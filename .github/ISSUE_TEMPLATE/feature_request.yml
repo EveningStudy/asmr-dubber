@@ -1,0 +1,34 @@
+name: 功能建议
+description: 建议新的工作流、后端、模型或用户体验改进
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+      description: 描述现在无法完成或很困难的实际任务。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已尝试的替代方案
+  - type: textarea
+    id: backend
+    attributes:
+      label: 若涉及新模型/服务
+      description: 请附官方仓库、许可证、系统/显存/磁盘要求和稳定 API 文档。
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: 声音与数据
+      options:
+        - label: 建议不会要求项目分发未授权模型权重、私人音频或 API Key。
+          required: true

@@ -1,0 +1,21 @@
+* text=auto
+
+*.py text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.m4a binary
+*.ogg binary
+*.safetensors binary
+*.pth binary
+*.pt binary
+*.bin binary
+*.zip binary

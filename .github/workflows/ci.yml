@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: ${{ matrix.os }} / Python 3.12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install core, UI, and development dependencies
+        run: uv sync --locked --extra ui --extra dev
+      - name: Lint
+        run: uv run --no-sync ruff check src tests scripts
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check src tests scripts
+      - name: Test
+        run: uv run --no-sync pytest
+      - name: Build UI graph
+        run: >-
+          uv run --no-sync python -c
+          "from asmr_dubber.ui import build_app; app = build_app();
+          assert len(app.blocks) >= 1; print('UI build OK')"
+      - name: Build Windows launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./launcher/windows/build.ps1
+      - name: Smoke-test Windows launcher paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./ASMR-Dubber.exe --self-test "$env:RUNNER_TEMP\launcher-self-test.txt"
+          Get-Content "$env:RUNNER_TEMP\launcher-self-test.txt"
+      - name: Build distributions
+        run: uv build
+      - name: Check distributions
+        run: uvx twine check dist/*

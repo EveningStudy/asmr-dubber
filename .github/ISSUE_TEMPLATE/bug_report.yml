@@ -1,0 +1,78 @@
+name: 缺陷报告
+description: 报告可复现的安装、识别、翻译、配音或混音问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿粘贴 API Key、私人音频或未清理的项目文件。安全问题请按 SECURITY.md 私下报告。
+  - type: input
+    id: version
+    attributes:
+      label: 版本/提交
+      placeholder: 0.4.0 或 git commit
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux
+        - WSL2
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: CPU / GPU / 显存 / 驱动
+      placeholder: RTX 5070 Ti Laptop 12GB, driver ...
+    validations:
+      required: true
+  - type: input
+    id: backends
+    attributes:
+      label: ASR / 翻译 / TTS 后端与模型
+      placeholder: Parakeet CTC 1.1B / DeepSeek V4 Pro / IndexTTS2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从干净启动开始列出最短步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: doctor --no-network 输出
+      description: 先删除用户名、私人路径和其他敏感信息。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 其他错误日志
+      description: 不要包含密钥、音频内容或私人转写。
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，并使用短音频复现。
+          required: true
+        - label: 我确认以上内容不包含 API Key 或未授权的私人数据。
+          required: true

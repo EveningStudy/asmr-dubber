@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build Windows launcher
+        shell: pwsh
+        run: ./launcher/windows/build.ps1
+      - name: Build portable Windows source archive
+        shell: pwsh
+        run: |
+          $staging = Join-Path $env:RUNNER_TEMP "ASMR-Dubber"
+          New-Item -ItemType Directory -Force $staging | Out-Null
+          Get-ChildItem -Force | Where-Object {
+            $_.Name -notin @(".git", ".asmr-dubber", "dist")
+          } | Copy-Item -Destination $staging -Recurse -Force
+          Compress-Archive -Path $staging `
+            -DestinationPath "ASMR-Dubber-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            ASMR-Dubber.exe
+            ASMR-Dubber-windows-portable.zip
+          if-no-files-found: error
+
+  github-release:
+    needs: windows-launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          expected = f"v{version}"
+          if os.environ["RELEASE_TAG"] != expected:
+              raise SystemExit(f"tag {os.environ['RELEASE_TAG']} does not match {expected}")
+          PY
+      - name: Build and validate distributions
+        run: |
+          uv build
+          uvx twine check dist/*
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          dist/*
+          release-assets/ASMR-Dubber.exe
+          release-assets/ASMR-Dubber-windows-portable.zip
+          --verify-tag
