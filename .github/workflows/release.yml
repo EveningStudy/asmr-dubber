@@ -28,9 +28,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: |
-            ASMR-Dubber.exe
-            ASMR-Dubber-windows-portable.zip
+          path: ASMR-Dubber-windows-portable.zip
           if-no-files-found: error
 
   github-release:
@@ -72,6 +70,5 @@ jobs:
         run: >-
           gh release create "${GITHUB_REF_NAME}"
           dist/*
-          release-assets/ASMR-Dubber.exe
           release-assets/ASMR-Dubber-windows-portable.zip
           --verify-tag
