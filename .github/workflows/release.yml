@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: ["main"]
 
 permissions:
   contents: write
@@ -12,6 +12,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 8fab2abe27877764daaa2c604fb15ec4ca40c608
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.30"
@@ -53,6 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 8fab2abe27877764daaa2c604fb15ec4ca40c608
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -61,7 +65,7 @@ jobs:
           version: "0.11.30"
       - name: Verify tag matches package version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: v0.2.0
         run: |
           python - <<'PY'
           import os
@@ -81,11 +85,14 @@ jobs:
         with:
           name: windows-release
           path: release-assets
-      - name: Create GitHub Release
+      - name: Replace GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          dist/*
-          release-assets/ASMR-Dubber-windows-portable.zip
-          --verify-tag
+          RELEASE_COMMIT: 8fab2abe27877764daaa2c604fb15ec4ca40c608
+        run: |
+          git tag -f "v0.2.0" "$RELEASE_COMMIT"
+          git push --force origin "refs/tags/v0.2.0"
+          gh release upload "v0.2.0" \
+            dist/* \
+            release-assets/ASMR-Dubber-windows-portable.zip \
+            --clobber
