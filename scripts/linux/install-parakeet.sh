@@ -16,7 +16,7 @@ PYTHON="$ASMR_DUBBER_VENV/bin/python"
 mkdir -p "$RUNTIME_ROOT/bin" "$MODEL_ROOT" "$DOWNLOAD_ROOT"
 
 if [[ ! -x "$PYTHON" ]]; then
-  echo "缺少项目私有 Python；请先运行 bash scripts/linux/setup.sh。" >&2
+  echo "缺少 Python 运行环境；请先运行 bash scripts/linux/setup.sh。" >&2
   exit 1
 fi
 

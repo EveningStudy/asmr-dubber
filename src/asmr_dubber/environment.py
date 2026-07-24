@@ -77,7 +77,7 @@ def require_cuda() -> None:
     if not summary["available"]:
         raise EnvironmentError(
             "未检测到 PyTorch CUDA。当前 ASR/TTS 后端需要 NVIDIA GPU；"
-            "请重新运行对应平台的 Recommended 安装，或切换 CPU/外部服务后端。"
+            "请在“设备与模型”中重新安装当前后端，或切换 CPU/外部服务后端。"
         )
 
 

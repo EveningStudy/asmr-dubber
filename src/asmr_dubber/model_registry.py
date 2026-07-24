@@ -105,10 +105,7 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
             "检查的 GAL checkpoint 转换。运行时会针对日语模型的长音频不稳定问题自动做"
             "全局归一化和约 8 秒流式编码，并输出真实词/段时间戳。"
         ),
-        setup=(
-            "在“设备与模型”页一键安装项目私有 CrispASR 和两款 F16 模型；"
-            "Windows/Linux 均不修改系统 Python。"
-        ),
+        setup="在“设备与模型”页安装 CrispASR 和两款 F16 模型。",
         tested_default=True,
         support_level="verified",
         devices=("cpu", "cuda"),

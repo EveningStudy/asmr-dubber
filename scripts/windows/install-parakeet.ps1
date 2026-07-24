@@ -29,7 +29,7 @@ New-Item -ItemType Directory -Force `
     -Path $RuntimeBin, $ModelRoot, $DownloadRoot | Out-Null
 
 if (-not (Test-Path $Python)) {
-    throw "缺少项目私有 Python；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    throw "缺少 Python 运行环境；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 
 if ($Variant -eq "Auto") {
@@ -102,7 +102,7 @@ function Get-CheckedDownload {
     throw "SHA256 校验失败：$Destination"
 }
 
-Write-Host "安装 CrispASR $Version（$Variant）到项目私有目录..." -ForegroundColor Cyan
+Write-Host "正在安装 CrispASR $Version（$Variant）..." -ForegroundColor Cyan
 Get-CheckedDownload -Uri $Url -Destination $Archive -Sha256 $ExpectedHash
 $Staging = Join-Path $Paths.Temp "crispasr-install"
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Staging

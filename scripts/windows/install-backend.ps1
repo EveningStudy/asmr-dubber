@@ -67,18 +67,24 @@ function Invoke-Checked {
 }
 
 Write-Host "正在安装后端：$Backend" -ForegroundColor Cyan
+$NvidiaSmi = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
+if (-not $NvidiaSmi) {
+    $SystemNvidiaSmi = Join-Path $env:SystemRoot "System32\nvidia-smi.exe"
+    if (Test-Path $SystemNvidiaSmi) {
+        $NvidiaSmi = $SystemNvidiaSmi
+    }
+}
 if ($Extra -eq "local-default") {
     Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot | Out-Null
-    $NvidiaSmi = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
-    if (-not $NvidiaSmi) {
-        $SystemNvidiaSmi = Join-Path $env:SystemRoot "System32\nvidia-smi.exe"
-        if (Test-Path $SystemNvidiaSmi) {
-            $NvidiaSmi = $SystemNvidiaSmi
-        }
-    }
     if (-not $NvidiaSmi) {
         throw "$Backend 需要 NVIDIA GPU；当前机器未检测到 nvidia-smi。"
     }
+}
+
+$InstallCudaTorch = ($Extra -eq "local-default") -or (
+    ($Backend -eq "kotoba_whisper") -and $NvidiaSmi
+)
+if ($InstallCudaTorch) {
     Write-Host "检测到 NVIDIA GPU，正在安装 CUDA PyTorch..." -ForegroundColor Cyan
     Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
         -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
@@ -88,9 +94,9 @@ if ($Extra -eq "local-default") {
         )
 }
 
-    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-        -Arguments @(
+Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+    -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+    -Arguments @(
         "pip", "install", "--python", $Python, "--editable", "$Root[$Extra]"
     )
 

@@ -7,8 +7,8 @@ using System.Text;
 [assembly: System.Reflection.AssemblyDescription("ASMR Dubber dependency installer and repair tool")]
 [assembly: System.Reflection.AssemblyCompany("ASMR Dubber contributors")]
 [assembly: System.Reflection.AssemblyProduct("ASMR Dubber")]
-[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.2.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.3.0.0")]
 
 namespace ASMRDubberSetup
 {

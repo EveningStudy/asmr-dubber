@@ -36,6 +36,20 @@ Progress = Callable[[str, int, int], None]
 _QWEN_CHUNK_SECONDS = 90.0
 _QWEN_BOUNDARY_SEARCH_SECONDS = 5.0
 _QWEN_BOUNDARY_WINDOW_SECONDS = 0.1
+_TRANSFORMERS_ASR_PIPELINE_LOCK = threading.Lock()
+
+
+def _run_transformers_asr_pipeline(pipe: Any, inputs: Any, **kwargs: Any) -> Any:
+    """Run an already-decoded waveform without importing optional TorchCodec."""
+    from transformers.pipelines import automatic_speech_recognition as asr_pipeline
+
+    with _TRANSFORMERS_ASR_PIPELINE_LOCK:
+        availability_check = asr_pipeline.is_torchcodec_available
+        asr_pipeline.is_torchcodec_available = lambda: False
+        try:
+            return pipe(inputs, **kwargs)
+        finally:
+            asr_pipeline.is_torchcodec_available = availability_check
 
 
 def _finite_token(text: Any, start: Any, end: Any) -> TimedToken | None:
@@ -436,7 +450,8 @@ def _transcribe_kotoba_whisper(
         )
         if waveform.ndim > 1:
             waveform = waveform.mean(axis=1)
-        result = pipe(
+        result = _run_transformers_asr_pipeline(
+            pipe,
             {"array": waveform, "sampling_rate": sample_rate},
             # Kotoba's distilled two-layer decoder inherits alignment-head
             # indices from the 32-layer Whisper teacher.  Word timestamp

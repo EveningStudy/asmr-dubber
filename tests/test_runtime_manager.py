@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 from subprocess import CompletedProcess
+from threading import Event
 
 import pytest
 
@@ -85,6 +86,24 @@ def test_http_backend_is_external_service(monkeypatch) -> None:
     assert status.state == "external"
 
 
+def test_windows_kotoba_reports_missing_cuda_runtime(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Windows", "AMD64", True, False, False),
+    )
+    monkeypatch.setattr("asmr_dubber.runtime_manager.detect_hardware", lambda: _hardware(cuda=True))
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.cuda_summary",
+        lambda: {"available": False},
+    )
+    monkeypatch.setattr("asmr_dubber.runtime_manager._imports_available", lambda _backend: True)
+
+    status = backend_status(ASR_BACKENDS["kotoba_whisper"])
+
+    assert status.state == "partial"
+    assert "CUDA" in status.label
+
+
 def test_parakeet_model_status_is_reported_per_concrete_model(
     monkeypatch,
     tmp_path: Path,
@@ -163,6 +182,10 @@ def test_install_backend_uses_current_interpreter(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr("asmr_dubber.runtime_manager._uv_executable", lambda: uv)
     monkeypatch.setattr("asmr_dubber.runtime_manager._run_streaming_process", fake_run)
     monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Linux", "x86_64", False, True, False),
+    )
+    monkeypatch.setattr(
         "asmr_dubber.runtime_manager.download_backend_models",
         lambda *_args, **_kwargs: "models ready",
     )
@@ -171,6 +194,60 @@ def test_install_backend_uses_current_interpreter(monkeypatch, tmp_path: Path) -
     assert "安装完成" in result
     assert calls[0][0] == str(uv)
     assert any("asr-faster-whisper" in argument for argument in calls[0])
+
+
+def test_windows_kotoba_uses_runtime_installer(monkeypatch, tmp_path: Path) -> None:
+    uv = tmp_path / "uv.exe"
+    uv.touch()
+    calls: list[str] = []
+
+    def fake_install(backend_id: str, **_kwargs):
+        calls.append(backend_id)
+        return CompletedProcess(["pwsh"], 0, stdout="CUDA runtime ready", stderr="")
+
+    monkeypatch.setattr("asmr_dubber.runtime_manager._uv_executable", lambda: uv)
+    monkeypatch.setattr("asmr_dubber.runtime_manager._install_windows_backend", fake_install)
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.download_backend_models",
+        lambda *_args, **_kwargs: "models ready",
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Windows", "AMD64", True, False, False),
+    )
+
+    result = install_backend("kotoba_whisper", force=True)
+
+    assert calls == ["kotoba_whisper"]
+    assert "CUDA runtime ready" in result
+
+
+def test_install_backend_imports_matching_pack_before_network(monkeypatch) -> None:
+    statuses = iter(
+        [
+            type("Status", (), {"state": "missing"})(),
+            type("Status", (), {"state": "ready"})(),
+        ]
+    )
+    imported: list[str] = []
+
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.backend_status",
+        lambda *_args, **_kwargs: next(statuses),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.import_backend_model_packs",
+        lambda backend_id, **_kwargs: imported.append(backend_id) or 1,
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager._uv_executable",
+        lambda: pytest.fail("a complete local model pack must be used before network install"),
+    )
+
+    result = install_backend("parakeet_nemo")
+
+    assert imported == ["parakeet_nemo"]
+    assert "本地模型包" in result
 
 
 def test_windows_local_backend_uses_runtime_installer(monkeypatch, tmp_path: Path) -> None:
@@ -302,6 +379,34 @@ def test_streaming_installer_forwards_stdout_and_stderr(tmp_path: Path) -> None:
     assert logs == ["first line", "second line"]
     assert "first line" in completed.stdout
     assert "second line" in completed.stdout
+
+
+def test_streaming_installer_can_be_paused(tmp_path: Path) -> None:
+    cancel_event = Event()
+    logs: list[str] = []
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        "import time; print('started', flush=True); time.sleep(30)",
+    ]
+
+    def pause_after_start(message: str) -> None:
+        logs.append(message)
+        if message == "started":
+            cancel_event.set()
+
+    with pytest.raises(AppEnvironmentError, match="下载已暂停"):
+        _run_streaming_process(
+            command,
+            cwd=tmp_path,
+            env=os.environ.copy(),
+            timeout_seconds=10,
+            log_callback=pause_after_start,
+            cancel_event=cancel_event,
+        )
+
+    assert logs == ["started"]
 
 
 def test_ready_parakeet_returns_without_running_installer(

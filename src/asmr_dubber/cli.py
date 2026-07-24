@@ -45,7 +45,12 @@ from .pipeline import (
     translate_project,
 )
 from .platforms import current_platform, portable_home, require_supported_platform
-from .runtime_manager import backend_status, detect_hardware, install_backend
+from .runtime_manager import (
+    backend_status,
+    detect_hardware,
+    download_backend_models,
+    install_backend,
+)
 from .user_settings import PROVIDER_PRESETS, load_user_settings, resolve_api_key
 
 load_dotenv()
@@ -478,6 +483,21 @@ def install_backend_command(
     """安装或修复一个后端，并预下载该后端的固定推荐模型。"""
     try:
         result = install_backend(backend_id)
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[green]{result}[/green]")
+
+
+@app.command("download-backend-models", hidden=True)
+def download_backend_models_command(
+    backend_id: Annotated[str, typer.Argument(help="后端 ID")],
+) -> None:
+    """Download the pinned models for one backend."""
+    try:
+        result = download_backend_models(
+            backend_id,
+            log_callback=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+        )
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
     console.print(f"[green]{result}[/green]")

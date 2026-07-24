@@ -32,7 +32,7 @@ $Archive = Join-Path $DownloadRoot "index-tts-$Revision.zip"
 $Staging = "$RuntimeRoot.staging"
 
 if (-not (Test-Path $Uv)) {
-    throw "缺少项目私有 uv；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    throw "缺少 uv；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 New-Item -ItemType Directory -Force -Path $DataRoot, $DownloadRoot | Out-Null
 $env:UV_LINK_MODE = "copy"

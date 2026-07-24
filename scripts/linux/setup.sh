@@ -39,7 +39,7 @@ export UV_NO_MODIFY_PATH=1
 
 echo "ASMR Dubber · Linux 安装"
 echo "项目目录：$ROOT"
-echo "便携目录：$DATA_ROOT"
+echo "数据目录：$DATA_ROOT"
 echo "安装配置：$PROFILE"
 case "$PROFILE" in
   Core)
@@ -60,7 +60,7 @@ if [[ "$PROFILE" != Core ]]; then
 fi
 
 if [[ ! -x "$UV" ]]; then
-  echo "正在安装项目私有 uv（不会修改系统 PATH）..."
+  echo "正在安装 uv..."
   UV_INSTALLER="$TMPDIR/uv-installer.sh"
   while IFS= read -r installer_url; do
     if asmr_download "$ROOT" "$installer_url" "$UV_INSTALLER"; then
@@ -80,7 +80,7 @@ if [[ ! -x "$UV" ]]; then
   exit 1
 fi
 
-echo "正在准备项目私有 Python 3.12..."
+echo "正在准备 Python 3.12..."
 PYTHON_READY=0
 while IFS= read -r python_mirror; do
   echo "使用 Python 下载源：$python_mirror"
@@ -239,4 +239,3 @@ if ! bash "$ROOT/scripts/linux/run-cli.sh" doctor --no-network; then
 fi
 echo
 echo "安装完成。运行 bash $ROOT/scripts/linux/run-ui.sh 启动界面。"
-echo "卸载方法：删除整个项目目录；程序不会在用户主目录留下文件。"

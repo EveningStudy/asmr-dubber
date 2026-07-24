@@ -6,6 +6,10 @@ class EnvironmentError(AsmrDubberError):
     """The local operating system or model runtime is unsuitable."""
 
 
+class InstallPausedError(EnvironmentError):
+    """A resumable dependency or model download was paused by the user."""
+
+
 class ProjectError(AsmrDubberError):
     """A project manifest is missing or inconsistent."""
 

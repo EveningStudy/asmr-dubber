@@ -238,6 +238,25 @@ def test_kotoba_transformers_refuses_incomplete_model_without_downloading(
         )
 
 
+def test_transformers_asr_pipeline_skips_optional_torchcodec() -> None:
+    from transformers.pipelines import automatic_speech_recognition as asr_pipeline
+
+    original = asr_pipeline.is_torchcodec_available
+
+    def fake_pipe(inputs, **kwargs):
+        assert asr_pipeline.is_torchcodec_available() is False
+        return {"inputs": inputs, "kwargs": kwargs}
+
+    result = asr._run_transformers_asr_pipeline(
+        fake_pipe,
+        {"array": np.zeros(16, dtype=np.float32), "sampling_rate": 16_000},
+        return_timestamps=True,
+    )
+
+    assert result["kwargs"]["return_timestamps"] is True
+    assert asr_pipeline.is_torchcodec_available is original
+
+
 def test_parakeet_ctc_zero_width_words_fall_back_to_complete_segment() -> None:
     payload = {
         "crispasr": {"language": "ja"},

@@ -16,9 +16,9 @@ bash scripts/linux/run-cli.sh doctor --no-network
 
 确认 `ASMR-Dubber.exe`、`ASMR-Dubber-Setup.exe` 和 `mirrors.json` 位于项目根目录，且 `scripts/windows/setup.ps1` 和 `scripts/windows/run-ui.ps1` 存在。首次安装或修复依赖运行 `ASMR-Dubber-Setup.exe`；启动网页运行 `ASMR-Dubber.exe`。下载的未签名 Release 可能触发 SmartScreen 来源提示；请只从可信 Release 获取启动器。高级用户仍可运行 `./scripts/windows/setup.ps1 -Profile Recommended`，也可把 Profile 改为 Core、Advanced 或 Full。
 
-## 找不到 Python 或 Conda
+## 运行环境不完整
 
-项目使用 `.asmr-dubber` 内的托管 Python，不依赖全局 Python、Conda 或系统 PATH。Windows 依赖通过 `ASMR-Dubber-Setup.exe` 安装或修复，通过 `ASMR-Dubber.exe` 启动；Linux 使用对应脚本。移动项目目录后重新运行安装器；已有模型缓存会复用。
+Windows 运行 `ASMR-Dubber-Setup.exe`，Linux 重新运行对应的 setup 脚本。移动项目目录后如无法启动，也按此方式修复；已有模型缓存会复用。
 
 ## NVIDIA 驱动正常，但 CUDA 不可用
 
@@ -114,8 +114,3 @@ bash scripts/linux/install-indextts2.sh
 ```bash
 bash scripts/linux/run-cli.sh ui --port 7861
 ```
-
-
-## 卸载
-
-停止程序并删除仓库目录。

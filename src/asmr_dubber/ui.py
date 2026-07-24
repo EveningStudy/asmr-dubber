@@ -24,7 +24,7 @@ from .constants import (
 from .constants import (
     INDEXTTS_REQUIRED_FILES as _INDEXTTS_REQUIRED_FILES,
 )
-from .errors import AsmrDubberError, ProjectError, SynthesisError
+from .errors import AsmrDubberError, InstallPausedError, ProjectError, SynthesisError
 from .filtering import is_japanese_filler_only
 from .model_packs import (
     discover_model_packs,
@@ -105,6 +105,10 @@ TTS_BACKEND_ORDER = (
 )
 
 APP_CSS = """
+:root, body, .gradio-container {
+    --font: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    font-family: var(--font) !important;
+}
 .asmr-brand { margin: 0 0 1rem; }
 .asmr-brand__title {
     margin: 0;
@@ -121,11 +125,37 @@ APP_CSS = """
 """
 
 
+class DownloadController:
+    def __init__(self) -> None:
+        self.cancel_event = threading.Event()
+        self._lock = threading.Lock()
+        self._active: str | None = None
+
+    def begin(self, label: str) -> None:
+        with self._lock:
+            self.cancel_event.clear()
+            self._active = label
+
+    def finish(self, label: str) -> None:
+        with self._lock:
+            if self._active == label:
+                self._active = None
+
+    def pause(self) -> str:
+        with self._lock:
+            if self._active is None:
+                return "当前没有下载任务。"
+            label = self._active
+            self.cancel_event.set()
+        return f"正在暂停 {label}；再次点击安装/修复可继续。"
+
+
 def _install_backend_log_events(
     backend_id: str,
     *,
     installer: Callable[..., str] | None = None,
     heartbeat_seconds: float = 2.0,
+    controller: DownloadController | None = None,
 ) -> Iterator[tuple[str, bool, bool]]:
     """Yield accumulated installer logs, completion state, and success state."""
     install = installer or install_backend
@@ -144,13 +174,23 @@ def _install_backend_log_events(
 
     def run() -> None:
         try:
-            result = install(backend_id, log_callback=emit)
+            kwargs: dict[str, Any] = {"log_callback": emit}
+            if controller is not None:
+                kwargs["cancel_event"] = controller.cancel_event
+            result = install(backend_id, **kwargs)
+        except InstallPausedError as exc:
+            events.put(("paused", str(exc)))
         except Exception as exc:  # noqa: BLE001 - surface normalized installer failures in UI
             events.put(("error", str(exc)))
         else:
             events.put(("done", result))
+        finally:
+            if controller is not None:
+                controller.finish(backend_id)
 
     append(f"开始检查并安装：{backend_id}")
+    if controller is not None:
+        controller.begin(backend_id)
     worker = threading.Thread(
         target=run,
         name=f"asmr-dubber-install-{backend_id or 'unknown'}",
@@ -177,6 +217,10 @@ def _install_backend_log_events(
             if message.strip() and message.strip() not in current:
                 append(message)
             yield "\n".join(lines), True, True
+            return
+        if kind == "paused":
+            append(message)
+            yield "\n".join(lines), True, False
             return
         append(f"安装失败：{message}")
         yield "\n".join(lines), True, False
@@ -1254,6 +1298,7 @@ def build_app() -> Any:
             raise gr.Error(str(exc)) from exc
 
     stored = load_user_settings()
+    download_controller = DownloadController()
     if not stored.projects_root:
         stored.projects_root = str(pipeline.default_projects_dir())
     preset = PROVIDER_PRESETS.get(stored.translation_provider, PROVIDER_PRESETS["deepseek"])
@@ -1400,14 +1445,12 @@ def build_app() -> Any:
                     settings_status = gr.Textbox(label="设置状态", interactive=False)
                 with gr.Tabs():
                     with gr.Tab("设备与模型", id="device_models"):
-                        gr.Markdown(
-                            f"**便携数据目录**：`{portable_home()}`  \n"
-                            "运行时、模型、缓存、配置、项目和临时文件均位于程序目录内。"
-                        )
                         with gr.Row():
                             refresh_system_button = gr.Button(
                                 "重新检测设备与模型", variant="primary"
                             )
+                            pause_download_button = gr.Button("暂停当前下载", variant="stop")
+                        download_control_status = gr.Markdown()
                         hardware_info = gr.Markdown(hardware_markdown())
                         device_recommendation = gr.Markdown(recommended_stack_markdown())
                         gr.Markdown(
@@ -2523,7 +2566,10 @@ def build_app() -> Any:
             backend_id: Any,
             current_review_models: Any,
         ) -> Iterator[tuple[Any, ...]]:
-            for log, finished, _succeeded in _install_backend_log_events(str(backend_id or "")):
+            for log, finished, _succeeded in _install_backend_log_events(
+                str(backend_id or ""),
+                controller=download_controller,
+            ):
                 if not finished:
                     yield log, gr.skip(), gr.skip(), gr.skip()
                     continue
@@ -2538,7 +2584,10 @@ def build_app() -> Any:
         def install_tts_backend_callback(
             backend_id: Any,
         ) -> Iterator[tuple[Any, ...]]:
-            for log, finished, _succeeded in _install_backend_log_events(str(backend_id or "")):
+            for log, finished, _succeeded in _install_backend_log_events(
+                str(backend_id or ""),
+                controller=download_controller,
+            ):
                 if not finished:
                     yield log, gr.skip(), gr.skip()
                     continue
@@ -2552,13 +2601,22 @@ def build_app() -> Any:
         def import_offline_packs_callback(
             current_review_models: Any,
         ) -> Iterator[tuple[Any, ...]]:
-            def importer(_backend_id: str, *, log_callback: Callable[[str], None]) -> str:
+            def importer(
+                _backend_id: str,
+                *,
+                log_callback: Callable[[str], None],
+                cancel_event: threading.Event,
+            ) -> str:
+                if cancel_event.is_set():
+                    raise InstallPausedError("导入已暂停；再次点击导入可继续。")
                 results = import_discovered_model_packs(
                     log=log_callback,
                     progress=lambda message, current, total: log_callback(
                         f"[{current}/{total}] {message}"
                     ),
                 )
+                if cancel_event.is_set():
+                    raise InstallPausedError("导入已暂停；再次点击导入可继续。")
                 if not results:
                     return "未发现可导入的兼容模型包。"
                 installed = sum(result.installed_files for result in results)
@@ -2571,6 +2629,7 @@ def build_app() -> Any:
             for log, finished, _succeeded in _install_backend_log_events(
                 "offline-model-packs",
                 installer=importer,
+                controller=download_controller,
             ):
                 if not finished:
                     yield log, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
@@ -2585,6 +2644,9 @@ def build_app() -> Any:
                     guarded(available_backend_models_markdown, "tts", current),
                     _review_choices_update(current_review_models, current),
                 )
+
+        def pause_download_callback() -> str:
+            return download_controller.pause()
 
         click_parameters = inspect.signature(new_button.click).parameters
         private_event_options: dict[str, Any]
@@ -2602,6 +2664,11 @@ def build_app() -> Any:
             "concurrency_limit": 1,
             "show_progress": "minimal",
         }
+        pause_event_options = {
+            key: value
+            for key, value in private_event_options.items()
+            if key in {"api_visibility", "api_name"}
+        }
 
         refresh_system_button.click(
             refresh_system_callback,
@@ -2616,6 +2683,12 @@ def build_app() -> Any:
                 asr_review_models,
             ],
             **private_event_options,
+        )
+        pause_download_button.click(
+            pause_download_callback,
+            outputs=[download_control_status],
+            queue=False,
+            **pause_event_options,
         )
         install_asr_backend_button.click(
             install_asr_backend_callback,

@@ -34,6 +34,11 @@ def test_windows_setup_exposes_four_monotonic_profiles() -> None:
     assert "asr-openai-whisper" in full
     assert "asr-funasr" in full
 
+    cuda_block = setup.split("if ($InstallAdvancedModels -and $NvidiaSmi)", 1)[1]
+    cuda_block = cuda_block.split('Write-Host "正在安装应用依赖', 1)[0]
+    assert '"torch==2.11.0+cu130"' in cuda_block
+    assert '"torchaudio==2.11.0+cu130"' in cuda_block
+
 
 def test_linux_setup_exposes_same_four_profiles() -> None:
     setup = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
@@ -136,5 +141,5 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.2.1.0")' in source
-        assert 'AssemblyFileVersion("0.2.1.0")' in source
+        assert 'AssemblyVersion("0.3.0.0")' in source
+        assert 'AssemblyFileVersion("0.3.0.0")' in source

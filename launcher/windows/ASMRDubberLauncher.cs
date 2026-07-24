@@ -8,12 +8,12 @@ using System.Text;
 using System.Threading;
 
 [assembly: AssemblyTitle("ASMR Dubber")]
-[assembly: AssemblyDescription("ASMR Dubber portable command-line launcher")]
+[assembly: AssemblyDescription("ASMR Dubber command-line launcher")]
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("0.2.1.0")]
-[assembly: AssemblyFileVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyFileVersion("0.3.0.0")]
 
 namespace ASMRDubberLauncher
 {

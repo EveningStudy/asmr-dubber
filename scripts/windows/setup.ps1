@@ -81,7 +81,7 @@ $env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
 
 Write-Host "ASMR Dubber · Windows 安装" -ForegroundColor Cyan
 Write-Host "项目目录：$Root"
-Write-Host "便携目录：$DataRoot"
+Write-Host "数据目录：$DataRoot"
 Write-Host "安装配置：$Profile"
 $StorageEstimate = switch ($Profile) {
     "Core" {
@@ -164,9 +164,9 @@ if (-not (Test-PortableUv)) {
 if (-not (Test-PortableUv)) {
     throw "uv 安装失败：$Uv"
 }
-Write-Host "项目私有 uv 已就绪。" -ForegroundColor Green
+Write-Host "uv 已就绪。" -ForegroundColor Green
 
-Write-Host "正在准备项目私有 Python 3.12..." -ForegroundColor Cyan
+Write-Host "正在准备 Python 3.12..." -ForegroundColor Cyan
 $ManagedPython = Get-ChildItem `
     (Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-3.12.*-windows-x86_64-none\python.exe") `
     -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
@@ -246,7 +246,7 @@ $Extra = switch ($Profile) {
     }
 }
 
-if ($InstallDefaultModels -and $NvidiaSmi) {
+if ($InstallAdvancedModels -and $NvidiaSmi) {
     Write-Host "检测到 NVIDIA GPU，正在安装官方 CUDA 13.0 PyTorch..." -ForegroundColor Cyan
     Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
         -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
@@ -338,4 +338,3 @@ try {
 
 Write-Host ""
 Write-Host "安装完成。运行项目根目录的 ASMR-Dubber.exe 启动界面。" -ForegroundColor Green
-Write-Host "卸载方法：删除整个项目目录；程序不会在 AppData 留下文件。" -ForegroundColor DarkGray

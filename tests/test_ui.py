@@ -12,6 +12,8 @@ from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, sa
 from asmr_dubber.ui import (
     _INDEXTTS_REQUIRED_DIRS,
     _INDEXTTS_REQUIRED_FILES,
+    APP_CSS,
+    DownloadController,
     _cache_component_defaults,
     _install_backend_log_events,
     _output_audio,
@@ -178,6 +180,24 @@ def test_settings_show_split_backend_tables_and_page_reset_buttons() -> None:
     assert "TTS 后端兼容性与安装状态" in labels
     assert "离线模型包导入日志" in labels
     assert values.count("重置本页为默认值（需保存）") == 5
+    assert "暂停当前下载" in values
+
+
+def test_ui_uses_consistent_latin_and_chinese_fonts() -> None:
+    assert '"Segoe UI"' in APP_CSS
+    assert '"Microsoft YaHei UI"' in APP_CSS
+
+
+def test_download_controller_pauses_only_active_download() -> None:
+    controller = DownloadController()
+
+    assert controller.pause() == "当前没有下载任务。"
+    controller.begin("kotoba_whisper")
+    assert controller.cancel_event.is_set() is False
+    assert "kotoba_whisper" in controller.pause()
+    assert controller.cancel_event.is_set() is True
+    controller.finish("kotoba_whisper")
+    assert controller.pause() == "当前没有下载任务。"
 
 
 def test_offline_model_pack_status_names_the_well_known_inbox(monkeypatch, tmp_path: Path) -> None:
