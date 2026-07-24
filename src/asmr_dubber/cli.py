@@ -313,10 +313,8 @@ def download_models_command(
     ] = "all",
 ) -> None:
     """下载并校验固定版本的内置模型。"""
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        _fail(exc)
+    from .mirrors import snapshot_download_with_fallback
+
     backend_models = {
         "qwen3_asr": (DEFAULT_ASR_MODEL, DEFAULT_ALIGNER_MODEL),
         "voxcpm2": (DEFAULT_TTS_MODEL,),
@@ -329,7 +327,7 @@ def download_models_command(
         revision = MODEL_REVISIONS[model_id]
         console.print(f"[cyan][{index}/{len(model_ids)}] 下载 {model_id}[/cyan]")
         try:
-            path = snapshot_download(
+            path = snapshot_download_with_fallback(
                 repo_id=model_id,
                 revision=revision,
                 max_workers=2,

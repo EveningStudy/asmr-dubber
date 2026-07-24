@@ -5,6 +5,8 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/portable-runtime.sh
 source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
+source "$ROOT/scripts/mirrors.sh"
+asmr_apply_mirror_environment "$ROOT"
 
 VERSION="v0.8.21"
 RUNTIME_ROOT="$ASMR_DUBBER_HOME/runtimes/crispasr"
@@ -35,13 +37,7 @@ download_archive() {
       return 0
     fi
     rm -f "$ARCHIVE"
-    if ! curl -L --fail --retry 5 --retry-all-errors -C - \
-      -o "$ARCHIVE.partial" "$URL"; then
-      rm -f "$ARCHIVE.partial"
-      curl -L --fail --retry 5 --retry-all-errors \
-        -o "$ARCHIVE.partial" "$URL"
-    fi
-    mv "$ARCHIVE.partial" "$ARCHIVE"
+    asmr_download "$ROOT" "$URL" "$ARCHIVE" "$EXPECTED"
     if [[ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" == "$EXPECTED" ]]; then
       return 0
     fi
@@ -69,13 +65,15 @@ rm -rf "$STAGING"
   --filename parakeet-ctc-1.1b-ja-f16.gguf \
   --revision 7ccb2922f63cefe7c0d2735527c69aa46c05ceb9 \
   --destination "$MODEL_ROOT/parakeet-ctc-1.1b-ja-f16.gguf" \
-  --minimum-bytes 2000000000
+  --minimum-bytes 2000000000 \
+  --endpoints "$(asmr_mirror_list "$ROOT" huggingface_endpoints | paste -sd ';' -)"
 "$PYTHON" "$ROOT/scripts/download_hf_file.py" \
   --repo cstr/parakeet-tdt-0.6b-ja-GGUF \
   --filename parakeet-tdt-0.6b-ja.gguf \
   --revision 65341fce2b46d25ea51593b1f771ed9a73cf7108 \
   --destination "$MODEL_ROOT/parakeet-tdt-0.6b-ja.gguf" \
-  --minimum-bytes 1000000000
+  --minimum-bytes 1000000000 \
+  --endpoints "$(asmr_mirror_list "$ROOT" huggingface_endpoints | paste -sd ';' -)"
 
 "$RUNTIME_ROOT/bin/crispasr" --version
 echo "Parakeet 已就绪；全部文件均位于 .asmr-dubber。"

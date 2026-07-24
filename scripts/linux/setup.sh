@@ -19,6 +19,8 @@ fi
 
 source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
+source "$ROOT/scripts/mirrors.sh"
+asmr_apply_mirror_environment "$ROOT"
 
 source "$ROOT/scripts/network-bridge.sh"
 asmr_prepare_network
@@ -42,7 +44,19 @@ echo "安装配置：$PROFILE"
 
 if [[ ! -x "$UV" ]]; then
   echo "正在安装项目私有 uv（不会修改系统 PATH）..."
-  curl -fsSL --retry 5 https://astral.sh/uv/0.11.30/install.sh | sh
+  UV_INSTALLER="$TMPDIR/uv-installer.sh"
+  while IFS= read -r installer_url; do
+    if asmr_download "$ROOT" "$installer_url" "$UV_INSTALLER"; then
+      UV_ARCHIVE="https://github.com/astral-sh/uv/releases/download/0.11.30/uv-x86_64-unknown-linux-gnu.tar.gz"
+      while IFS= read -r archive_url; do
+        echo "使用 uv 下载源：$archive_url"
+        if UV_DOWNLOAD_URL="$archive_url" sh "$UV_INSTALLER"; then
+          break 2
+        fi
+        echo "当前 uv 下载源失败，自动切换。" >&2
+      done < <(asmr_download_candidates "$ROOT" "$UV_ARCHIVE")
+    fi
+  done < <(asmr_mirror_list "$ROOT" uv_installers_linux)
 fi
 if [[ ! -x "$UV" ]]; then
   echo "错误：uv 安装失败：$UV" >&2
@@ -50,7 +64,20 @@ if [[ ! -x "$UV" ]]; then
 fi
 
 echo "正在准备项目私有 Python 3.12..."
-"$UV" python install 3.12 --managed-python --no-bin
+PYTHON_READY=0
+while IFS= read -r python_mirror; do
+  echo "使用 Python 下载源：$python_mirror"
+  if UV_PYTHON_INSTALL_MIRROR="$python_mirror" \
+    "$UV" python install 3.12 --managed-python --no-bin; then
+    PYTHON_READY=1
+    break
+  fi
+  echo "当前 Python 下载源失败，自动切换。" >&2
+done < <(asmr_mirror_list "$ROOT" python_install_mirrors)
+if [[ "$PYTHON_READY" != 1 ]]; then
+  echo "错误：所有 Python 下载源均失败。" >&2
+  exit 1
+fi
 if [[ ! -x "$VENV/bin/python" ]]; then
   "$UV" venv --python 3.12 --managed-python "$VENV"
 fi
@@ -94,11 +121,22 @@ case "$PROFILE" in
 esac
 
 echo "正在安装应用依赖：$EXTRA"
-"$UV" pip install --python "$VENV/bin/python" --editable "$EXTRA"
+install_from_pypi() {
+  local index
+  while IFS= read -r index; do
+    echo "使用软件源：$index"
+    if "$UV" "$@" --default-index "$index"; then
+      return 0
+    fi
+    echo "当前软件源失败，自动切换。" >&2
+  done < <(asmr_mirror_list "$ROOT" pypi_indexes)
+  return 1
+}
+install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
 # PyTorch 2.11 constrains setuptools below 82. Keep the newest compatible
 # release so older package-discovery vulnerabilities are not retained by an
 # in-place upgrade.
-"$UV" pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
+install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
 "$VENV/bin/python" -m compileall -q -f "$ROOT/src/asmr_dubber"
 
 # TorchCodec loads system-style FFmpeg SONAMEs. PyAV ships a matching FFmpeg 8

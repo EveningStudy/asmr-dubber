@@ -49,6 +49,8 @@ jobs:
         run: |
           ./ASMR-Dubber.exe --self-test "$env:RUNNER_TEMP\launcher-self-test.txt"
           Get-Content "$env:RUNNER_TEMP\launcher-self-test.txt"
+          ./ASMR-Dubber-Setup.exe --self-test "$env:RUNNER_TEMP\setup-self-test.txt"
+          Get-Content "$env:RUNNER_TEMP\setup-self-test.txt"
       - name: Build distributions
         run: uv build
       - name: Check distributions

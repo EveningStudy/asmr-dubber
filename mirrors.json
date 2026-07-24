@@ -1,0 +1,31 @@
+{
+  "pypi_indexes": [
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple",
+    "https://pypi.org/simple"
+  ],
+  "huggingface_endpoints": [
+    "https://hf-mirror.com",
+    "https://huggingface.co"
+  ],
+  "pytorch_indexes": [
+    "https://mirrors.aliyun.com/pytorch-wheels/cu130",
+    "https://download.pytorch.org/whl/cu130"
+  ],
+  "github_proxy_prefixes": [
+    "https://gh-proxy.com/",
+    "https://gh.llkk.cc/",
+    ""
+  ],
+  "uv_installers_windows": [
+    "https://astral.sh/uv/0.11.30/install.ps1"
+  ],
+  "uv_installers_linux": [
+    "https://astral.sh/uv/0.11.30/install.sh"
+  ],
+  "python_install_mirrors": [
+    "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download",
+    "https://gh.llkk.cc/https://github.com/astral-sh/python-build-standalone/releases/download",
+    "https://github.com/astral-sh/python-build-standalone/releases/download"
+  ]
+}

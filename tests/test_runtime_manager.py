@@ -122,7 +122,7 @@ def test_install_backend_uses_current_interpreter(monkeypatch, tmp_path: Path) -
     result = install_backend("faster_whisper")
     assert "安装完成" in result
     assert calls[0][0] == str(uv)
-    assert "asr-faster-whisper" in calls[0][-1]
+    assert any("asr-faster-whisper" in argument for argument in calls[0])
 
 
 def test_windows_local_backend_uses_runtime_installer(monkeypatch, tmp_path: Path) -> None:

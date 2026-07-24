@@ -25,6 +25,7 @@ from .constants import (
 )
 from .environment import cached_model_path
 from .errors import AsmrDubberError, EnvironmentError
+from .mirrors import mirror_candidates, snapshot_download_with_fallback
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS, ModelBackend
 from .platforms import current_platform, portable_home, runtime_executable_candidates
 
@@ -535,10 +536,6 @@ def download_backend_models(
     if not model_ids:
         return "该后端在首次使用时由其官方运行库管理模型，无需预下载。"
     try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise EnvironmentError("缺少 huggingface-hub；请重新运行安装脚本。") from exc
-    try:
         from .user_settings import load_user_settings
 
         saved_endpoint = load_user_settings().huggingface_endpoint.strip()
@@ -561,10 +558,10 @@ def download_backend_models(
         if revision is None:
             raise EnvironmentError(f"模型 {model_id} 没有经过验证的固定版本。")
         try:
-            snapshot_download(
+            snapshot_download_with_fallback(
                 repo_id=model_id,
                 revision=revision,
-                endpoint=endpoint,
+                preferred_endpoint=endpoint,
                 max_workers=4,
             )
         except Exception as exc:  # noqa: BLE001 - normalize provider/network failures
@@ -614,11 +611,16 @@ def install_backend(
     try:
         from .user_settings import load_user_settings
 
-        pypi_index = load_user_settings().pypi_index_url.strip()
+        saved_settings = load_user_settings()
+        pypi_index = saved_settings.pypi_index_url.strip()
+        huggingface_endpoint = saved_settings.huggingface_endpoint.strip()
     except (OSError, ValueError, AsmrDubberError):
         pypi_index = ""
+        huggingface_endpoint = ""
     if pypi_index:
-        env["UV_DEFAULT_INDEX"] = pypi_index
+        env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
+    if huggingface_endpoint:
+        env["ASMR_DUBBER_HF_ENDPOINT"] = huggingface_endpoint
     try:
         if backend_id == "parakeet_nemo":
             completed = _install_parakeet_runtime(
@@ -637,25 +639,36 @@ def install_backend(
                 env=env,
             )
         else:
-            command = [
-                str(uv),
-                "pip",
-                "install",
-                "--python",
-                sys.executable,
-                "--editable",
-                f"{PROJECT_ROOT}[{extra}]",
-            ]
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_seconds,
-                check=False,
-                env=env,
-            )
+            attempts: list[str] = []
+            for index_url in mirror_candidates("pypi_indexes", preferred=pypi_index):
+                command = [
+                    str(uv),
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--editable",
+                    f"{PROJECT_ROOT}[{extra}]",
+                    "--default-index",
+                    index_url,
+                ]
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_seconds,
+                    check=False,
+                    env=env,
+                )
+                if completed.returncode == 0:
+                    break
+                attempts.append(f"{index_url}: {(completed.stderr or completed.stdout)[-800:]}")
+            else:
+                raise EnvironmentError(
+                    f"安装 {spec.label} 失败，所有 PyPI 源均不可用：\n" + "\n".join(attempts)
+                )
     except subprocess.TimeoutExpired as exc:
         raise EnvironmentError(f"安装 {spec.label} 超时。") from exc
     if completed.returncode != 0:
