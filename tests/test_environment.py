@@ -58,7 +58,7 @@ def test_known_transformers_model_uses_pinned_revision(monkeypatch, tmp_path: Pa
         calls.append(kwargs)
         return str(tmp_path / "config.json")
 
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    monkeypatch.setattr(environment, "hf_hub_download_with_fallback", fake_download)
 
     source, revision = environment.resolve_transformers_model_source(model_id)
 
@@ -87,6 +87,8 @@ def test_release_files_are_present() -> None:
     root = Path(__file__).parents[1]
     required = {
         "ASMR-Dubber.exe",
+        "ASMR-Dubber-Setup.exe",
+        "mirrors.json",
         "README.md",
         "LICENSE",
         "docs/THIRD_PARTY_NOTICES.md",
@@ -96,6 +98,9 @@ def test_release_files_are_present() -> None:
         "scripts/linux/run-ui.sh",
         "scripts/windows/run-ui.ps1",
         "launcher/windows/ASMRDubberLauncher.cs",
+        "launcher/windows/ASMRDubberSetup.cs",
+        "scripts/mirrors.ps1",
+        "scripts/mirrors.sh",
         "scripts/portable-runtime.sh",
         "scripts/portable-runtime.ps1",
         ".github/workflows/ci.yml",
@@ -104,9 +109,9 @@ def test_release_files_are_present() -> None:
     assert not missing
 
 
-def test_windows_launcher_is_a_console_executable() -> None:
-    executable = Path(__file__).parents[1] / "ASMR-Dubber.exe"
-    data = executable.read_bytes()
+@pytest.mark.parametrize("name", ["ASMR-Dubber.exe", "ASMR-Dubber-Setup.exe"])
+def test_windows_launchers_are_console_executables(name: str) -> None:
+    data = (Path(__file__).parents[1] / name).read_bytes()
     assert data[:2] == b"MZ"
     pe_offset = int.from_bytes(data[0x3C:0x40], "little")
     assert data[pe_offset : pe_offset + 4] == b"PE\0\0"
@@ -125,6 +130,8 @@ def test_launchers_use_project_portable_home() -> None:
         "scripts/windows/install-indextts2.ps1",
         "scripts/portable-runtime.sh",
         "scripts/portable-runtime.ps1",
+        "scripts/mirrors.sh",
+        "scripts/mirrors.ps1",
     )
     combined = "\n".join((root / name).read_text(encoding="utf-8") for name in launchers)
     assert ".asmr-dubber" in combined

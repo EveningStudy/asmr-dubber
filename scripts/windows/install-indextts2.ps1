@@ -18,6 +18,8 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
+. (Join-Path $Root "scripts\mirrors.ps1")
+$MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
 $DataRoot = $Paths.Home
 $RuntimeRoot = Join-Path $DataRoot "runtimes\index-tts"
@@ -30,18 +32,27 @@ $Archive = Join-Path $DownloadRoot "index-tts-$Revision.zip"
 $Staging = "$RuntimeRoot.staging"
 
 if (-not (Test-Path $Uv)) {
-    throw "缺少项目私有 uv；请先双击项目根目录的 ASMR-Dubber.exe 完成安装。"
+    throw "缺少项目私有 uv；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 New-Item -ItemType Directory -Force -Path $DataRoot, $DownloadRoot | Out-Null
 $env:UV_LINK_MODE = "copy"
 $env:HF_HUB_DISABLE_XET = "1"
 $env:HF_HUB_DISABLE_TELEMETRY = "1"
-if ($IndexUrl) {
-    $env:UV_DEFAULT_INDEX = $IndexUrl.TrimEnd("/")
-}
-if ($HuggingFaceEndpoint) {
-    $env:HF_ENDPOINT = $HuggingFaceEndpoint.TrimEnd("/")
-}
+$PreferredIndex = if ($IndexUrl) {
+    $IndexUrl
+} elseif ($env:ASMR_DUBBER_PYPI_MIRROR) {
+    $env:ASMR_DUBBER_PYPI_MIRROR
+} else { "" }
+$PreferredHuggingFace = if ($HuggingFaceEndpoint) {
+    $HuggingFaceEndpoint
+} elseif ($env:ASMR_DUBBER_HF_ENDPOINT) {
+    $env:ASMR_DUBBER_HF_ENDPOINT
+} else { "" }
+$HuggingFaceEndpoints = @(Get-ASMRDubberMirrorList `
+    -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
+    -Preferred $PreferredHuggingFace)
+$env:ASMR_DUBBER_HF_ENDPOINTS = $HuggingFaceEndpoints -join ";"
+$env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
 
 function Invoke-Process {
     param(
@@ -82,8 +93,8 @@ if (-not $SourceReady) {
     }
     if ($NeedDownload) {
         Write-Host "正在下载固定版本 IndexTTS2 源码（约 32 MB）..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $SourceUrl -OutFile "$Archive.partial" -UseBasicParsing
-        Move-Item -Force "$Archive.partial" $Archive
+        Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+            -Url $SourceUrl -Destination $Archive -Sha256 $SourceSha256 -Resume | Out-Null
     }
     $ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($ActualHash -ne $SourceSha256.ToLowerInvariant()) {
@@ -116,14 +127,9 @@ if (-not $SourceReady) {
 }
 
 Write-Host "正在安装 IndexTTS2 独立 Python/CUDA 环境..." -ForegroundColor Cyan
-$SyncArgs = @("sync")
-if ($env:UV_DEFAULT_INDEX) {
-    $SyncArgs += @("--default-index", $env:UV_DEFAULT_INDEX)
-}
-$Sync = Invoke-Process -FilePath $Uv -ArgumentList $SyncArgs -WorkingDirectory $RuntimeRoot
-if ($Sync.ExitCode -ne 0) {
-    throw "IndexTTS2 依赖安装失败（退出码 $($Sync.ExitCode)）。"
-}
+Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+    -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+    -Arguments @("sync")
 
 $SharedFFmpeg = Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
 Write-Host "共享版 FFmpeg：$SharedFFmpeg" -ForegroundColor DarkGray
@@ -132,15 +138,17 @@ if (-not (Test-Path $IndexCli)) {
     throw "IndexTTS2 CLI 安装后不存在：$IndexCli"
 }
 
-Write-Host "正在下载/续传 IndexTTS2 官方模型（约 11 GB）..." -ForegroundColor Cyan
+Write-Host "正在通过 ModelScope 下载/续传 IndexTTS2 官方模型（约 11 GB）..." `
+    -ForegroundColor Cyan
+$env:USE_MODELSCOPE = "true"
 $Download = Invoke-Process -FilePath $IndexCli `
-    -ArgumentList @("download", "--source", "auto", "--model-dir", $ModelDir) `
+    -ArgumentList @("download", "--source", "modelscope", "--model-dir", $ModelDir) `
     -WorkingDirectory $RuntimeRoot
 if ($Download.ExitCode -ne 0) {
-    Write-Warning "自动下载源不可用，改用 ModelScope 续传。"
-    $env:USE_MODELSCOPE = "true"
+    Write-Warning "ModelScope 不可用，改用 Hugging Face 镜像续传。"
+    $env:USE_MODELSCOPE = "false"
     $Download = Invoke-Process -FilePath $IndexCli `
-        -ArgumentList @("download", "--source", "modelscope", "--model-dir", $ModelDir) `
+        -ArgumentList @("download", "--source", "auto", "--model-dir", $ModelDir) `
         -WorkingDirectory $RuntimeRoot
 }
 if ($Download.ExitCode -ne 0) {

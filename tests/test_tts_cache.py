@@ -9,8 +9,12 @@ import soundfile as sf
 from asmr_dubber.errors import SynthesisError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence
 from asmr_dubber.tts import _enable_voxcpm_prompt_cache, shared_reference_sentence, tts_cache_key
-from asmr_dubber.tts_backends import _load_qwen3, synthesize_with_selected_backend
-from asmr_dubber.voice_reference import VoiceReference
+from asmr_dubber.tts_backends import _load_indextts, _load_qwen3, synthesize_with_selected_backend
+from asmr_dubber.voice_reference import (
+    VoiceReference,
+    prepare_index_emotion_reference,
+    prepare_index_speaker_reference,
+)
 
 
 def _project() -> DubProject:
@@ -36,6 +40,8 @@ def _project() -> DubProject:
 
 def test_tts_cache_tracks_clone_inputs_but_not_mix_only_settings() -> None:
     project = _project()
+    project.settings.tts_backend = "voxcpm2"
+    project.settings.tts_model = "openbmb/VoxCPM2"
     sentence = project.sentences[0]
     original = tts_cache_key(project, sentence)
 
@@ -55,6 +61,8 @@ def test_tts_cache_tracks_clone_inputs_but_not_mix_only_settings() -> None:
 
 def test_shared_reference_is_deterministic_and_affects_every_tts_key() -> None:
     project = _project()
+    project.settings.tts_backend = "voxcpm2"
+    project.settings.tts_model = "openbmb/VoxCPM2"
     target = project.sentences[0]
     anchor = Sentence(
         id="s000002",
@@ -80,6 +88,91 @@ def test_shared_reference_is_deterministic_and_affects_every_tts_key() -> None:
 
     anchor.end_seconds = 8.5
     assert tts_cache_key(project, target) != original
+
+
+def test_index_default_uses_shared_speaker_and_current_sentence_emotion(
+    tmp_path: Path,
+) -> None:
+    project = _project()
+    target = project.sentences[0]
+    anchor = Sentence(
+        id="s000002",
+        start_seconds=2.0,
+        end_seconds=8.0,
+        ja_text="これは十分に長くて明瞭な音色の参考文章です。",
+        zh_text="这是一句足够长而清晰的音色参考。",
+    )
+    project.source.duration_seconds = 9.0
+    project.sentences.append(anchor)
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(16_000 * 9, dtype=np.float32), 16_000, subtype="FLOAT")
+
+    speaker = prepare_index_speaker_reference(project, tmp_path, source, target)
+    emotion = prepare_index_emotion_reference(project, tmp_path, source, target, speaker)
+
+    assert speaker.sentence is anchor
+    assert emotion is not None
+    assert emotion.sentence is target
+    assert emotion.path != speaker.path
+
+
+def test_index_cache_tracks_independent_emotion_reference() -> None:
+    project = _project()
+    sentence = project.sentences[0]
+    project.settings.tts_reference_sentence_id = sentence.id
+    original = tts_cache_key(project, sentence)
+
+    sentence.start_seconds = 0.3
+    assert tts_cache_key(project, sentence) != original
+
+    project.settings.tts_index_emotion_source = "speaker_reference"
+    shared_emotion = tts_cache_key(project, sentence)
+    sentence.start_seconds = 0.4
+    assert tts_cache_key(project, sentence) != shared_emotion
+
+
+def test_indextts_direct_runner_passes_separate_emotion_audio(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _project()
+    project.settings.tts_model_path = str(tmp_path / "checkpoints")
+    project.settings.tts_config_path = str(tmp_path / "checkpoints" / "config.yaml")
+    Path(project.settings.tts_model_path).mkdir()
+    Path(project.settings.tts_config_path).touch()
+    calls: list[dict[str, object]] = []
+
+    class FakeIndexTTS2:
+        def __init__(self, **_kwargs):
+            pass
+
+        def infer(self, **kwargs):
+            calls.append(kwargs)
+
+    fake_package = SimpleNamespace()
+    fake_infer = SimpleNamespace(IndexTTS2=FakeIndexTTS2)
+    monkeypatch.setitem(sys.modules, "indextts", fake_package)
+    monkeypatch.setitem(sys.modules, "indextts.infer_v2", fake_infer)
+    speaker = tmp_path / "speaker.wav"
+    emotion = tmp_path / "emotion.wav"
+    output = tmp_path / "output.wav"
+    reference = VoiceReference(
+        speaker,
+        "音色",
+        "speaker",
+        emotion_path=emotion,
+        emotion_identity="emotion",
+    )
+
+    run, cleanup = _load_indextts(project)
+    try:
+        run(project.sentences[0], reference, output)
+    finally:
+        cleanup()
+
+    assert calls[0]["spk_audio_prompt"] == str(speaker)
+    assert calls[0]["emo_audio_prompt"] == str(emotion)
+    assert calls[0]["emo_alpha"] == project.settings.tts_index_emo_alpha
 
 
 def test_backend_and_external_reference_change_tts_cache(tmp_path: Path) -> None:

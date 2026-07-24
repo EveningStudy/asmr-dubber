@@ -11,6 +11,9 @@ from asmr_dubber.model_registry import ASR_BACKENDS, TTS_BACKENDS
 from asmr_dubber.platforms import PlatformInfo
 from asmr_dubber.runtime_manager import (
     HardwareProfile,
+    available_asr_review_choices,
+    backend_catalog_rows,
+    backend_model_status,
     backend_status,
     compatibility_note,
     download_backend_models,
@@ -79,6 +82,48 @@ def test_http_backend_is_external_service(monkeypatch) -> None:
     assert status.state == "external"
 
 
+def test_parakeet_model_status_is_reported_per_concrete_model(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Windows", "AMD64", True, False, False),
+    )
+    monkeypatch.setattr("asmr_dubber.runtime_manager.portable_home", lambda: tmp_path)
+    executable = tmp_path / "runtimes" / "crispasr" / "bin" / "crispasr.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    model = tmp_path / "models" / "parakeet" / "parakeet-ctc-1.1b-ja-f16.gguf"
+    model.parent.mkdir(parents=True)
+    model.touch()
+    backend = ASR_BACKENDS["parakeet_nemo"]
+
+    first = backend_model_status(backend, backend.models[0])
+    second = backend_model_status(backend, backend.models[1])
+    choices = available_asr_review_choices()
+
+    assert first.state == "ready"
+    assert second.state == "missing"
+    values = [value for _, value in choices]
+    assert f"parakeet_nemo|{backend.models[0]}" in values
+    assert f"parakeet_nemo|{backend.models[1]}" not in values
+
+
+def test_backend_catalog_can_be_split_by_kind(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.detect_hardware",
+        lambda: _hardware(cuda=True),
+    )
+
+    asr_rows = backend_catalog_rows(UserSettings(), "asr")
+    tts_rows = backend_catalog_rows(UserSettings(), "tts")
+
+    assert len(asr_rows) == len(ASR_BACKENDS)
+    assert len(tts_rows) == len(TTS_BACKENDS)
+    assert all(len(row) == 6 for row in [*asr_rows, *tts_rows])
+
+
 def test_indextts_status_accepts_windows_runtime(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "asmr_dubber.runtime_manager.current_platform",
@@ -122,7 +167,7 @@ def test_install_backend_uses_current_interpreter(monkeypatch, tmp_path: Path) -
     result = install_backend("faster_whisper")
     assert "安装完成" in result
     assert calls[0][0] == str(uv)
-    assert "asr-faster-whisper" in calls[0][-1]
+    assert any("asr-faster-whisper" in argument for argument in calls[0])
 
 
 def test_windows_local_backend_uses_runtime_installer(monkeypatch, tmp_path: Path) -> None:

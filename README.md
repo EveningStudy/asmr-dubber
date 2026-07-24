@@ -10,10 +10,10 @@ ASMR Dubber 在日语原声中加入逐句中文复述。日语时间轴和内�
 
 ### Windows
 
-双击项目根目录中的 `ASMR-Dubber.exe`。首次运行会打开一个终端，列出 Core、Recommended、Full的详细说明。
-以后再次双击同一个 EXE 会直接启动服务并打开浏览器。运行期间终端用于显示；按 `Ctrl+C` 或关闭终端即可停止由它启动的服务。
+首次使用时运行项目根目录中的 `ASMR-Dubber-Setup.exe`，在终端中选择 Core、Recommended 或 Full。安装中断或依赖损坏时，再次运行它即可检查状态、复用已完成文件并继续安装。
 
-安装器会在 `.asmr-dubber` 中准备 uv、Python 3.12、FFmpeg、依赖和所选推荐模型，启动器未经代码签名，Windows 首次运行下载的 Release 时可能显示 SmartScreen 来源提示。
+依赖完成后运行 `ASMR-Dubber.exe`。它只负责启动服务并打开浏览器；如果 Core 环境未安装或不完整，会提示改用安装器修复。运行期间请保留终端；按 `Ctrl+C` 或关闭终端即可停止服务。
+
 
 ### Linux
 
@@ -25,6 +25,10 @@ bash scripts/linux/run-ui.sh
 ```
 
 打开终端显示的 `http://127.0.0.1:7860`。
+
+### 下载镜像
+
+根目录的 `mirrors.json` 按顺序列出 PyPI、Hugging Face、PyTorch、GitHub 下载代理和 Python 下载源。Windows 和 Linux 默认优先尝试国内可用地址，失败后自动切换，最后回退官方源；可直接编辑这个文件调整、删除或添加 HTTPS 地址。
 
 ### 安装配置
 
@@ -52,7 +56,7 @@ ASMR_DUBBER_SKIP_RECOMMENDED_TTS=1 bash scripts/linux/setup.sh Recommended
 2. 在“设置 → 翻译设置”选择服务、填写 API Key 并保存。
 3. 上传日语音频，点击“① 新建并识别 + 翻译”。
 4. 检查日文、中文、启用状态和时间轴，点击“② 保存表格”。
-5. 试听并保存一条清晰的统一声纹参考句，或在 TTS 设置中选择外部参考。
+5. 试听并保存一条清晰的项目参考句；IndexTTS2 可在 TTS 设置中分别选择音色和情绪来源。
 6. 点击“③ 逐句克隆 + 混音”。
 
 

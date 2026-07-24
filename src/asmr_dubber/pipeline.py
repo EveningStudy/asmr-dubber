@@ -59,9 +59,12 @@ def output_filename(project: DubProject, project_dir: Path) -> str:
     """Return a stable, human-readable filename for the current TTS setup."""
     source_label = _PROJECT_STAMP.sub("", project_dir.name) or "audio"
     model_label = Path(project.settings.tts_model.replace("\\", "/")).name
-    tts_label = _safe_name(
-        f"{project.settings.tts_backend}-{model_label}-{project.settings.tts_clone_mode}"
+    reference_label = (
+        f"{project.settings.tts_index_speaker_source}-{project.settings.tts_index_emotion_source}"
+        if project.settings.tts_backend == "indextts2"
+        else project.settings.tts_clone_mode
     )
+    tts_label = _safe_name(f"{project.settings.tts_backend}-{model_label}-{reference_label}")
     return f"{_safe_name(source_label)}__ja-zh__{tts_label}.wav"
 
 

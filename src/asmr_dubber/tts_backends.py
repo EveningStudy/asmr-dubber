@@ -23,7 +23,12 @@ from .models import DubProject, Sentence
 from .platforms import isolated_runtime_environment
 from .tts import tts_cache_key
 from .user_settings import saved_service_key
-from .voice_reference import VoiceReference, prepare_voice_reference
+from .voice_reference import (
+    VoiceReference,
+    prepare_index_emotion_reference,
+    prepare_index_speaker_reference,
+    prepare_voice_reference,
+)
 
 Progress = Callable[[str, int, int], None]
 
@@ -171,11 +176,13 @@ def _load_indextts(project: DubProject) -> tuple[Any, Callable[[], None]]:
             "use_random": False,
             "verbose": False,
         }
-        if project.settings.tts_index_use_emo_text:
+        if project.settings.tts_index_emotion_source == "text":
             kwargs.update(
                 use_emo_text=True,
                 emo_text=project.settings.tts_index_emo_text.strip() or sentence.zh_text,
             )
+        elif reference.emotion_path is not None:
+            kwargs["emo_audio_prompt"] = str(reference.emotion_path)
         model.infer(**kwargs)
 
     def cleanup() -> None:
@@ -229,7 +236,14 @@ def _synthesize_indextts_cli_batch(
     tasks: list[tuple[Sentence, VoiceReference, Path]] = []
     lines: list[str] = []
     for sentence in pending:
-        reference = prepare_voice_reference(project, project_dir, source, sentence)
+        reference = prepare_index_speaker_reference(project, project_dir, source, sentence)
+        emotion = prepare_index_emotion_reference(
+            project,
+            project_dir,
+            source,
+            sentence,
+            reference,
+        )
         output = (tts_dir / f".{sentence.id}.indextts2.tmp.wav").resolve()
         output.unlink(missing_ok=True)
         payload: dict[str, Any] = {
@@ -237,10 +251,13 @@ def _synthesize_indextts_cli_batch(
             "voice": str(reference.path.resolve()),
             "output": str(output),
         }
-        if project.settings.tts_index_use_emo_text:
+        if project.settings.tts_index_emotion_source == "text":
             payload["emotion_text"] = (
                 project.settings.tts_index_emo_text.strip() or sentence.zh_text
             )
+            payload["emotion_weight"] = project.settings.tts_index_emo_alpha
+        elif emotion is not None:
+            payload["emotion_audio"] = str(emotion.path.resolve())
             payload["emotion_weight"] = project.settings.tts_index_emo_alpha
         lines.append(json.dumps(payload, ensure_ascii=False))
         tasks.append((sentence, reference, output))
@@ -607,7 +624,31 @@ def synthesize_with_selected_backend(
         for index, sentence in enumerate(pending, start=1):
             output = tts_dir / f"{sentence.id}.wav"
             try:
-                reference = prepare_voice_reference(project, project_dir, source, sentence)
+                if project.settings.tts_backend == "indextts2":
+                    reference = prepare_index_speaker_reference(
+                        project,
+                        project_dir,
+                        source,
+                        sentence,
+                    )
+                    emotion = prepare_index_emotion_reference(
+                        project,
+                        project_dir,
+                        source,
+                        sentence,
+                        reference,
+                    )
+                    if emotion is not None:
+                        reference = VoiceReference(
+                            path=reference.path,
+                            text=reference.text,
+                            identity=reference.identity,
+                            sentence=reference.sentence,
+                            emotion_path=emotion.path,
+                            emotion_identity=emotion.identity,
+                        )
+                else:
+                    reference = prepare_voice_reference(project, project_dir, source, sentence)
                 _require_reference_text(project, reference)
                 if progress:
                     progress(

@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .constants import (
     DEFAULT_ALIGNER_MODEL,
@@ -25,6 +25,7 @@ from .constants import (
 )
 from .environment import cached_model_path
 from .errors import AsmrDubberError, EnvironmentError
+from .mirrors import mirror_candidates, snapshot_download_with_fallback
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS, ModelBackend
 from .platforms import current_platform, portable_home, runtime_executable_candidates
 
@@ -74,6 +75,55 @@ _BACKEND_MODEL_REPOS: dict[str, tuple[str, ...]] = {
     ),
     "voxcpm2": (DEFAULT_TTS_MODEL,),
 }
+
+_PARAKEET_MODEL_FILES = {
+    "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo": (
+        "parakeet-ctc-1.1b-ja-f16.gguf"
+    ),
+    "nvidia/parakeet-tdt_ctc-0.6b-ja": "parakeet-tdt-0.6b-ja.gguf",
+}
+
+_FASTER_WHISPER_REPOS = {
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
+    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
+}
+
+ASR_REVIEW_MODEL_OPTIONS = (
+    (
+        "Parakeet CTC 1.1B 日语 GAL（推荐）",
+        "parakeet_nemo",
+        "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
+    ),
+    (
+        "Parakeet TDT/CTC 0.6B 日语（官方）",
+        "parakeet_nemo",
+        "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    ),
+    (
+        "Kotoba-Whisper v2.2（最新推荐）",
+        "kotoba_whisper",
+        "kotoba-tech/kotoba-whisper-v2.2",
+    ),
+    (
+        "Kotoba-Whisper v2.1（旧版标点模型）",
+        "kotoba_whisper",
+        "kotoba-tech/kotoba-whisper-v2.1",
+    ),
+    (
+        "Kotoba-Whisper v2.0 Faster",
+        "faster_whisper",
+        "kotoba-tech/kotoba-whisper-v2.0-faster",
+    ),
+    ("Qwen3-ASR 1.7B", "qwen3_asr", "Qwen/Qwen3-ASR-1.7B"),
+    ("Qwen3-ASR 0.6B", "qwen3_asr", "Qwen/Qwen3-ASR-0.6B"),
+    ("Faster-Whisper large-v2", "faster_whisper", "large-v2"),
+    ("Faster-Whisper large-v3", "faster_whisper", "large-v3"),
+)
 
 
 def _windows_memory_gb() -> float | None:
@@ -315,6 +365,142 @@ def backend_status(
     return BackendStatus("ready", "可用")
 
 
+def _local_huggingface_snapshot(model_id: str) -> Path | None:
+    """Return a complete local snapshot without making a network request."""
+    pinned = cached_model_path(model_id)
+    if pinned is not None:
+        return pinned
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot = Path(
+            snapshot_download(
+                repo_id=model_id,
+                local_files_only=True,
+            )
+        ).resolve()
+    except (ImportError, OSError, ValueError):
+        return None
+    if not snapshot.is_dir() or not (snapshot / "config.json").is_file():
+        return None
+    weight_patterns = (
+        "*.safetensors",
+        "model.bin",
+        "pytorch_model*.bin",
+        "*.pth",
+    )
+    if not any(next(snapshot.glob(pattern), None) for pattern in weight_patterns):
+        return None
+    return snapshot
+
+
+def _openai_whisper_model_file(model_id: str) -> Path:
+    cache_root = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")).expanduser()
+    return cache_root / "whisper" / f"{model_id}.pt"
+
+
+def backend_model_status(
+    backend: ModelBackend,
+    model_id: str,
+    *,
+    settings: Any | None = None,
+) -> BackendStatus:
+    """Report whether one concrete model is locally usable without loading it."""
+    if backend.id == "parakeet_nemo":
+        executable_name = "crispasr.exe" if current_platform().is_windows else "crispasr"
+        executable = portable_home() / "runtimes" / "crispasr" / "bin" / executable_name
+        filename = _PARAKEET_MODEL_FILES.get(model_id)
+        if not executable.is_file():
+            return BackendStatus("missing", "运行库未安装")
+        if filename is None:
+            return BackendStatus("unknown", "自定义模型，未验证")
+        path = portable_home() / "models" / "parakeet" / filename
+        return (
+            BackendStatus("ready", "可用", str(path))
+            if path.is_file()
+            else BackendStatus("missing", "模型未下载", str(path))
+        )
+
+    overall = backend_status(backend, settings=settings)
+    if overall.state in {"incompatible", "missing", "broken"}:
+        return overall
+    if overall.state == "external":
+        return BackendStatus("external", "需连接外部服务确认")
+    if backend.id == "indextts2":
+        return overall
+
+    repository: str | None = None
+    if backend.id in {"faster_whisper", "whisperx"}:
+        repository = _FASTER_WHISPER_REPOS.get(model_id, model_id if "/" in model_id else None)
+    elif backend.id in {"kotoba_whisper", "qwen3_asr", "voxcpm2", "qwen3_tts"}:
+        repository = model_id if "/" in model_id else None
+    if repository is not None:
+        path = _local_huggingface_snapshot(repository)
+        return (
+            BackendStatus("ready", "可用", str(path))
+            if path is not None
+            else BackendStatus("missing", "模型未下载")
+        )
+
+    if backend.id == "openai_whisper":
+        path = _openai_whisper_model_file(model_id)
+        return (
+            BackendStatus("ready", "可用", str(path))
+            if path.is_file()
+            else BackendStatus("missing", "模型未下载", str(path))
+        )
+
+    if overall.state == "ready":
+        return BackendStatus("managed", "运行库可用，模型由后端管理")
+    return overall
+
+
+def available_backend_models_markdown(
+    kind: Literal["asr", "tts"],
+    settings: Any | None = None,
+) -> str:
+    registry = ASR_BACKENDS if kind == "asr" else TTS_BACKENDS
+    title = "ASR" if kind == "asr" else "TTS"
+    lines = [f"**本机 {title} 可用状态（只读检测）**"]
+    for backend in registry.values():
+        statuses = [
+            (model_id, backend_model_status(backend, model_id, settings=settings))
+            for model_id in backend.models
+        ]
+        ready = [model_id for model_id, status in statuses if status.state == "ready"]
+        managed = [model_id for model_id, status in statuses if status.state == "managed"]
+        external = [model_id for model_id, status in statuses if status.state == "external"]
+        if ready:
+            rendered = "、".join(f"`{model_id}`" for model_id in ready)
+            lines.append(f"- **[可用] {backend.label}**：{rendered}")
+        elif external:
+            rendered = "、".join(f"`{model_id}`" for model_id in external)
+            lines.append(f"- **[外部] {backend.label}**：需连接服务确认（{rendered}）")
+        elif managed:
+            rendered = "、".join(f"`{model_id}`" for model_id in managed)
+            lines.append(
+                f"- **[待确认] {backend.label}**：运行库可用，模型由后端管理（{rendered}）"
+            )
+        else:
+            overall = backend_status(backend, settings=settings)
+            lines.append(f"- **[不可用] {backend.label}**：{overall.label}")
+    return "\n".join(lines)
+
+
+def available_asr_review_choices(settings: Any | None = None) -> list[tuple[str, str]]:
+    """Return only locally verified ASR models suitable for cross-review."""
+    choices: list[tuple[str, str]] = []
+    for label, backend_id, model_id in ASR_REVIEW_MODEL_OPTIONS:
+        status = backend_model_status(
+            ASR_BACKENDS[backend_id],
+            model_id,
+            settings=settings,
+        )
+        if status.state == "ready":
+            choices.append((label, f"{backend_id}|{model_id}"))
+    return choices
+
+
 def compatibility_note(backend: ModelBackend, profile: HardwareProfile) -> str:
     if profile.platform_id not in backend.platforms:
         return "不兼容"
@@ -335,23 +521,31 @@ def compatibility_note(backend: ModelBackend, profile: HardwareProfile) -> str:
     return "需检查设备"
 
 
-def backend_catalog_rows(settings: Any | None = None) -> list[list[str]]:
+def backend_catalog_rows(
+    settings: Any | None = None,
+    kind: Literal["asr", "tts"] | None = None,
+) -> list[list[str]]:
     profile = detect_hardware()
     rows: list[list[str]] = []
-    for kind, registry in (("ASR", ASR_BACKENDS), ("TTS", TTS_BACKENDS)):
+    registries = (
+        (("ASR", ASR_BACKENDS),)
+        if kind == "asr"
+        else (("TTS", TTS_BACKENDS),)
+        if kind == "tts"
+        else (("ASR", ASR_BACKENDS), ("TTS", TTS_BACKENDS))
+    )
+    for kind_label, registry in registries:
         for backend in registry.values():
             status = backend_status(backend, settings=settings)
-            rows.append(
-                [
-                    kind,
-                    backend.label,
-                    backend.support_label,
-                    compatibility_note(backend, profile),
-                    status.label,
-                    status.detail,
-                    f"约 {backend.disk_gb:g} GB" if backend.disk_gb else "外部/未知",
-                ]
-            )
+            row = [
+                backend.label,
+                backend.support_label,
+                compatibility_note(backend, profile),
+                status.label,
+                status.detail,
+                f"约 {backend.disk_gb:g} GB" if backend.disk_gb else "外部/未知",
+            ]
+            rows.append([kind_label, *row] if kind is None else row)
     return rows
 
 
@@ -535,10 +729,6 @@ def download_backend_models(
     if not model_ids:
         return "该后端在首次使用时由其官方运行库管理模型，无需预下载。"
     try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise EnvironmentError("缺少 huggingface-hub；请重新运行安装脚本。") from exc
-    try:
         from .user_settings import load_user_settings
 
         saved_endpoint = load_user_settings().huggingface_endpoint.strip()
@@ -561,10 +751,10 @@ def download_backend_models(
         if revision is None:
             raise EnvironmentError(f"模型 {model_id} 没有经过验证的固定版本。")
         try:
-            snapshot_download(
+            snapshot_download_with_fallback(
                 repo_id=model_id,
                 revision=revision,
-                endpoint=endpoint,
+                preferred_endpoint=endpoint,
                 max_workers=4,
             )
         except Exception as exc:  # noqa: BLE001 - normalize provider/network failures
@@ -614,11 +804,16 @@ def install_backend(
     try:
         from .user_settings import load_user_settings
 
-        pypi_index = load_user_settings().pypi_index_url.strip()
+        saved_settings = load_user_settings()
+        pypi_index = saved_settings.pypi_index_url.strip()
+        huggingface_endpoint = saved_settings.huggingface_endpoint.strip()
     except (OSError, ValueError, AsmrDubberError):
         pypi_index = ""
+        huggingface_endpoint = ""
     if pypi_index:
-        env["UV_DEFAULT_INDEX"] = pypi_index
+        env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
+    if huggingface_endpoint:
+        env["ASMR_DUBBER_HF_ENDPOINT"] = huggingface_endpoint
     try:
         if backend_id == "parakeet_nemo":
             completed = _install_parakeet_runtime(
@@ -637,25 +832,36 @@ def install_backend(
                 env=env,
             )
         else:
-            command = [
-                str(uv),
-                "pip",
-                "install",
-                "--python",
-                sys.executable,
-                "--editable",
-                f"{PROJECT_ROOT}[{extra}]",
-            ]
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_seconds,
-                check=False,
-                env=env,
-            )
+            attempts: list[str] = []
+            for index_url in mirror_candidates("pypi_indexes", preferred=pypi_index):
+                command = [
+                    str(uv),
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--editable",
+                    f"{PROJECT_ROOT}[{extra}]",
+                    "--default-index",
+                    index_url,
+                ]
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_seconds,
+                    check=False,
+                    env=env,
+                )
+                if completed.returncode == 0:
+                    break
+                attempts.append(f"{index_url}: {(completed.stderr or completed.stdout)[-800:]}")
+            else:
+                raise EnvironmentError(
+                    f"安装 {spec.label} 失败，所有 PyPI 源均不可用：\n" + "\n".join(attempts)
+                )
     except subprocess.TimeoutExpired as exc:
         raise EnvironmentError(f"安装 {spec.label} 超时。") from exc
     if completed.returncode != 0:

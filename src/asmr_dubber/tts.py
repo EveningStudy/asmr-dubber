@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .audio import extract_reference, project_file_exists
+from .audio import extract_reference, project_file_exists, sha256_file
 from .constants import MODEL_REVISIONS
 from .environment import require_cuda, resolve_model_source
 from .errors import SynthesisError
@@ -98,7 +98,8 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "qwen_x_vector_only": project.settings.tts_qwen_x_vector_only,
         "index_fp16": project.settings.tts_index_use_fp16,
         "index_emo_alpha": project.settings.tts_index_emo_alpha,
-        "index_use_emo_text": project.settings.tts_index_use_emo_text,
+        "index_speaker_source": project.settings.tts_index_speaker_source,
+        "index_emotion_source": project.settings.tts_index_emotion_source,
         "index_emo_text": project.settings.tts_index_emo_text,
         "gpt_top_k": project.settings.tts_gpt_top_k,
         "gpt_split": project.settings.tts_gpt_text_split_method,
@@ -108,8 +109,47 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "f5_cfg": project.settings.tts_f5_cfg_strength,
         "zh": sentence.zh_text,
         "sentence_id": sentence.id,
-        "implementation": "multi-backend-tts-v1",
+        "implementation": "multi-backend-tts-v2",
     }
+    if project.settings.tts_backend == "indextts2":
+        reference_payloads = {
+            "sentence_reference": {
+                "id": sentence.id,
+                "start": sentence.start_seconds,
+                "end": sentence.end_seconds,
+                "ja": sentence.ja_text,
+            },
+        }
+        speaker_source = project.settings.tts_index_speaker_source
+        emotion_source = project.settings.tts_index_emotion_source
+        if "project_reference" in {speaker_source, emotion_source}:
+            shared = shared_reference_sentence(project)
+            reference_payloads["project_reference"] = {
+                "id": shared.id,
+                "start": shared.start_seconds,
+                "end": shared.end_seconds,
+                "ja": shared.ja_text,
+            }
+        if speaker_source == "external":
+            speaker_path = Path(project.settings.tts_external_reference_audio).expanduser()
+            if not speaker_path.is_file():
+                raise SynthesisError(f"找不到 IndexTTS2 外部音色参考：{speaker_path}")
+            payload["index_speaker_reference"] = sha256_file(speaker_path)
+        else:
+            payload["index_speaker_reference"] = reference_payloads[speaker_source]
+        if emotion_source == "external":
+            emotion_path = Path(project.settings.tts_index_external_emotion_audio).expanduser()
+            if not emotion_path.is_file():
+                raise SynthesisError(f"找不到 IndexTTS2 外部情绪参考：{emotion_path}")
+            payload["index_emotion_reference"] = sha256_file(emotion_path)
+        elif emotion_source in reference_payloads:
+            payload["index_emotion_reference"] = reference_payloads[emotion_source]
+        else:
+            payload["index_emotion_reference"] = emotion_source
+        payload["reference_padding"] = project.settings.reference_padding_seconds
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     uses_shared = (
         project.settings.tts_reference_source == "external"
         or project.settings.tts_clone_mode in _STABLE_CLONE_MODES

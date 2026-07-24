@@ -75,8 +75,11 @@ def test_safe_default_asr_batch_size() -> None:
     assert settings.match_source_loudness is True
     assert settings.chinese_min_active_rms_dbfs == -42.0
     assert settings.chinese_target_active_rms_dbfs == -30.0
+    assert settings.chinese_relative_loudness_db == -4.0
     assert settings.global_overlap_seconds == 5.0
     assert settings.global_overlap_percentage == 50.0
+    assert settings.tts_index_speaker_source == "project_reference"
+    assert settings.tts_index_emotion_source == "sentence_reference"
 
 
 def test_output_filename_identifies_tts_configuration(tmp_path: Path) -> None:
@@ -91,7 +94,15 @@ def test_output_filename_identifies_tts_configuration(tmp_path: Path) -> None:
 
     filename = output_filename(project, tmp_path / "voice_sample_20260723T120000Z")
 
-    assert filename == ("voice_sample__ja-zh__indextts2-IndexTTS2-stable_reference.wav")
+    assert filename == (
+        "voice_sample__ja-zh__indextts2-IndexTTS2-project_reference-sentence_reference.wav"
+    )
+
+
+def test_legacy_index_text_emotion_setting_is_migrated() -> None:
+    settings = ProjectSettings.model_validate({"tts_index_use_emo_text": True})
+
+    assert settings.tts_index_emotion_source == "text"
 
 
 def test_sentence_id_cannot_escape_generated_audio_directory() -> None:

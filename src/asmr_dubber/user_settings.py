@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .audio import probe_audio, sha256_file
 from .constants import (
@@ -111,6 +111,7 @@ _PORTABLE_PATH_FIELDS = (
     "tts_model_path",
     "tts_config_path",
     "tts_external_reference_audio",
+    "tts_index_external_emotion_audio",
 )
 
 
@@ -170,6 +171,9 @@ class UserSettings(BaseModel):
     tts_qwen_x_vector_only: bool = False
     tts_index_use_fp16: bool = True
     tts_index_emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    tts_index_speaker_source: str = "project_reference"
+    tts_index_emotion_source: str = "sentence_reference"
+    tts_index_external_emotion_audio: str = ""
     tts_index_use_emo_text: bool = False
     tts_index_emo_text: str = ""
     tts_gpt_top_k: int = Field(default=15, ge=1, le=100)
@@ -179,7 +183,7 @@ class UserSettings(BaseModel):
     tts_f5_nfe_steps: int = Field(default=32, ge=4, le=128)
     tts_f5_cfg_strength: float = Field(default=2.0, ge=0.0, le=10.0)
     match_source_loudness: bool = True
-    chinese_relative_loudness_db: float = Field(default=0.0, ge=-24.0, le=24.0)
+    chinese_relative_loudness_db: float = Field(default=-4.0, ge=-24.0, le=24.0)
     chinese_min_active_rms_dbfs: float = Field(default=-42.0, ge=-60.0, le=-20.0)
     chinese_max_active_rms_dbfs: float = Field(default=-30.0, ge=-50.0, le=-16.0)
     retain_chinese_stem: bool = False
@@ -195,6 +199,18 @@ class UserSettings(BaseModel):
     translation_prompt: str = SYSTEM_PROMPT
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_index_emotion(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and "tts_index_emotion_source" not in value
+            and value.get("tts_index_use_emo_text") is True
+        ):
+            value = dict(value)
+            value["tts_index_emotion_source"] = "text"
+        return value
 
     def to_project_settings(self, base: ProjectSettings | None = None) -> ProjectSettings:
         values = base.model_dump() if base is not None else {}
@@ -242,7 +258,10 @@ class UserSettings(BaseModel):
             tts_qwen_x_vector_only=self.tts_qwen_x_vector_only,
             tts_index_use_fp16=self.tts_index_use_fp16,
             tts_index_emo_alpha=self.tts_index_emo_alpha,
-            tts_index_use_emo_text=self.tts_index_use_emo_text,
+            tts_index_speaker_source=self.tts_index_speaker_source,
+            tts_index_emotion_source=self.tts_index_emotion_source,
+            tts_index_external_emotion_audio=self.tts_index_external_emotion_audio,
+            tts_index_use_emo_text=self.tts_index_emotion_source == "text",
             tts_index_emo_text=self.tts_index_emo_text,
             tts_gpt_top_k=self.tts_gpt_top_k,
             tts_gpt_text_split_method=self.tts_gpt_text_split_method,
@@ -346,9 +365,9 @@ def load_user_settings() -> UserSettings:
     except ValidationError as exc:
         raise ProjectError(f"本地设置校验失败 {path}: {exc}") from exc
     if settings.huggingface_endpoint:
-        os.environ.setdefault("HF_ENDPOINT", settings.huggingface_endpoint)
+        os.environ["HF_ENDPOINT"] = settings.huggingface_endpoint
     if settings.pypi_index_url:
-        os.environ.setdefault("UV_DEFAULT_INDEX", settings.pypi_index_url)
+        os.environ["UV_DEFAULT_INDEX"] = settings.pypi_index_url
     return settings
 
 

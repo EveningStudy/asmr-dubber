@@ -23,6 +23,8 @@ class VoiceReference:
     text: str
     identity: str
     sentence: Sentence | None = None
+    emotion_path: Path | None = None
+    emotion_identity: str | None = None
 
 
 def _content_length(text: str) -> int:
@@ -139,4 +141,112 @@ def prepare_voice_reference(
         text=reference_sentence.ja_text,
         identity=f"project:{identity}",
         sentence=reference_sentence,
+    )
+
+
+def _index_external_reference(path_text: str, *, role: str) -> VoiceReference:
+    path = Path(path_text).expanduser().resolve()
+    if not path.is_file():
+        raise SynthesisError(f"找不到 IndexTTS2 外部{role}参考音频：{path}")
+    identity = sha256_file(path)
+    return VoiceReference(
+        path=path,
+        text="",
+        identity=f"index-external-{role}:{identity}",
+    )
+
+
+def _index_sentence_reference(
+    project: DubProject,
+    project_dir: Path,
+    source: Path,
+    reference_sentence: Sentence,
+    *,
+    role: str,
+    shared: bool,
+) -> VoiceReference:
+    payload = (
+        f"{project.source.sha256}|index-{role}|{reference_sentence.id}|"
+        f"{reference_sentence.start_seconds:.6f}|{reference_sentence.end_seconds:.6f}|"
+        f"{reference_sentence.ja_text}|{project.settings.reference_padding_seconds:.6f}"
+    )
+    identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    prefix = f"index_{role}_anchor" if shared else f"index_{role}_{reference_sentence.id}"
+    destination = project_dir / "references" / f"{prefix}_{identity[:16]}.wav"
+    if not destination.is_file():
+        temporary = destination.with_name(f".{destination.stem}.tmp.wav")
+        try:
+            extract_reference(
+                source=source,
+                destination=temporary,
+                start_seconds=reference_sentence.start_seconds,
+                end_seconds=reference_sentence.end_seconds,
+                padding_seconds=project.settings.reference_padding_seconds,
+            )
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return VoiceReference(
+        path=destination,
+        text=reference_sentence.ja_text,
+        identity=f"index-{role}:{identity}",
+        sentence=reference_sentence,
+    )
+
+
+def prepare_index_speaker_reference(
+    project: DubProject,
+    project_dir: Path,
+    source: Path,
+    sentence: Sentence,
+) -> VoiceReference:
+    source_id = project.settings.tts_index_speaker_source
+    if source_id == "external":
+        return _index_external_reference(
+            project.settings.tts_external_reference_audio,
+            role="speaker",
+        )
+    shared = source_id == "project_reference"
+    reference_sentence = shared_reference_sentence(project) if shared else sentence
+    return _index_sentence_reference(
+        project,
+        project_dir,
+        source,
+        reference_sentence,
+        role="speaker",
+        shared=shared,
+    )
+
+
+def prepare_index_emotion_reference(
+    project: DubProject,
+    project_dir: Path,
+    source: Path,
+    sentence: Sentence,
+    speaker_reference: VoiceReference,
+) -> VoiceReference | None:
+    source_id = project.settings.tts_index_emotion_source
+    if source_id == "text":
+        return None
+    if source_id == "speaker_reference":
+        return speaker_reference
+    if source_id == "external":
+        return _index_external_reference(
+            project.settings.tts_index_external_emotion_audio,
+            role="emotion",
+        )
+    shared = source_id == "project_reference"
+    reference_sentence = shared_reference_sentence(project) if shared else sentence
+    if (
+        speaker_reference.sentence is not None
+        and speaker_reference.sentence.id == reference_sentence.id
+    ):
+        return speaker_reference
+    return _index_sentence_reference(
+        project,
+        project_dir,
+        source,
+        reference_sentence,
+        role="emotion",
+        shared=shared,
     )

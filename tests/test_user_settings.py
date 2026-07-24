@@ -61,12 +61,14 @@ def test_portable_paths_are_saved_relative_to_application_home(
     settings = UserSettings(
         projects_root=str(home / "projects"),
         tts_model_path=str(home / "runtimes" / "index-tts" / "checkpoints"),
+        tts_index_external_emotion_audio=str(home / "config" / "references" / "emotion.wav"),
     )
 
     path = save_user_settings(settings)
     payload = path.read_text(encoding="utf-8")
 
     assert "${ASMR_DUBBER_HOME}/projects" in payload
+    assert "${ASMR_DUBBER_HOME}/config/references/emotion.wav" in payload
     assert str(home) not in payload
     assert load_user_settings().projects_root == str(home / "projects")
 
@@ -83,6 +85,9 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
         translation_provider="anthropic",
         translation_model="claude-sonnet-5",
         translation_base_url="https://api.anthropic.com",
+        tts_index_speaker_source="sentence_reference",
+        tts_index_emotion_source="text",
+        tts_index_emo_text="轻柔",
     )
     project = settings.to_project_settings()
     assert project.global_overlap_seconds == 0.4
@@ -92,6 +97,22 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
     assert project.chinese_target_active_rms_dbfs == -31.0
     assert project.translation_provider == "anthropic"
     assert project.translation_model == "claude-sonnet-5"
+    assert project.tts_index_speaker_source == "sentence_reference"
+    assert project.tts_index_emotion_source == "text"
+    assert project.tts_index_use_emo_text is True
+
+
+def test_default_relative_chinese_loudness_is_minus_four_db() -> None:
+    settings = UserSettings()
+
+    assert settings.chinese_relative_loudness_db == -4.0
+    assert settings.to_project_settings().chinese_relative_loudness_db == -4.0
+
+
+def test_legacy_user_setting_migrates_index_text_emotion() -> None:
+    settings = UserSettings.model_validate({"tts_index_use_emo_text": True})
+
+    assert settings.tts_index_emotion_source == "text"
 
 
 def test_model_backends_and_external_reference_are_copied_to_project(

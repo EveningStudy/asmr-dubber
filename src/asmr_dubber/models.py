@@ -157,6 +157,21 @@ class ProjectSettings(BaseModel):
     tts_qwen_x_vector_only: bool = False
     tts_index_use_fp16: bool = True
     tts_index_emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    tts_index_speaker_source: Literal[
+        "project_reference",
+        "sentence_reference",
+        "external",
+    ] = "project_reference"
+    tts_index_emotion_source: Literal[
+        "sentence_reference",
+        "project_reference",
+        "speaker_reference",
+        "external",
+        "text",
+    ] = "sentence_reference"
+    tts_index_external_emotion_audio: str = ""
+    # Retained so projects created before the split still load. New code derives
+    # this value from tts_index_emotion_source.
     tts_index_use_emo_text: bool = False
     tts_index_emo_text: str = ""
     tts_gpt_top_k: int = Field(default=15, ge=1, le=100)
@@ -187,7 +202,7 @@ class ProjectSettings(BaseModel):
     chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
     normalize_chinese_loudness: bool = True
     match_source_loudness: bool = True
-    chinese_relative_loudness_db: float = Field(default=0.0, ge=-24.0, le=24.0)
+    chinese_relative_loudness_db: float = Field(default=-4.0, ge=-24.0, le=24.0)
     chinese_min_active_rms_dbfs: float = Field(default=-42.0, ge=-60.0, le=-20.0)
     chinese_target_active_rms_dbfs: float = Field(default=-30.0, ge=-50.0, le=-16.0)
     chinese_max_loudness_boost_db: float = Field(default=12.0, ge=0.0, le=30.0)
@@ -198,6 +213,18 @@ class ProjectSettings(BaseModel):
     skip_japanese_fillers: bool = True
     reference_padding_seconds: float = Field(default=0.0, ge=0.0, le=2.0)
     random_seed: int = Field(default=20260722, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_index_emotion(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and "tts_index_emotion_source" not in value
+            and value.get("tts_index_use_emo_text") is True
+        ):
+            value = dict(value)
+            value["tts_index_emotion_source"] = "text"
+        return value
 
     @model_validator(mode="after")
     def valid_loudness_range(self) -> ProjectSettings:

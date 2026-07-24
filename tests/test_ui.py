@@ -163,3 +163,14 @@ def test_completed_audio_uses_the_original_simple_player_and_output_path(tmp_pat
     assert player.interactive is False
     assert player.elem_id is None
     assert "预处理" not in labels
+
+
+def test_settings_show_split_backend_tables_and_page_reset_buttons() -> None:
+    pytest.importorskip("gradio")
+    app = ui_module.build_app()
+    labels = [getattr(component, "label", None) for component in app.blocks.values()]
+    values = [getattr(component, "value", None) for component in app.blocks.values()]
+
+    assert "ASR 后端兼容性与安装状态" in labels
+    assert "TTS 后端兼容性与安装状态" in labels
+    assert values.count("重置本页为默认值（需保存）") == 5

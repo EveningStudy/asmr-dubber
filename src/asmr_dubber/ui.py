@@ -27,6 +27,8 @@ from .model_registry import ASR_BACKENDS, CLONE_MODE_LABELS, TTS_BACKENDS
 from .models import DubProject, Sentence, save_project
 from .platforms import portable_home, require_supported_platform, runtime_executable_candidates
 from .runtime_manager import (
+    available_asr_review_choices,
+    available_backend_models_markdown,
     backend_catalog_rows,
     hardware_markdown,
     install_backend,
@@ -890,8 +892,11 @@ def save_settings_form(
     tts_api_key: Any,
     tts_qwen_x_vector_only: Any,
     tts_index_use_fp16: Any,
+    tts_index_speaker_source: Any,
+    tts_index_external_speaker_audio: Any,
+    tts_index_emotion_source: Any,
+    tts_index_external_emotion_audio: Any,
     tts_index_emo_alpha: Any,
-    tts_index_use_emo_text: Any,
     tts_index_emo_text: Any,
     tts_gpt_top_k: Any,
     tts_gpt_text_split_method: Any,
@@ -939,14 +944,50 @@ def save_settings_form(
     reference_source = str(tts_reference_source or "project_sentence").strip()
     if reference_source not in {"project_sentence", "external"}:
         raise ProjectError("TTS 参考来源无效。")
-    uploaded_reference = str(tts_external_reference_audio or "").strip()
     previous_settings = load_user_settings()
+    uploaded_reference = str(tts_external_reference_audio or "").strip()
+    uploaded_index_speaker = str(tts_index_external_speaker_audio or "").strip()
     persistent_reference = previous_settings.tts_external_reference_audio
-    if uploaded_reference:
-        persistent_reference = str(store_reference_audio(uploaded_reference))
+    selected_speaker_upload = (
+        uploaded_index_speaker if tts_backend_id == "indextts2" else uploaded_reference
+    )
+    if selected_speaker_upload:
+        persistent_reference = str(store_reference_audio(selected_speaker_upload))
+    uploaded_index_emotion = str(tts_index_external_emotion_audio or "").strip()
+    persistent_index_emotion = previous_settings.tts_index_external_emotion_audio
+    if uploaded_index_emotion:
+        persistent_index_emotion = str(store_reference_audio(uploaded_index_emotion))
     external_text = str(tts_external_reference_text or "").strip()
     x_vector_only = _boolean(tts_qwen_x_vector_only, "Qwen 仅声纹向量")
-    if reference_source == "external":
+    index_speaker_source = str(tts_index_speaker_source or "project_reference").strip()
+    if index_speaker_source not in {
+        "project_reference",
+        "sentence_reference",
+        "external",
+    }:
+        raise ProjectError("IndexTTS2 音色参考来源无效。")
+    index_emotion_source = str(tts_index_emotion_source or "sentence_reference").strip()
+    if index_emotion_source not in {
+        "sentence_reference",
+        "project_reference",
+        "speaker_reference",
+        "external",
+        "text",
+    }:
+        raise ProjectError("IndexTTS2 情绪参考来源无效。")
+    if (
+        tts_backend_id == "indextts2"
+        and index_speaker_source == "external"
+        and (not persistent_reference or not Path(persistent_reference).is_file())
+    ):
+        raise ProjectError("选择外部音色参考后，必须上传一段可读取的音频。")
+    if (
+        tts_backend_id == "indextts2"
+        and index_emotion_source == "external"
+        and (not persistent_index_emotion or not Path(persistent_index_emotion).is_file())
+    ):
+        raise ProjectError("选择外部情绪参考后，必须上传一段可读取的音频。")
+    if tts_backend_id != "indextts2" and reference_source == "external":
         if not persistent_reference or not Path(persistent_reference).is_file():
             raise ProjectError("选择外部参考后，必须上传一段可读取的参考音频。")
         text_required = tts_spec.reference_text == "required"
@@ -1020,7 +1061,10 @@ def save_settings_form(
             tts_qwen_x_vector_only=x_vector_only,
             tts_index_use_fp16=_boolean(tts_index_use_fp16, "IndexTTS FP16"),
             tts_index_emo_alpha=_finite_number(tts_index_emo_alpha, "IndexTTS 情绪权重"),
-            tts_index_use_emo_text=_boolean(tts_index_use_emo_text, "IndexTTS 文本情绪"),
+            tts_index_speaker_source=index_speaker_source,
+            tts_index_emotion_source=index_emotion_source,
+            tts_index_external_emotion_audio=persistent_index_emotion,
+            tts_index_use_emo_text=index_emotion_source == "text",
             tts_index_emo_text=str(tts_index_emo_text or "").strip(),
             tts_gpt_top_k=int(_finite_number(tts_gpt_top_k, "GPT-SoVITS Top K")),
             tts_gpt_text_split_method=str(tts_gpt_text_split_method or "cut5").strip(),
@@ -1048,6 +1092,10 @@ def save_settings_form(
             translation_deepl_formality=str(deepl_formality or "default").strip(),
             translation_microsoft_region=str(microsoft_region or "").strip(),
         )
+        available_review_models = {value for _, value in available_asr_review_choices(settings)}
+        settings.asr_review_models = [
+            value for value in settings.asr_review_models if value in available_review_models
+        ]
         # Also validates cross-field audio limits and the selected clone mode.
         settings.to_project_settings()
     except ValidationError as exc:
@@ -1150,31 +1198,17 @@ def build_app() -> Any:
         "funasr",
     }
     local_tts_backends = {"voxcpm2", "qwen3_tts", "indextts2", "f5_tts", "xtts_v2"}
-    asr_review_choices = [
-        (
-            "Parakeet CTC 1.1B 日语 GAL（推荐）",
-            "parakeet_nemo|grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
-        ),
-        (
-            "Parakeet TDT/CTC 0.6B 日语（官方）",
-            "parakeet_nemo|nvidia/parakeet-tdt_ctc-0.6b-ja",
-        ),
-        (
-            "Kotoba-Whisper v2.2（最新推荐）",
-            "kotoba_whisper|kotoba-tech/kotoba-whisper-v2.2",
-        ),
-        (
-            "Kotoba-Whisper v2.1（旧版标点模型）",
-            "kotoba_whisper|kotoba-tech/kotoba-whisper-v2.1",
-        ),
-        (
-            "Kotoba-Whisper v2.0 Faster",
-            "faster_whisper|kotoba-tech/kotoba-whisper-v2.0-faster",
-        ),
-        ("Qwen3-ASR 1.7B", "qwen3_asr|Qwen/Qwen3-ASR-1.7B"),
-        ("Qwen3-ASR 0.6B", "qwen3_asr|Qwen/Qwen3-ASR-0.6B"),
-        ("Faster-Whisper large-v2", "faster_whisper|large-v2"),
-        ("Faster-Whisper large-v3", "faster_whisper|large-v3"),
+    installable_ids = installable_backend_ids()
+    installable_asr_ids = [
+        backend_id for backend_id in installable_ids if backend_id in ASR_BACKENDS
+    ]
+    installable_tts_ids = [
+        backend_id for backend_id in installable_ids if backend_id in TTS_BACKENDS
+    ]
+    asr_review_choices = available_asr_review_choices(stored)
+    available_review_values = {value for _, value in asr_review_choices}
+    stored.asr_review_models = [
+        value for value in stored.asr_review_models if value in available_review_values
     ]
 
     dataframe_count_options: dict[str, Any]
@@ -1288,9 +1322,9 @@ def build_app() -> Any:
                             "下表区分真实可用状态和支持等级。‘实验性’表示接口已经接入，"
                             "但尚未完成所有系统/硬件组合的真实测试。"
                         )
-                        backend_catalog = gr.Dataframe(
+                        gr.Markdown("### ASR 后端")
+                        asr_backend_catalog = gr.Dataframe(
                             headers=[
-                                "类型",
                                 "后端",
                                 "支持等级",
                                 "本机适配",
@@ -1298,64 +1332,100 @@ def build_app() -> Any:
                                 "详情",
                                 "预计磁盘",
                             ],
-                            datatype=["str"] * 7,
-                            value=backend_catalog_rows(stored),
+                            datatype=["str"] * 6,
+                            value=backend_catalog_rows(stored, "asr"),
                             interactive=False,
                             wrap=True,
-                            label="后端兼容性与安装状态",
+                            label="ASR 后端兼容性与安装状态",
                         )
-                        with gr.Accordion("安装或修复本地后端", open=False):
+                        with gr.Accordion("安装或修复本地 ASR 后端", open=False):
                             gr.Markdown(
                                 "只安装你选择的模型运行依赖，并下载、校验该后端的固定版本模型；"
                                 "大型质量优先后端可能占用数 GB 到数十 GB。"
                             )
                             with gr.Row():
-                                install_backend_selector = gr.Dropdown(
-                                    label="要安装的后端",
+                                install_asr_backend_selector = gr.Dropdown(
+                                    label="要安装的 ASR 后端",
                                     choices=[
-                                        (
-                                            (
-                                                ASR_BACKENDS.get(backend_id)
-                                                or TTS_BACKENDS[backend_id]
-                                            ).label,
-                                            backend_id,
-                                        )
-                                        for backend_id in installable_backend_ids()
+                                        (ASR_BACKENDS[backend_id].label, backend_id)
+                                        for backend_id in installable_asr_ids
                                     ],
-                                    value="indextts2",
+                                    value=(
+                                        "parakeet_nemo"
+                                        if "parakeet_nemo" in installable_asr_ids
+                                        else installable_asr_ids[0]
+                                    ),
                                 )
-                                install_backend_button = gr.Button(
-                                    "安装/修复所选后端", variant="primary"
+                                install_asr_backend_button = gr.Button(
+                                    "安装/修复所选 ASR 后端", variant="primary"
                                 )
-                            install_backend_status = gr.Textbox(
-                                label="安装日志", lines=8, interactive=False
+                            install_asr_backend_status = gr.Textbox(
+                                label="ASR 安装日志", lines=8, interactive=False
+                            )
+
+                        gr.Markdown("### TTS 后端")
+                        tts_backend_catalog = gr.Dataframe(
+                            headers=[
+                                "后端",
+                                "支持等级",
+                                "本机适配",
+                                "安装状态",
+                                "详情",
+                                "预计磁盘",
+                            ],
+                            datatype=["str"] * 6,
+                            value=backend_catalog_rows(stored, "tts"),
+                            interactive=False,
+                            wrap=True,
+                            label="TTS 后端兼容性与安装状态",
+                        )
+                        with gr.Accordion("安装或修复本地 TTS 后端", open=False):
+                            gr.Markdown(
+                                "只安装所选 TTS 后端的运行环境和固定模型；"
+                                "外部 API 后端需要按照对应说明单独启动服务。"
+                            )
+                            with gr.Row():
+                                install_tts_backend_selector = gr.Dropdown(
+                                    label="要安装的 TTS 后端",
+                                    choices=[
+                                        (TTS_BACKENDS[backend_id].label, backend_id)
+                                        for backend_id in installable_tts_ids
+                                    ],
+                                    value=(
+                                        "indextts2"
+                                        if "indextts2" in installable_tts_ids
+                                        else installable_tts_ids[0]
+                                    ),
+                                )
+                                install_tts_backend_button = gr.Button(
+                                    "安装/修复所选 TTS 后端", variant="primary"
+                                )
+                            install_tts_backend_status = gr.Textbox(
+                                label="TTS 安装日志", lines=8, interactive=False
                             )
 
                     with gr.Tab("下载与网络", id="download_network"):
+                        reset_network_button = gr.Button("重置本页为默认值（需保存）")
                         gr.Markdown(
-                            "留空时使用官方源。国内网络可填写自己信任的镜像或代理地址；"
-                            "这些地址只用于下载依赖和模型，不会随项目导出。"
+                            "留空时按项目根目录 `mirrors.json` 的顺序自动尝试国内镜像和官方源。"
+                            "这里填写的地址会作为个人首选源，只用于下载依赖和模型。"
                         )
                         huggingface_endpoint = gr.Textbox(
                             label="Hugging Face Endpoint",
                             value=stored.huggingface_endpoint,
-                            placeholder="例如自建或可信镜像的 https://...；留空使用官方源",
+                            placeholder="可选：个人首选的 https://... 地址",
                             info="用于内置 Qwen/VoxCPM 模型下载，保存后下次安装立即生效。",
                         )
                         pypi_index_url = gr.Textbox(
                             label="Python 包索引",
                             value=stored.pypi_index_url,
-                            placeholder="https://pypi.org/simple",
-                            info="用于界面内安装 ASR/TTS 后端依赖；留空使用官方 PyPI。",
+                            placeholder="可选：个人首选的 PyPI /simple 地址",
+                            info="用于界面内安装 ASR/TTS 后端依赖；失败后自动切换 mirrors.json。",
                         )
-                        gr.Markdown(
-                            "首次安装尚未进入界面时，可使用：  \n"
-                            "Windows：`./scripts/windows/setup.ps1 -IndexUrl <镜像地址>`  \n"
-                            "Linux：先设置 `UV_DEFAULT_INDEX=<镜像地址>`，再运行 "
-                            "`bash scripts/linux/setup.sh`。"
-                        )
+                        gr.Markdown("首次安装尚未进入界面时，直接编辑根目录 `mirrors.json`。")
 
                     with gr.Tab("总设置", id="general_settings"):
+                        reset_general_button = gr.Button("重置本页为默认值（需保存）")
                         settings_projects_root = gr.Textbox(
                             label="项目输出目录",
                             value=stored.projects_root,
@@ -1442,6 +1512,12 @@ def build_app() -> Any:
                         )
 
                     with gr.Tab("ASR 设置", id="asr_settings"):
+                        with gr.Row():
+                            reset_asr_button = gr.Button("重置本页为默认值（需保存）")
+                        with gr.Accordion("本机可用的 ASR 后端与具体模型", open=True):
+                            asr_availability = gr.Markdown(
+                                available_backend_models_markdown("asr", stored)
+                            )
                         asr_backend_selector = gr.Dropdown(
                             label="识别后端",
                             choices=[
@@ -1624,7 +1700,8 @@ def build_app() -> Any:
                                 choices=asr_review_choices,
                                 value=stored.asr_review_models,
                                 info=(
-                                    "当前主 ASR 若也在列表中会自动去重；建议额外选择 2 个不同架构。"
+                                    "只显示本机已确认可用的模型；当前主 ASR 若也在列表中会自动"
+                                    "去重。建议额外选择 2 个不同架构。"
                                 ),
                             )
                             asr_review_background = gr.Textbox(
@@ -1647,6 +1724,7 @@ def build_app() -> Any:
                                 lines=14,
                             )
                     with gr.Tab("翻译设置", id="translation_settings"):
+                        reset_translation_button = gr.Button("重置本页为默认值（需保存）")
                         translation_provider = gr.Dropdown(
                             label="翻译供应商",
                             choices=[
@@ -1736,6 +1814,12 @@ def build_app() -> Any:
                             )
 
                     with gr.Tab("TTS 设置", id="tts_settings"):
+                        with gr.Row():
+                            reset_tts_button = gr.Button("重置本页为默认值（需保存）")
+                        with gr.Accordion("本机可用的 TTS 后端与具体模型", open=True):
+                            tts_availability = gr.Markdown(
+                                available_backend_models_markdown("tts", stored)
+                            )
                         tts_backend_selector = gr.Dropdown(
                             label="配音后端",
                             choices=[
@@ -1775,62 +1859,65 @@ def build_app() -> Any:
                                     "f5_tts",
                                 },
                             )
-                        gr.Markdown("#### 音色参考来源")
-                        tts_reference_source = gr.Radio(
-                            label="参考来源",
-                            choices=[
-                                ("项目内参考句（在项目页选择）", "project_sentence"),
-                                ("外部参考音频（所有项目复用）", "external"),
-                            ],
-                            value=stored.tts_reference_source,
-                        )
                         with gr.Group(
-                            visible=stored.tts_reference_source == "external"
-                        ) as tts_external_group:
-                            gr.Markdown(
-                                "外部参考将复制到便携配置目录。"
-                                "参考文本应与音频逐字对应；IndexTTS2/XTTS 不使用文本，"
-                                "CosyVoice 跨语言模式可不填。"
+                            visible=stored.tts_backend != "indextts2"
+                        ) as tts_generic_reference_group:
+                            gr.Markdown("#### 音色参考来源")
+                            tts_reference_source = gr.Radio(
+                                label="参考来源",
+                                choices=[
+                                    ("项目内参考句（在项目页选择）", "project_sentence"),
+                                    ("外部参考音频（所有项目复用）", "external"),
+                                ],
+                                value=stored.tts_reference_source,
                             )
-                            with gr.Row():
-                                tts_external_audio = gr.Audio(
-                                    label="外部参考音频",
-                                    value=(
-                                        stored.tts_external_reference_audio
-                                        if Path(stored.tts_external_reference_audio).is_file()
-                                        else None
-                                    ),
-                                    type="filepath",
-                                    sources=["upload"],
+                            with gr.Group(
+                                visible=stored.tts_reference_source == "external"
+                            ) as tts_external_group:
+                                gr.Markdown(
+                                    "外部参考将复制到便携配置目录。"
+                                    "参考文本应与音频逐字对应；XTTS 不使用文本，"
+                                    "CosyVoice 跨语言模式可不填。"
                                 )
-                                tts_external_text = gr.Textbox(
-                                    label="外部参考文本",
-                                    value=stored.tts_external_reference_text,
-                                    lines=5,
-                                    placeholder="准确填写参考音频中说出的日文/中文文本",
-                                    visible=(
-                                        tts_spec.reference_text != "unused"
-                                        and not (
-                                            stored.tts_backend == "qwen3_tts"
-                                            and stored.tts_qwen_x_vector_only
-                                        )
-                                        and not (
-                                            stored.tts_backend == "cosyvoice"
-                                            and stored.tts_cosyvoice_mode == "cross_lingual"
-                                        )
-                                    ),
-                                )
-                        clone_mode = gr.Radio(
-                            choices=[
-                                (CLONE_MODE_LABELS[item], item) for item in initial_clone_modes
-                            ],
-                            value=stored.tts_clone_mode,
-                            label="项目内参考策略",
-                            info=(
-                                "选择外部参考时，此项不再改变音色来源；"
-                                "VoxCPM 逐句语气模式仍可读取原句韵律。"
-                            ),
-                        )
+                                with gr.Row():
+                                    tts_external_audio = gr.Audio(
+                                        label="外部参考音频",
+                                        value=(
+                                            stored.tts_external_reference_audio
+                                            if Path(stored.tts_external_reference_audio).is_file()
+                                            else None
+                                        ),
+                                        type="filepath",
+                                        sources=["upload"],
+                                    )
+                                    tts_external_text = gr.Textbox(
+                                        label="外部参考文本",
+                                        value=stored.tts_external_reference_text,
+                                        lines=5,
+                                        placeholder="准确填写参考音频中说出的日文/中文文本",
+                                        visible=(
+                                            tts_spec.reference_text != "unused"
+                                            and not (
+                                                stored.tts_backend == "qwen3_tts"
+                                                and stored.tts_qwen_x_vector_only
+                                            )
+                                            and not (
+                                                stored.tts_backend == "cosyvoice"
+                                                and stored.tts_cosyvoice_mode == "cross_lingual"
+                                            )
+                                        ),
+                                    )
+                            clone_mode = gr.Radio(
+                                choices=[
+                                    (CLONE_MODE_LABELS[item], item) for item in initial_clone_modes
+                                ],
+                                value=stored.tts_clone_mode,
+                                label="项目内参考策略",
+                                info=(
+                                    "选择外部参考时，此项不再改变音色来源；"
+                                    "VoxCPM 逐句语气模式仍可读取原句韵律。"
+                                ),
+                            )
                         with gr.Row():
                             tts_speed = gr.Number(
                                 label="语速",
@@ -1909,20 +1996,71 @@ def build_app() -> Any:
                                 tts_index_fp16 = gr.Checkbox(
                                     label="FP16", value=stored.tts_index_use_fp16
                                 )
+                            tts_index_speaker_source = gr.Radio(
+                                label="音色参考来源",
+                                choices=[
+                                    ("项目参考句（推荐）", "project_reference"),
+                                    ("每句话对应的日文原句", "sentence_reference"),
+                                    ("外部音色参考音频", "external"),
+                                ],
+                                value=stored.tts_index_speaker_source,
+                                info="决定中文配音使用谁的声纹和基础音色。",
+                            )
+                            with gr.Group(
+                                visible=stored.tts_index_speaker_source == "external"
+                            ) as tts_index_external_speaker_group:
+                                tts_index_external_speaker_audio = gr.Audio(
+                                    label="外部音色参考音频",
+                                    value=(
+                                        stored.tts_external_reference_audio
+                                        if Path(stored.tts_external_reference_audio).is_file()
+                                        else None
+                                    ),
+                                    type="filepath",
+                                    sources=["upload"],
+                                )
+                            tts_index_emotion_source = gr.Radio(
+                                label="情绪参考来源",
+                                choices=[
+                                    ("每句话对应的日文原句（推荐）", "sentence_reference"),
+                                    ("项目参考句", "project_reference"),
+                                    ("跟随音色参考", "speaker_reference"),
+                                    ("外部情绪参考音频", "external"),
+                                    ("文本情绪", "text"),
+                                ],
+                                value=stored.tts_index_emotion_source,
+                                info="决定每句中文的语气、节奏和情绪倾向，不改变音色参考的选择。",
+                            )
+                            with gr.Group(
+                                visible=stored.tts_index_emotion_source == "external"
+                            ) as tts_index_external_emotion_group:
+                                tts_index_external_emotion_audio = gr.Audio(
+                                    label="外部情绪参考音频",
+                                    value=(
+                                        stored.tts_index_external_emotion_audio
+                                        if Path(stored.tts_index_external_emotion_audio).is_file()
+                                        else None
+                                    ),
+                                    type="filepath",
+                                    sources=["upload"],
+                                )
+                            with gr.Row():
                                 tts_index_emo_alpha = gr.Number(
-                                    label="情绪权重",
+                                    label="情绪参考强度",
                                     value=stored.tts_index_emo_alpha,
                                     minimum=0,
                                     maximum=1,
                                     step=0.05,
+                                    info="0 更接近基础音色，1 更充分采用所选情绪参考。",
                                 )
-                                tts_index_use_emo_text = gr.Checkbox(
-                                    label="使用文本情绪", value=stored.tts_index_use_emo_text
+                            with gr.Group(
+                                visible=stored.tts_index_emotion_source == "text"
+                            ) as tts_index_text_emotion_group:
+                                tts_index_emo_text = gr.Textbox(
+                                    label="情绪描述文本",
+                                    value=stored.tts_index_emo_text,
+                                    placeholder="留空时按当前句中文内容自动分析情绪",
                                 )
-                            tts_index_emo_text = gr.Textbox(
-                                label="情绪描述文本（留空使用当前中文）",
-                                value=stored.tts_index_emo_text,
-                            )
                         with gr.Group(
                             visible=stored.tts_backend in {"gpt_sovits", "cosyvoice", "fish_speech"}
                         ) as tts_http_group:
@@ -2141,6 +2279,7 @@ def build_app() -> Any:
                 gr.update(visible=backend_id == "voxcpm2"),
                 gr.update(visible=backend_id == "qwen3_tts"),
                 gr.update(visible=backend_id == "indextts2"),
+                gr.update(visible=backend_id != "indextts2"),
                 gr.update(visible=backend_id in {"gpt_sovits", "cosyvoice", "fish_speech"}),
                 gr.update(visible=backend_id == "gpt_sovits"),
                 gr.update(visible=backend_id == "cosyvoice"),
@@ -2182,6 +2321,16 @@ def build_app() -> Any:
 
         def tts_reference_source_callback(source: Any) -> Any:
             return gr.update(visible=str(source or "") == "external")
+
+        def tts_index_reference_source_callback(
+            speaker_source: Any,
+            emotion_source: Any,
+        ) -> tuple[Any, Any, Any]:
+            return (
+                gr.update(visible=str(speaker_source or "") == "external"),
+                gr.update(visible=str(emotion_source or "") == "external"),
+                gr.update(visible=str(emotion_source or "") == "text"),
+            )
 
         def tts_reference_text_callback(
             source: Any,
@@ -2226,25 +2375,65 @@ def build_app() -> Any:
         def clear_tts_key_callback(backend: Any) -> tuple[str, Any]:
             return guarded(clear_saved_service_key, "tts", backend), gr.update(value="")
 
-        def refresh_system_callback() -> tuple[str, str, list[list[str]]]:
+        def _review_choices_update(
+            current_values: Any,
+            current: UserSettings,
+        ) -> Any:
+            choices = available_asr_review_choices(current)
+            available_values = {value for _, value in choices}
+            selected = [
+                str(value)
+                for value in (current_values if isinstance(current_values, (list, tuple)) else [])
+                if str(value) in available_values
+            ]
+            return gr.update(choices=choices, value=selected)
+
+        def refresh_system_callback(current_review_models: Any) -> tuple[Any, ...]:
             current = load_user_settings()
             profile = refresh_hardware()
             return (
                 guarded(hardware_markdown, profile),
                 guarded(recommended_stack_markdown, profile),
-                guarded(backend_catalog_rows, current),
+                guarded(backend_catalog_rows, current, "asr"),
+                guarded(backend_catalog_rows, current, "tts"),
+                guarded(available_backend_models_markdown, "asr", current),
+                guarded(available_backend_models_markdown, "tts", current),
+                _review_choices_update(current_review_models, current),
             )
 
-        def install_backend_callback(
+        def install_asr_backend_callback(
             backend_id: Any,
+            current_review_models: Any,
             progress: Any = gr.Progress(),  # noqa: B008 - Gradio progress injection API.
-        ) -> tuple[str, list[list[str]]]:
+        ) -> tuple[Any, ...]:
             result = guarded(
                 install_backend,
                 str(backend_id or ""),
                 progress=progress,
             )
-            return result, guarded(backend_catalog_rows, load_user_settings())
+            current = load_user_settings()
+            return (
+                result,
+                guarded(backend_catalog_rows, current, "asr"),
+                guarded(available_backend_models_markdown, "asr", current),
+                _review_choices_update(current_review_models, current),
+            )
+
+        def install_tts_backend_callback(
+            backend_id: Any,
+            progress: Any = gr.Progress(),  # noqa: B008 - Gradio progress injection API.
+        ) -> tuple[Any, ...]:
+            result = guarded(
+                install_backend,
+                str(backend_id or ""),
+                progress=progress,
+            )
+            current = load_user_settings()
+            return (
+                result,
+                guarded(backend_catalog_rows, current, "tts"),
+                guarded(available_backend_models_markdown, "tts", current),
+            )
 
         click_parameters = inspect.signature(new_button.click).parameters
         private_event_options: dict[str, Any]
@@ -2259,13 +2448,37 @@ def build_app() -> Any:
 
         refresh_system_button.click(
             refresh_system_callback,
-            outputs=[hardware_info, device_recommendation, backend_catalog],
+            inputs=[asr_review_models],
+            outputs=[
+                hardware_info,
+                device_recommendation,
+                asr_backend_catalog,
+                tts_backend_catalog,
+                asr_availability,
+                tts_availability,
+                asr_review_models,
+            ],
             **private_event_options,
         )
-        install_backend_button.click(
-            install_backend_callback,
-            inputs=[install_backend_selector],
-            outputs=[install_backend_status, backend_catalog],
+        install_asr_backend_button.click(
+            install_asr_backend_callback,
+            inputs=[install_asr_backend_selector, asr_review_models],
+            outputs=[
+                install_asr_backend_status,
+                asr_backend_catalog,
+                asr_availability,
+                asr_review_models,
+            ],
+            **private_event_options,
+        )
+        install_tts_backend_button.click(
+            install_tts_backend_callback,
+            inputs=[install_tts_backend_selector],
+            outputs=[
+                install_tts_backend_status,
+                tts_backend_catalog,
+                tts_availability,
+            ],
             **private_event_options,
         )
 
@@ -2356,6 +2569,7 @@ def build_app() -> Any:
                 tts_voxcpm_group,
                 tts_qwen_group,
                 tts_index_group,
+                tts_generic_reference_group,
                 tts_http_group,
                 tts_gpt_group,
                 tts_cosy_group,
@@ -2380,6 +2594,23 @@ def build_app() -> Any:
             outputs=[tts_external_group],
             **private_event_options,
         )
+        for index_reference_trigger in (
+            tts_index_speaker_source,
+            tts_index_emotion_source,
+        ):
+            index_reference_trigger.input(
+                tts_index_reference_source_callback,
+                inputs=[
+                    tts_index_speaker_source,
+                    tts_index_emotion_source,
+                ],
+                outputs=[
+                    tts_index_external_speaker_group,
+                    tts_index_external_emotion_group,
+                    tts_index_text_emotion_group,
+                ],
+                **private_event_options,
+            )
         for reference_text_trigger in (
             tts_reference_source,
             tts_backend_selector,
@@ -2469,8 +2700,11 @@ def build_app() -> Any:
             tts_api_key,
             tts_qwen_x_vector,
             tts_index_fp16,
+            tts_index_speaker_source,
+            tts_index_external_speaker_audio,
+            tts_index_emotion_source,
+            tts_index_external_emotion_audio,
             tts_index_emo_alpha,
-            tts_index_use_emo_text,
             tts_index_emo_text,
             tts_gpt_top_k,
             tts_gpt_split,
@@ -2533,11 +2767,21 @@ def build_app() -> Any:
                 if Path(current.tts_external_reference_audio).is_file()
                 else None
             )
+            external_index_emotion = (
+                current.tts_index_external_emotion_audio
+                if Path(current.tts_index_external_emotion_audio).is_file()
+                else None
+            )
             reference_text_visible = (
                 current_tts_spec.reference_text != "unused"
                 and not (tts_id == "qwen3_tts" and current.tts_qwen_x_vector_only)
                 and not (tts_id == "cosyvoice" and current.tts_cosyvoice_mode == "cross_lingual")
             )
+            review_choices = available_asr_review_choices(current)
+            review_values = {value for _, value in review_choices}
+            selected_review_models = [
+                value for value in current.asr_review_models if value in review_values
+            ]
 
             return {
                 settings_projects_root: current.projects_root,
@@ -2614,7 +2858,10 @@ def build_app() -> Any:
                 asr_chunk_seconds: current.asr_chunk_seconds,
                 asr_kotoba_chunk_seconds: current.asr_kotoba_chunk_seconds,
                 asr_review_enabled: current.asr_review_enabled,
-                asr_review_models: current.asr_review_models,
+                asr_review_models: gr.update(
+                    choices=review_choices,
+                    value=selected_review_models,
+                ),
                 asr_review_background: current.asr_review_background,
                 asr_review_prompt: current.asr_review_prompt,
                 asr_review_max_drift: current.asr_review_max_drift_seconds,
@@ -2682,8 +2929,11 @@ def build_app() -> Any:
                 tts_api_key: gr.update(value=""),
                 tts_qwen_x_vector: current.tts_qwen_x_vector_only,
                 tts_index_fp16: current.tts_index_use_fp16,
+                tts_index_speaker_source: current.tts_index_speaker_source,
+                tts_index_external_speaker_audio: external_reference,
+                tts_index_emotion_source: current.tts_index_emotion_source,
+                tts_index_external_emotion_audio: external_index_emotion,
                 tts_index_emo_alpha: current.tts_index_emo_alpha,
-                tts_index_use_emo_text: current.tts_index_use_emo_text,
                 tts_index_emo_text: current.tts_index_emo_text,
                 tts_gpt_top_k: current.tts_gpt_top_k,
                 tts_gpt_split: current.tts_gpt_text_split_method,
@@ -2720,6 +2970,7 @@ def build_app() -> Any:
                 tts_voxcpm_group: gr.update(visible=tts_id == "voxcpm2"),
                 tts_qwen_group: gr.update(visible=tts_id == "qwen3_tts"),
                 tts_index_group: gr.update(visible=tts_id == "indextts2"),
+                tts_generic_reference_group: gr.update(visible=tts_id != "indextts2"),
                 tts_http_group: gr.update(
                     visible=tts_id in {"gpt_sovits", "cosyvoice", "fish_speech"}
                 ),
@@ -2728,12 +2979,182 @@ def build_app() -> Any:
                 tts_f5_group: gr.update(visible=tts_id == "f5_tts"),
                 tts_key_group: gr.update(visible=current_tts_spec.api_key),
                 tts_external_group: gr.update(visible=current.tts_reference_source == "external"),
+                tts_index_external_speaker_group: gr.update(
+                    visible=current.tts_index_speaker_source == "external"
+                ),
+                tts_index_external_emotion_group: gr.update(
+                    visible=current.tts_index_emotion_source == "external"
+                ),
+                tts_index_text_emotion_group: gr.update(
+                    visible=current.tts_index_emotion_source == "text"
+                ),
                 tts_key_status: service_key_status(
                     f"tts:{tts_id}",
                     current_tts_spec.api_key,
                 ),
                 tts_index_status: indextts_installation_status(current.tts_model_path),
+                asr_availability: available_backend_models_markdown("asr", current),
+                tts_availability: available_backend_models_markdown("tts", current),
+                asr_backend_catalog: backend_catalog_rows(current, "asr"),
+                tts_backend_catalog: backend_catalog_rows(current, "tts"),
             }
+
+        network_page_components = [
+            huggingface_endpoint,
+            pypi_index_url,
+        ]
+        general_page_components = [
+            settings_projects_root,
+            global_overlap,
+            global_overlap_percentage,
+            match_source_loudness,
+            relative_loudness,
+            minimum_loudness,
+            maximum_loudness,
+            chinese_gain,
+            retain_chinese_stem,
+        ]
+        asr_page_components = [
+            asr_backend_selector,
+            asr_model_selector,
+            aligner_model,
+            asr_device,
+            asr_compute_type,
+            asr_batch_size,
+            asr_beam_size,
+            asr_vad_filter,
+            asr_vad_min_silence,
+            asr_previous_context,
+            asr_initial_prompt,
+            asr_api_base_url,
+            asr_timeout,
+            asr_funasr_vad,
+            asr_funasr_punc,
+            asr_parakeet_decoder,
+            asr_chunk_seconds,
+            asr_kotoba_chunk_seconds,
+            asr_review_enabled,
+            asr_review_models,
+            asr_review_background,
+            asr_review_prompt,
+            asr_review_max_drift,
+            asr_api_key,
+            asr_help,
+            asr_setup,
+            asr_qwen_group,
+            asr_funasr_group,
+            asr_parakeet_group,
+            asr_kotoba_group,
+            asr_http_group,
+            asr_key_status,
+            asr_availability,
+        ]
+        translation_page_components = [
+            translation_provider,
+            translation_model,
+            translation_base_url,
+            translation_api_key,
+            translation_temperature,
+            translation_top_p,
+            translation_max_tokens,
+            translation_prompt,
+            deepl_formality,
+            microsoft_region,
+            provider_help,
+            saved_key_status,
+            translation_llm_group,
+            translation_deepl_group,
+            translation_microsoft_group,
+        ]
+        tts_page_components = [
+            tts_backend_selector,
+            tts_model_selector,
+            tts_device,
+            clone_mode,
+            tts_reference_source,
+            tts_external_audio,
+            tts_external_text,
+            tts_api_base_url,
+            tts_timeout,
+            tts_model_path,
+            tts_config_path,
+            tts_executable,
+            tts_speed,
+            tts_temperature,
+            tts_top_p,
+            tts_api_key,
+            tts_qwen_x_vector,
+            tts_index_fp16,
+            tts_index_speaker_source,
+            tts_index_external_speaker_audio,
+            tts_index_emotion_source,
+            tts_index_external_emotion_audio,
+            tts_index_emo_alpha,
+            tts_index_emo_text,
+            tts_gpt_top_k,
+            tts_gpt_split,
+            tts_gpt_steps,
+            tts_cosy_mode,
+            tts_f5_nfe,
+            tts_f5_cfg,
+            tts_cfg,
+            tts_steps,
+            tts_instruction,
+            tts_help,
+            tts_setup,
+            tts_voxcpm_group,
+            tts_qwen_group,
+            tts_index_group,
+            tts_generic_reference_group,
+            tts_http_group,
+            tts_gpt_group,
+            tts_cosy_group,
+            tts_f5_group,
+            tts_key_group,
+            tts_external_group,
+            tts_index_external_speaker_group,
+            tts_index_external_emotion_group,
+            tts_index_text_emotion_group,
+            tts_key_status,
+            tts_index_status,
+            tts_availability,
+        ]
+
+        def reset_page_callback(components: list[Any]) -> tuple[Any, ...]:
+            defaults = UserSettings()
+            if not defaults.projects_root:
+                defaults.projects_root = str(pipeline.default_projects_dir())
+            payload = settings_reload_payload(defaults)
+            return (
+                *(payload[component] for component in components),
+                "本页已恢复默认值；点击“保存全部设置”后生效。已保存的 API Key 和模型文件不会删除。",
+            )
+
+        reset_network_button.click(
+            lambda: reset_page_callback(network_page_components),
+            outputs=[*network_page_components, settings_status],
+            **private_event_options,
+        )
+        reset_general_button.click(
+            lambda: reset_page_callback(general_page_components),
+            outputs=[*general_page_components, settings_status],
+            **private_event_options,
+        )
+        reset_asr_button.click(
+            lambda: reset_page_callback(asr_page_components),
+            outputs=[*asr_page_components, settings_status],
+            **private_event_options,
+        )
+        reset_translation_button.click(
+            lambda: reset_page_callback(translation_page_components),
+            outputs=[*translation_page_components, settings_status],
+            **private_event_options,
+        )
+        reset_tts_button.click(
+            lambda: reset_page_callback(tts_page_components),
+            outputs=[*tts_page_components, settings_status],
+            **private_event_options,
+        )
 
         for settings_button in (save_settings_button, save_settings_bottom_button):
             settings_button.click(
