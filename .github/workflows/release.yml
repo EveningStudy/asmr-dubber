@@ -88,10 +88,7 @@ jobs:
       - name: Replace GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: 8fab2abe27877764daaa2c604fb15ec4ca40c608
         run: |
-          git tag -f "v0.2.0" "$RELEASE_COMMIT"
-          git push --force origin "refs/tags/v0.2.0"
           gh release upload "v0.2.0" \
             dist/* \
             release-assets/ASMR-Dubber-windows-portable.zip \
