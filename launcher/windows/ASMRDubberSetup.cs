@@ -7,8 +7,8 @@ using System.Text;
 [assembly: System.Reflection.AssemblyDescription("ASMR Dubber dependency installer and repair tool")]
 [assembly: System.Reflection.AssemblyCompany("ASMR Dubber contributors")]
 [assembly: System.Reflection.AssemblyProduct("ASMR Dubber")]
-[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.2.1.0")]
 
 namespace ASMRDubberSetup
 {
@@ -86,13 +86,19 @@ namespace ASMRDubberSetup
         private static string PromptForProfile()
         {
             Console.WriteLine("1  Core：程序和网页界面，不下载大型模型");
-            Console.WriteLine("2  Recommended：Core、Parakeet、Kotoba/Faster-Whisper 依赖；");
+            Console.WriteLine("   安装后约 2 GB；建议至少预留 5 GB");
+            Console.WriteLine("2  Recommended：Core、Parakeet 1.1B/0.6B；");
             Console.WriteLine("   NVIDIA 设备另外安装 IndexTTS2");
-            Console.WriteLine("3  Full：Recommended、Qwen3-ASR、ForcedAligner、VoxCPM2 和更多 ASR 依赖");
+            Console.WriteLine("   安装后约 24–28 GB；建议至少预留 35 GB");
+            Console.WriteLine("3  Advanced：Recommended、Kotoba-Whisper v2.2、Faster-Whisper large-v2");
+            Console.WriteLine("   安装后约 30–35 GB；建议至少预留 45 GB");
+            Console.WriteLine("4  Full：Advanced，加上其余已集成且可自动安装的本地后端");
+            Console.WriteLine("   安装后约 42–48 GB；建议至少预留 60 GB");
+            Console.WriteLine("   无 NVIDIA GPU 时会跳过 CUDA 后端，实际占用将减少");
             Console.WriteLine();
             while (true)
             {
-                Console.Write("选择 1、2 或 3（直接回车选择 Recommended）：");
+                Console.Write("选择 1、2、3 或 4（直接回车选择 Recommended）：");
                 string input = Console.ReadLine();
                 if (input == null)
                 {
@@ -101,8 +107,9 @@ namespace ASMRDubberSetup
                 input = input.Trim();
                 if (input == "1") return "Core";
                 if (input == "" || input == "2") return "Recommended";
-                if (input == "3") return "Full";
-                WriteError("请输入 1、2 或 3。");
+                if (input == "3") return "Advanced";
+                if (input == "4") return "Full";
+                WriteError("请输入 1、2、3 或 4。");
             }
         }
 

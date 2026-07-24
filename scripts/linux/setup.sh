@@ -6,9 +6,9 @@ cd "$ROOT"
 
 PROFILE="${1:-Recommended}"
 case "$PROFILE" in
-  Core|Recommended|Full) ;;
+  Core|Recommended|Advanced|Full) ;;
   *)
-    echo "用法：bash scripts/linux/setup.sh [Core|Recommended|Full]" >&2
+    echo "用法：bash scripts/linux/setup.sh [Core|Recommended|Advanced|Full]" >&2
     exit 2
     ;;
 esac
@@ -41,6 +41,23 @@ echo "ASMR Dubber · Linux 安装"
 echo "项目目录：$ROOT"
 echo "便携目录：$DATA_ROOT"
 echo "安装配置：$PROFILE"
+case "$PROFILE" in
+  Core)
+    echo "预计安装后占用：约 2 GB；建议安装前至少有 5 GB 可用空间"
+    ;;
+  Recommended)
+    echo "预计安装后占用：约 24–28 GB；建议安装前至少有 35 GB 可用空间"
+    ;;
+  Advanced)
+    echo "预计安装后占用：约 30–35 GB；建议安装前至少有 45 GB 可用空间"
+    ;;
+  Full)
+    echo "预计安装后占用：约 42–48 GB；建议安装前至少有 60 GB 可用空间"
+    ;;
+esac
+if [[ "$PROFILE" != Core ]]; then
+  echo "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS/ASR，实际占用将减少。"
+fi
 
 if [[ ! -x "$UV" ]]; then
   echo "正在安装项目私有 uv（不会修改系统 PATH）..."
@@ -88,6 +105,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 EXTRA=".[ui]"
 INSTALL_DEFAULT_MODELS=0
+INSTALL_ADVANCED_MODELS=0
 INSTALL_RECOMMENDED_TTS=0
 INSTALL_PARAKEET=0
 case "$PROFILE" in
@@ -97,16 +115,23 @@ case "$PROFILE" in
   Recommended)
     INSTALL_PARAKEET=1
     if [[ "$HAS_NVIDIA" == 1 ]]; then
-      EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper]"
       if [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
         INSTALL_RECOMMENDED_TTS=1
       fi
-    else
-      EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper]"
+    fi
+    ;;
+  Advanced)
+    INSTALL_PARAKEET=1
+    INSTALL_ADVANCED_MODELS=1
+    EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper]"
+    if [[ "$HAS_NVIDIA" == 1 ]] \
+      && [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
+      INSTALL_RECOMMENDED_TTS=1
     fi
     ;;
   Full)
     INSTALL_PARAKEET=1
+    INSTALL_ADVANCED_MODELS=1
     if [[ "$HAS_NVIDIA" == 1 ]]; then
       EXTRA=".[ui,local-default,asr-faster-whisper,asr-kotoba-whisper,asr-openai-whisper,asr-funasr]"
       INSTALL_DEFAULT_MODELS=1
@@ -139,6 +164,31 @@ install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
 install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
 "$VENV/bin/python" -m compileall -q -f "$ROOT/src/asmr_dubber"
 
+if [[ "$PROFILE" != Core ]]; then
+  echo "正在检测并导入当前档位的本地模型包..."
+  PACK_ARGUMENTS=(import-model-packs --all)
+  case "$PROFILE" in
+    Recommended)
+      PACK_ARGUMENTS+=(
+        --pack-id parakeet-ja-linux
+        --pack-id indextts2-checkpoints
+      )
+      ;;
+    Advanced)
+      PACK_ARGUMENTS+=(
+        --pack-id parakeet-ja-linux
+        --pack-id indextts2-checkpoints
+        --pack-id kotoba-whisper-v2.2
+        --pack-id faster-whisper-large-v2
+      )
+      ;;
+  esac
+  if ! bash "$ROOT/scripts/linux/run-cli.sh" "${PACK_ARGUMENTS[@]}"; then
+    echo "错误：本地模型包扫描或导入失败；请检查 model-packs 目录中的压缩包。" >&2
+    exit 1
+  fi
+fi
+
 # TorchCodec loads system-style FFmpeg SONAMEs. PyAV ships a matching FFmpeg 8
 # build on supported manylinux systems; expose only the canonical names in an
 # application-private directory and leave the host's FFmpeg untouched.
@@ -163,13 +213,14 @@ link_av_library libavdevice.so.62 'libavdevice-*.so.62.*'
 link_av_library libswresample.so.6 'libswresample-*.so.6.*'
 link_av_library libswscale.so.9 'libswscale-*.so.9.*'
 
+if [[ "$INSTALL_ADVANCED_MODELS" == 1 ]]; then
+  echo "正在准备 Advanced ASR 模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
+  bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend advanced-asr
+fi
+
 if [[ "$INSTALL_DEFAULT_MODELS" == 1 ]]; then
   echo "正在下载并校验默认模型（已有缓存会复用）..."
-  if [[ "$PROFILE" == Full ]]; then
-    bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend all
-  else
-    bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend qwen3_asr
-  fi
+  bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend all
 fi
 
 if [[ "$INSTALL_PARAKEET" == 1 ]]; then

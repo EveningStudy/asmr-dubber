@@ -1,6 +1,6 @@
 # 第三方软件、模型与许可证说明
 
-ASMR Dubber 自身代码采用 MIT License。Git 仓库和源码 Release **不包含任何模型权重**；安装器会按用户选择从对应上游下载软件和模型。下载、使用和分发第三方组件时，用户必须遵守其当前许可证、服务条款和适用法律。本文件是信息性清单，不构成法律意见，也不会替代上游许可证全文。
+ASMR Dubber 自身代码采用 MIT License。Git 仓库、源码包和程序包**不包含模型权重**；Release 可以另行提供名称明确的独立离线模型包。安装器会按用户选择导入离线包或从对应上游下载软件和模型。每个离线包保留适用的许可证和归属说明。下载、使用和分发第三方组件时，用户必须遵守其当前许可证、服务条款和适用法律。本文件是信息性清单，不构成法律意见，也不会替代上游许可证全文。
 
 ## 支持的下载组件
 
@@ -25,7 +25,7 @@ ASMR Dubber 自身代码采用 MIT License。Git 仓库和源码 Release **不�
 IndexTTS2 来自 <https://github.com/index-tts/index-tts>，代码和模型受 **bilibili Model Use License Agreement** 约束，不是本项目的 MIT License。该许可证包含使用限制、下游义务、合规要求和特定规模组织的额外授权条件。安装器把上游 `LICENSE`、`LICENSE_ZH.txt` 及 checkpoints 许可证保留在
 IndexTTS2 独立运行时目录。运行安装器或使用模型前请完整阅读并决定是否接受；不同意时不要安装或使用 IndexTTS2。
 
-ASMR Dubber 没有修改或再分发 IndexTTS2 模型，不代表 bilibili 或 IndexTTS2 权利人对本项目提供背书、保证或认可。
+ASMR Dubber 没有修改 IndexTTS2 模型权重；Release 可以单独提供保留上游中英文许可证和 README 的 checkpoints 离线包。获取、分发或使用该模型即受上游许可证约束，不代表 bilibili 或 IndexTTS2 权利人对本项目提供背书、保证或认可。
 
 ## 可选后端
 

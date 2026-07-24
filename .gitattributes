@@ -19,3 +19,4 @@
 *.pt binary
 *.bin binary
 *.zip binary
+*.sha256 text eol=lf

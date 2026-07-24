@@ -20,6 +20,20 @@ if [[ ! -x "$PYTHON" ]]; then
   exit 1
 fi
 
+EXPECTED_11B="34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7"
+EXPECTED_06B="374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
+MODEL_11B="$MODEL_ROOT/parakeet-ctc-1.1b-ja-f16.gguf"
+MODEL_06B="$MODEL_ROOT/parakeet-tdt-0.6b-ja.gguf"
+if [[ -x "$RUNTIME_ROOT/bin/crispasr" ]] \
+  && [[ -f "$MODEL_11B" ]] \
+  && [[ -f "$MODEL_06B" ]] \
+  && [[ "$(sha256sum "$MODEL_11B" | cut -d' ' -f1)" == "$EXPECTED_11B" ]] \
+  && [[ "$(sha256sum "$MODEL_06B" | cut -d' ' -f1)" == "$EXPECTED_06B" ]] \
+  && "$RUNTIME_ROOT/bin/crispasr" --version; then
+  echo "Parakeet 本地运行时和两款模型已完整，无需联网下载。"
+  exit 0
+fi
+
 ASSET="crispasr-linux-x86_64.tar.gz"
 EXPECTED="55d48357052c6d9376ad6548c877f9fb1e0a79728ae5e24dfc84b29405d22434"
 if command -v nvidia-smi >/dev/null 2>&1; then

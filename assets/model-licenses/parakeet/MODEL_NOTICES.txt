@@ -1,0 +1,56 @@
+Parakeet model notices and attribution
+======================================
+
+This offline pack redistributes two GGUF model files without further changes by
+ASMR Dubber.  The GGUF conversion work was performed upstream by the CrispASR
+project.  ASMR Dubber is not affiliated with or endorsed by NVIDIA, the model
+authors, Hugging Face, or CrispASR.
+
+1. Parakeet CTC 1.1B Japanese GAL (F16 GGUF)
+
+Distributed file:
+  parakeet-ctc-1.1b-ja-f16.gguf
+
+GGUF source and fixed revision:
+  https://huggingface.co/cstr/parakeet-ctc-1.1b-ja-GGUF
+  7ccb2922f63cefe7c0d2735527c69aa46c05ceb9
+
+Original Japanese model:
+  https://huggingface.co/grider-transwithai/parakeet-ctc-1.1b-ja
+  The GGUF was converted from the GAL checkpoint (parakeet-ja-gal.nemo).
+
+License declared by the original and GGUF repositories:
+  Apache License 2.0.  A complete copy is included as APACHE-2.0.txt.
+
+The GGUF repository notes that the underlying NVIDIA NeMo FastConformer-CTC
+architecture is under CC BY 4.0.  The CC BY 4.0 license is available at:
+  https://creativecommons.org/licenses/by/4.0/legalcode.en
+
+2. NVIDIA Parakeet TDT-CTC 0.6B Japanese (F16 GGUF)
+
+Distributed file:
+  parakeet-tdt-0.6b-ja.gguf
+
+GGUF source and fixed revision:
+  https://huggingface.co/cstr/parakeet-tdt-0.6b-ja-GGUF
+  65341fce2b46d25ea51593b1f771ed9a73cf7108
+
+Original work and attribution:
+  "Parakeet TDT-CTC 0.6B (ja)"
+  Developed by the NVIDIA NeMo team.
+  https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja
+
+License:
+  Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/legalcode.en
+
+Changes from the original work:
+  The upstream CrispASR project converted the NeMo checkpoint to GGUF for its
+  ggml runtime.  ASMR Dubber redistributes that F16 GGUF file without modifying
+  its model bytes.
+
+3. CrispASR runtime
+
+The package also contains the CrispASR runtime used to execute these GGUF files.
+Its own LICENSE and THIRD_PARTY_NOTICES.txt files are retained next to the
+runtime binaries under runtimes/crispasr/bin.

@@ -138,21 +138,45 @@ if (-not (Test-Path $IndexCli)) {
     throw "IndexTTS2 CLI 安装后不存在：$IndexCli"
 }
 
-Write-Host "正在通过 ModelScope 下载/续传 IndexTTS2 官方模型（约 11 GB）..." `
-    -ForegroundColor Cyan
-$env:USE_MODELSCOPE = "true"
-$Download = Invoke-Process -FilePath $IndexCli `
-    -ArgumentList @("download", "--source", "modelscope", "--model-dir", $ModelDir) `
-    -WorkingDirectory $RuntimeRoot
-if ($Download.ExitCode -ne 0) {
-    Write-Warning "ModelScope 不可用，改用 Hugging Face 镜像续传。"
-    $env:USE_MODELSCOPE = "false"
-    $Download = Invoke-Process -FilePath $IndexCli `
-        -ArgumentList @("download", "--source", "auto", "--model-dir", $ModelDir) `
-        -WorkingDirectory $RuntimeRoot
+function Test-IndexTTSCheckpointsComplete {
+    $ValidationScript = @'
+import sys
+from pathlib import Path
+
+from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
+
+model_dir = Path(sys.argv[1])
+files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
+dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
+print("ready" if files_ready and dirs_ready else "missing")
+'@
+    $AppPython = [string]$Paths.Python
+    $ValidationResult = & $AppPython -c $ValidationScript $ModelDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法读取 IndexTTS2 checkpoints 必需资源定义。"
+    }
+    return ([string]$ValidationResult).Trim() -eq "ready"
 }
-if ($Download.ExitCode -ne 0) {
-    throw "IndexTTS2 模型下载失败（退出码 $($Download.ExitCode)）。"
+
+if (Test-IndexTTSCheckpointsComplete) {
+    Write-Host "IndexTTS2 本地 checkpoints 已完整，无需联网下载。" -ForegroundColor Green
+} else {
+    Write-Host "正在通过 ModelScope 下载/续传 IndexTTS2 官方模型（约 11 GB）..." `
+        -ForegroundColor Cyan
+    $env:USE_MODELSCOPE = "true"
+    $Download = Invoke-Process -FilePath $IndexCli `
+        -ArgumentList @("download", "--source", "modelscope", "--model-dir", $ModelDir) `
+        -WorkingDirectory $RuntimeRoot
+    if ($Download.ExitCode -ne 0) {
+        Write-Warning "ModelScope 不可用，改用 Hugging Face 镜像续传。"
+        $env:USE_MODELSCOPE = "false"
+        $Download = Invoke-Process -FilePath $IndexCli `
+            -ArgumentList @("download", "--source", "auto", "--model-dir", $ModelDir) `
+            -WorkingDirectory $RuntimeRoot
+    }
+    if ($Download.ExitCode -ne 0) {
+        throw "IndexTTS2 模型下载失败（退出码 $($Download.ExitCode)）。"
+    }
 }
 
 $Device = if (Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue) { "cuda" } else { "cpu" }

@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import pytest
@@ -12,9 +13,11 @@ from asmr_dubber.ui import (
     _INDEXTTS_REQUIRED_DIRS,
     _INDEXTTS_REQUIRED_FILES,
     _cache_component_defaults,
+    _install_backend_log_events,
     _output_audio,
     _projects_root,
     indextts_installation_status,
+    offline_model_pack_markdown,
     reference_picker_data,
     save_reference_sentence,
 )
@@ -173,4 +176,106 @@ def test_settings_show_split_backend_tables_and_page_reset_buttons() -> None:
 
     assert "ASR 后端兼容性与安装状态" in labels
     assert "TTS 后端兼容性与安装状态" in labels
+    assert "离线模型包导入日志" in labels
     assert values.count("重置本页为默认值（需保存）") == 5
+
+
+def test_offline_model_pack_status_names_the_well_known_inbox(monkeypatch, tmp_path: Path) -> None:
+    inbox = tmp_path / "model-packs"
+    monkeypatch.setattr("asmr_dubber.ui.model_pack_directory", lambda: inbox)
+
+    text = offline_model_pack_markdown()
+
+    assert str(inbox) in text
+    assert "未发现 ZIP" in text
+
+
+def test_backend_install_log_stream_yields_output_and_heartbeats() -> None:
+    release = Event()
+
+    def fake_installer(_backend_id: str, *, log_callback) -> str:
+        log_callback("下载第一部分")
+        assert release.wait(timeout=2)
+        log_callback("下载第二部分")
+        return "安装完成"
+
+    events = _install_backend_log_events(
+        "test_backend",
+        installer=fake_installer,
+        heartbeat_seconds=0.05,
+    )
+
+    initial = next(events)
+    first_log = next(events)
+    heartbeat = next(events)
+    release.set()
+    remaining = list(events)
+
+    assert initial[1:] == (False, True)
+    assert "下载第一部分" in first_log[0]
+    assert "仍在安装中" in heartbeat[0]
+    assert remaining[-1][1:] == (True, True)
+    assert "下载第二部分" in remaining[-1][0]
+    assert "安装完成" in remaining[-1][0]
+
+
+def test_backend_install_log_stream_finishes_on_error() -> None:
+    def failing_installer(_backend_id: str, *, log_callback) -> str:
+        log_callback("已经开始")
+        raise RuntimeError("模拟安装失败")
+
+    events = list(
+        _install_backend_log_events(
+            "test_backend",
+            installer=failing_installer,
+            heartbeat_seconds=0.05,
+        )
+    )
+
+    assert events[-1][1:] == (True, False)
+    assert "安装失败" in events[-1][0]
+    assert "模拟安装失败" in events[-1][0]
+
+
+def test_backend_install_events_are_streamed_and_use_an_independent_queue() -> None:
+    pytest.importorskip("gradio")
+    app = ui_module.build_app()
+    functions = {function.name: function for function in app.fns.values()}
+
+    for name in (
+        "install_asr_backend_callback",
+        "install_tts_backend_callback",
+        "import_offline_packs_callback",
+    ):
+        function = functions[name]
+        dependency = next(item for item in app.config["dependencies"] if item["api_name"] == name)
+        assert function.concurrency_id == "backend_install"
+        assert function.concurrency_limit == 1
+        assert dependency["types"]["generator"] is True
+        assert dependency["show_progress"] == "minimal"
+
+    assert functions["new_callback"].concurrency_id == "asmr_dubber_pipeline"
+    component_ids = {
+        getattr(component, "label", None): component._id for component in app.blocks.values()
+    }
+    asr_dependency = next(
+        item
+        for item in app.config["dependencies"]
+        if item["api_name"] == "install_asr_backend_callback"
+    )
+    tts_dependency = next(
+        item
+        for item in app.config["dependencies"]
+        if item["api_name"] == "install_tts_backend_callback"
+    )
+    assert component_ids["ASR 后端兼容性与安装状态"] in asr_dependency["outputs"]
+    assert component_ids["TTS 后端兼容性与安装状态"] in tts_dependency["outputs"]
+
+
+def test_install_profile_help_matches_setup_profiles() -> None:
+    source = Path(ui_module.__file__).read_text(encoding="utf-8")
+
+    assert "Recommended | Parakeet 1.1B/0.6B + IndexTTS2" in source
+    assert "Advanced | Recommended + Kotoba v2.2 + Faster-Whisper large-v2" in source
+    assert "Full | Advanced + 其余已集成且可自动安装的本地后端" in source
+    assert "bash scripts/linux/setup.sh <档位>" in source

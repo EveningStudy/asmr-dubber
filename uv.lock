@@ -172,7 +172,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/8e/25/4422cf7777c0cedd2
 
 [[package]]
 name = "asmr-dubber"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "av" },

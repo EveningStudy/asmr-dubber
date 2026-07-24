@@ -14,7 +14,7 @@ bash scripts/linux/run-cli.sh doctor --no-network
 
 ## Windows 启动器无法运行
 
-确认 `ASMR-Dubber.exe`、`ASMR-Dubber-Setup.exe` 和 `mirrors.json` 位于项目根目录，且 `scripts/windows/setup.ps1` 和 `scripts/windows/run-ui.ps1` 存在。首次安装或修复依赖运行 `ASMR-Dubber-Setup.exe`；启动网页运行 `ASMR-Dubber.exe`。下载的未签名 Release 可能触发 SmartScreen 来源提示；请只从可信 Release 获取启动器。高级用户仍可运行 `./scripts/windows/setup.ps1 -Profile Recommended`。
+确认 `ASMR-Dubber.exe`、`ASMR-Dubber-Setup.exe` 和 `mirrors.json` 位于项目根目录，且 `scripts/windows/setup.ps1` 和 `scripts/windows/run-ui.ps1` 存在。首次安装或修复依赖运行 `ASMR-Dubber-Setup.exe`；启动网页运行 `ASMR-Dubber.exe`。下载的未签名 Release 可能触发 SmartScreen 来源提示；请只从可信 Release 获取启动器。高级用户仍可运行 `./scripts/windows/setup.ps1 -Profile Recommended`，也可把 Profile 改为 Core、Advanced 或 Full。
 
 ## 找不到 Python 或 Conda
 
@@ -41,7 +41,7 @@ WSL 只需要 Windows NVIDIA 驱动，不要在 WSL 内安装内核驱动。
 
 ## Parakeet 未安装或模型不可切换
 
-`Recommended` 会安装 1.1B CTC GAL 和 0.6B TDT/CTC。也可单独执行：
+`Recommended` 及更高档位会安装 1.1B CTC GAL 和 0.6B TDT/CTC。也可单独执行：
 
 ```powershell
 ./scripts/windows/install-parakeet.ps1 -Variant Auto

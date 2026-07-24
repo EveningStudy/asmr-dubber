@@ -212,6 +212,21 @@ def _indextts_cli(project: DubProject) -> Path | None:
     return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
+def _indextts_command(project: DubProject) -> list[str] | None:
+    """Prefer the relocatable venv interpreter over an absolute-path EXE shim."""
+    model_dir = Path(project.settings.tts_model_path).expanduser().resolve()
+    runtime_root = model_dir.parent
+    python_candidates = (
+        runtime_root / ".venv" / "Scripts" / "python.exe",
+        runtime_root / ".venv" / "bin" / "python",
+    )
+    python = next((candidate for candidate in python_candidates if candidate.is_file()), None)
+    if python is not None:
+        return [str(python), "-m", "indextts.cli_v2"]
+    executable = _indextts_cli(project)
+    return [str(executable)] if executable is not None else None
+
+
 def _synthesize_indextts_cli_batch(
     project: DubProject,
     project_dir: Path,
@@ -222,8 +237,8 @@ def _synthesize_indextts_cli_batch(
 ) -> list[str]:
     project_dir = project_dir.resolve()
     source = source.resolve()
-    executable = _indextts_cli(project)
-    if executable is None:
+    command_prefix = _indextts_command(project)
+    if command_prefix is None:
         raise SynthesisError(
             "找不到 IndexTTS2 独立运行环境。请把模型放在官方仓库的 checkpoints 目录，"
             "并在该仓库运行 uv sync。"
@@ -263,7 +278,7 @@ def _synthesize_indextts_cli_batch(
         tasks.append((sentence, reference, output))
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
     command = [
-        str(executable),
+        *command_prefix,
         "batch",
         "--batch-file",
         str(manifest),
@@ -607,7 +622,7 @@ def synthesize_with_selected_backend(
         if progress:
             progress("中文配音缓存完整，无需重新生成", 1, 1)
         return []
-    if project.settings.tts_backend == "indextts2" and _indextts_cli(project) is not None:
+    if project.settings.tts_backend == "indextts2" and _indextts_command(project) is not None:
         return _synthesize_indextts_cli_batch(
             project,
             project_dir,

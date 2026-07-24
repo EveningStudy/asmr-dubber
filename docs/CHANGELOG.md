@@ -14,6 +14,24 @@
 
 - 精简 README 中重复的开发和网络说明。
 
+## [0.2.1] - 2026-07-24
+
+### Changed
+
+- 安装配置调整为 Core、Recommended、Advanced 和 Full 四档；Advanced 增加
+  Kotoba-Whisper v2.2 与 Faster-Whisper large-v2。
+- Recommended 聚焦 Parakeet 与 IndexTTS2；安装器同时显示预计占用和建议预留空间。
+
+### Added
+
+- 新增带文件级 SHA-256 校验的离线模型包；Setup 可按档位自动导入，
+  设备与模型页也可手动扫描。
+
+### Fixed
+
+- ASR/TTS 后端安装日志改为实时流式输出，并使用独立队列，不再长时间停在转圈状态。
+- 已完整安装的 Parakeet 会在本地校验后直接复用，不再重复联网下载。
+
 ## [0.4.0] - 2026-07-23
 
 ### Added
