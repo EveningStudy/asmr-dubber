@@ -84,36 +84,67 @@ Write-Host "项目目录：$Root"
 Write-Host "便携目录：$DataRoot"
 Write-Host "安装配置：$Profile"
 
-if (-not (Test-Path $Uv)) {
-    Write-Host "正在安装项目私有 uv（不会修改系统 PATH）..." -ForegroundColor Cyan
-    $InstallerUrls = Get-ASMRDubberMirrorList `
-        -Configuration $MirrorConfiguration -Name "uv_installers_windows"
-    $Installer = Get-ASMRDubberTextDownload `
-        -Configuration $MirrorConfiguration -Urls $InstallerUrls
-    $InstallerPath = Join-Path $Bootstrap "uv-installer.ps1"
-    Set-Content -Path $InstallerPath -Value $Installer -Encoding utf8NoBOM
-    $UvArchive = "https://github.com/astral-sh/uv/releases/download/" +
-        "0.11.30/uv-x86_64-pc-windows-msvc.zip"
-    $CurrentPowerShell = (Get-Process -Id $PID).Path
-    foreach ($Candidate in Get-ASMRDubberGitHubUrls `
-        -Configuration $MirrorConfiguration -Url $UvArchive) {
-        Write-Host "使用 uv 下载源：$Candidate" -ForegroundColor DarkGray
-        $env:UV_DOWNLOAD_URL = $Candidate
-        $ExitCode = Invoke-ASMRDubberProcess -FilePath $CurrentPowerShell `
-            -ArgumentList @(
-                "-NoLogo", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-File", $InstallerPath
-            ) -WorkingDirectory $Root
-        if ($ExitCode -eq 0 -and (Test-Path $Uv)) {
-            break
-        }
-        Write-Warning "当前 uv 下载源失败，自动切换。"
+function Test-PortableUv {
+    if (-not (Test-Path $Uv)) {
+        return $false
     }
-    Remove-Item Env:\UV_DOWNLOAD_URL -ErrorAction SilentlyContinue
+    try {
+        $ExitCode = Invoke-ASMRDubberProcess -FilePath $Uv `
+            -ArgumentList @("--version") -WorkingDirectory $Root
+        return $ExitCode -eq 0
+    } catch {
+        return $false
+    }
 }
-if (-not (Test-Path $Uv)) {
+
+if (-not (Test-PortableUv)) {
+    if (Test-Path $Uv) {
+        Write-Warning "项目内置 uv 已损坏，将重新下载并修复。"
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $UvDir
+        New-Item -ItemType Directory -Force -Path $UvDir | Out-Null
+    } else {
+        Write-Host "项目未包含可用的 uv，正在下载修复副本..." -ForegroundColor Cyan
+    }
+
+    $UvArchive = Join-Path $Bootstrap "uv-x86_64-pc-windows-msvc.zip"
+    $UvStaging = Join-Path $Bootstrap "uv-extract"
+    $UvSha256 = "be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e"
+    $UvInstalled = $false
+    foreach ($ArchiveUrl in Get-ASMRDubberMirrorList `
+        -Configuration $MirrorConfiguration -Name "uv_archives_windows") {
+        try {
+            Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+                -Url $ArchiveUrl -Destination $UvArchive -Sha256 $UvSha256 -Resume |
+                Out-Null
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $UvStaging
+            New-Item -ItemType Directory -Force -Path $UvStaging | Out-Null
+            Expand-Archive -Path $UvArchive -DestinationPath $UvStaging -Force
+            $DownloadedUv = Get-ChildItem $UvStaging -Filter "uv.exe" -File -Recurse |
+                Select-Object -First 1
+            if (-not $DownloadedUv) {
+                throw "uv 压缩包中找不到 uv.exe。"
+            }
+            New-Item -ItemType Directory -Force -Path $UvDir | Out-Null
+            Copy-Item -Force (Join-Path $DownloadedUv.Directory.FullName "*.exe") $UvDir
+            if (Test-PortableUv) {
+                $UvInstalled = $true
+                break
+            }
+            throw "下载的 uv 无法运行。"
+        } catch {
+            Write-Warning "uv 下载源失败：$($_.Exception.Message)"
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $UvStaging
+        }
+    }
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $UvStaging
+    if (-not $UvInstalled) {
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $UvDir
+    }
+}
+if (-not (Test-PortableUv)) {
     throw "uv 安装失败：$Uv"
 }
+Write-Host "项目私有 uv 已就绪。" -ForegroundColor Green
 
 Write-Host "正在准备项目私有 Python 3.12..." -ForegroundColor Cyan
 $ManagedPython = Get-ChildItem `

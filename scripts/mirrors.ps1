@@ -36,10 +36,19 @@ function Get-ASMRDubberMirrorList {
         "huggingface_endpoints" { @("https://huggingface.co") }
         "pytorch_indexes" { @("https://download.pytorch.org/whl/cu130") }
         "github_proxy_prefixes" { @("") }
+        "uv_archives_windows" {
+            @(
+                "https://releases.astral.sh/github/uv/releases/download/" +
+                "0.11.30/uv-x86_64-pc-windows-msvc.zip"
+            )
+        }
         "uv_installers_windows" { @("https://astral.sh/uv/0.11.30/install.ps1") }
         "uv_installers_linux" { @("https://astral.sh/uv/0.11.30/install.sh") }
         "python_install_mirrors" {
-            @("https://github.com/astral-sh/python-build-standalone/releases/download")
+            @(
+                "https://releases.astral.sh/github/python-build-standalone/releases/download",
+                "https://github.com/astral-sh/python-build-standalone/releases/download"
+            )
         }
         default { @() }
     }
@@ -95,29 +104,32 @@ function Invoke-ASMRDubberDownload {
 
     $Candidates = Get-ASMRDubberGitHubUrls -Configuration $Configuration -Url $Url
     $Partial = "$Destination.partial"
+    $PartialPath = [System.IO.Path]::GetFullPath($Partial)
+    $Curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+    if (-not $Curl) {
+        throw "Windows 缺少 curl.exe，无法下载文件。"
+    }
     $Errors = New-Object System.Collections.Generic.List[string]
     foreach ($Candidate in $Candidates) {
         Write-Host "尝试下载：$Candidate" -ForegroundColor Cyan
         $Arguments = @(
             "-L", "--fail", "--retry", "3", "--retry-all-errors",
-            "--connect-timeout", "20", "--output", $Partial
+            "--connect-timeout", "20", "--output", $PartialPath
         )
         if ($Resume -and (Test-Path $Partial)) {
             $Arguments += @("-C", "-")
         }
         $Arguments += $Candidate
-        $global:LASTEXITCODE = 0
-        & curl.exe @Arguments
-        $ExitCode = $global:LASTEXITCODE
+        $ExitCode = Invoke-ASMRDubberProcess -FilePath $Curl.Source `
+            -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path
         if ($ExitCode -eq 33 -and $Resume) {
             Remove-Item -Force -ErrorAction SilentlyContinue $Partial
             $Arguments = @(
                 "-L", "--fail", "--retry", "3", "--retry-all-errors",
-                "--connect-timeout", "20", "--output", $Partial, $Candidate
+                "--connect-timeout", "20", "--output", $PartialPath, $Candidate
             )
-            $global:LASTEXITCODE = 0
-            & curl.exe @Arguments
-            $ExitCode = $global:LASTEXITCODE
+            $ExitCode = Invoke-ASMRDubberProcess -FilePath $Curl.Source `
+                -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path
         }
         if ($ExitCode -eq 0 -and (Test-Path $Partial)) {
             Move-Item -Force $Partial $Destination

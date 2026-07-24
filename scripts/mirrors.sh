@@ -18,6 +18,7 @@ fallbacks = {
     "github_proxy_prefixes": [""],
     "uv_installers_linux": ["https://astral.sh/uv/0.11.30/install.sh"],
     "python_install_mirrors": [
+        "https://releases.astral.sh/github/python-build-standalone/releases/download",
         "https://github.com/astral-sh/python-build-standalone/releases/download"
     ],
 }
@@ -52,11 +53,13 @@ PY
       ;;
     python_install_mirrors)
       printf '%s\n' \
-        "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download" \
+        "https://releases.astral.sh/github/python-build-standalone/releases/download" \
+        "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download" \
+        "https://ghproxy.net/https://github.com/astral-sh/python-build-standalone/releases/download" \
         "https://github.com/astral-sh/python-build-standalone/releases/download"
       ;;
     github_proxy_prefixes)
-      printf '%s\n' "https://gh-proxy.com/" "https://gh.llkk.cc/" ""
+      printf '%s\n' "https://ghfast.top/" "https://ghproxy.net/" ""
       ;;
     uv_installers_linux)
       printf '%s\n' "https://astral.sh/uv/0.11.30/install.sh"

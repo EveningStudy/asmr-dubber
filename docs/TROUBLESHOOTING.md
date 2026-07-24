@@ -31,7 +31,7 @@ WSL 只需要 Windows NVIDIA 驱动，不要在 WSL 内安装内核驱动。
 
 ## 下载失败
 
-- Windows 直接重跑 `ASMR-Dubber-Setup.exe`；Linux 重跑 setup 脚本。uv、Hugging Face、Parakeet 和 IndexTTS2 会复用已完成文件。
+- Windows Release 便携包已内置固定版本的 uv 和基础 Python 3.12，不需要在首次安装时从 GitHub 获取这两项。直接重跑 `ASMR-Dubber-Setup.exe`；Linux 重跑 setup 脚本。Hugging Face、Parakeet 和 IndexTTS2 会复用已完成文件。
 - 编辑根目录 `mirrors.json` 可调整镜像顺序。各类地址会按顺序尝试，最后回退官方源；只添加自己信任的 HTTPS 镜像。
 - 代理使用标准 `HTTP_PROXY` / `HTTPS_PROXY`。
 - WSL 网络正常时可设置 `ASMR_DUBBER_WINDOWS_BRIDGE=0` 禁用临时网络桥。

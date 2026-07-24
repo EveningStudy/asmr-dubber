@@ -12,6 +12,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
       - name: Build Windows launcher
         shell: pwsh
         run: ./launcher/windows/build.ps1
@@ -23,6 +26,20 @@ jobs:
           Get-ChildItem -Force | Where-Object {
             $_.Name -notin @(".git", ".asmr-dubber", "dist")
           } | Copy-Item -Destination $staging -Recurse -Force
+          $portable = Join-Path $staging ".asmr-dubber"
+          $uvDir = Join-Path $portable "bootstrap\windows\uv"
+          $pythonDir = Join-Path $portable "runtimes\python"
+          New-Item -ItemType Directory -Force $uvDir, $pythonDir | Out-Null
+          Copy-Item (Get-Command uv.exe).Source (Join-Path $uvDir "uv.exe") -Force
+          $env:UV_PYTHON_INSTALL_DIR = $pythonDir
+          $env:UV_CACHE_DIR = Join-Path $env:RUNNER_TEMP "uv-python-cache"
+          uv python install 3.12 --managed-python --no-bin
+          if (-not (Test-Path (Join-Path $uvDir "uv.exe"))) {
+            throw "Portable archive is missing uv.exe."
+          }
+          if (-not (Get-ChildItem $pythonDir -Filter "python.exe" -File -Recurse)) {
+            throw "Portable archive is missing Python 3.12."
+          }
           Compress-Archive -Path $staging `
             -DestinationPath "ASMR-Dubber-windows-portable.zip"
       - uses: actions/upload-artifact@v4

@@ -139,3 +139,19 @@ def test_launchers_use_project_portable_home() -> None:
     assert "APPDATA" not in combined
     assert "XDG_DATA_HOME" not in combined
     assert "XDG_CONFIG_HOME" not in combined
+
+
+def test_windows_portable_release_bundles_bootstrap_runtime() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    setup = (root / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    mirrors = json.loads((root / "mirrors.json").read_text(encoding="utf-8"))
+
+    assert 'version: "0.11.30"' in workflow
+    assert 'Join-Path $portable "bootstrap\\windows\\uv"' in workflow
+    assert 'Join-Path $portable "runtimes\\python"' in workflow
+    assert "uv python install 3.12 --managed-python --no-bin" in workflow
+    assert "uv_archives_windows" in setup
+    assert "be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e" in setup
+    assert mirrors["uv_archives_windows"][0].startswith("https://releases.astral.sh/")
+    assert mirrors["python_install_mirrors"][0].startswith("https://releases.astral.sh/")
