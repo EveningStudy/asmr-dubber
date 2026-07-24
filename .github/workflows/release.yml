@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: ["main"]
 
 permissions:
   contents: write
@@ -12,6 +12,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 989a5248671e61481f6bbfeaa4e9121145e97ebf
       - name: Build Windows launcher
         shell: pwsh
         run: ./launcher/windows/build.ps1
@@ -36,25 +38,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 989a5248671e61481f6bbfeaa4e9121145e97ebf
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.30"
-      - name: Verify tag matches package version
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Verify package version
         run: |
           python - <<'PY'
-          import os
           import tomllib
           from pathlib import Path
 
           version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
-          expected = f"v{version}"
-          if os.environ["RELEASE_TAG"] != expected:
-              raise SystemExit(f"tag {os.environ['RELEASE_TAG']} does not match {expected}")
+          if version != "0.2.0":
+              raise SystemExit(f"package version {version} does not match 0.2.0")
           PY
       - name: Build and validate distributions
         run: |
@@ -68,7 +68,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "${GITHUB_REF_NAME}"
+          gh release create "v0.2.0"
           dist/*
           release-assets/ASMR-Dubber-windows-portable.zip
-          --verify-tag
+          --target "989a5248671e61481f6bbfeaa4e9121145e97ebf"
+          --title "v0.2.0"
+          --notes ""
