@@ -48,6 +48,12 @@ function Install-ASMRDubberSharedFFmpeg {
         )
     )
 
+    if (-not (Get-Command Get-ASMRDubberMirrorConfiguration -ErrorAction SilentlyContinue)) {
+        $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        . (Join-Path $Root "scripts\mirrors.ps1")
+    }
+    $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
     $Existing = Enable-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
     if ($Existing) {
         return $Existing
@@ -65,7 +71,8 @@ function Install-ASMRDubberSharedFFmpeg {
     New-Item -ItemType Directory -Force -Path $DownloadRoot | Out-Null
 
     Write-Host "正在获取共享版 FFmpeg 校验信息..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsFile -UseBasicParsing
+    Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+        -Url $ChecksumsUrl -Destination $ChecksumsFile | Out-Null
     $ChecksumLine = Get-Content $ChecksumsFile | Where-Object {
         $_ -match ("^[0-9a-fA-F]{64}\s+" + [Regex]::Escape($AssetName) + "$")
     } | Select-Object -First 1
@@ -81,8 +88,8 @@ function Install-ASMRDubberSharedFFmpeg {
     }
     if ($NeedsDownload) {
         Write-Host "正在下载便携式 LGPL shared FFmpeg（约 70 MB）..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $AssetUrl -OutFile "$Archive.partial" -UseBasicParsing
-        Move-Item -Force "$Archive.partial" $Archive
+        Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+            -Url $AssetUrl -Destination $Archive -Resume | Out-Null
     }
     $ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($ActualHash -ne $ExpectedHash) {

@@ -1333,27 +1333,22 @@ def build_app() -> Any:
 
                     with gr.Tab("下载与网络", id="download_network"):
                         gr.Markdown(
-                            "留空时使用官方源。国内网络可填写自己信任的镜像或代理地址；"
-                            "这些地址只用于下载依赖和模型，不会随项目导出。"
+                            "留空时按项目根目录 `mirrors.json` 的顺序自动尝试国内镜像和官方源。"
+                            "这里填写的地址会作为个人首选源，只用于下载依赖和模型。"
                         )
                         huggingface_endpoint = gr.Textbox(
                             label="Hugging Face Endpoint",
                             value=stored.huggingface_endpoint,
-                            placeholder="例如自建或可信镜像的 https://...；留空使用官方源",
+                            placeholder="可选：个人首选的 https://... 地址",
                             info="用于内置 Qwen/VoxCPM 模型下载，保存后下次安装立即生效。",
                         )
                         pypi_index_url = gr.Textbox(
                             label="Python 包索引",
                             value=stored.pypi_index_url,
-                            placeholder="https://pypi.org/simple",
-                            info="用于界面内安装 ASR/TTS 后端依赖；留空使用官方 PyPI。",
+                            placeholder="可选：个人首选的 PyPI /simple 地址",
+                            info="用于界面内安装 ASR/TTS 后端依赖；失败后自动切换 mirrors.json。",
                         )
-                        gr.Markdown(
-                            "首次安装尚未进入界面时，可使用：  \n"
-                            "Windows：`./scripts/windows/setup.ps1 -IndexUrl <镜像地址>`  \n"
-                            "Linux：先设置 `UV_DEFAULT_INDEX=<镜像地址>`，再运行 "
-                            "`bash scripts/linux/setup.sh`。"
-                        )
+                        gr.Markdown("首次安装尚未进入界面时，直接编辑根目录 `mirrors.json`。")
 
                     with gr.Tab("总设置", id="general_settings"):
                         settings_projects_root = gr.Textbox(

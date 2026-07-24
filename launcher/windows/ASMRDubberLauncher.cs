@@ -12,8 +12,8 @@ using System.Threading;
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("0.4.0.0")]
-[assembly: AssemblyFileVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.1.0.0")]
+[assembly: AssemblyFileVersion("0.1.0.0")]
 
 namespace ASMRDubberLauncher
 {
@@ -36,13 +36,6 @@ namespace ASMRDubberLauncher
                 WriteSelfTest(root, args[1]);
                 return 0;
             }
-            if (args.Length == 2 && args[0] == "--test-profile-prompt")
-            {
-                string selected = PromptForProfile();
-                File.WriteAllText(args[1], selected, new UTF8Encoding(false));
-                return 0;
-            }
-
             bool created;
             using (Mutex mutex = new Mutex(true, MutexName, out created))
             {
@@ -81,9 +74,8 @@ namespace ASMRDubberLauncher
 
         private static int Run(string root)
         {
-            string setupScript = Path.Combine(root, "scripts", "windows", "setup.ps1");
             string runScript = Path.Combine(root, "scripts", "windows", "run-ui.ps1");
-            if (!File.Exists(setupScript) || !File.Exists(runScript))
+            if (!File.Exists(runScript))
             {
                 throw new FileNotFoundException(
                     "项目文件不完整。请保持 ASMR-Dubber.exe 位于项目根目录，并重新下载 scripts 目录。");
@@ -92,23 +84,12 @@ namespace ASMRDubberLauncher
             PrintHeader();
             if (!IsInstalled(root))
             {
-                string profile = PromptForProfile();
+                WriteError("程序依赖未安装、安装未完成或已经损坏。");
+                Console.WriteLine("请运行项目根目录的 ASMR-Dubber-Setup.exe 进行安装或修复。");
                 Console.WriteLine();
-                WriteInfo("开始安装 " + profile + "。安装文件全部保存在当前项目目录。");
-                Console.WriteLine("项目目录：" + root);
-                Console.WriteLine();
-
-                int setupExitCode = RunPowerShellAndWait(
-                    root,
-                    setupScript,
-                    "-Profile " + profile);
-                if (setupExitCode != 0 || !IsInstalled(root))
-                {
-                    throw new InvalidOperationException(
-                        "安装未完成，退出码 " + setupExitCode + "。可以再次双击 EXE 续传和重试。");
-                }
-                Console.WriteLine();
-                WriteSuccess("安装完成。");
+                Console.WriteLine("按任意键关闭窗口。");
+                Console.ReadKey(true);
+                return 2;
             }
 
             if (ServerResponds())
@@ -167,87 +148,40 @@ namespace ASMRDubberLauncher
             Console.WriteLine();
         }
 
-        private static string PromptForProfile()
-        {
-            Console.WriteLine("首次运行，请选择安装配置：");
-            Console.WriteLine();
-
-            WriteChoice(
-                "1",
-                "Core · 最小安装",
-                "只安装程序、网页界面和基础音频依赖，不下载大型 ASR/TTS 权重。");
-            Console.WriteLine(
-                "     安装完成后，需要在软件的“设置 → 设备与模型”中安装所需模型。");
-            Console.WriteLine();
-
-            WriteChoice(
-                "2",
-                "Recommended · 推荐安装",
-                "安装 Parakeet 1.1B/0.6B、Kotoba/Faster-Whisper 运行依赖；");
-            Console.WriteLine(
-                "     NVIDIA 设备还会安装 IndexTTS2，约需 30 GB。其他模型仍可在软件内按需安装。");
-            Console.WriteLine();
-
-            WriteChoice(
-                "3",
-                "Full · 完整依赖",
-                "包含 Recommended，并准备 Qwen3-ASR、ForcedAligner、VoxCPM2 权重");
-            Console.WriteLine(
-                "     以及更多 ASR 运行依赖。外部服务和未选择的模型仍需在软件内配置。");
-            Console.WriteLine();
-
-            while (true)
-            {
-                Console.Write("请输入 1、2 或 3（直接回车使用 Recommended）：");
-                string input = Console.ReadLine();
-                if (input == null)
-                {
-                    throw new InvalidOperationException("没有收到安装配置输入。");
-                }
-                input = input.Trim();
-                if (input == "1")
-                {
-                    return "Core";
-                }
-                if (input == "" || input == "2")
-                {
-                    return "Recommended";
-                }
-                if (input == "3")
-                {
-                    return "Full";
-                }
-                WriteError("输入无效，请输入 1、2 或 3。");
-            }
-        }
-
-        private static void WriteChoice(string number, string title, string description)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write("  [" + number + "] " + title);
-            Console.ResetColor();
-            Console.WriteLine();
-            Console.WriteLine("     " + description);
-        }
-
         private static bool IsInstalled(string root)
         {
-            return File.Exists(Path.Combine(
-                       root, ".asmr-dubber", "venv", "Scripts", "python.exe"))
-                && File.Exists(Path.Combine(
-                       root, ".asmr-dubber", "venv", "Scripts", "asmr-dubber.exe"));
-        }
-
-        private static int RunPowerShellAndWait(
-            string root,
-            string script,
-            string arguments)
-        {
-            activeProcess = StartPowerShell(root, script, arguments);
-            activeProcess.WaitForExit();
-            int exitCode = activeProcess.ExitCode;
-            activeProcess = null;
-            return exitCode;
+            string python = Path.Combine(
+                root, ".asmr-dubber", "venv", "Scripts", "python.exe");
+            if (!File.Exists(python)
+                || !File.Exists(Path.Combine(
+                    root, ".asmr-dubber", "venv", "Scripts", "asmr-dubber.exe"))
+                || !Directory.Exists(Path.Combine(
+                    root, ".asmr-dubber", "venv", "Lib", "site-packages", "gradio")))
+            {
+                return false;
+            }
+            try
+            {
+                ProcessStartInfo info = new ProcessStartInfo();
+                info.FileName = python;
+                info.Arguments = "-c \"import asmr_dubber.ui, gradio, av, soundfile\"";
+                info.WorkingDirectory = root;
+                info.UseShellExecute = false;
+                info.CreateNoWindow = true;
+                using (Process check = Process.Start(info))
+                {
+                    if (check == null || !check.WaitForExit(30000))
+                    {
+                        if (check != null) check.Kill();
+                        return false;
+                    }
+                    return check.ExitCode == 0;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static Process StartPowerShell(
@@ -441,20 +375,16 @@ namespace ASMRDubberLauncher
 
         private static void WriteSelfTest(string root, string destination)
         {
-            string setup = Path.Combine(root, "scripts", "windows", "setup.ps1");
             string run = Path.Combine(root, "scripts", "windows", "run-ui.ps1");
-            string python = Path.Combine(
-                root, ".asmr-dubber", "venv", "Scripts", "python.exe");
-            string cli = Path.Combine(
-                root, ".asmr-dubber", "venv", "Scripts", "asmr-dubber.exe");
+            string installer = Path.Combine(root, "ASMR-Dubber-Setup.exe");
             string result = string.Join(
                 Environment.NewLine,
                 new[]
                 {
                     "root=" + root,
-                    "setup=" + File.Exists(setup),
                     "run=" + File.Exists(run),
-                    "installed=" + (File.Exists(python) && File.Exists(cli)),
+                    "setup_exe=" + File.Exists(installer),
+                    "installed=" + IsInstalled(root),
                     "powershell=" + (FindPowerShell() ?? ""),
                 });
             File.WriteAllText(destination, result, new UTF8Encoding(false));

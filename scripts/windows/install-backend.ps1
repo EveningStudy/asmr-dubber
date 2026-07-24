@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("qwen3_asr", "faster_whisper", "kotoba_whisper", "openai_whisper", "funasr", "voxcpm2")]
     [string]$Backend,
-    [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu130"
+    [string]$TorchIndexUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,15 +15,20 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
+. (Join-Path $Root "scripts\mirrors.ps1")
+$MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
 $DataRoot = $Paths.Home
 $Uv = $Paths.Uv
 $Python = $Paths.Python
 if (-not (Test-Path $Uv) -or -not (Test-Path $Python)) {
-    throw "缺少应用安装环境；请先双击项目根目录的 ASMR-Dubber.exe。"
+    throw "缺少应用安装环境；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 
 $env:UV_LINK_MODE = "copy"
+$PreferredIndex = if ($env:ASMR_DUBBER_PYPI_MIRROR) {
+    $env:ASMR_DUBBER_PYPI_MIRROR
+} else { "" }
 
 $Extra = switch ($Backend) {
     "qwen3_asr" { "local-default" }
@@ -75,19 +80,18 @@ if ($Extra -eq "local-default") {
         throw "$Backend 需要 NVIDIA GPU；当前机器未检测到 nvidia-smi。"
     }
     Write-Host "检测到 NVIDIA GPU，正在安装 CUDA PyTorch..." -ForegroundColor Cyan
-    Invoke-Checked -FilePath $Uv `
-        -ArgumentList @(
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
+        -IndexOption "--index" -Arguments @(
             "pip", "install", "--python", $Python, "--reinstall",
-            "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130",
-            "--index", $TorchIndexUrl
-        ) `
-        -FailureMessage "CUDA PyTorch 安装失败"
+            "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130"
+        )
 }
 
-Invoke-Checked -FilePath $Uv `
-    -ArgumentList @(
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments @(
         "pip", "install", "--python", $Python, "--editable", "$Root[$Extra]"
-    ) `
-    -FailureMessage "Python 后端安装失败"
+    )
 
 Write-Host "后端运行环境安装完成。请重启 ASMR Dubber 后使用。" -ForegroundColor Green

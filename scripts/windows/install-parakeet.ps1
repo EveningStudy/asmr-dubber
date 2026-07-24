@@ -13,6 +13,11 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
+. (Join-Path $Root "scripts\mirrors.ps1")
+$MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
+$PreferredHuggingFace = if ($env:ASMR_DUBBER_HF_ENDPOINT) {
+    $env:ASMR_DUBBER_HF_ENDPOINT
+} else { "" }
 
 $Version = "v0.8.21"
 $RuntimeRoot = Join-Path $Paths.Runtimes "crispasr"
@@ -24,7 +29,7 @@ New-Item -ItemType Directory -Force `
     -Path $RuntimeBin, $ModelRoot, $DownloadRoot | Out-Null
 
 if (-not (Test-Path $Python)) {
-    throw "缺少项目私有 Python；请先双击项目根目录的 ASMR-Dubber.exe 完成安装。"
+    throw "缺少项目私有 Python；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 
 if ($Variant -eq "Auto") {
@@ -60,26 +65,8 @@ function Get-CheckedDownload {
             Remove-Item -Force $Destination
         }
 
-        Write-Host "下载 $Uri" -ForegroundColor Cyan
-        $CurlArguments = @(
-            "-L", "--fail", "--retry", "5", "--retry-all-errors",
-            "-C", "-", "--output", "$Destination.partial", $Uri
-        )
-        $Curl = Start-Process -FilePath "curl.exe" -ArgumentList $CurlArguments `
-            -NoNewWindow -Wait -PassThru
-        if ($Curl.ExitCode -eq 33) {
-            Remove-Item -Force -ErrorAction SilentlyContinue "$Destination.partial"
-            $CurlArguments = @(
-                "-L", "--fail", "--retry", "5", "--retry-all-errors",
-                "--output", "$Destination.partial", $Uri
-            )
-            $Curl = Start-Process -FilePath "curl.exe" -ArgumentList $CurlArguments `
-                -NoNewWindow -Wait -PassThru
-        }
-        if ($Curl.ExitCode -ne 0) {
-            throw "下载失败：$Uri（curl 退出码 $($Curl.ExitCode)）"
-        }
-        Move-Item -Force "$Destination.partial" $Destination
+        Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+            -Url $Uri -Destination $Destination -Sha256 $Sha256 -Resume | Out-Null
         $Actual = (Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($Actual -eq $Sha256) {
             return
@@ -130,7 +117,10 @@ Invoke-PythonChecked -Arguments @(
     "--filename", "parakeet-ctc-1.1b-ja-f16.gguf",
     "--revision", "7ccb2922f63cefe7c0d2735527c69aa46c05ceb9",
     "--destination", (Join-Path $ModelRoot "parakeet-ctc-1.1b-ja-f16.gguf"),
-    "--minimum-bytes", "2000000000"
+    "--minimum-bytes", "2000000000",
+    "--endpoints", ((Get-ASMRDubberMirrorList `
+        -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
+        -Preferred $PreferredHuggingFace) -join ";")
 ) -FailureMessage "Parakeet 1.1B GAL F16 模型下载失败。"
 
 Invoke-PythonChecked -Arguments @(
@@ -139,7 +129,10 @@ Invoke-PythonChecked -Arguments @(
     "--filename", "parakeet-tdt-0.6b-ja.gguf",
     "--revision", "65341fce2b46d25ea51593b1f771ed9a73cf7108",
     "--destination", (Join-Path $ModelRoot "parakeet-tdt-0.6b-ja.gguf"),
-    "--minimum-bytes", "1000000000"
+    "--minimum-bytes", "1000000000",
+    "--endpoints", ((Get-ASMRDubberMirrorList `
+        -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
+        -Preferred $PreferredHuggingFace) -join ";")
 ) -FailureMessage "Parakeet 0.6B 模型下载失败。"
 
 $SelfTest = Start-Process -FilePath (Join-Path $RuntimeBin "crispasr.exe") `

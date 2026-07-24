@@ -14,6 +14,7 @@ from .constants import (
     OPTIONAL_ASR_MODEL_REVISIONS,
 )
 from .errors import EnvironmentError
+from .mirrors import hf_hub_download_with_fallback
 from .platforms import current_platform
 
 
@@ -167,10 +168,8 @@ def resolve_transformers_model_source(model_id: str) -> tuple[str, str | None]:
             source = str(cached)
         else:
             try:
-                from huggingface_hub import hf_hub_download
-
                 config_path = Path(
-                    hf_hub_download(
+                    hf_hub_download_with_fallback(
                         repo_id=model_id,
                         filename="config.json",
                         revision=revision,

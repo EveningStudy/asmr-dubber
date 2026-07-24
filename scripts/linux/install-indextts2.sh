@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
+source "$ROOT/scripts/mirrors.sh"
+asmr_apply_mirror_environment "$ROOT"
 
 source "$ROOT/scripts/network-bridge.sh"
 asmr_prepare_network
@@ -62,8 +64,7 @@ if [[ "$SOURCE_READY" == 0 ]]; then
   fi
   if [[ "$NEED_DOWNLOAD" == 1 ]]; then
     echo "下载固定版本 IndexTTS2 源码（约 32 MB）..."
-    curl -fL --retry 5 --retry-all-errors "$SOURCE_URL" -o "$ARCHIVE.partial"
-    mv -f "$ARCHIVE.partial" "$ARCHIVE"
+    asmr_download "$ROOT" "$SOURCE_URL" "$ARCHIVE" "$SOURCE_SHA256"
   fi
   ACTUAL_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
   if [[ "$ACTUAL_SHA256" != "$SOURCE_SHA256" ]]; then
@@ -86,7 +87,19 @@ if [[ "$SOURCE_READY" == 0 ]]; then
 fi
 
 echo "安装 IndexTTS2 隔离运行时..."
-(cd "$INDEX_ROOT" && "$ASMR_DUBBER_UV" sync)
+SYNC_READY=0
+while IFS= read -r index; do
+  echo "使用软件源：$index"
+  if (cd "$INDEX_ROOT" && "$ASMR_DUBBER_UV" sync --default-index "$index"); then
+    SYNC_READY=1
+    break
+  fi
+  echo "当前软件源失败，自动切换。" >&2
+done < <(asmr_mirror_list "$ROOT" pypi_indexes)
+if [[ "$SYNC_READY" != 1 ]]; then
+  echo "IndexTTS2 依赖安装失败：所有软件源均不可用。" >&2
+  exit 1
+fi
 
 INDEX_CLI="$INDEX_ROOT/.venv/bin/indextts2"
 if [[ ! -x "$INDEX_CLI" ]]; then
@@ -94,12 +107,13 @@ if [[ ! -x "$INDEX_CLI" ]]; then
   exit 1
 fi
 
-echo "下载或续传 IndexTTS2 模型（约 11 GB）..."
-if ! "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"; then
-  echo "自动下载源不可用，改用 ModelScope。" >&2
-  USE_MODELSCOPE=true \
-    MODELSCOPE_DOWNLOAD_PARALLELS="${MODELSCOPE_DOWNLOAD_PARALLELS:-4}" \
-    "$INDEX_CLI" download --source modelscope --model-dir "$MODEL_DIR"
+echo "通过 ModelScope 下载或续传 IndexTTS2 模型（约 11 GB）..."
+if ! USE_MODELSCOPE=true \
+  MODELSCOPE_DOWNLOAD_PARALLELS="${MODELSCOPE_DOWNLOAD_PARALLELS:-4}" \
+  "$INDEX_CLI" download --source modelscope --model-dir "$MODEL_DIR"; then
+  echo "ModelScope 不可用，改用 Hugging Face 镜像。" >&2
+  HF_ENDPOINT="$(asmr_mirror_list "$ROOT" huggingface_endpoints | head -n 1)" \
+    "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"
 fi
 
 DEVICE="$("$INDEX_ROOT/.venv/bin/python" -c \

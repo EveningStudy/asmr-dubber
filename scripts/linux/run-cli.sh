@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
+source "$ROOT/scripts/mirrors.sh"
+asmr_apply_mirror_environment "$ROOT"
 if [[ ! -x "$ASMR_DUBBER_VENV/bin/asmr-dubber" ]]; then
   echo "尚未安装。请先运行：bash $ROOT/scripts/linux/setup.sh" >&2
   exit 1

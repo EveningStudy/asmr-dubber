@@ -346,9 +346,9 @@ def load_user_settings() -> UserSettings:
     except ValidationError as exc:
         raise ProjectError(f"本地设置校验失败 {path}: {exc}") from exc
     if settings.huggingface_endpoint:
-        os.environ.setdefault("HF_ENDPOINT", settings.huggingface_endpoint)
+        os.environ["HF_ENDPOINT"] = settings.huggingface_endpoint
     if settings.pypi_index_url:
-        os.environ.setdefault("UV_DEFAULT_INDEX", settings.pypi_index_url)
+        os.environ["UV_DEFAULT_INDEX"] = settings.pypi_index_url
     return settings
 
 

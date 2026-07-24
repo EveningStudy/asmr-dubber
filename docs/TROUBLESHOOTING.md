@@ -14,11 +14,11 @@ bash scripts/linux/run-cli.sh doctor --no-network
 
 ## Windows 启动器无法运行
 
-确认 `ASMR-Dubber.exe` 位于项目根目录，且 `scripts/windows/setup.ps1` 和 `scripts/windows/run-ui.ps1` 存在。下载的未签名 Release 可能触发 SmartScreen 来源提示；请只从可信 Release 获取启动器。高级用户仍可运行 `./scripts/windows/setup.ps1 -Profile Recommended`。
+确认 `ASMR-Dubber.exe`、`ASMR-Dubber-Setup.exe` 和 `mirrors.json` 位于项目根目录，且 `scripts/windows/setup.ps1` 和 `scripts/windows/run-ui.ps1` 存在。首次安装或修复依赖运行 `ASMR-Dubber-Setup.exe`；启动网页运行 `ASMR-Dubber.exe`。下载的未签名 Release 可能触发 SmartScreen 来源提示；请只从可信 Release 获取启动器。高级用户仍可运行 `./scripts/windows/setup.ps1 -Profile Recommended`。
 
 ## 找不到 Python 或 Conda
 
-项目使用 `.asmr-dubber` 内的托管 Python，不依赖全局 Python、Conda 或系统 PATH。始终通过`ASMR-Dubber.exe` 或 `scripts/linux/run-ui.sh` 启动。移动项目目录后重新运行安装器；已有模型缓存会复用。
+项目使用 `.asmr-dubber` 内的托管 Python，不依赖全局 Python、Conda 或系统 PATH。Windows 依赖通过 `ASMR-Dubber-Setup.exe` 安装或修复，通过 `ASMR-Dubber.exe` 启动；Linux 使用对应脚本。移动项目目录后重新运行安装器；已有模型缓存会复用。
 
 ## NVIDIA 驱动正常，但 CUDA 不可用
 
@@ -31,8 +31,8 @@ WSL 只需要 Windows NVIDIA 驱动，不要在 WSL 内安装内核驱动。
 
 ## 下载失败
 
-- 直接重跑安装器；uv、Hugging Face、Parakeet 和 IndexTTS2 均会复用已完成文件。
-- 使用可信的 PyPI `/simple` 索引或 Hugging Face endpoint。
+- Windows 直接重跑 `ASMR-Dubber-Setup.exe`；Linux 重跑 setup 脚本。uv、Hugging Face、Parakeet 和 IndexTTS2 会复用已完成文件。
+- 编辑根目录 `mirrors.json` 可调整镜像顺序。各类地址会按顺序尝试，最后回退官方源；只添加自己信任的 HTTPS 镜像。
 - 代理使用标准 `HTTP_PROXY` / `HTTPS_PROXY`。
 - WSL 网络正常时可设置 `ASMR_DUBBER_WINDOWS_BRIDGE=0` 禁用临时网络桥。
 - 镜像文件不完整时切回官方源。

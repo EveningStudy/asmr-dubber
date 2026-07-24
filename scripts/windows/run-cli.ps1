@@ -9,11 +9,19 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
+. (Join-Path $Root "scripts\mirrors.ps1")
+$MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
+$HuggingFaceEndpoints = @(Get-ASMRDubberMirrorList `
+    -Configuration $MirrorConfiguration -Name "huggingface_endpoints")
+$env:ASMR_DUBBER_HF_ENDPOINTS = $HuggingFaceEndpoints -join ";"
+if (-not $env:HF_ENDPOINT) {
+    $env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
+}
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $Python = $Paths.Python
 if (-not (Test-Path $Python)) {
-    throw "尚未安装。请双击项目根目录的 ASMR-Dubber.exe。"
+    throw "尚未安装。请运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 $DataRoot = $Paths.Home
 . (Join-Path $Root "scripts\windows-runtime.ps1")

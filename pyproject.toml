@@ -86,6 +86,8 @@ include = [
   "/scripts",
   "/launcher",
   "/ASMR-Dubber.exe",
+  "/ASMR-Dubber-Setup.exe",
+  "/mirrors.json",
   "/README.md",
   "/LICENSE",
   "/docs",
