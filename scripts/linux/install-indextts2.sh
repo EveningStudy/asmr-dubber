@@ -107,13 +107,31 @@ if [[ ! -x "$INDEX_CLI" ]]; then
   exit 1
 fi
 
-echo "通过 ModelScope 下载或续传 IndexTTS2 模型（约 11 GB）..."
-if ! USE_MODELSCOPE=true \
-  MODELSCOPE_DOWNLOAD_PARALLELS="${MODELSCOPE_DOWNLOAD_PARALLELS:-4}" \
-  "$INDEX_CLI" download --source modelscope --model-dir "$MODEL_DIR"; then
-  echo "ModelScope 不可用，改用 Hugging Face 镜像。" >&2
-  HF_ENDPOINT="$(asmr_mirror_list "$ROOT" huggingface_endpoints | head -n 1)" \
-    "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"
+indextts_checkpoints_complete() {
+  "$PYTHON" - "$MODEL_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
+
+model_dir = Path(sys.argv[1])
+files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
+dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
+raise SystemExit(0 if files_ready and dirs_ready else 1)
+PY
+}
+
+if indextts_checkpoints_complete; then
+  echo "IndexTTS2 本地 checkpoints 已完整，无需联网下载。"
+else
+  echo "通过 ModelScope 下载或续传 IndexTTS2 模型（约 11 GB）..."
+  if ! USE_MODELSCOPE=true \
+    MODELSCOPE_DOWNLOAD_PARALLELS="${MODELSCOPE_DOWNLOAD_PARALLELS:-4}" \
+    "$INDEX_CLI" download --source modelscope --model-dir "$MODEL_DIR"; then
+    echo "ModelScope 不可用，改用 Hugging Face 镜像。" >&2
+    HF_ENDPOINT="$(asmr_mirror_list "$ROOT" huggingface_endpoints | head -n 1)" \
+      "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"
+  fi
 fi
 
 DEVICE="$("$INDEX_ROOT/.venv/bin/python" -c \

@@ -4,9 +4,12 @@ import hashlib
 import inspect
 import math
 import os
+import queue
 import re
+import threading
+import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,11 @@ from .constants import (
 )
 from .errors import AsmrDubberError, ProjectError, SynthesisError
 from .filtering import is_japanese_filler_only
+from .model_packs import (
+    discover_model_packs,
+    import_discovered_model_packs,
+    model_pack_directory,
+)
 from .model_registry import ASR_BACKENDS, CLONE_MODE_LABELS, TTS_BACKENDS
 from .models import DubProject, Sentence, save_project
 from .platforms import portable_home, require_supported_platform, runtime_executable_candidates
@@ -111,6 +119,90 @@ APP_CSS = """
     color: var(--body-text-color-subdued);
 }
 """
+
+
+def _install_backend_log_events(
+    backend_id: str,
+    *,
+    installer: Callable[..., str] | None = None,
+    heartbeat_seconds: float = 2.0,
+) -> Iterator[tuple[str, bool, bool]]:
+    """Yield accumulated installer logs, completion state, and success state."""
+    install = installer or install_backend
+    events: queue.Queue[tuple[str, str]] = queue.Queue()
+    lines: list[str] = []
+    started = time.monotonic()
+
+    def append(message: str) -> None:
+        rendered = str(message or "").replace("\r", "\n")
+        lines.extend(line.strip() for line in rendered.splitlines() if line.strip())
+        if len(lines) > 240:
+            lines[:] = ["…较早的安装日志已省略…", *lines[-239:]]
+
+    def emit(message: str) -> None:
+        events.put(("log", str(message)))
+
+    def run() -> None:
+        try:
+            result = install(backend_id, log_callback=emit)
+        except Exception as exc:  # noqa: BLE001 - surface normalized installer failures in UI
+            events.put(("error", str(exc)))
+        else:
+            events.put(("done", result))
+
+    append(f"开始检查并安装：{backend_id}")
+    worker = threading.Thread(
+        target=run,
+        name=f"asmr-dubber-install-{backend_id or 'unknown'}",
+        daemon=True,
+    )
+    worker.start()
+    yield "\n".join(lines), False, True
+
+    heartbeat = max(0.05, heartbeat_seconds)
+    while True:
+        try:
+            kind, message = events.get(timeout=heartbeat)
+        except queue.Empty:
+            elapsed = int(time.monotonic() - started)
+            append(f"仍在安装中（已运行 {elapsed} 秒）…")
+            yield "\n".join(lines), False, True
+            continue
+        if kind == "log":
+            append(message)
+            yield "\n".join(lines), False, True
+            continue
+        if kind == "done":
+            current = "\n".join(lines)
+            if message.strip() and message.strip() not in current:
+                append(message)
+            yield "\n".join(lines), True, True
+            return
+        append(f"安装失败：{message}")
+        yield "\n".join(lines), True, False
+        return
+
+
+def offline_model_pack_markdown() -> str:
+    """Describe model-pack inbox contents without reading large payload bytes."""
+    inbox = model_pack_directory()
+    inspections = discover_model_packs(inbox)
+    lines = [f"**本地模型包目录：** `{inbox}`"]
+    if not inspections:
+        lines.append("未发现 ZIP。把下载的模型包原样放入该目录后再扫描。")
+        return "  \n".join(lines)
+    for inspection in inspections:
+        manifest = inspection.manifest
+        if manifest is None:
+            lines.append(f"- **[无效] {inspection.archive.name}**：{inspection.error}")
+            continue
+        size = manifest.uncompressed_bytes / 1024**3
+        state = "可导入" if inspection.compatible else f"不兼容：{inspection.error}"
+        lines.append(
+            f"- **[{state}] {manifest.display_name}** · {size:.2f} GiB · "
+            f"`{inspection.archive.name}`"
+        )
+    return "\n".join(lines)
 
 
 class _StageProgress:
@@ -1319,6 +1411,32 @@ def build_app() -> Any:
                         hardware_info = gr.Markdown(hardware_markdown())
                         device_recommendation = gr.Markdown(recommended_stack_markdown())
                         gr.Markdown(
+                            "### 批量安装档位\n"
+                            "| 档位 | 内容 | 安装后约占 | 建议预留 |\n"
+                            "|---|---|---:|---:|\n"
+                            "| Core | 程序与网页 | 2 GB | 5 GB |\n"
+                            "| Recommended | Parakeet 1.1B/0.6B + IndexTTS2 | 24–28 GB | 35 GB |\n"
+                            "| Advanced | Recommended + Kotoba v2.2 + Faster-Whisper large-v2 | "
+                            "30–35 GB | 45 GB |\n"
+                            "| Full | Advanced + 其余已集成且可自动安装的本地后端 | "
+                            "42–48 GB | 60 GB |\n\n"
+                            "Windows 档位安装请运行根目录 `ASMR-Dubber-Setup.exe`；"
+                            "Linux 请运行 `bash scripts/linux/setup.sh <档位>`。"
+                            "无 NVIDIA GPU 时会跳过 CUDA 后端。"
+                        )
+                        with gr.Accordion("导入离线模型包", open=False):
+                            gr.Markdown(
+                                "把从网盘下载的 ZIP 放入下方目录。"
+                                "Setup 会自动导入，也可在这里手动校验并导入。"
+                            )
+                            offline_pack_status = gr.Markdown(offline_model_pack_markdown())
+                            import_offline_packs_button = gr.Button(
+                                "扫描并导入本地模型包", variant="primary"
+                            )
+                            offline_pack_log = gr.Textbox(
+                                label="离线模型包导入日志", lines=8, interactive=False
+                            )
+                        gr.Markdown(
                             "下表区分真实可用状态和支持等级。‘实验性’表示接口已经接入，"
                             "但尚未完成所有系统/硬件组合的真实测试。"
                         )
@@ -2404,36 +2522,69 @@ def build_app() -> Any:
         def install_asr_backend_callback(
             backend_id: Any,
             current_review_models: Any,
-            progress: Any = gr.Progress(),  # noqa: B008 - Gradio progress injection API.
-        ) -> tuple[Any, ...]:
-            result = guarded(
-                install_backend,
-                str(backend_id or ""),
-                progress=progress,
-            )
-            current = load_user_settings()
-            return (
-                result,
-                guarded(backend_catalog_rows, current, "asr"),
-                guarded(available_backend_models_markdown, "asr", current),
-                _review_choices_update(current_review_models, current),
-            )
+        ) -> Iterator[tuple[Any, ...]]:
+            for log, finished, _succeeded in _install_backend_log_events(str(backend_id or "")):
+                if not finished:
+                    yield log, gr.skip(), gr.skip(), gr.skip()
+                    continue
+                current = load_user_settings()
+                yield (
+                    log,
+                    guarded(backend_catalog_rows, current, "asr"),
+                    guarded(available_backend_models_markdown, "asr", current),
+                    _review_choices_update(current_review_models, current),
+                )
 
         def install_tts_backend_callback(
             backend_id: Any,
-            progress: Any = gr.Progress(),  # noqa: B008 - Gradio progress injection API.
-        ) -> tuple[Any, ...]:
-            result = guarded(
-                install_backend,
-                str(backend_id or ""),
-                progress=progress,
-            )
-            current = load_user_settings()
-            return (
-                result,
-                guarded(backend_catalog_rows, current, "tts"),
-                guarded(available_backend_models_markdown, "tts", current),
-            )
+        ) -> Iterator[tuple[Any, ...]]:
+            for log, finished, _succeeded in _install_backend_log_events(str(backend_id or "")):
+                if not finished:
+                    yield log, gr.skip(), gr.skip()
+                    continue
+                current = load_user_settings()
+                yield (
+                    log,
+                    guarded(backend_catalog_rows, current, "tts"),
+                    guarded(available_backend_models_markdown, "tts", current),
+                )
+
+        def import_offline_packs_callback(
+            current_review_models: Any,
+        ) -> Iterator[tuple[Any, ...]]:
+            def importer(_backend_id: str, *, log_callback: Callable[[str], None]) -> str:
+                results = import_discovered_model_packs(
+                    log=log_callback,
+                    progress=lambda message, current, total: log_callback(
+                        f"[{current}/{total}] {message}"
+                    ),
+                )
+                if not results:
+                    return "未发现可导入的兼容模型包。"
+                installed = sum(result.installed_files for result in results)
+                reused = sum(result.reused_files for result in results)
+                return (
+                    f"导入完成：处理 {len(results)} 个模型包，"
+                    f"新增/更新 {installed} 个文件，复用 {reused} 个文件。"
+                )
+
+            for log, finished, _succeeded in _install_backend_log_events(
+                "offline-model-packs",
+                installer=importer,
+            ):
+                if not finished:
+                    yield log, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+                    continue
+                current = load_user_settings()
+                yield (
+                    log,
+                    guarded(offline_model_pack_markdown),
+                    guarded(backend_catalog_rows, current, "asr"),
+                    guarded(backend_catalog_rows, current, "tts"),
+                    guarded(available_backend_models_markdown, "asr", current),
+                    guarded(available_backend_models_markdown, "tts", current),
+                    _review_choices_update(current_review_models, current),
+                )
 
         click_parameters = inspect.signature(new_button.click).parameters
         private_event_options: dict[str, Any]
@@ -2445,6 +2596,12 @@ def build_app() -> Any:
             concurrency_id="asmr_dubber_pipeline",
             concurrency_limit=1,
         )
+        backend_install_event_options = {
+            **private_event_options,
+            "concurrency_id": "backend_install",
+            "concurrency_limit": 1,
+            "show_progress": "minimal",
+        }
 
         refresh_system_button.click(
             refresh_system_callback,
@@ -2469,7 +2626,7 @@ def build_app() -> Any:
                 asr_availability,
                 asr_review_models,
             ],
-            **private_event_options,
+            **backend_install_event_options,
         )
         install_tts_backend_button.click(
             install_tts_backend_callback,
@@ -2479,7 +2636,21 @@ def build_app() -> Any:
                 tts_backend_catalog,
                 tts_availability,
             ],
-            **private_event_options,
+            **backend_install_event_options,
+        )
+        import_offline_packs_button.click(
+            import_offline_packs_callback,
+            inputs=[asr_review_models],
+            outputs=[
+                offline_pack_log,
+                offline_pack_status,
+                asr_backend_catalog,
+                tts_backend_catalog,
+                asr_availability,
+                tts_availability,
+                asr_review_models,
+            ],
+            **backend_install_event_options,
         )
 
         project_path.change(

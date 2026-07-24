@@ -22,9 +22,16 @@ from .constants import (
     DEFAULT_TTS_MODEL,
     MODEL_LFS_SHA256,
     MODEL_REVISIONS,
+    OPTIONAL_ASR_MODEL_REVISIONS,
 )
 from .environment import cached_model_path, cuda_summary, ffmpeg_version
 from .errors import AsmrDubberError
+from .model_packs import (
+    ModelPackError,
+    discover_model_packs,
+    import_discovered_model_packs,
+    import_model_pack,
+)
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS
 from .models import ProjectSettings, save_project
 from .pipeline import (
@@ -308,37 +315,62 @@ def download_models_command(
         str,
         typer.Option(
             "--backend",
-            help="qwen3_asr、voxcpm2 或 all",
+            help="qwen3_asr、voxcpm2、advanced-asr 或 all",
         ),
     ] = "all",
 ) -> None:
     """下载并校验固定版本的内置模型。"""
     from .mirrors import snapshot_download_with_fallback
 
+    advanced_asr_models = (
+        "kotoba-tech/kotoba-whisper-v2.2",
+        "Systran/faster-whisper-large-v2",
+    )
     backend_models = {
         "qwen3_asr": (DEFAULT_ASR_MODEL, DEFAULT_ALIGNER_MODEL),
         "voxcpm2": (DEFAULT_TTS_MODEL,),
+        "advanced-asr": advanced_asr_models,
         "all": tuple(MODEL_REVISIONS),
     }
     model_ids = backend_models.get(backend)
     if model_ids is None:
-        _fail(ValueError("--backend 必须是 qwen3_asr、voxcpm2 或 all。"))
-    for index, model_id in enumerate(model_ids, start=1):
-        revision = MODEL_REVISIONS[model_id]
-        console.print(f"[cyan][{index}/{len(model_ids)}] 下载 {model_id}[/cyan]")
+        _fail(ValueError("--backend 必须是 qwen3_asr、voxcpm2、advanced-asr 或 all。"))
+    if backend == "advanced-asr":
         try:
-            path = snapshot_download_with_fallback(
-                repo_id=model_id,
-                revision=revision,
-                max_workers=2,
+            imported = import_discovered_model_packs(
+                pack_ids={"kotoba-whisper-v2.2", "faster-whisper-large-v2"},
+                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+                progress=ConsoleProgress(),
             )
-        except Exception as exc:
-            _fail(AsmrDubberError(f"模型下载失败 {model_id}：{exc}"))
+        except ModelPackError as exc:
+            _fail(exc)
+        if imported:
+            console.print(f"[green]已处理 {len(imported)} 个本地离线模型包。[/green]")
+    for index, model_id in enumerate(model_ids, start=1):
         cached = cached_model_path(model_id)
+        revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+        if revision is None:
+            _fail(AsmrDubberError(f"模型没有固定版本：{model_id}"))
+        if cached is not None:
+            path = cached
+            console.print(f"[cyan][{index}/{len(model_ids)}] 复用本地模型 {model_id}[/cyan]")
+        else:
+            console.print(f"[cyan][{index}/{len(model_ids)}] 下载 {model_id}[/cyan]")
+            try:
+                path = snapshot_download_with_fallback(
+                    repo_id=model_id,
+                    revision=revision,
+                    max_workers=2,
+                )
+            except Exception as exc:
+                _fail(AsmrDubberError(f"模型下载失败 {model_id}：{exc}"))
+            cached = cached_model_path(model_id)
         if cached is None:
             _fail(AsmrDubberError(f"模型快照不完整：{model_id}"))
-        console.print(f"[cyan]校验大权重 SHA-256：{model_id}[/cyan]")
-        for relative, expected in MODEL_LFS_SHA256[model_id].items():
+        known_hashes = MODEL_LFS_SHA256.get(model_id, {})
+        if known_hashes:
+            console.print(f"[cyan]校验大权重 SHA-256：{model_id}[/cyan]")
+        for relative, expected in known_hashes.items():
             digest = hashlib.sha256()
             with (cached / relative).open("rb") as handle:
                 while block := handle.read(8 * 1024 * 1024):
@@ -346,6 +378,97 @@ def download_models_command(
             if digest.hexdigest() != expected:
                 _fail(AsmrDubberError(f"模型权重校验失败：{model_id}/{relative}"))
         console.print(f"[green]完成：[/green]{path}")
+
+
+@app.command("list-model-packs")
+def list_model_packs_command() -> None:
+    """列出项目根目录 model-packs 中发现的离线模型包。"""
+    inspections = discover_model_packs()
+    table = Table(title="ASMR Dubber 离线模型包")
+    table.add_column("文件")
+    table.add_column("模型包")
+    table.add_column("版本")
+    table.add_column("解压大小")
+    table.add_column("状态")
+    for inspection in inspections:
+        manifest = inspection.manifest
+        if manifest is None:
+            table.add_row(
+                inspection.archive.name,
+                "—",
+                "—",
+                "—",
+                f"无效：{inspection.error}",
+            )
+            continue
+        table.add_row(
+            inspection.archive.name,
+            manifest.display_name,
+            manifest.pack_version,
+            f"{manifest.uncompressed_bytes / 1024**3:.2f} GiB",
+            "可导入" if inspection.compatible else f"不兼容：{inspection.error}",
+        )
+    if not inspections:
+        table.add_row("—", "—", "—", "—", "未发现 ZIP 模型包")
+    console.print(table)
+
+
+@app.command("import-model-packs")
+def import_model_packs_command(
+    archives: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="要导入的模型包 ZIP；可指定多个。",
+        ),
+    ] = None,
+    all_packs: Annotated[
+        bool,
+        typer.Option("--all", help="导入项目根目录 model-packs 中所有兼容模型包。"),
+    ] = False,
+    pack_ids: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--pack-id",
+            help="只导入指定 pack_id；可重复使用，供安装档位精确选择。",
+        ),
+    ] = None,
+) -> None:
+    """校验并原子导入离线模型包。"""
+    if not all_packs and not archives:
+        _fail(ValueError("请指定模型包 ZIP，或添加 --all。"))
+    try:
+        if all_packs:
+            results = import_discovered_model_packs(
+                pack_ids=set(pack_ids or ()) or None,
+                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+                progress=ConsoleProgress(),
+            )
+        else:
+            results = [
+                import_model_pack(
+                    archive,
+                    log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+                    progress=ConsoleProgress(),
+                )
+                for archive in archives or []
+            ]
+    except (ModelPackError, OSError) as exc:
+        _fail(exc)
+    if not results:
+        # Setup calls ``--all`` for every profile. An empty inbox is a normal
+        # online-install path, while malformed archives are rejected by the
+        # importer above and still produce a non-zero exit code.
+        console.print("未发现可导入的本地模型包；继续按所选档位准备。")
+        return
+    installed = sum(result.installed_files for result in results)
+    reused = sum(result.reused_files for result in results)
+    console.print(
+        f"[green]完成：处理 {len(results)} 个模型包，"
+        f"新增/更新 {installed} 个文件，复用 {reused} 个文件。[/green]"
+    )
 
 
 @app.command("install-backend")

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Core", "Recommended", "Full")]
+    [ValidateSet("Core", "Recommended", "Advanced", "Full")]
     [string]$Profile = "Recommended",
     [string]$IndexUrl = "",
     [string]$PythonMirror = "",
@@ -83,6 +83,26 @@ Write-Host "ASMR Dubber · Windows 安装" -ForegroundColor Cyan
 Write-Host "项目目录：$Root"
 Write-Host "便携目录：$DataRoot"
 Write-Host "安装配置：$Profile"
+$StorageEstimate = switch ($Profile) {
+    "Core" {
+        [pscustomobject]@{ Installed = "约 2 GB"; Free = "至少 5 GB" }
+    }
+    "Recommended" {
+        [pscustomobject]@{ Installed = "约 24–28 GB"; Free = "至少 35 GB" }
+    }
+    "Advanced" {
+        [pscustomobject]@{ Installed = "约 30–35 GB"; Free = "至少 45 GB" }
+    }
+    "Full" {
+        [pscustomobject]@{ Installed = "约 42–48 GB"; Free = "至少 60 GB" }
+    }
+}
+Write-Host "预计安装后占用：$($StorageEstimate.Installed)"
+Write-Host "建议安装前可用空间：$($StorageEstimate.Free)"
+if ($Profile -ne "Core") {
+    Write-Host "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS/ASR，实际占用将减少。" `
+        -ForegroundColor DarkGray
+}
 
 function Test-PortableUv {
     if (-not (Test-Path $Uv)) {
@@ -192,6 +212,7 @@ if (-not $NvidiaSmi) {
     }
 }
 $InstallDefaultModels = $false
+$InstallAdvancedModels = $false
 $InstallRecommendedTTS = $false
 $InstallParakeet = $false
 $Extra = switch ($Profile) {
@@ -201,10 +222,19 @@ $Extra = switch ($Profile) {
         if ($NvidiaSmi) {
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
         }
+        ".[ui]"
+    }
+    "Advanced" {
+        $InstallParakeet = $true
+        $InstallAdvancedModels = $true
+        if ($NvidiaSmi) {
+            $InstallRecommendedTTS = -not $SkipRecommendedTTS
+        }
         ".[ui,asr-faster-whisper,asr-kotoba-whisper]"
     }
     "Full" {
         $InstallParakeet = $true
+        $InstallAdvancedModels = $true
         if ($NvidiaSmi) {
             $InstallDefaultModels = $true
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
@@ -241,14 +271,47 @@ Invoke-Checked -FilePath $Python `
     -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
     -FailureMessage "应用字节码刷新失败"
 
+$LocalPackIds = switch ($Profile) {
+    "Core" { @() }
+    "Recommended" { @("parakeet-ja-windows", "indextts2-checkpoints") }
+    "Advanced" {
+        @(
+            "parakeet-ja-windows",
+            "indextts2-checkpoints",
+            "kotoba-whisper-v2.2",
+            "faster-whisper-large-v2"
+        )
+    }
+    "Full" { $null }
+}
+if ($Profile -ne "Core") {
+    Write-Host "正在检测并导入当前档位的本地模型包..." -ForegroundColor Cyan
+    $ImportArguments = @("-m", "asmr_dubber.cli", "import-model-packs", "--all")
+    foreach ($PackId in @($LocalPackIds)) {
+        $ImportArguments += @("--pack-id", $PackId)
+    }
+    Invoke-Checked -FilePath $Python `
+        -ArgumentList $ImportArguments `
+        -FailureMessage "本地模型包扫描或导入失败；请检查 model-packs 目录中的压缩包"
+}
+
+if ($InstallAdvancedModels) {
+    Write-Host "正在准备 Advanced ASR 模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2..." `
+        -ForegroundColor Cyan
+    Invoke-Checked -FilePath $Python `
+        -ArgumentList @(
+            "-m", "asmr_dubber.cli", "download-models", "--backend", "advanced-asr"
+        ) `
+        -FailureMessage "Advanced ASR 模型下载或校验失败"
+}
+
 if ($InstallDefaultModels) {
     $SharedFFmpegBin = Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
     Write-Host "共享版 FFmpeg：$SharedFFmpegBin" -ForegroundColor DarkGray
     Write-Host "正在下载并校验默认模型（已有缓存会复用）..." -ForegroundColor Cyan
     Invoke-Checked -FilePath $Python `
         -ArgumentList @(
-            "-m", "asmr_dubber.cli", "download-models", "--backend",
-            $(if ($Profile -eq "Full") { "all" } else { "qwen3_asr" })
+            "-m", "asmr_dubber.cli", "download-models", "--backend", "all"
         ) `
         -FailureMessage "默认模型下载或校验失败"
 }

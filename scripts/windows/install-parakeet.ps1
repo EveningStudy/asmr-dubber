@@ -37,6 +37,27 @@ if ($Variant -eq "Auto") {
     $Variant = if (Test-Path $NvidiaSmi) { "CUDA" } else { "CPU" }
 }
 
+$InstalledExecutable = Join-Path $RuntimeBin "crispasr.exe"
+$Installed11B = Join-Path $ModelRoot "parakeet-ctc-1.1b-ja-f16.gguf"
+$Installed06B = Join-Path $ModelRoot "parakeet-tdt-0.6b-ja.gguf"
+$Expected11B = "34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7"
+$Expected06B = "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
+if (
+    (Test-Path $InstalledExecutable) -and
+    (Test-Path $Installed11B) -and
+    (Test-Path $Installed06B) -and
+    ((Get-FileHash $Installed11B -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Expected11B) -and
+    ((Get-FileHash $Installed06B -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Expected06B)
+) {
+    $ReadyCheck = Start-Process -FilePath $InstalledExecutable `
+        -ArgumentList @("--version") -NoNewWindow -Wait -PassThru
+    if ($ReadyCheck.ExitCode -eq 0) {
+        Write-Host "Parakeet 本地运行时和两款模型已完整，无需联网下载。" `
+            -ForegroundColor Green
+        return
+    }
+}
+
 $Asset = if ($Variant -eq "CUDA") {
     "crispasr-windows-x86_64-cuda.zip"
 } else {

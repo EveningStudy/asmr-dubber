@@ -6,11 +6,11 @@ ASMR Dubber 在日语原声中加入逐句中文复述。日语时间轴和内�
 
 ## 安装
 
-项目不包含模型权重。`Recommended` 在 NVIDIA 设备上约需 30 GB 可用空间，具体取决于缓存和后端。
+项目源码包不包含模型权重。各安装配置的预计占用和建议预留空间见下表。
 
 ### Windows
 
-首次使用时运行项目根目录中的 `ASMR-Dubber-Setup.exe`，在终端中选择 Core、Recommended 或 Full。安装中断或依赖损坏时，再次运行它即可检查状态、复用已完成文件并继续安装。
+首次使用时运行项目根目录中的 `ASMR-Dubber-Setup.exe`，在终端中选择 Core、Recommended、Advanced 或 Full。安装中断或依赖损坏时，再次运行它即可检查状态、复用已完成文件并继续安装。
 
 依赖完成后运行 `ASMR-Dubber.exe`。它只负责启动服务并打开浏览器；如果 Core 环境未安装或不完整，会提示改用安装器修复。运行期间请保留终端；按 `Ctrl+C` 或关闭终端即可停止服务。
 
@@ -32,15 +32,24 @@ bash scripts/linux/run-ui.sh
 
 ### 安装配置
 
-| 配置 | 内容 |
-|---|---|
-| `Core` | 应用、UI 和基础音频依赖；不下载大型 ASR/TTS 权重 |
-| `Recommended` | 两款 Parakeet 模型、Kotoba/Faster-Whisper 运行库；NVIDIA 设备安装 IndexTTS2 |
-| `Full` | Recommended，另加 Qwen3-ASR/ForcedAligner、VoxCPM2 权重和更多 ASR 运行库 |
+| 配置 | 内容 | 安装后约占 | 建议预留 |
+|---|---|---:|---:|
+| `Core` | 应用、UI 和基础音频依赖；不下载大型 ASR/TTS 权重 | 2 GB | 5 GB |
+| `Recommended` | Core、两款 Parakeet；NVIDIA 设备安装 IndexTTS2 | 24–28 GB | 35 GB |
+| `Advanced` | Recommended，另加 Kotoba-Whisper v2.2 和 Faster-Whisper large-v2 | 30–35 GB | 45 GB |
+| `Full` | Advanced，另加其余已集成且可自动安装的本地后端 | 42–48 GB | 60 GB |
 
-配置只决定首次批量准备的内容。安装后仍需在“设置 → 设备与模型”确认状态，并按需下载、安装或修复没有包含在当前配置中的模型。无 NVIDIA GPU 时，安装器跳过 CUDA 模型；可使用Faster-Whisper CPU `int8` 和外部 TTS 服务。
+配置只决定首次批量准备的内容。安装后仍需在“设置 → 设备与模型”确认状态，并按需下载、安装或修复没有包含在当前配置中的模型。无 NVIDIA GPU 时，安装器跳过 CUDA 模型，实际占用也会减少；可使用 Faster-Whisper CPU `int8` 和外部 TTS 服务。
 
-高级用户如需从命令行跳过 Recommended 中的 IndexTTS2：
+### 离线模型包
+
+从项目提供的网盘下载模型包后，保持 ZIP 原名并放入项目根目录的 `model-packs` 文件夹，再运行 `ASMR-Dubber-Setup.exe`。安装器会在联网下载前校验并导入；已安装的文件会直接复用。若 ZIP 损坏或校验不符，安装会停止并指明文件，不会静默重新下载。
+
+GitHub Release 中的大模型使用 WinRAR 分卷。下载同一模型的全部 `.part*.rar` 到同一目录，用 WinRAR 或 7-Zip 打开 `part1.rar` 并解压；把得到的完整模型 ZIP 放进项目根目录的 `model-packs`。Setup 和网页只导入解压后的 ZIP，不直接读取 RAR 分卷。
+
+Advanced 的四个独立包为 Parakeet 日语（含 Windows CrispASR）、IndexTTS2 checkpoints、Kotoba-Whisper v2.2 和 Faster-Whisper large-v2。高级用户也可执行 `python scripts/create-model-packs.py` 从当前已安装的固定版本模型重新生成这四个包。
+
+高级用户如需从命令行跳过 Recommended 或更高档位中的 IndexTTS2：
 
 ```powershell
 ./scripts/windows/setup.ps1 -Profile Recommended -SkipRecommendedTTS

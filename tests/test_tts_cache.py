@@ -9,7 +9,12 @@ import soundfile as sf
 from asmr_dubber.errors import SynthesisError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence
 from asmr_dubber.tts import _enable_voxcpm_prompt_cache, shared_reference_sentence, tts_cache_key
-from asmr_dubber.tts_backends import _load_indextts, _load_qwen3, synthesize_with_selected_backend
+from asmr_dubber.tts_backends import (
+    _indextts_command,
+    _load_indextts,
+    _load_qwen3,
+    synthesize_with_selected_backend,
+)
 from asmr_dubber.voice_reference import (
     VoiceReference,
     prepare_index_emotion_reference,
@@ -173,6 +178,21 @@ def test_indextts_direct_runner_passes_separate_emotion_audio(
     assert calls[0]["spk_audio_prompt"] == str(speaker)
     assert calls[0]["emo_audio_prompt"] == str(emotion)
     assert calls[0]["emo_alpha"] == project.settings.tts_index_emo_alpha
+
+
+def test_indextts_prefers_relocatable_python_module_command(tmp_path: Path) -> None:
+    project = _project()
+    model_dir = tmp_path / "index-tts" / "checkpoints"
+    python = model_dir.parent / ".venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    model_dir.mkdir()
+    project.settings.tts_model_path = str(model_dir)
+
+    command = _indextts_command(project)
+    assert command is not None
+    assert Path(command[0]).samefile(python)
+    assert command[1:] == ["-m", "indextts.cli_v2"]
 
 
 def test_backend_and_external_reference_change_tts_cache(tmp_path: Path) -> None:

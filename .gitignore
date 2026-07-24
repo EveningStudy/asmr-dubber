@@ -18,6 +18,8 @@ build/
 dist/
 projects/
 models/
+model-packs/*.zip
+model-packs/*.zip.sha256
 data/
 *.log
 .DS_Store

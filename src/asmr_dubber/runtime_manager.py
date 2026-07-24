@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterable
+import threading
+import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -52,6 +55,84 @@ class BackendStatus:
     state: str
     label: str
     detail: str = ""
+
+
+InstallLogCallback = Callable[[str], None]
+
+
+def _run_streaming_process(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: float,
+    log_callback: InstallLogCallback | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run an installer while forwarding merged stdout/stderr line by line."""
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    output: list[str] = []
+    messages: queue.Queue[str | None] = queue.Queue()
+
+    def read_output() -> None:
+        assert process.stdout is not None
+        try:
+            for line in iter(process.stdout.readline, ""):
+                messages.put(line)
+        finally:
+            process.stdout.close()
+            messages.put(None)
+
+    reader = threading.Thread(
+        target=read_output,
+        name="asmr-dubber-installer-output",
+        daemon=True,
+    )
+    reader.start()
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+    reader_finished = False
+    try:
+        while not reader_finished:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_seconds, output="".join(output))
+            try:
+                line = messages.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                continue
+            if line is None:
+                reader_finished = True
+                continue
+            output.append(line)
+            rendered = line.rstrip("\r\n")
+            if rendered and log_callback is not None:
+                log_callback(rendered)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout_seconds, output="".join(output))
+        return_code = process.wait(timeout=remaining)
+    except BaseException:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        raise
+    finally:
+        reader.join(timeout=1)
+    return subprocess.CompletedProcess(
+        command,
+        return_code,
+        stdout="".join(output),
+        stderr="",
+    )
 
 
 _IMPORTS: dict[str, tuple[str, ...]] = {
@@ -597,6 +678,7 @@ def _install_windows_backend(
     *,
     timeout_seconds: float,
     env: dict[str, str],
+    log_callback: InstallLogCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     powershell = _powershell_executable()
     script = PROJECT_ROOT / "scripts" / "windows" / "install-backend.ps1"
@@ -604,7 +686,7 @@ def _install_windows_backend(
         raise EnvironmentError("找不到 PowerShell；请安装 PowerShell 7 后重试。")
     if not script.is_file():
         raise EnvironmentError("Windows 后端安装脚本缺失；请重新下载完整项目。")
-    return subprocess.run(
+    return _run_streaming_process(
         [
             str(powershell),
             "-NoLogo",
@@ -617,13 +699,9 @@ def _install_windows_backend(
             backend_id,
         ],
         cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-        check=False,
         env=env,
+        timeout_seconds=timeout_seconds,
+        log_callback=log_callback,
     )
 
 
@@ -639,6 +717,7 @@ def _install_indextts_runtime(
     *,
     timeout_seconds: float,
     env: dict[str, str],
+    log_callback: InstallLogCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     info = current_platform()
     if info.is_windows:
@@ -663,16 +742,12 @@ def _install_indextts_runtime(
         command = [str(executable), str(script)]
     if not script.is_file():
         raise EnvironmentError("IndexTTS2 安装脚本缺失；请重新下载完整项目。")
-    return subprocess.run(
+    return _run_streaming_process(
         command,
         cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=max(timeout_seconds, 14_400),
-        check=False,
         env=env,
+        timeout_seconds=max(timeout_seconds, 14_400),
+        log_callback=log_callback,
     )
 
 
@@ -680,6 +755,7 @@ def _install_parakeet_runtime(
     *,
     timeout_seconds: float,
     env: dict[str, str],
+    log_callback: InstallLogCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     info = current_platform()
     if info.is_windows:
@@ -706,16 +782,12 @@ def _install_parakeet_runtime(
         command = [str(executable), str(script)]
     if not script.is_file():
         raise EnvironmentError("Parakeet 安装脚本缺失；请重新下载完整项目。")
-    return subprocess.run(
+    return _run_streaming_process(
         command,
         cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=max(timeout_seconds, 14_400),
-        check=False,
         env=env,
+        timeout_seconds=max(timeout_seconds, 14_400),
+        log_callback=log_callback,
     )
 
 
@@ -723,6 +795,7 @@ def download_backend_models(
     backend_id: str,
     *,
     progress: Any | None = None,
+    log_callback: InstallLogCallback | None = None,
 ) -> str:
     """Download and verify pinned built-in model snapshots."""
     model_ids = _BACKEND_MODEL_REPOS.get(backend_id, ())
@@ -742,30 +815,41 @@ def download_backend_models(
     )
     resolved: list[str] = []
     for index, model_id in enumerate(model_ids, start=1):
-        if progress:
-            progress(
-                (index - 1) / len(model_ids),
-                desc=f"正在下载并校验模型 {index}/{len(model_ids)}：{model_id}",
-            )
         revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
         if revision is None:
             raise EnvironmentError(f"模型 {model_id} 没有经过验证的固定版本。")
-        try:
-            snapshot_download_with_fallback(
-                repo_id=model_id,
-                revision=revision,
-                preferred_endpoint=endpoint,
-                max_workers=4,
-            )
-        except Exception as exc:  # noqa: BLE001 - normalize provider/network failures
-            mirror = f"（当前端点：{endpoint}）" if endpoint else ""
-            raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}") from exc
         path = cached_model_path(model_id)
         if path is None:
-            raise EnvironmentError(f"模型 {model_id} 下载后未通过完整性检查。")
+            message = f"正在下载并校验模型 {index}/{len(model_ids)}：{model_id}"
+            if log_callback is not None:
+                log_callback(message)
+            if progress:
+                progress(
+                    (index - 1) / len(model_ids),
+                    desc=message,
+                )
+            try:
+                snapshot_download_with_fallback(
+                    repo_id=model_id,
+                    revision=revision,
+                    preferred_endpoint=endpoint,
+                    max_workers=4,
+                )
+            except Exception as exc:  # noqa: BLE001 - normalize provider/network failures
+                mirror = f"（当前端点：{endpoint}）" if endpoint else ""
+                raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}") from exc
+            path = cached_model_path(model_id)
+            if path is None:
+                raise EnvironmentError(f"模型 {model_id} 下载后未通过完整性检查。")
+        elif log_callback is not None:
+            log_callback(f"复用已导入或已缓存的模型 {index}/{len(model_ids)}：{model_id}")
         resolved.append(f"{model_id} → {path}")
+        if log_callback is not None:
+            log_callback(f"模型 {model_id} 已通过完整性检查。")
     if progress:
         progress(1, desc="模型下载与完整性检查完成")
+    if log_callback is not None:
+        log_callback("模型下载与完整性检查完成。")
     return "模型准备完成：\n" + "\n".join(resolved)
 
 
@@ -774,6 +858,8 @@ def install_backend(
     *,
     progress: Any | None = None,
     timeout_seconds: float = 3600,
+    log_callback: InstallLogCallback | None = None,
+    force: bool = False,
 ) -> str:
     """Install a verified Python backend into the current application environment."""
     registry = ASR_BACKENDS if backend_id in ASR_BACKENDS else TTS_BACKENDS
@@ -787,6 +873,25 @@ def install_backend(
     extra = spec.python_extra
     if spec.installer == "python-extra" and not extra:
         raise EnvironmentError(f"{spec.label} 的安装声明缺少 Python extra。")
+    saved_settings: Any | None = None
+    try:
+        from .user_settings import load_user_settings
+
+        saved_settings = load_user_settings()
+        pypi_index = saved_settings.pypi_index_url.strip()
+        huggingface_endpoint = saved_settings.huggingface_endpoint.strip()
+    except (OSError, ValueError, AsmrDubberError):
+        pypi_index = ""
+        huggingface_endpoint = ""
+    if not force:
+        status = backend_status(spec, settings=saved_settings)
+        if status.state == "ready":
+            result = f"{spec.label} 已经可用，无需重复安装。"
+            if log_callback is not None:
+                log_callback(result)
+            if progress:
+                progress(1, desc=result)
+            return result
     uv = _uv_executable()
     if uv is None:
         raise EnvironmentError("找不到项目安装器 uv；请重新运行对应平台的 setup 脚本。")
@@ -797,19 +902,13 @@ def install_backend(
                 f"{spec.label} 需要 NVIDIA CUDA GPU；当前未检测到 NVIDIA GPU。"
                 "请选择 CPU/外部服务后端，或在带 NVIDIA GPU 的机器上安装。"
             )
+    start_message = f"正在安装 {spec.label}，请勿关闭页面。"
+    if log_callback is not None:
+        log_callback(start_message)
     if progress:
-        progress(0, desc=f"正在安装 {spec.label}，请勿关闭页面")
+        progress(0, desc=start_message)
     env = os.environ.copy()
     env.setdefault("UV_LINK_MODE", "copy" if os.name == "nt" else "clone")
-    try:
-        from .user_settings import load_user_settings
-
-        saved_settings = load_user_settings()
-        pypi_index = saved_settings.pypi_index_url.strip()
-        huggingface_endpoint = saved_settings.huggingface_endpoint.strip()
-    except (OSError, ValueError, AsmrDubberError):
-        pypi_index = ""
-        huggingface_endpoint = ""
     if pypi_index:
         env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
     if huggingface_endpoint:
@@ -819,21 +918,26 @@ def install_backend(
             completed = _install_parakeet_runtime(
                 timeout_seconds=timeout_seconds,
                 env=env,
+                log_callback=log_callback,
             )
         elif spec.installer == "isolated":
             completed = _install_indextts_runtime(
                 timeout_seconds=timeout_seconds,
                 env=env,
+                log_callback=log_callback,
             )
         elif current_platform().is_windows and backend_id in {"qwen3_asr", "voxcpm2"}:
             completed = _install_windows_backend(
                 backend_id,
                 timeout_seconds=timeout_seconds,
                 env=env,
+                log_callback=log_callback,
             )
         else:
             attempts: list[str] = []
             for index_url in mirror_candidates("pypi_indexes", preferred=pypi_index):
+                if log_callback is not None:
+                    log_callback(f"使用 Python 软件源：{index_url}")
                 command = [
                     str(uv),
                     "pip",
@@ -845,15 +949,12 @@ def install_backend(
                     "--default-index",
                     index_url,
                 ]
-                completed = subprocess.run(
+                completed = _run_streaming_process(
                     command,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=timeout_seconds,
-                    check=False,
+                    cwd=PROJECT_ROOT,
                     env=env,
+                    timeout_seconds=timeout_seconds,
+                    log_callback=log_callback,
                 )
                 if completed.returncode == 0:
                     break
@@ -871,11 +972,25 @@ def install_backend(
         if progress:
             progress(1, desc="IndexTTS2 独立环境与模型安装完成")
         tail = (completed.stdout or completed.stderr).strip().splitlines()[-12:]
-        return "IndexTTS2 安装完成。\n" + "\n".join(tail) + "\n请重启 ASMR Dubber。"
+        result = "IndexTTS2 安装完成。\n" + "\n".join(tail) + "\n请重启 ASMR Dubber。"
+        if log_callback is not None:
+            log_callback("IndexTTS2 独立环境与模型安装完成。")
+        return result
     if progress:
         progress(0.5, desc=f"{spec.label} 运行环境安装完成，正在检查模型")
-    model_detail = download_backend_models(backend_id, progress=progress)
+    if log_callback is not None:
+        log_callback(f"{spec.label} 运行环境安装完成，正在检查模型。")
+    model_detail = download_backend_models(
+        backend_id,
+        progress=progress,
+        log_callback=log_callback,
+    )
     tail = (completed.stdout or completed.stderr).strip().splitlines()[-8:]
     detail = "\n".join(tail)
     restart = "\n请重启 ASMR Dubber，使新安装的运行时生效。" if os.name == "nt" else ""
-    return f"{spec.label} 安装完成。\n{detail}\n{model_detail}{restart}".strip()
+    result = f"{spec.label} 安装完成。\n{detail}\n{model_detail}{restart}".strip()
+    if progress:
+        progress(1, desc=f"{spec.label} 安装完成")
+    if log_callback is not None:
+        log_callback(f"{spec.label} 安装完成。")
+    return result

@@ -15,7 +15,7 @@ from .constants import (
 )
 from .errors import EnvironmentError
 from .mirrors import hf_hub_download_with_fallback
-from .platforms import current_platform
+from .platforms import current_platform, portable_home
 
 
 def is_wsl() -> bool:
@@ -81,22 +81,8 @@ def require_cuda() -> None:
         )
 
 
-def cached_model_path(model_id: str) -> Path | None:
-    """Return the pinned, complete local snapshot for a known model."""
-    revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
-    if revision is None:
-        return None
-    try:
-        from huggingface_hub import snapshot_download
-
-        path = snapshot_download(
-            repo_id=model_id,
-            revision=revision,
-            local_files_only=True,
-        )
-    except (ImportError, OSError, ValueError):
-        return None
-    candidate = Path(path).resolve()
+def _complete_model_snapshot(model_id: str, candidate: Path) -> Path | None:
+    candidate = candidate.resolve()
     if not candidate.is_dir():
         return None
     required_files = MODEL_REQUIRED_FILES.get(model_id)
@@ -118,6 +104,35 @@ def cached_model_path(model_id: str) -> Path | None:
         except OSError:
             return None
     return candidate
+
+
+def cached_model_path(model_id: str) -> Path | None:
+    """Return the pinned, complete project-owned or Hub-cached model snapshot."""
+    revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+    if revision is None:
+        return None
+
+    # Offline packs install immutable snapshots below the portable models
+    # directory. Prefer them over the mutable Hub cache so an imported pack is
+    # usable without network access or Hugging Face cache metadata.
+    from .model_packs import imported_hf_snapshot_path
+
+    imported = imported_hf_snapshot_path(model_id, revision, home=portable_home())
+    complete = _complete_model_snapshot(model_id, imported)
+    if complete is not None:
+        return complete
+
+    try:
+        from huggingface_hub import snapshot_download
+
+        path = snapshot_download(
+            repo_id=model_id,
+            revision=revision,
+            local_files_only=True,
+        )
+    except (ImportError, OSError, ValueError):
+        return None
+    return _complete_model_snapshot(model_id, Path(path))
 
 
 def resolve_model_source(model_id: str) -> str:

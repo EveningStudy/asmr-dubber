@@ -12,8 +12,8 @@ using System.Threading;
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("0.2.0.0")]
-[assembly: AssemblyFileVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.2.1.0")]
+[assembly: AssemblyFileVersion("0.2.1.0")]
 
 namespace ASMRDubberLauncher
 {
@@ -82,6 +82,7 @@ namespace ASMRDubberLauncher
             }
 
             PrintHeader();
+            RepairPortablePaths(root);
             if (!IsInstalled(root))
             {
                 WriteError("程序依赖未安装、安装未完成或已经损坏。");
@@ -181,6 +182,34 @@ namespace ASMRDubberLauncher
             catch
             {
                 return false;
+            }
+        }
+
+        private static void RepairPortablePaths(string root)
+        {
+            string python = Path.Combine(
+                root, ".asmr-dubber", "venv", "Scripts", "python.exe");
+            if (!File.Exists(python))
+            {
+                return;
+            }
+            string runCli = Path.Combine(root, "scripts", "windows", "run-cli.ps1");
+            if (!File.Exists(runCli))
+            {
+                return;
+            }
+            using (Process repair = StartPowerShell(root, runCli, "--help"))
+            {
+                if (!repair.WaitForExit(90000))
+                {
+                    repair.Kill();
+                    throw new TimeoutException("项目内部可移动路径修复超时。");
+                }
+                if (repair.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        "项目内部可移动路径修复失败，请运行 ASMR-Dubber-Setup.exe。");
+                }
             }
         }
 
