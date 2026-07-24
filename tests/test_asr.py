@@ -239,7 +239,8 @@ def test_kotoba_transformers_refuses_incomplete_model_without_downloading(
 
 
 def test_transformers_asr_pipeline_skips_optional_torchcodec() -> None:
-    from transformers.pipelines import automatic_speech_recognition as asr_pipeline
+    transformers = pytest.importorskip("transformers")
+    asr_pipeline = transformers.pipelines.automatic_speech_recognition
 
     original = asr_pipeline.is_torchcodec_available
 
