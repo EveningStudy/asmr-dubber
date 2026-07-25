@@ -343,7 +343,7 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
     executable.touch()
     model.touch()
     audio = tmp_path / "analysis.wav"
-    audio.touch()
+    sf.write(audio, np.zeros(16_000, dtype=np.float32), 16_000)
     calls: list[list[str]] = []
 
     class FakeProcess:
@@ -396,11 +396,104 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
     command = calls[0]
     assert command[command.index("--backend") + 1] == "parakeet"
     assert command[command.index("--cache-dir") + 1] == str(portable / "cache" / "crispasr")
-    assert command[command.index("--chunk-seconds") + 1] == "30.0"
     assert command[command.index("-vm") + 1] == "silero"
-    assert command[command.index("-vmsd") + 1] == "30.0"
+    assert "--chunk-seconds" not in command
     assert "whisper-vad" not in command
     assert sentences[0].ja_text == "声。"
+    assert not list((portable / "temp" / "asr").glob("parakeet-*"))
+
+
+@pytest.mark.parametrize(
+    ("model_id", "model_filename"),
+    [
+        (
+            "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
+            "parakeet-ctc-1.1b-ja-f16.gguf",
+        ),
+        (
+            "nvidia/parakeet-tdt_ctc-0.6b-ja",
+            "parakeet-tdt-0.6b-ja.gguf",
+        ),
+    ],
+)
+def test_parakeet_long_audio_is_split_before_both_backends(
+    tmp_path,
+    monkeypatch,
+    model_id,
+    model_filename,
+) -> None:
+    portable = tmp_path / "portable"
+    executable = portable / "runtimes" / "crispasr" / "bin" / "crispasr"
+    model = portable / "models" / "parakeet" / model_filename
+    executable.parent.mkdir(parents=True)
+    model.parent.mkdir(parents=True)
+    executable.touch()
+    model.touch()
+    audio = tmp_path / "long.wav"
+    sf.write(audio, np.zeros(66_000, dtype=np.float32), 1_000)
+    calls: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self, command, **_kwargs):
+            calls.append(command)
+            output_base = command[command.index("-of") + 1]
+            if model_id == "nvidia/parakeet-tdt_ctc-0.6b-ja" and len(calls) == 2:
+                self.stdout = iter(())
+                self.returncode = None
+                return
+            payload = {
+                "crispasr": {"language": "ja"},
+                "transcription": [
+                    {
+                        "text": "声。",
+                        "words": [
+                            {
+                                "text": "声",
+                                "offsets": {"from": 100, "to": 500},
+                            }
+                        ],
+                    }
+                ],
+            }
+            Path(output_base).with_suffix(".json").write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            self.stdout = iter(())
+            self.returncode = None
+
+        def wait(self):
+            self.returncode = 0
+            return 0
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(asr, "portable_home", lambda: portable)
+    monkeypatch.setattr(
+        asr,
+        "current_platform",
+        lambda: SimpleNamespace(is_windows=False),
+    )
+    monkeypatch.setattr(asr.subprocess, "Popen", FakeProcess)
+
+    sentences, _ = asr._transcribe_parakeet(
+        audio,
+        ProjectSettings(asr_model=model_id, asr_chunk_seconds=0),
+        None,
+    )
+
+    assert len(calls) == 3
+    assert all("--chunk-seconds" not in command for command in calls)
+    assert all(
+        Path(command[command.index("-f") + 1]).name.startswith("chunk-") for command in calls
+    )
+    expected_sentences = 2 if model_id == "nvidia/parakeet-tdt_ctc-0.6b-ja" else 3
+    assert len(sentences) == expected_sentences
+    assert sentences[1].start_seconds > (45 if expected_sentences == 2 else 20)
     assert not list((portable / "temp" / "asr").glob("parakeet-*"))
 
 
@@ -413,7 +506,7 @@ def test_parakeet_error_keeps_leading_argument_diagnostic(tmp_path, monkeypatch)
     executable.touch()
     model.touch()
     audio = tmp_path / "analysis.wav"
-    audio.touch()
+    sf.write(audio, np.zeros(16_000, dtype=np.float32), 16_000)
 
     class FakeProcess:
         def __init__(self, _command, **_kwargs):

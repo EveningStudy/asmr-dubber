@@ -1809,12 +1809,12 @@ def build_app() -> Any:
                                     label="分块上限（秒）",
                                     value=stored.asr_chunk_seconds,
                                     minimum=0,
-                                    maximum=300,
+                                    maximum=30,
                                     step=1,
                                     info=(
-                                        "0 表示自动：1.1B CTC 使用安全的 30 秒分块，"
-                                        "0.6B 使用运行时默认值。手动值过大可能耗尽显存，"
-                                        "也可能增加漏字或时间漂移。"
+                                        "0 表示自动使用 30 秒。两种 Parakeet 模型都会由"
+                                        "程序先按安静位置分段，再逐段识别；旧配置中超过"
+                                        "30 秒的值也会自动限制为 30 秒。"
                                     ),
                                 )
                         with gr.Group(

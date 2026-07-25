@@ -36,8 +36,9 @@ Progress = Callable[[str, int, int], None]
 _QWEN_CHUNK_SECONDS = 90.0
 _QWEN_BOUNDARY_SEARCH_SECONDS = 5.0
 _QWEN_BOUNDARY_WINDOW_SECONDS = 0.1
-_PARAKEET_CTC_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
-_PARAKEET_CTC_AUTO_CHUNK_SECONDS = 30.0
+_PARAKEET_AUTO_CHUNK_SECONDS = 30.0
+_PARAKEET_BOUNDARY_SEARCH_SECONDS = 5.0
+_PARAKEET_BOUNDARY_WINDOW_SECONDS = 0.1
 _TRANSFORMERS_ASR_PIPELINE_LOCK = threading.Lock()
 
 
@@ -117,6 +118,45 @@ def _qwen_chunk_ranges(
 
     ranges.append((start, total_samples))
     return ranges
+
+
+def _audio_file_chunk_ranges(
+    audio_path: Path,
+    chunk_seconds: float,
+    search_seconds: float = _PARAKEET_BOUNDARY_SEARCH_SECONDS,
+    window_seconds: float = _PARAKEET_BOUNDARY_WINDOW_SECONDS,
+) -> tuple[int, list[tuple[int, int]]]:
+    """Split an audio file near quiet boundaries without loading it all into RAM."""
+    with sf.SoundFile(audio_path) as audio:
+        sample_rate = audio.samplerate
+        total_samples = len(audio)
+        target_samples = max(1, int(round(chunk_seconds * sample_rate)))
+        if total_samples <= target_samples:
+            return sample_rate, [(0, total_samples)]
+        search_samples = max(0, int(round(search_seconds * sample_rate)))
+        window_samples = max(1, int(round(window_seconds * sample_rate)))
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        while total_samples - start > target_samples:
+            target = start + target_samples
+            left = max(start + 1, target - search_samples)
+            right = min(total_samples, target + search_samples)
+            audio.seek(left)
+            region = audio.read(right - left, dtype="float32", always_2d=True)
+            amplitudes = np.mean(np.abs(region), axis=1)
+            if amplitudes.size <= window_samples:
+                boundary = target
+            else:
+                prefix = np.empty(amplitudes.size + 1, dtype=np.float64)
+                prefix[0] = 0.0
+                np.cumsum(amplitudes, dtype=np.float64, out=prefix[1:])
+                energies = prefix[window_samples:] - prefix[:-window_samples]
+                boundary = left + int(np.argmin(energies)) + (window_samples // 2)
+            boundary = min(total_samples, max(start + 1, boundary))
+            ranges.append((start, boundary))
+            start = boundary
+        ranges.append((start, total_samples))
+        return sample_rate, ranges
 
 
 def _clock(seconds: float) -> str:
@@ -520,10 +560,9 @@ def _parakeet_input_path(analysis_audio: Path, run_directory: Path) -> Path:
     return staged
 
 
-def _parse_crispasr_payload(
+def _crispasr_payload_tokens(
     payload: Mapping[str, Any],
-    settings: ProjectSettings,
-) -> tuple[list[Sentence], str]:
+) -> tuple[list[TimedToken], str, str]:
     def timed_items(items: Any) -> list[TimedToken]:
         parsed: list[TimedToken] = []
         expected = 0
@@ -578,7 +617,15 @@ def _parse_crispasr_payload(
                     tokens.append(token)
     metadata = payload.get("crispasr") or {}
     language = str(metadata.get("language", "Japanese")) if isinstance(metadata, Mapping) else "ja"
-    return _finish_tokens(tokens, "".join(full_text_parts), language, settings)
+    return tokens, "".join(full_text_parts), language
+
+
+def _parse_crispasr_payload(
+    payload: Mapping[str, Any],
+    settings: ProjectSettings,
+) -> tuple[list[Sentence], str]:
+    tokens, full_text, language = _crispasr_payload_tokens(payload)
+    return _finish_tokens(tokens, full_text, language, settings)
 
 
 def _transcribe_parakeet(
@@ -594,12 +641,10 @@ def _transcribe_parakeet(
         )
     run_directory = portable_home() / "temp" / "asr" / f"parakeet-{uuid.uuid4().hex}"
     run_directory.mkdir(parents=True, exist_ok=False)
-    result_base = run_directory / "result"
-    result_file = result_base.with_suffix(".json")
     cache_directory = portable_home() / "cache" / "crispasr"
     cache_directory.mkdir(parents=True, exist_ok=True)
     native_input = _parakeet_input_path(analysis_audio, run_directory)
-    command = [
+    base_command = [
         str(executable),
         "--backend",
         "parakeet",
@@ -607,30 +652,17 @@ def _transcribe_parakeet(
         str(cache_directory),
         "-m",
         str(model_path),
-        "-f",
-        str(native_input),
         "-l",
         "ja",
         "-ojf",
-        "-of",
-        str(result_base),
         "-pp",
         "-t",
         str(max(1, min(os.cpu_count() or 4, settings.asr_batch_size * 4))),
     ]
     if settings.asr_model == "nvidia/parakeet-tdt_ctc-0.6b-ja":
-        command.extend(("--parakeet-decoder", settings.asr_parakeet_decoder))
-    chunk_seconds = settings.asr_chunk_seconds
-    if settings.asr_model == _PARAKEET_CTC_MODEL and chunk_seconds <= 0:
-        # CrispASR 0.8.21 can route this pure-CTC model through its full-audio
-        # path when the default is left implicit. Long recordings then reserve
-        # activation memory for the entire file. Pass its documented 30-second
-        # fallback explicitly so memory stays bounded on consumer GPUs.
-        chunk_seconds = _PARAKEET_CTC_AUTO_CHUNK_SECONDS
-    if chunk_seconds > 0:
-        command.extend(("--chunk-seconds", str(chunk_seconds)))
+        base_command.extend(("--parakeet-decoder", settings.asr_parakeet_decoder))
     if settings.asr_vad_filter:
-        command.extend(
+        base_command.extend(
             (
                 "--vad",
                 "-vm",
@@ -639,21 +671,29 @@ def _transcribe_parakeet(
                 str(settings.asr_vad_min_silence_ms),
             )
         )
-        if chunk_seconds > 0:
-            # VAD uses its own speech chunks, so cap continuous speech there as
-            # well; --chunk-seconds is only the non-VAD fallback in CrispASR.
-            command.extend(("-vmsd", str(chunk_seconds)))
     if settings.asr_initial_prompt:
-        command.extend(("--hotwords", settings.asr_initial_prompt))
+        base_command.extend(("--hotwords", settings.asr_initial_prompt))
     if not settings.asr_device.startswith("cuda"):
-        command.append("--no-gpu")
+        base_command.append("--no-gpu")
     environment = isolated_runtime_environment("crispasr")
     environment["CRISPASR_CACHE_DIR"] = str(portable_home() / "cache" / "crispasr")
+    requested_chunk_seconds = settings.asr_chunk_seconds or _PARAKEET_AUTO_CHUNK_SECONDS
+    # CrispASR 0.8.21 accepts --chunk-seconds but ignores it after the 1.1B
+    # model auto-routes to fastconformer-ctc. Split the analysis copy ourselves
+    # for both recommended Parakeet models so no backend path can reserve memory
+    # for a multi-minute recording. Existing larger manual values are clamped.
+    chunk_seconds = min(requested_chunk_seconds, _PARAKEET_AUTO_CHUNK_SECONDS)
+    sample_rate, chunk_ranges = _audio_file_chunk_ranges(native_input, chunk_seconds)
+    if not chunk_ranges or chunk_ranges[-1][1] <= 0:
+        raise AsmrDubberError("Parakeet 输入音频为空。")
     if progress:
-        progress(f"启动 Parakeet：{settings.asr_model}", 0, 1)
-    process = None
-    output_lines: list[str] = []
-    try:
+        progress(f"Parakeet 将音频分为 {len(chunk_ranges)} 段", 0, len(chunk_ranges))
+    deadline = time.monotonic() + settings.asr_timeout_seconds
+    active_process: subprocess.Popen[str] | None = None
+
+    def run_chunk(command: list[str], result_file: Path, index: int) -> Mapping[str, Any]:
+        nonlocal active_process
+        output_lines: list[str] = []
         process = subprocess.Popen(
             command,
             cwd=PROJECT_ROOT,
@@ -664,6 +704,7 @@ def _transcribe_parakeet(
             encoding="utf-8",
             errors="replace",
         )
+        active_process = process
         assert process.stdout is not None
         output_queue: queue.Queue[str | None] = queue.Queue()
 
@@ -680,7 +721,6 @@ def _transcribe_parakeet(
             daemon=True,
         )
         reader.start()
-        deadline = time.monotonic() + settings.asr_timeout_seconds
         last_heartbeat = 0.0
         output_closed = False
         while not output_closed:
@@ -698,7 +738,12 @@ def _transcribe_parakeet(
                 now = time.monotonic()
                 if progress and now - last_heartbeat >= 2:
                     elapsed = settings.asr_timeout_seconds - remaining
-                    progress(f"Parakeet 正在识别（已运行 {elapsed:.0f} 秒）", 0, 1)
+                    progress(
+                        f"Parakeet 正在识别第 {index}/{len(chunk_ranges)} 段"
+                        f"（已运行 {elapsed:.0f} 秒）",
+                        index - 1,
+                        len(chunk_ranges),
+                    )
                     last_heartbeat = now
                 if process.poll() is not None and not reader.is_alive():
                     break
@@ -711,26 +756,96 @@ def _transcribe_parakeet(
                 continue
             output_lines.append(value)
             if progress and ("progress" in value.lower() or "%" in value):
-                progress(f"Parakeet：{value[-160:]}", 0, 1)
+                progress(
+                    f"Parakeet 第 {index}/{len(chunk_ranges)} 段：{value[-140:]}",
+                    index - 1,
+                    len(chunk_ranges),
+                )
         reader.join(timeout=1)
         return_code = process.wait()
+        active_process = None
         if return_code != 0:
             if len(output_lines) > 42:
                 diagnostic_lines = output_lines[:12] + ["…"] + output_lines[-30:]
             else:
                 diagnostic_lines = output_lines
             detail = "\n".join(diagnostic_lines).strip()
-            raise AsmrDubberError(f"Parakeet 识别进程失败（退出码 {return_code}）：{detail[:4000]}")
+            raise AsmrDubberError(
+                f"Parakeet 第 {index}/{len(chunk_ranges)} 段识别失败"
+                f"（退出码 {return_code}）：{detail[:4000]}"
+            )
+        if not result_file.is_file():
+            # CrispASR returns success without creating JSON when a chunk is
+            # entirely silent or contains no decodable speech. This is normal
+            # for quiet ASMR gaps; skip it and continue with adjacent chunks.
+            return {"crispasr": {"language": "ja"}, "transcription": []}
         try:
             payload = json.loads(result_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise AsmrDubberError(f"Parakeet 没有生成有效结果：{exc}") from exc
+            raise AsmrDubberError(
+                f"Parakeet 第 {index}/{len(chunk_ranges)} 段没有生成有效结果：{exc}"
+            ) from exc
         if not isinstance(payload, Mapping):
             raise AsmrDubberError("Parakeet JSON 顶层格式无效。")
-        return _parse_crispasr_payload(payload, settings)
+        return payload
+
+    all_tokens: list[TimedToken] = []
+    full_text_parts: list[str] = []
+    language = "Japanese"
+    try:
+        with sf.SoundFile(native_input) as source_audio:
+            for index, (start_sample, end_sample) in enumerate(chunk_ranges, start=1):
+                if len(chunk_ranges) == 1:
+                    chunk_file = native_input
+                else:
+                    chunk_file = run_directory / f"chunk-{index:04d}.wav"
+                    source_audio.seek(start_sample)
+                    waveform = source_audio.read(
+                        end_sample - start_sample,
+                        dtype="float32",
+                        always_2d=False,
+                    )
+                    sf.write(chunk_file, waveform, sample_rate, subtype="PCM_16")
+                result_base = run_directory / f"result-{index:04d}"
+                command = [
+                    *base_command,
+                    "-f",
+                    str(chunk_file),
+                    "-of",
+                    str(result_base),
+                ]
+                if progress:
+                    progress(
+                        f"Parakeet 正在识别第 {index}/{len(chunk_ranges)} 段",
+                        index - 1,
+                        len(chunk_ranges),
+                    )
+                payload = run_chunk(command, result_base.with_suffix(".json"), index)
+                tokens, full_text, chunk_language = _crispasr_payload_tokens(payload)
+                offset_seconds = start_sample / sample_rate
+                all_tokens.extend(
+                    TimedToken(
+                        text=token.text,
+                        start_seconds=token.start_seconds + offset_seconds,
+                        end_seconds=token.end_seconds + offset_seconds,
+                    )
+                    for token in tokens
+                )
+                full_text_parts.append(full_text)
+                if chunk_language:
+                    language = chunk_language
+                if chunk_file != native_input:
+                    chunk_file.unlink(missing_ok=True)
+                if progress:
+                    progress(
+                        f"Parakeet 已完成第 {index}/{len(chunk_ranges)} 段",
+                        index,
+                        len(chunk_ranges),
+                    )
+        return _finish_tokens(all_tokens, "".join(full_text_parts), language, settings)
     finally:
-        if process is not None and process.poll() is None:
-            process.kill()
+        if active_process is not None and active_process.poll() is None:
+            active_process.kill()
         shutil.rmtree(run_directory, ignore_errors=True)
         _cleanup_cuda()
 
