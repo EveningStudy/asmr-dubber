@@ -27,6 +27,7 @@ $Uv = $Paths.Uv
 $Venv = $Paths.Venv
 $Python = $Paths.Python
 . (Join-Path $Root "scripts\windows-runtime.ps1")
+. (Join-Path $Root "scripts\windows\recommended-dependencies.ps1")
 
 function Invoke-Checked {
     param(
@@ -246,6 +247,16 @@ $Extra = switch ($Profile) {
     }
 }
 
+$RecommendedDependenciesReady = $false
+if ($Profile -ne "Core" -and $NvidiaSmi) {
+    $RecommendedDependenciesReady = Import-ASMRDubberRecommendedDependencies `
+        -Root $Root -PortableRoot $DataRoot -Python $ManagedPython.FullName `
+        -MirrorConfiguration $MirrorConfiguration
+    # The imported virtual environments were created in a different folder.
+    # Re-read the executable path after portable path repair.
+    $Python = $Paths.Python
+}
+
 if ($InstallAdvancedModels -and $NvidiaSmi) {
     Write-Host "检测到 NVIDIA GPU，正在安装官方 CUDA 13.0 PyTorch..." -ForegroundColor Cyan
     Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
@@ -256,17 +267,25 @@ if ($InstallAdvancedModels -and $NvidiaSmi) {
         )
 }
 
-Write-Host "正在安装应用依赖：$Extra" -ForegroundColor Cyan
-Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-    -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-    -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
-# PyTorch 2.11 requires setuptools <82. Upgrade existing portable environments
-# to the newest compatible release instead of retaining an older installer.
-Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-    -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-    -Arguments @(
-        "pip", "install", "--python", $Python, "setuptools>=78.1.1,<82"
-    )
+$ApplicationDependenciesReady = (
+    $Profile -eq "Recommended" -and
+    (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot)
+)
+if (-not $ApplicationDependenciesReady) {
+    Write-Host "正在安装应用依赖：$Extra" -ForegroundColor Cyan
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
+    # PyTorch 2.11 requires setuptools <82. Upgrade existing portable environments
+    # to the newest compatible release instead of retaining an older installer.
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments @(
+            "pip", "install", "--python", $Python, "setuptools>=78.1.1,<82"
+        )
+} else {
+    Write-Host "应用依赖已由 Windows Recommended 依赖包提供。" -ForegroundColor Green
+}
 Invoke-Checked -FilePath $Python `
     -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
     -FailureMessage "应用字节码刷新失败"

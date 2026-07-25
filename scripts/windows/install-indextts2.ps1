@@ -18,6 +18,7 @@ $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 . (Join-Path $Root "scripts\mirrors.ps1")
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
+. (Join-Path $Root "scripts\windows\recommended-dependencies.ps1")
 $DataRoot = $Paths.Home
 $RuntimeRoot = Join-Path $DataRoot "runtimes\index-tts"
 $ModelDir = Join-Path $RuntimeRoot "checkpoints"
@@ -149,16 +150,29 @@ if (-not $SourceReady) {
     Set-Content -Path $Marker -Value $Revision -Encoding utf8NoBOM
 }
 
-Write-Host "正在安装 IndexTTS2 独立 Python/CUDA 环境..." -ForegroundColor Cyan
-Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-    -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-    -Arguments @("sync")
+$IndexPython = Join-Path $RuntimeRoot ".venv\Scripts\python.exe"
+$IndexRuntimeReady = Test-ASMRDubberIndexRuntimeDependencies -PortableRoot $DataRoot
+if ($IndexRuntimeReady) {
+    $ImportCheck = Start-Process -FilePath $IndexPython `
+        -ArgumentList @("-c", "import indextts.cli_v2") `
+        -WorkingDirectory $RuntimeRoot -NoNewWindow -Wait -PassThru
+    $IndexRuntimeReady = $ImportCheck.ExitCode -eq 0
+}
+if ($IndexRuntimeReady) {
+    Write-Host "IndexTTS2 Python/CUDA 依赖已由 Recommended 依赖包提供。" `
+        -ForegroundColor Green
+} else {
+    Write-Host "正在安装 IndexTTS2 独立 Python/CUDA 环境..." -ForegroundColor Cyan
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments @("sync")
+}
 
 $SharedFFmpeg = Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
 Write-Host "共享版 FFmpeg：$SharedFFmpeg" -ForegroundColor DarkGray
-$IndexCli = Join-Path $RuntimeRoot ".venv\Scripts\indextts2.exe"
-if (-not (Test-Path $IndexCli)) {
-    throw "IndexTTS2 CLI 安装后不存在：$IndexCli"
+$IndexPython = Join-Path $RuntimeRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $IndexPython)) {
+    throw "IndexTTS2 Python 环境安装后不存在：$IndexPython"
 }
 
 function Test-IndexTTSCheckpointsComplete {
@@ -187,14 +201,20 @@ if (Test-IndexTTSCheckpointsComplete) {
     Write-Host "正在通过 ModelScope 下载/续传 IndexTTS2 官方模型（约 11 GB）..." `
         -ForegroundColor Cyan
     $env:USE_MODELSCOPE = "true"
-    $Download = Invoke-Process -FilePath $IndexCli `
-        -ArgumentList @("download", "--source", "modelscope", "--model-dir", $ModelDir) `
+    $Download = Invoke-Process -FilePath $IndexPython `
+        -ArgumentList @(
+            "-m", "indextts.cli_v2", "download", "--source", "modelscope",
+            "--model-dir", $ModelDir
+        ) `
         -WorkingDirectory $RuntimeRoot
     if ($Download.ExitCode -ne 0) {
         Write-Warning "ModelScope 不可用，改用 Hugging Face 镜像续传。"
         $env:USE_MODELSCOPE = "false"
-        $Download = Invoke-Process -FilePath $IndexCli `
-            -ArgumentList @("download", "--source", "auto", "--model-dir", $ModelDir) `
+        $Download = Invoke-Process -FilePath $IndexPython `
+            -ArgumentList @(
+                "-m", "indextts.cli_v2", "download", "--source", "auto",
+                "--model-dir", $ModelDir
+            ) `
             -WorkingDirectory $RuntimeRoot
     }
     if ($Download.ExitCode -ne 0) {
@@ -204,8 +224,11 @@ if (Test-IndexTTSCheckpointsComplete) {
 
 $Device = if (Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue) { "cuda" } else { "cpu" }
 Write-Host "正在检查 IndexTTS2 模型与运行环境..." -ForegroundColor Cyan
-$Check = Invoke-Process -FilePath $IndexCli `
-    -ArgumentList @("check", "--model-dir", $ModelDir, "--device", $Device) `
+$Check = Invoke-Process -FilePath $IndexPython `
+    -ArgumentList @(
+        "-m", "indextts.cli_v2", "check", "--model-dir", $ModelDir,
+        "--device", $Device
+    ) `
     -WorkingDirectory $RuntimeRoot
 if ($Check.ExitCode -ne 0) {
     throw "IndexTTS2 检查失败（退出码 $($Check.ExitCode)）。"

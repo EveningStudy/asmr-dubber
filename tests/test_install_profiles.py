@@ -116,7 +116,7 @@ def test_indextts_installers_reuse_complete_checkpoints_before_download() -> Non
     linux = (ROOT / "scripts/linux/install-indextts2.sh").read_text(encoding="utf-8")
 
     for installer, download_marker, check_marker in (
-        (windows, '@("download", "--source", "modelscope"', '@("check", "--model-dir"'),
+        (windows, '"download", "--source", "modelscope"', '"check", "--model-dir"'),
         (linux, "download --source modelscope", 'check --model-dir "$MODEL_DIR"'),
     ):
         definition_position = installer.index(
@@ -141,6 +141,49 @@ def test_indextts_source_archive_prefers_modelscope_and_keeps_github_fallback() 
     assert 'asmr_mirror_list "$ROOT" indextts2_source_archives' in linux
 
 
+def test_windows_recommended_prefers_verified_modelscope_dependency_pack() -> None:
+    mirrors = json.loads((ROOT / "mirrors.json").read_text(encoding="utf-8"))
+    sources = mirrors["windows_recommended_dependency_archives"]
+    assert sources == [
+        "https://modelscope.cn/models/EveningStudyW/"
+        "ASMR-Dubber-Windows-Recommended/resolve/master/"
+        "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
+    ]
+
+    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    helper = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(encoding="utf-8")
+    importer = (ROOT / "scripts/import_windows_dependency_pack.py").read_text(encoding="utf-8")
+    assert setup.index("Import-ASMRDubberRecommendedDependencies") < setup.index(
+        'Write-Host "正在安装应用依赖'
+    )
+    assert "windows_recommended_dependency_archives" in helper
+    assert "Get-FileHash $Archive -Algorithm SHA256" in helper
+    assert "RecommendedDependencyPackSize = 0" not in helper
+    assert "__WINDOWS_RECOMMENDED_DEPENDENCY_PACK_SHA256__" not in helper
+    assert "ALLOWED_PREFIXES" in importer
+    assert "MAX_UNCOMPRESSED_BYTES" in importer
+
+
+def test_windows_indextts_can_reuse_relocatable_preinstalled_environment() -> None:
+    installer = (ROOT / "scripts/windows/install-indextts2.ps1").read_text(encoding="utf-8")
+    assert "Test-ASMRDubberIndexRuntimeDependencies" in installer
+    assert '"-m", "indextts.cli_v2", "check"' in installer
+    assert '"-m", "indextts.cli_v2", "download"' in installer
+
+
+def test_windows_recommended_dependency_pack_builder_has_expected_components() -> None:
+    builder = (ROOT / "scripts/windows/create-recommended-dependency-pack.ps1").read_text(
+        encoding="utf-8"
+    )
+    for component in (
+        "application-ui",
+        "indextts2",
+        "ffmpeg-shared",
+        "cpython-3.11.13-windows-x86_64-none",
+    ):
+        assert component in builder
+
+
 def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
     source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
 
@@ -155,5 +198,5 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.3.2.0")' in source
-        assert 'AssemblyFileVersion("0.3.2.0")' in source
+        assert 'AssemblyVersion("0.3.3.0")' in source
+        assert 'AssemblyFileVersion("0.3.3.0")' in source

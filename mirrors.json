@@ -44,5 +44,8 @@
   "indextts2_source_archives": [
     "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS2/resolve/master/index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip",
     "https://github.com/index-tts/index-tts/archive/13495845e3028f0bb6ca1462ad22aa0e76349e40.zip"
+  ],
+  "windows_recommended_dependency_archives": [
+    "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended/resolve/master/ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
   ]
 }
