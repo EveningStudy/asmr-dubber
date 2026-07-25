@@ -128,6 +128,15 @@ def test_discovery_reports_valid_and_invalid_archives(tmp_path: Path) -> None:
     assert inspections[1].manifest is not None
 
 
+def test_discovery_ignores_windows_recommended_dependency_bundle(tmp_path: Path) -> None:
+    directory = tmp_path / "model-packs"
+    directory.mkdir()
+    dependency_bundle = directory / "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
+    dependency_bundle.write_bytes(b"handled by the Windows dependency importer")
+
+    assert discover_model_packs(directory) == []
+
+
 def test_bulk_import_rejects_a_corrupt_archive_in_the_inbox(tmp_path: Path) -> None:
     directory = tmp_path / "model-packs"
     directory.mkdir()

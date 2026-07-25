@@ -23,6 +23,7 @@ MODEL_PACK_SCHEMA_VERSION = 1
 MODEL_PACK_MANIFEST = "model-pack.json"
 MODEL_PACK_PAYLOAD_PREFIX = "payload/"
 MODEL_PACK_DIRECTORY_NAME = "model-packs"
+WINDOWS_DEPENDENCY_PACK_PREFIX = "asmr-dubber-windows-recommended-dependencies-v"
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_FILE_COUNT = 100_000
 MAX_UNCOMPRESSED_BYTES = 100 * 1024**3
@@ -348,6 +349,10 @@ def discover_model_packs(directory: Path | None = None) -> list[ModelPackInspect
         inspect_model_pack(archive)
         for archive in sorted(root.glob("*.zip"), key=lambda path: path.name.casefold())
         if archive.is_file()
+        # This archive shares the user-facing inbox so Setup can install it
+        # without another download, but it has a separate manifest and importer.
+        # Do not misreport it as a corrupt offline model pack.
+        and not archive.name.casefold().startswith(WINDOWS_DEPENDENCY_PACK_PREFIX)
     ]
 
 

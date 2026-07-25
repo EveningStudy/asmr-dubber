@@ -36,6 +36,8 @@ Progress = Callable[[str, int, int], None]
 _QWEN_CHUNK_SECONDS = 90.0
 _QWEN_BOUNDARY_SEARCH_SECONDS = 5.0
 _QWEN_BOUNDARY_WINDOW_SECONDS = 0.1
+_PARAKEET_CTC_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
+_PARAKEET_CTC_AUTO_CHUNK_SECONDS = 30.0
 _TRANSFORMERS_ASR_PIPELINE_LOCK = threading.Lock()
 
 
@@ -618,8 +620,15 @@ def _transcribe_parakeet(
     ]
     if settings.asr_model == "nvidia/parakeet-tdt_ctc-0.6b-ja":
         command.extend(("--parakeet-decoder", settings.asr_parakeet_decoder))
-    if settings.asr_chunk_seconds > 0:
-        command.extend(("--chunk-seconds", str(settings.asr_chunk_seconds)))
+    chunk_seconds = settings.asr_chunk_seconds
+    if settings.asr_model == _PARAKEET_CTC_MODEL and chunk_seconds <= 0:
+        # CrispASR 0.8.21 can route this pure-CTC model through its full-audio
+        # path when the default is left implicit. Long recordings then reserve
+        # activation memory for the entire file. Pass its documented 30-second
+        # fallback explicitly so memory stays bounded on consumer GPUs.
+        chunk_seconds = _PARAKEET_CTC_AUTO_CHUNK_SECONDS
+    if chunk_seconds > 0:
+        command.extend(("--chunk-seconds", str(chunk_seconds)))
     if settings.asr_vad_filter:
         command.extend(
             (
@@ -630,6 +639,10 @@ def _transcribe_parakeet(
                 str(settings.asr_vad_min_silence_ms),
             )
         )
+        if chunk_seconds > 0:
+            # VAD uses its own speech chunks, so cap continuous speech there as
+            # well; --chunk-seconds is only the non-VAD fallback in CrispASR.
+            command.extend(("-vmsd", str(chunk_seconds)))
     if settings.asr_initial_prompt:
         command.extend(("--hotwords", settings.asr_initial_prompt))
     if not settings.asr_device.startswith("cuda"):
