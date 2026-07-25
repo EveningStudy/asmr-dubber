@@ -149,12 +149,15 @@ def test_complete_local_pack_never_opens_network(tmp_path: Path, monkeypatch) ->
     def fail_open(*_args, **_kwargs):
         raise AssertionError("network must not be used")
 
-    assert prepare_remote_model_pack(
-        spec.pack_id,
-        directory=inbox,
-        mirror_path=config,
-        opener=fail_open,
-    ) == destination
+    assert (
+        prepare_remote_model_pack(
+            spec.pack_id,
+            directory=inbox,
+            mirror_path=config,
+            opener=fail_open,
+        )
+        == destination
+    )
 
 
 def test_range_download_resumes_existing_part(tmp_path: Path, monkeypatch) -> None:

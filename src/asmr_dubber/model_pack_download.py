@@ -296,9 +296,7 @@ def _download_segmented(
         if start <= end:
             work.append((part_dir / f"{index:02d}.part", start, end))
     present = sum(
-        min(part.stat().st_size, end - start + 1)
-        for part, start, end in work
-        if part.is_file()
+        min(part.stat().st_size, end - start + 1) for part, start, end in work if part.is_file()
     )
     progress = _DownloadProgress(expected_size, present, log)
     with ThreadPoolExecutor(max_workers=len(work)) as executor:
