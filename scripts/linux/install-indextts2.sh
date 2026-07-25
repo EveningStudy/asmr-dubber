@@ -15,7 +15,7 @@ DATA_ROOT="$ASMR_DUBBER_HOME"
 INDEX_ROOT="$DATA_ROOT/runtimes/index-tts"
 MODEL_DIR="$INDEX_ROOT/checkpoints"
 REVISION="13495845e3028f0bb6ca1462ad22aa0e76349e40"
-SOURCE_URL="${INDEXTTS_SOURCE_URL:-https://github.com/index-tts/index-tts/archive/$REVISION.zip}"
+SOURCE_URL="${INDEXTTS_SOURCE_URL:-}"
 SOURCE_SHA256="${INDEXTTS_SOURCE_SHA256:-7ed8bc742e2eeeb83f922247ef0e27f96327f418acacb6c63f182cafd66887ba}"
 MARKER="$INDEX_ROOT/.asmr-source-revision"
 DOWNLOAD_ROOT="$DATA_ROOT/cache/downloads"
@@ -73,7 +73,25 @@ if [[ "$SOURCE_READY" == 0 ]]; then
   fi
   if [[ "$NEED_DOWNLOAD" == 1 ]]; then
     echo "下载固定版本 IndexTTS2 源码（约 32 MB）..."
-    asmr_download "$ROOT" "$SOURCE_URL" "$ARCHIVE" "$SOURCE_SHA256"
+    SOURCE_READY=0
+    if [[ -n "$SOURCE_URL" ]] &&
+      asmr_download "$ROOT" "$SOURCE_URL" "$ARCHIVE" "$SOURCE_SHA256"; then
+      SOURCE_READY=1
+    fi
+    if [[ "$SOURCE_READY" == 0 ]]; then
+      while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        [[ "$candidate" == "$SOURCE_URL" ]] && continue
+        if asmr_download "$ROOT" "$candidate" "$ARCHIVE" "$SOURCE_SHA256"; then
+          SOURCE_READY=1
+          break
+        fi
+      done < <(asmr_mirror_list "$ROOT" indextts2_source_archives)
+    fi
+    if [[ "$SOURCE_READY" == 0 ]]; then
+      echo "IndexTTS2 源码下载失败：所有来源均不可用。" >&2
+      exit 1
+    fi
   fi
   ACTUAL_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
   if [[ "$ACTUAL_SHA256" != "$SOURCE_SHA256" ]]; then

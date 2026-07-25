@@ -50,6 +50,12 @@ function Get-ASMRDubberMirrorList {
                 "https://github.com/astral-sh/python-build-standalone/releases/download"
             )
         }
+        "indextts2_source_archives" {
+            @(
+                "https://github.com/index-tts/index-tts/archive/" +
+                "13495845e3028f0bb6ca1462ad22aa0e76349e40.zip"
+            )
+        }
         default { @() }
     }
     foreach ($Value in @($Configured) + @($Fallbacks)) {

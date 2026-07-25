@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -127,6 +128,19 @@ def test_indextts_installers_reuse_complete_checkpoints_before_download() -> Non
         assert "本地 checkpoints 已完整，无需联网下载" in installer
 
 
+def test_indextts_source_archive_prefers_modelscope_and_keeps_github_fallback() -> None:
+    mirrors = json.loads((ROOT / "mirrors.json").read_text(encoding="utf-8"))
+    sources = mirrors["indextts2_source_archives"]
+    assert sources[0].startswith("https://modelscope.cn/")
+    assert sources[-1].startswith("https://github.com/")
+    assert "13495845e3028f0bb6ca1462ad22aa0e76349e40.zip" in sources[0]
+
+    windows = (ROOT / "scripts/windows/install-indextts2.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "scripts/linux/install-indextts2.sh").read_text(encoding="utf-8")
+    assert '-Name "indextts2_source_archives"' in windows
+    assert 'asmr_mirror_list "$ROOT" indextts2_source_archives' in linux
+
+
 def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
     source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
 
@@ -141,5 +155,5 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.3.1.0")' in source
-        assert 'AssemblyFileVersion("0.3.1.0")' in source
+        assert 'AssemblyVersion("0.3.2.0")' in source
+        assert 'AssemblyFileVersion("0.3.2.0")' in source

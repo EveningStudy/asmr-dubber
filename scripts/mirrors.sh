@@ -21,6 +21,9 @@ fallbacks = {
         "https://releases.astral.sh/github/python-build-standalone/releases/download",
         "https://github.com/astral-sh/python-build-standalone/releases/download"
     ],
+    "indextts2_source_archives": [
+        "https://github.com/index-tts/index-tts/archive/13495845e3028f0bb6ca1462ad22aa0e76349e40.zip"
+    ],
 }
 seen = set()
 for value in [*values, *fallbacks.get(name, [])]:
