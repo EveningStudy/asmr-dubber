@@ -86,7 +86,13 @@ if (-not $SourceReady) {
     $StagedSource = Get-ChildItem $Staging -Filter "pyproject.toml" -File -Recurse `
         -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Directory
     if (-not $SourceReady -and (Test-Path $RuntimeRoot) -and -not $StagedSource) {
-        $Unexpected = Get-ChildItem $RuntimeRoot -Force | Where-Object { $_.Name -ne "checkpoints" }
+        # Recommended dependency bundles install the isolated environment before
+        # this script adds the pinned IndexTTS2 source tree. Both directories are
+        # therefore valid bootstrap state after an interrupted or fresh install.
+        $AllowedBootstrapDirectories = @("checkpoints", ".venv")
+        $Unexpected = Get-ChildItem $RuntimeRoot -Force | Where-Object {
+            -not ($_.PSIsContainer -and $_.Name -in $AllowedBootstrapDirectories)
+        }
         if ($Unexpected) {
             throw "IndexTTS2 目录已存在且包含未知文件：$RuntimeRoot"
         }

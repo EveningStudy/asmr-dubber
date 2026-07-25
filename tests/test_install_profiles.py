@@ -169,6 +169,8 @@ def test_windows_indextts_can_reuse_relocatable_preinstalled_environment() -> No
     assert "Test-ASMRDubberIndexRuntimeDependencies" in installer
     assert '"-m", "indextts.cli_v2", "check"' in installer
     assert '"-m", "indextts.cli_v2", "download"' in installer
+    assert '$AllowedBootstrapDirectories = @("checkpoints", ".venv")' in installer
+    assert "$_.PSIsContainer -and $_.Name -in $AllowedBootstrapDirectories" in installer
 
 
 def test_windows_recommended_dependency_pack_builder_has_expected_components() -> None:
