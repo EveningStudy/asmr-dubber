@@ -28,6 +28,14 @@ from asmr_dubber.runtime_manager import (
 from asmr_dubber.user_settings import UserSettings
 
 
+@pytest.fixture(autouse=True)
+def _disable_remote_model_pack_download(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.prepare_remote_model_pack",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 def _hardware(*, cuda: bool) -> HardwareProfile:
     return HardwareProfile(
         platform_id="windows",
