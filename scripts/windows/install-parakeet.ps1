@@ -32,6 +32,15 @@ if (-not (Test-Path $Python)) {
     throw "缺少 Python 运行环境；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 
+if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
+    & $Python -m asmr_dubber.cli prepare-model-pack parakeet-ja-windows
+    if ($LASTEXITCODE -eq 0) {
+        & $Python -m asmr_dubber.cli import-model-packs --all --pack-id parakeet-ja-windows
+    } else {
+        Write-Warning "远程 Parakeet 模型包不可用，将继续使用原始下载源。"
+    }
+}
+
 if ($Variant -eq "Auto") {
     $NvidiaSmi = Join-Path $env:SystemRoot "System32\nvidia-smi.exe"
     $Variant = if (Test-Path $NvidiaSmi) { "CUDA" } else { "CPU" }

@@ -26,6 +26,7 @@ from .constants import (
 )
 from .environment import cached_model_path, cuda_summary, ffmpeg_version
 from .errors import AsmrDubberError
+from .model_pack_download import ModelPackDownloadError, prepare_remote_model_pack
 from .model_packs import (
     ModelPackError,
     discover_model_packs,
@@ -416,6 +417,24 @@ def list_model_packs_command() -> None:
     if not inspections:
         table.add_row("—", "—", "—", "—", "未发现 ZIP 模型包")
     console.print(table)
+
+
+@app.command("prepare-model-pack")
+def prepare_model_pack_command(
+    pack_id: Annotated[str, typer.Argument(help="要下载到 model-packs 的模型包 ID")],
+) -> None:
+    """从 mirrors.json 配置的远程来源下载并校验模型包。"""
+    try:
+        archive = prepare_remote_model_pack(
+            pack_id,
+            log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+        )
+    except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
+        _fail(exc)
+    if archive is None:
+        console.print(f"没有为 {pack_id} 配置远程模型包；继续使用原始下载源。")
+        return
+    console.print(f"[green]模型包已就绪：[/green]{archive}")
 
 
 @app.command("import-model-packs")

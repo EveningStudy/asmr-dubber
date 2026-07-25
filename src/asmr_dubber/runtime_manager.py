@@ -31,6 +31,11 @@ from .constants import (
 from .environment import cached_model_path, cuda_summary
 from .errors import AsmrDubberError, EnvironmentError, InstallPausedError
 from .mirrors import mirror_candidates, snapshot_download_with_fallback
+from .model_pack_download import (
+    ModelPackDownloadError,
+    ModelPackDownloadPaused,
+    prepare_remote_model_pack,
+)
 from .model_packs import ModelPackError, import_discovered_model_packs
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS, ModelBackend
 from .platforms import current_platform, portable_home, runtime_executable_candidates
@@ -783,10 +788,23 @@ def import_backend_model_packs(
     backend_id: str,
     *,
     log_callback: InstallLogCallback | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> int:
     pack_ids = backend_model_pack_ids(backend_id)
     if not pack_ids:
         return 0
+    for pack_id in sorted(pack_ids):
+        try:
+            prepare_remote_model_pack(
+                pack_id,
+                log=log_callback,
+                cancelled=cancel_event.is_set if cancel_event is not None else None,
+            )
+        except ModelPackDownloadPaused as exc:
+            raise InstallPausedError(str(exc)) from exc
+        except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
+            if log_callback is not None:
+                log_callback(f"远程模型包不可用，将继续使用原始下载源：{exc}")
     try:
         results = import_discovered_model_packs(
             pack_ids=pack_ids,
@@ -1027,6 +1045,7 @@ def install_backend(
     imported_packs = import_backend_model_packs(
         backend_id,
         log_callback=log_callback,
+        cancel_event=cancel_event,
     )
     if cancel_event is not None and cancel_event.is_set():
         raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
@@ -1056,6 +1075,8 @@ def install_backend(
         progress(0, desc=start_message)
     env = os.environ.copy()
     env.setdefault("UV_LINK_MODE", "copy" if os.name == "nt" else "clone")
+    if imported_packs:
+        env["ASMR_DUBBER_MODEL_PACKS_PREPARED"] = "1"
     if pypi_index:
         env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
     if huggingface_endpoint:

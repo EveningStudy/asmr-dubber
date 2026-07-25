@@ -35,6 +35,15 @@ if (-not (Test-Path $Uv)) {
     throw "缺少 uv；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
 }
 New-Item -ItemType Directory -Force -Path $DataRoot, $DownloadRoot | Out-Null
+if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
+    & $Paths.Python -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints
+    if ($LASTEXITCODE -eq 0) {
+        & $Paths.Python -m asmr_dubber.cli import-model-packs --all `
+            --pack-id indextts2-checkpoints
+    } else {
+        Write-Warning "远程 IndexTTS2 模型包不可用，将继续使用原始下载源。"
+    }
+}
 $env:UV_LINK_MODE = "copy"
 $env:HF_HUB_DISABLE_XET = "1"
 $env:HF_HUB_DISABLE_TELEMETRY = "1"

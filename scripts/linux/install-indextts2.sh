@@ -29,6 +29,15 @@ if [[ ! -x "$ASMR_DUBBER_UV" || ! -x "$PYTHON" ]]; then
 fi
 mkdir -p "$DOWNLOAD_ROOT"
 
+if [[ "${ASMR_DUBBER_MODEL_PACKS_PREPARED:-}" != "1" ]]; then
+  if "$PYTHON" -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints; then
+    "$PYTHON" -m asmr_dubber.cli import-model-packs --all \
+      --pack-id indextts2-checkpoints
+  else
+    echo "远程 IndexTTS2 模型包不可用，将继续使用原始下载源。" >&2
+  fi
+fi
+
 source_files_ready() {
   [[ -f "$INDEX_ROOT/pyproject.toml" ]] &&
     [[ -f "$INDEX_ROOT/uv.lock" ]] &&

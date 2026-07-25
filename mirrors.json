@@ -32,5 +32,13 @@
     "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download",
     "https://ghproxy.net/https://github.com/astral-sh/python-build-standalone/releases/download",
     "https://github.com/astral-sh/python-build-standalone/releases/download"
-  ]
+  ],
+  "model_pack_sources": {
+    "parakeet-ja-windows": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Parakeet/resolve/master/ASMR-Dubber-ModelPack-parakeet-ja-windows-v0.2.1.zip"
+    ],
+    "indextts2-checkpoints": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS2/resolve/master/ASMR-Dubber-ModelPack-indextts2-checkpoints-v0.2.1.zip"
+    ]
+  }
 }
