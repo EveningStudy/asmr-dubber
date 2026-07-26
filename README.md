@@ -4,10 +4,10 @@ ASMR Dubber 在日语原声中加入逐句中文复述。日语时间轴和内�
 
 ## 演示
 
-- [素材 1](assets/demos/demo-1.wav)
-- [素材 2](assets/demos/demo-2.wav)
-- [素材 3](assets/demos/demo-3.wav)
-- [素材 4（18+）](assets/demos/demo-4.wav)
+- [素材 1](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-1.wav)
+- [素材 2](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-2.wav)
+- [素材 3](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-3.wav)
+- [素材 4（18+）](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-4.wav)
 - [B 站演示视频](https://www.bilibili.com/video/BV1f43G6YEov/)
 
 以上素材仅用于功能演示，如有侵权请联系删除。
