@@ -2,6 +2,16 @@
 
 ASMR Dubber 在日语原声中加入逐句中文复述。日语时间轴和内容保持不变；中文由所选 TTS 后端使用日语声纹参考生成，并按对应原句的局部响度混入。
 
+## 演示
+
+- [素材 1](assets/demos/demo-1.wav)
+- [素材 2](assets/demos/demo-2.wav)
+- [素材 3](assets/demos/demo-3.wav)
+- [素材 4（18+，请谨慎播放）](assets/demos/demo-4.wav)
+- [B 站演示视频](https://www.bilibili.com/video/BV1f43G6YEov/)
+
+以上素材仅用于功能演示，如有侵权请联系删除。
+
 支持 Windows 10/11 和 64 位 Linux。
 
 ## 安装
