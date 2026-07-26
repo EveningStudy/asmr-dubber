@@ -1,4 +1,4 @@
-Set-StrictMode -Version 2.0
+﻿Set-StrictMode -Version 2.0
 
 $script:RecommendedDependencyPackName = `
     "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
@@ -102,7 +102,7 @@ function Import-ASMRDubberRecommendedDependencies {
         if ($File.Length -ne $script:RecommendedDependencyPackSize) {
             throw "依赖包大小不符：$($File.Length)"
         }
-        $ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
         if ($ActualHash -ne $script:RecommendedDependencyPackSha256) {
             throw "依赖包 SHA-256 校验失败：$ActualHash"
         }

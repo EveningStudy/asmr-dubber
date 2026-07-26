@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Auto", "CPU", "CUDA")]
     [string]$Variant = "Auto"
@@ -55,12 +55,12 @@ if (
     (Test-Path $InstalledExecutable) -and
     (Test-Path $Installed11B) -and
     (Test-Path $Installed06B) -and
-    ((Get-FileHash $Installed11B -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Expected11B) -and
-    ((Get-FileHash $Installed06B -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Expected06B)
+    ((Get-ASMRDubberFileSha256 -Path $Installed11B) -eq $Expected11B) -and
+    ((Get-ASMRDubberFileSha256 -Path $Installed06B) -eq $Expected06B)
 ) {
-    $ReadyCheck = Start-Process -FilePath $InstalledExecutable `
-        -ArgumentList @("--version") -NoNewWindow -Wait -PassThru
-    if ($ReadyCheck.ExitCode -eq 0) {
+    $ReadyCheck = Invoke-ASMRDubberProcess -FilePath $InstalledExecutable `
+        -ArgumentList @("--version") -WorkingDirectory $Root
+    if ($ReadyCheck -eq 0) {
         Write-Host "Parakeet 本地运行时和两款模型已完整，无需联网下载。" `
             -ForegroundColor Green
         return
@@ -88,7 +88,7 @@ function Get-CheckedDownload {
     )
     for ($Attempt = 1; $Attempt -le 2; $Attempt++) {
         if (Test-Path $Destination) {
-            $Actual = (Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            $Actual = Get-ASMRDubberFileSha256 -Path $Destination
             if ($Actual -eq $Sha256) {
                 return
             }
@@ -97,7 +97,7 @@ function Get-CheckedDownload {
 
         Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
             -Url $Uri -Destination $Destination -Sha256 $Sha256 -Resume | Out-Null
-        $Actual = (Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        $Actual = Get-ASMRDubberFileSha256 -Path $Destination
         if ($Actual -eq $Sha256) {
             return
         }
@@ -134,10 +134,10 @@ function Invoke-PythonChecked {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$FailureMessage
     )
-    $Process = Start-Process -FilePath $Python -ArgumentList $Arguments `
-        -NoNewWindow -Wait -PassThru
-    if ($Process.ExitCode -ne 0) {
-        throw "$FailureMessage（退出码 $($Process.ExitCode)）"
+    $ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
+        -ArgumentList $Arguments -WorkingDirectory $Root
+    if ($ExitCode -ne 0) {
+        throw "$FailureMessage（退出码 $ExitCode）"
     }
 }
 
@@ -165,7 +165,7 @@ Invoke-PythonChecked -Arguments @(
         -Preferred $PreferredHuggingFace) -join ";")
 ) -FailureMessage "Parakeet 0.6B 模型下载失败。"
 
-$SelfTest = Start-Process -FilePath (Join-Path $RuntimeBin "crispasr.exe") `
-    -ArgumentList @("--version") -NoNewWindow -Wait -PassThru
-if ($SelfTest.ExitCode -ne 0) { throw "CrispASR 安装后自检失败。" }
+$SelfTest = Invoke-ASMRDubberProcess -FilePath (Join-Path $RuntimeBin "crispasr.exe") `
+    -ArgumentList @("--version") -WorkingDirectory $Root
+if ($SelfTest -ne 0) { throw "CrispASR 安装后自检失败。" }
 Write-Host "Parakeet 已就绪。运行时、模型和缓存都位于 .asmr-dubber。" -ForegroundColor Green

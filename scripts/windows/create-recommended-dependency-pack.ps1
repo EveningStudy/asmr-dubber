@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputDirectory = "",
     [string]$PackVersion = "1.0.0"
@@ -47,10 +47,11 @@ function Copy-DependencyTree {
         "/MT:16", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
         "/XD", "__pycache__", "/XF", "*.pyc", "*.pyo"
     )
-    $Process = Start-Process -FilePath (Join-Path $env:SystemRoot "System32\robocopy.exe") `
-        -ArgumentList $Arguments -WorkingDirectory $Root -NoNewWindow -Wait -PassThru
-    if ($Process.ExitCode -gt 7) {
-        throw "robocopy 复制失败：$Source（退出码 $($Process.ExitCode)）"
+    $ExitCode = Invoke-ASMRDubberProcess `
+        -FilePath (Join-Path $env:SystemRoot "System32\robocopy.exe") `
+        -ArgumentList $Arguments -WorkingDirectory $Root
+    if ($ExitCode -gt 7) {
+        throw "robocopy 复制失败：$Source（退出码 $ExitCode）"
     }
 }
 
@@ -106,8 +107,12 @@ $Manifest = [ordered]@{
     indextts_revision = "13495845e3028f0bb6ca1462ad22aa0e76349e40"
     components = @("application-ui", "indextts2", "ffmpeg-shared")
 }
-$Manifest | ConvertTo-Json -Depth 4 |
-    Set-Content (Join-Path $Staging "dependency-pack.json") -Encoding utf8NoBOM
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    (Join-Path $Staging "dependency-pack.json"),
+    (($Manifest | ConvertTo-Json -Depth 4) + "`r`n"),
+    $Utf8NoBom
+)
 $Notices = @"
 ASMR Dubber Windows Recommended dependency pack
 
@@ -118,8 +123,11 @@ PyTorch: https://pytorch.org/
 FFmpeg LGPL shared build: https://github.com/BtbN/FFmpeg-Builds
 Python: https://www.python.org/
 "@
-Set-Content (Join-Path $Staging "THIRD_PARTY_NOTICES.txt") `
-    -Value $Notices -Encoding utf8NoBOM
+[System.IO.File]::WriteAllText(
+    (Join-Path $Staging "THIRD_PARTY_NOTICES.txt"),
+    $Notices,
+    $Utf8NoBom
+)
 
 Remove-Item -Force -ErrorAction SilentlyContinue $Output, "$Output.sha256"
 $WinRARCommand = Get-Command "WinRAR.exe" -ErrorAction SilentlyContinue
@@ -130,10 +138,10 @@ if (-not $WinRARPath) {
 }
 Write-Host "正在创建 ZIP64 依赖包（此步骤可能需要较长时间）..." -ForegroundColor Cyan
 if ($WinRARPath) {
-    $Process = Start-Process -FilePath $WinRARPath `
-        -ArgumentList @("a", "-afzip", "-m1", "-mt", "-r", "-ep1", $Output, "$Staging\*") `
-        -WorkingDirectory $Staging -NoNewWindow -Wait -PassThru
-    if ($Process.ExitCode -ne 0) { throw "WinRAR 打包失败：$($Process.ExitCode)" }
+    $ExitCode = Invoke-ASMRDubberProcess -FilePath $WinRARPath `
+        -ArgumentList @("a", "-afzip", "-m1", "-r", "-ep1", $Output, "$Staging\*") `
+        -WorkingDirectory $Staging
+    if ($ExitCode -ne 0) { throw "WinRAR 打包失败：$ExitCode" }
 } else {
     & $BasePython.FullName -m zipfile -c $Output `
         (Join-Path $Staging "dependency-pack.json") `
@@ -141,7 +149,7 @@ if ($WinRARPath) {
     if ($LASTEXITCODE -ne 0) { throw "Python ZIP64 打包失败。" }
 }
 
-$Hash = (Get-FileHash $Output -Algorithm SHA256).Hash.ToLowerInvariant()
+$Hash = Get-ASMRDubberFileSha256 -Path $Output
 $Size = (Get-Item $Output).Length
 "$Hash  $PackName" | Set-Content "$Output.sha256" -Encoding ascii
 Write-Host "依赖包已完成：$Output" -ForegroundColor Green

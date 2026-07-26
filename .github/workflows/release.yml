@@ -77,6 +77,29 @@ jobs:
         run: |
           uv build
           uvx twine check dist/*
+      - name: Prepare release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          changelog = Path("docs/CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              rf"^## \[{re.escape(version)}\].*?\n(?P<body>.*?)(?=^## \[|\Z)",
+              changelog,
+              re.MULTILINE | re.DOTALL,
+          )
+          if not match:
+              raise SystemExit(f"missing changelog entry for {version}")
+          Path("release-notes.md").write_text(
+              match.group("body").strip() + "\n",
+              encoding="utf-8",
+          )
+          PY
       - uses: actions/download-artifact@v4
         with:
           name: windows-release
@@ -88,4 +111,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}"
           dist/*
           release-assets/ASMR-Dubber-windows-portable.zip
+          --notes-file release-notes.md
           --verify-tag

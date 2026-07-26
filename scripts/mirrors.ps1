@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
 function Get-ASMRDubberMirrorConfiguration {
@@ -99,6 +99,28 @@ function Get-ASMRDubberGitHubUrls {
     return $Candidates.ToArray()
 }
 
+function Get-ASMRDubberFileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $FullPath = [System.IO.Path]::GetFullPath($Path)
+    $Stream = $null
+    $Hasher = $null
+    try {
+        $Stream = New-Object System.IO.FileStream(
+            $FullPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+        $Hasher = [System.Security.Cryptography.SHA256]::Create()
+        $Hash = $Hasher.ComputeHash($Stream)
+        return ([System.BitConverter]::ToString($Hash)).Replace("-", "").ToLowerInvariant()
+    } finally {
+        if ($Hasher) { $Hasher.Dispose() }
+        if ($Stream) { $Stream.Dispose() }
+    }
+}
+
 function Invoke-ASMRDubberDownload {
     param(
         [Parameter(Mandatory = $true)][object]$Configuration,
@@ -140,7 +162,7 @@ function Invoke-ASMRDubberDownload {
         if ($ExitCode -eq 0 -and (Test-Path $Partial)) {
             Move-Item -Force $Partial $Destination
             if (-not $Sha256 -or (
-                (Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq
+                (Get-ASMRDubberFileSha256 -Path $Destination) -eq
                 $Sha256.ToLowerInvariant()
             )) {
                 return $Candidate
@@ -178,27 +200,84 @@ function Get-ASMRDubberTextDownload {
     throw "所有下载源均失败：$($Errors -join '；')"
 }
 
-function Invoke-ASMRDubberProcess {
+function ConvertTo-ASMRDubberWindowsCommandLineArgument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Argument
+    )
+
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $Builder = New-Object System.Text.StringBuilder
+    [void]$Builder.Append('"')
+    $Backslashes = 0
+    foreach ($Character in $Argument.ToCharArray()) {
+        if ($Character -eq '\') {
+            $Backslashes++
+            continue
+        }
+        if ($Character -eq '"') {
+            [void]$Builder.Append(('\' * (($Backslashes * 2) + 1)))
+            [void]$Builder.Append('"')
+        } else {
+            if ($Backslashes -gt 0) {
+                [void]$Builder.Append(('\' * $Backslashes))
+            }
+            [void]$Builder.Append($Character)
+        }
+        $Backslashes = 0
+    }
+    if ($Backslashes -gt 0) {
+        [void]$Builder.Append(('\' * ($Backslashes * 2)))
+    }
+    [void]$Builder.Append('"')
+    return $Builder.ToString()
+}
+
+function Join-ASMRDubberWindowsCommandLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$ArgumentList
+    )
+
+    return (($ArgumentList | ForEach-Object {
+        ConvertTo-ASMRDubberWindowsCommandLineArgument -Argument $_
+    }) -join ' ')
+}
+
+function Start-ASMRDubberProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
 
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $StartInfo.FileName = $FilePath
-        $StartInfo.WorkingDirectory = $WorkingDirectory
-        $StartInfo.UseShellExecute = $false
-        foreach ($Argument in $ArgumentList) {
-            [void]$StartInfo.ArgumentList.Add($Argument)
-        }
-        $Process = [System.Diagnostics.Process]::Start($StartInfo)
-        $Process.WaitForExit()
-        return $Process.ExitCode
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $FilePath
+    $StartInfo.Arguments = Join-ASMRDubberWindowsCommandLine -ArgumentList $ArgumentList
+    $StartInfo.WorkingDirectory = $WorkingDirectory
+    $StartInfo.UseShellExecute = $false
+    $Process = [System.Diagnostics.Process]::Start($StartInfo)
+    if (-not $Process) {
+        throw "无法启动进程：$FilePath"
     }
-    $Process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory -NoNewWindow -Wait -PassThru
+    return $Process
+}
+
+function Invoke-ASMRDubberProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+
+    $Process = Start-ASMRDubberProcess -FilePath $FilePath `
+        -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+    $Process.WaitForExit()
     return $Process.ExitCode
 }
 

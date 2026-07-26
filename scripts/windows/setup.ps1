@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Core", "Recommended", "Advanced", "Full")]
     [string]$Profile = "Recommended",
@@ -35,23 +35,8 @@ function Invoke-Checked {
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$FailureMessage
     )
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $StartInfo.FileName = $FilePath
-        $StartInfo.WorkingDirectory = $Root
-        $StartInfo.UseShellExecute = $false
-        foreach ($Argument in $ArgumentList) {
-            [void]$StartInfo.ArgumentList.Add($Argument)
-        }
-        $Process = [System.Diagnostics.Process]::Start($StartInfo)
-        $Process.WaitForExit()
-        $ExitCode = $Process.ExitCode
-    } else {
-        # Windows PowerShell 5.1 does not expose ProcessStartInfo.ArgumentList.
-        $Process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-            -WorkingDirectory $Root -NoNewWindow -Wait -PassThru
-        $ExitCode = $Process.ExitCode
-    }
+    $ExitCode = Invoke-ASMRDubberProcess -FilePath $FilePath `
+        -ArgumentList $ArgumentList -WorkingDirectory $Root
     if ($ExitCode -ne 0) {
         throw "$FailureMessage（退出码 $ExitCode）"
     }

@@ -1,5 +1,16 @@
 # 更新记录
 
+## [0.3.4] - 2026-07-26
+
+### Changed
+
+- Setup 自动保存完整安装日志。
+- 新增经过校验的 Windows Recommended 免安装包构建流程。
+
+### Fixed
+
+- 修复 Windows PowerShell 5.1 的脚本编码和原生进程参数兼容问题。
+
 ## [0.3.0] - 2026-07-24
 
 ### Added

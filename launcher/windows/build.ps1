@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Output = ""
 )
@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+. (Join-Path $ProjectRoot "scripts\mirrors.ps1")
 $Sources = @(
     @{
         Source = Join-Path $PSScriptRoot "ASMRDubberLauncher.cs"
@@ -28,18 +29,30 @@ if (-not $Compiler) {
 }
 
 foreach ($Item in $Sources) {
-    $global:LASTEXITCODE = 0
-    & $Compiler `
-        /nologo `
-        /target:exe `
-        /optimize+ `
-        /codepage:65001 `
-        "/out:$($Item.Output)" `
-        /reference:System.dll `
-        /reference:System.Core.dll `
-        $Item.Source
-    if ($LASTEXITCODE -ne 0) {
-        throw "Windows 启动器编译失败（退出码 $LASTEXITCODE）。"
+    $TemporaryOutput = Join-Path `
+        ([System.IO.Path]::GetDirectoryName($Item.Output)) `
+        ([System.IO.Path]::GetFileNameWithoutExtension($Item.Output) + ".new.exe")
+    Remove-Item -Force -ErrorAction SilentlyContinue $TemporaryOutput
+    try {
+        $CompileExitCode = Invoke-ASMRDubberProcess -FilePath $Compiler `
+            -ArgumentList @(
+                "/nologo",
+                "/target:exe",
+                "/optimize+",
+                "/codepage:65001",
+                "/out:$TemporaryOutput",
+                "/reference:System.dll",
+                "/reference:System.Core.dll",
+                $Item.Source
+            ) `
+            -WorkingDirectory $ProjectRoot
+        if ($CompileExitCode -ne 0 -or -not (Test-Path $TemporaryOutput)) {
+            throw "Windows 启动器编译失败（退出码 $CompileExitCode）。"
+        }
+        [void][System.Reflection.AssemblyName]::GetAssemblyName($TemporaryOutput)
+        Move-Item -Force $TemporaryOutput $Item.Output
+    } finally {
+        Remove-Item -Force -ErrorAction SilentlyContinue $TemporaryOutput
     }
     Write-Host "已生成：$($Item.Output)" -ForegroundColor Green
 }

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$IndexUrl = "",
     [string]$HuggingFaceEndpoint = "",
@@ -67,8 +67,10 @@ function Invoke-Process {
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
-    return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory -NoNewWindow -Wait -PassThru
+    $Process = Start-ASMRDubberProcess -FilePath $FilePath `
+        -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+    $Process.WaitForExit()
+    return $Process
 }
 
 $SourceFilesReady = (Test-Path (Join-Path $RuntimeRoot "pyproject.toml")) -and `
@@ -80,7 +82,11 @@ if (-not $SourceReady) {
     if ($SourceFilesReady) {
         # A previous run may have completed the source move just before writing
         # the marker. The immutable archive hash still identifies this install.
-        Set-Content -Path $Marker -Value $Revision -Encoding utf8NoBOM
+        [System.IO.File]::WriteAllText(
+            $Marker,
+            $Revision + "`r`n",
+            (New-Object System.Text.UTF8Encoding($false))
+        )
         $SourceReady = $true
     }
     $StagedSource = Get-ChildItem $Staging -Filter "pyproject.toml" -File -Recurse `
@@ -101,7 +107,7 @@ if (-not $SourceReady) {
 if (-not $SourceReady) {
     $NeedDownload = $true
     if (Test-Path $Archive) {
-        $NeedDownload = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne `
+        $NeedDownload = (Get-ASMRDubberFileSha256 -Path $Archive) -ne `
             $SourceSha256.ToLowerInvariant()
     }
     if ($NeedDownload) {
@@ -126,7 +132,7 @@ if (-not $SourceReady) {
             throw "IndexTTS2 源码下载失败：$($SourceErrors -join '；')"
         }
     }
-    $ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
     if ($ActualHash -ne $SourceSha256.ToLowerInvariant()) {
         throw "IndexTTS2 源码校验失败：$ActualHash"
     }
@@ -153,16 +159,20 @@ if (-not $SourceReady) {
         }
     }
     Remove-Item -Recurse -Force $Staging
-    Set-Content -Path $Marker -Value $Revision -Encoding utf8NoBOM
+    [System.IO.File]::WriteAllText(
+        $Marker,
+        $Revision + "`r`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
 }
 
 $IndexPython = Join-Path $RuntimeRoot ".venv\Scripts\python.exe"
 $IndexRuntimeReady = Test-ASMRDubberIndexRuntimeDependencies -PortableRoot $DataRoot
 if ($IndexRuntimeReady) {
-    $ImportCheck = Start-Process -FilePath $IndexPython `
+    $ImportCheck = Invoke-ASMRDubberProcess -FilePath $IndexPython `
         -ArgumentList @("-c", "import indextts.cli_v2") `
-        -WorkingDirectory $RuntimeRoot -NoNewWindow -Wait -PassThru
-    $IndexRuntimeReady = $ImportCheck.ExitCode -eq 0
+        -WorkingDirectory $RuntimeRoot
+    $IndexRuntimeReady = $ImportCheck -eq 0
 }
 if ($IndexRuntimeReady) {
     Write-Host "IndexTTS2 Python/CUDA 依赖已由 Recommended 依赖包提供。" `

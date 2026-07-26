@@ -11,6 +11,7 @@ ASMR Dubber 在日语原声中加入逐句中文复述。日语时间轴和内�
 ### 获取程序
 
 - Windows：从 [Releases](https://github.com/EveningStudy/ASMR-Dubber/releases) 下载 `ASMR-Dubber-windows-portable.zip` 并完整解压。
+- Windows NVIDIA 用户也可从 [ModelScope](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable) 下载 `ASMR-Dubber-Windows-Recommended-v0.3.4.zip`。完整解压后直接运行 `ASMR-Dubber.exe`，无需先运行 Setup。
 - Linux：下载 Source code 压缩包并解压，或运行 `git clone https://github.com/EveningStudy/ASMR-Dubber.git`。
 - 已安装旧版本：备份重要项目后更新代码文件，保留原有 `.asmr-dubber`，再运行 Setup 修复依赖。
 

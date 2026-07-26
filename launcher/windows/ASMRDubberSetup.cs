@@ -2,18 +2,25 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 [assembly: System.Reflection.AssemblyTitle("ASMR Dubber Setup")]
 [assembly: System.Reflection.AssemblyDescription("ASMR Dubber dependency installer and repair tool")]
 [assembly: System.Reflection.AssemblyCompany("ASMR Dubber contributors")]
 [assembly: System.Reflection.AssemblyProduct("ASMR Dubber")]
-[assembly: System.Reflection.AssemblyVersion("0.3.3.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.3.3.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.4.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.3.4.0")]
 
 namespace ASMRDubberSetup
 {
     internal static class Program
     {
+        private static readonly object OutputLock = new object();
+        private static TextWriter originalOutput;
+        private static TextWriter originalError;
+        private static StreamWriter logWriter;
+        private static string logPath;
+
         private static int Main(string[] args)
         {
             Console.OutputEncoding = new UTF8Encoding(false);
@@ -25,14 +32,29 @@ namespace ASMRDubberSetup
                 WriteSelfTest(root, args[1]);
                 return 0;
             }
+            if (args.Length == 2 && args[0] == "--self-test-log")
+            {
+                InitializeLogging(root);
+                Console.WriteLine("ASMR Dubber setup log self-test");
+                string createdLog = logPath ?? "";
+                CloseLogging();
+                File.WriteAllText(args[1], createdLog, new UTF8Encoding(false));
+                return string.IsNullOrEmpty(createdLog) ? 1 : 0;
+            }
             if (args.Length == 2 && args[0] == "--test-profile-prompt")
             {
                 File.WriteAllText(args[1], PromptForProfile(), new UTF8Encoding(false));
                 return 0;
             }
 
+            InitializeLogging(root);
             try
             {
+                if (!string.IsNullOrEmpty(logPath))
+                {
+                    Console.WriteLine("安装日志：" + logPath);
+                    Console.WriteLine();
+                }
                 return Run(root);
             }
             catch (Exception exception)
@@ -42,6 +64,10 @@ namespace ASMRDubberSetup
                 Console.WriteLine("可以再次运行 ASMR-Dubber-Setup.exe 继续下载和修复。");
                 WaitForClose();
                 return 1;
+            }
+            finally
+            {
+                CloseLogging();
             }
         }
 
@@ -180,14 +206,81 @@ namespace ASMRDubberSetup
                 + Quote(script) + " " + arguments;
             info.WorkingDirectory = root;
             info.UseShellExecute = false;
+            info.RedirectStandardOutput = true;
+            info.RedirectStandardError = true;
+            info.StandardOutputEncoding = new UTF8Encoding(false);
+            info.StandardErrorEncoding = new UTF8Encoding(false);
             using (Process process = Process.Start(info))
             {
                 if (process == null)
                 {
                     throw new InvalidOperationException("无法启动安装脚本。");
                 }
+                Thread outputThread = StartCopyThread(process.StandardOutput, Console.Out);
+                Thread errorThread = StartCopyThread(process.StandardError, Console.Error);
                 process.WaitForExit();
+                outputThread.Join();
+                errorThread.Join();
                 return process.ExitCode;
+            }
+        }
+
+        private static Thread StartCopyThread(TextReader source, TextWriter destination)
+        {
+            Thread thread = new Thread(delegate()
+            {
+                char[] buffer = new char[4096];
+                int count;
+                while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    destination.Write(buffer, 0, count);
+                    destination.Flush();
+                }
+            });
+            thread.IsBackground = true;
+            thread.Start();
+            return thread;
+        }
+
+        private static void InitializeLogging(string root)
+        {
+            originalOutput = Console.Out;
+            originalError = Console.Error;
+            try
+            {
+                string logDirectory = Path.Combine(root, ".asmr-dubber", "logs");
+                Directory.CreateDirectory(logDirectory);
+                logPath = Path.Combine(
+                    logDirectory,
+                    "setup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
+                logWriter = new StreamWriter(logPath, false, new UTF8Encoding(false));
+                logWriter.AutoFlush = true;
+                Console.SetOut(TextWriter.Synchronized(
+                    new TeeTextWriter(originalOutput, logWriter)));
+                Console.SetError(TextWriter.Synchronized(
+                    new TeeTextWriter(originalError, logWriter)));
+            }
+            catch (Exception exception)
+            {
+                logPath = null;
+                if (logWriter != null)
+                {
+                    logWriter.Dispose();
+                    logWriter = null;
+                }
+                originalError.WriteLine("无法创建安装日志：" + exception.Message);
+            }
+        }
+
+        private static void CloseLogging()
+        {
+            if (originalOutput != null) Console.SetOut(originalOutput);
+            if (originalError != null) Console.SetError(originalError);
+            if (logWriter != null)
+            {
+                logWriter.Flush();
+                logWriter.Dispose();
+                logWriter = null;
             }
         }
 
@@ -233,6 +326,59 @@ namespace ASMRDubberSetup
                     "powershell=" + (FindPowerShell() ?? ""),
                 });
             File.WriteAllText(destination, result, new UTF8Encoding(false));
+        }
+
+        private sealed class TeeTextWriter : TextWriter
+        {
+            private readonly TextWriter first;
+            private readonly TextWriter second;
+
+            internal TeeTextWriter(TextWriter firstWriter, TextWriter secondWriter)
+            {
+                first = firstWriter;
+                second = secondWriter;
+            }
+
+            public override Encoding Encoding
+            {
+                get { return first.Encoding; }
+            }
+
+            public override void Write(char value)
+            {
+                lock (OutputLock)
+                {
+                    first.Write(value);
+                    second.Write(value);
+                }
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                lock (OutputLock)
+                {
+                    first.Write(buffer, index, count);
+                    second.Write(buffer, index, count);
+                }
+            }
+
+            public override void Write(string value)
+            {
+                lock (OutputLock)
+                {
+                    first.Write(value);
+                    second.Write(value);
+                }
+            }
+
+            public override void Flush()
+            {
+                lock (OutputLock)
+                {
+                    first.Flush();
+                    second.Flush();
+                }
+            }
         }
     }
 }

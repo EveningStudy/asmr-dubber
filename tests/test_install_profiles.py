@@ -157,7 +157,7 @@ def test_windows_recommended_prefers_verified_modelscope_dependency_pack() -> No
         'Write-Host "正在安装应用依赖'
     )
     assert "windows_recommended_dependency_archives" in helper
-    assert "Get-FileHash $Archive -Algorithm SHA256" in helper
+    assert "Get-ASMRDubberFileSha256 -Path $Archive" in helper
     assert "RecommendedDependencyPackSize = 0" not in helper
     assert "__WINDOWS_RECOMMENDED_DEPENDENCY_PACK_SHA256__" not in helper
     assert "ALLOWED_PREFIXES" in importer
@@ -186,6 +186,21 @@ def test_windows_recommended_dependency_pack_builder_has_expected_components() -
         assert component in builder
 
 
+def test_windows_recommended_portable_builder_uses_verified_complete_payloads() -> None:
+    builder = (ROOT / "scripts/windows/create-recommended-portable.ps1").read_text(
+        encoding="utf-8"
+    )
+    for component in (
+        "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip",
+        "ASMR-Dubber-ModelPack-parakeet-ja-windows-v0.2.1.zip",
+        "ASMR-Dubber-ModelPack-indextts2-checkpoints-v0.2.1.zip",
+        "doctor",
+        "--no-network",
+    ):
+        assert component in builder
+    assert "Get-ASMRDubberFileSha256 -Path $Pack.Path" in builder
+
+
 def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
     source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
 
@@ -200,5 +215,31 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.3.3.0")' in source
-        assert 'AssemblyFileVersion("0.3.3.0")' in source
+        assert 'AssemblyVersion("0.3.4.0")' in source
+        assert 'AssemblyFileVersion("0.3.4.0")' in source
+
+
+def test_windows_powershell_scripts_are_compatible_with_legacy_utf8_detection() -> None:
+    scripts = sorted((ROOT / "scripts").rglob("*.ps1")) + sorted(
+        (ROOT / "launcher").rglob("*.ps1")
+    )
+    assert scripts
+    for script in scripts:
+        assert script.read_bytes().startswith(b"\xef\xbb\xbf"), script
+        assert "utf8NoBOM" not in script.read_text(encoding="utf-8-sig")
+
+
+def test_windows_native_process_arguments_use_shared_quoting() -> None:
+    mirrors = (ROOT / "scripts/mirrors.ps1").read_text(encoding="utf-8")
+    assert "ConvertTo-ASMRDubberWindowsCommandLineArgument" in mirrors
+    assert "$StartInfo.Arguments = Join-ASMRDubberWindowsCommandLine" in mirrors
+
+    for relative in (
+        "scripts/windows/setup.ps1",
+        "scripts/windows/install-backend.ps1",
+        "scripts/windows/install-indextts2.ps1",
+        "scripts/windows/install-parakeet.ps1",
+        "scripts/windows/run-cli.ps1",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "ProcessStartInfo]::new" not in source

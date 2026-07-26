@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Arguments
@@ -28,20 +28,6 @@ $DataRoot = $Paths.Home
 $SharedFFmpegBin = Enable-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
 
 $ProcessArguments = @("-m", "asmr_dubber.cli") + $Arguments
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $StartInfo.FileName = $Python
-    $StartInfo.WorkingDirectory = $Root
-    $StartInfo.UseShellExecute = $false
-    foreach ($Argument in $ProcessArguments) {
-        [void]$StartInfo.ArgumentList.Add($Argument)
-    }
-    $Process = [System.Diagnostics.Process]::Start($StartInfo)
-    $Process.WaitForExit()
-    $ExitCode = $Process.ExitCode
-} else {
-    $global:LASTEXITCODE = 0
-    & $Python @ProcessArguments
-    $ExitCode = $global:LASTEXITCODE
-}
+$ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
+    -ArgumentList $ProcessArguments -WorkingDirectory $Root
 exit $ExitCode

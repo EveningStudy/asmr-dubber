@@ -1,4 +1,4 @@
-Set-StrictMode -Version 2.0
+﻿Set-StrictMode -Version 2.0
 
 function Get-ASMRDubberSharedFFmpegBin {
     param([Parameter(Mandatory = $true)][string]$DataRoot)
@@ -83,7 +83,7 @@ function Install-ASMRDubberSharedFFmpeg {
 
     $NeedsDownload = $true
     if (Test-Path $Archive) {
-        $ExistingHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $ExistingHash = Get-ASMRDubberFileSha256 -Path $Archive
         $NeedsDownload = $ExistingHash -ne $ExpectedHash
     }
     if ($NeedsDownload) {
@@ -91,7 +91,7 @@ function Install-ASMRDubberSharedFFmpeg {
         Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
             -Url $AssetUrl -Destination $Archive -Resume | Out-Null
     }
-    $ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
     if ($ActualHash -ne $ExpectedHash) {
         throw "FFmpeg 文件校验失败。期望 $ExpectedHash，实际 $ActualHash。"
     }

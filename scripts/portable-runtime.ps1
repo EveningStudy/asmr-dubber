@@ -1,4 +1,4 @@
-function Set-ASMRDubberTextFileIfChanged {
+﻿function Set-ASMRDubberTextFileIfChanged {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Content
