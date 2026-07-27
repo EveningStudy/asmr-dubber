@@ -140,6 +140,9 @@ class ProjectSettings(BaseModel):
     translation_max_output_tokens: int = Field(default=16_384, ge=1_024, le=131_072)
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
+    # Used by local Transformers providers (currently Hunyuan Hy-MT2). Mirrors
+    # asr_device/tts_device so a single runtime can be selected per project.
+    translation_device: str = "cuda"
     tts_backend: str = RECOMMENDED_TTS_BACKEND
     tts_model: str = RECOMMENDED_TTS_MODEL
     tts_device: str = "cuda"

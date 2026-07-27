@@ -12,6 +12,7 @@ from .constants import (
     MODEL_REQUIRED_FILES,
     MODEL_REVISIONS,
     OPTIONAL_ASR_MODEL_REVISIONS,
+    OPTIONAL_TRANSLATION_MODEL_REVISIONS,
 )
 from .errors import EnvironmentError
 from .mirrors import hf_hub_download_with_fallback
@@ -108,7 +109,11 @@ def _complete_model_snapshot(model_id: str, candidate: Path) -> Path | None:
 
 def cached_model_path(model_id: str) -> Path | None:
     """Return the pinned, complete project-owned or Hub-cached model snapshot."""
-    revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+    revision = (
+        MODEL_REVISIONS.get(model_id)
+        or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+        or OPTIONAL_TRANSLATION_MODEL_REVISIONS.get(model_id)
+    )
     if revision is None:
         return None
 
@@ -171,7 +176,11 @@ def resolve_transformers_model_source(model_id: str) -> tuple[str, str | None]:
         revision = None
         source = str(candidate.resolve())
     else:
-        revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+        revision = (
+            MODEL_REVISIONS.get(model_id)
+            or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+            or OPTIONAL_TRANSLATION_MODEL_REVISIONS.get(model_id)
+        )
         if revision is None:
             raise EnvironmentError(
                 "自定义 Transformers 模型必须使用本地目录；远程仓库只允许应用内置的固定快照。"

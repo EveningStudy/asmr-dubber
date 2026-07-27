@@ -1010,6 +1010,7 @@ def save_settings_form(
     translation_prompt: Any,
     deepl_formality: Any,
     microsoft_region: Any,
+    translation_device: Any,
     tts_backend: Any,
     tts_model: Any,
     tts_device: Any,
@@ -1057,9 +1058,14 @@ def save_settings_form(
     model = str(translation_model or "").strip()
     if not model:
         raise ProjectError("翻译模型 ID 不能为空。")
+    preset = PROVIDER_PRESETS[provider]
     base_url = str(translation_base_url or "").strip()
-    if not base_url:
+    # Local Transformers providers (Hunyuan Hy-MT2) have no HTTP endpoint;
+    # fall back to the preset's empty base_url and skip the URL requirement.
+    if not base_url and not preset.get("local"):
         raise ProjectError("翻译 API 地址不能为空。")
+    if not base_url:
+        base_url = str(preset.get("base_url", "") or "")
     prompt = str(translation_prompt or "").strip()
     if (
         provider in {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
@@ -1227,6 +1233,7 @@ def save_settings_form(
             translation_prompt=prompt,
             translation_deepl_formality=str(deepl_formality or "default").strip(),
             translation_microsoft_region=str(microsoft_region or "").strip(),
+            translation_device=str(translation_device or "cuda").strip(),
         )
         available_review_models = {value for _, value in available_asr_review_choices(settings)}
         settings.asr_review_models = [
@@ -1897,6 +1904,10 @@ def build_app() -> Any:
                             interactive=True,
                         )
                         provider_help = gr.Markdown(str(preset["help"]))
+                        # Hunyuan Hy-MT2 runs locally via Transformers, so it has
+                        # no API key/base_url. Keep them rendered for HTTP
+                        # providers and toggle visibility per provider change.
+                        is_local_translation_provider = stored.translation_provider == "hunyuan_mt"
                         with gr.Row():
                             translation_model = gr.Dropdown(
                                 label="模型 / 翻译引擎",
@@ -1909,23 +1920,39 @@ def build_app() -> Any:
                             translation_base_url = gr.Textbox(
                                 label="API 地址",
                                 value=stored.translation_base_url or str(preset["base_url"]),
+                                visible=not is_local_translation_provider,
                             )
                         with gr.Row():
                             translation_api_key = gr.Textbox(
                                 label="API Key",
                                 type="password",
                                 placeholder="留空会保留并使用本机已保存的密钥",
+                                visible=not is_local_translation_provider,
                             )
                             saved_key_status = gr.Textbox(
                                 label="密钥状态",
                                 value=api_key_status(stored.translation_provider),
                                 interactive=False,
+                                visible=not is_local_translation_provider,
                             )
-                            clear_key_button = gr.Button("清除当前服务密钥")
+                            clear_key_button = gr.Button(
+                                "清除当前服务密钥",
+                                visible=not is_local_translation_provider,
+                            )
                         gr.Markdown(
                             "密钥以明文保存在 `.asmr-dubber/config/secrets.json`，"
                             "不会写入源码、日志或音频项目。请勿共享该文件。"
                         )
+                        with gr.Group(
+                            visible=is_local_translation_provider
+                        ) as translation_local_group:
+                            translation_device = gr.Dropdown(
+                                label="设备",
+                                choices=["cpu", "cuda", "cuda:0"],
+                                value=stored.translation_device or "cuda",
+                                interactive=True,
+                                info="Hy-MT2 本地推理设备；CPU 可在无 GPU 环境运行。",
+                            )
                         with gr.Group(
                             visible=stored.translation_provider in llm_translation_providers
                         ) as translation_llm_group:
@@ -2351,15 +2378,20 @@ def build_app() -> Any:
             selected_model = str(current_model or "").strip()
             if selected_model not in models:
                 selected_model = model
+            is_local = provider_id == "hunyuan_mt"
             return (
                 gr.update(choices=models, value=selected_model),
-                base_url,
+                gr.update(value=base_url, visible=not is_local),
                 help_text,
                 key_text,
-                gr.update(value=""),
+                gr.update(value="", visible=not is_local),
                 gr.update(visible=provider_id in llm_translation_providers),
                 gr.update(visible=provider_id == "deepl"),
                 gr.update(visible=provider_id == "microsoft_translate"),
+                gr.update(visible=is_local),
+                gr.update(visible=not is_local),
+                gr.update(visible=not is_local),
+                gr.update(visible=not is_local),
             )
 
         def asr_backend_callback(
@@ -2764,6 +2796,10 @@ def build_app() -> Any:
                 translation_llm_group,
                 translation_deepl_group,
                 translation_microsoft_group,
+                translation_local_group,
+                translation_api_key,
+                saved_key_status,
+                clear_key_button,
             ],
             **private_event_options,
         )
@@ -2927,6 +2963,7 @@ def build_app() -> Any:
             translation_prompt,
             deepl_formality,
             microsoft_region,
+            translation_device,
             tts_backend_selector,
             tts_model_selector,
             tts_device,
@@ -3124,6 +3161,10 @@ def build_app() -> Any:
                 translation_prompt: current.translation_prompt,
                 deepl_formality: current.translation_deepl_formality,
                 microsoft_region: current.translation_microsoft_region,
+                translation_device: gr.update(
+                    value=current.translation_device,
+                    visible=provider_id == "hunyuan_mt",
+                ),
                 tts_backend_selector: current.tts_backend,
                 tts_model_selector: gr.update(
                     choices=tts_models,
@@ -3209,6 +3250,9 @@ def build_app() -> Any:
                 translation_deepl_group: gr.update(visible=provider_id == "deepl"),
                 translation_microsoft_group: gr.update(
                     visible=provider_id == "microsoft_translate"
+                ),
+                translation_local_group: gr.update(
+                    visible=provider_id == "hunyuan_mt"
                 ),
                 tts_help: current_tts_spec.help,
                 tts_setup: f"安装/启动：{current_tts_spec.setup}",
@@ -3305,11 +3349,13 @@ def build_app() -> Any:
             translation_prompt,
             deepl_formality,
             microsoft_region,
+            translation_device,
             provider_help,
             saved_key_status,
             translation_llm_group,
             translation_deepl_group,
             translation_microsoft_group,
+            translation_local_group,
         ]
         tts_page_components = [
             tts_backend_selector,

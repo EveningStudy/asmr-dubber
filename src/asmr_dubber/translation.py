@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import html
 import json
 import random
@@ -12,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
+from .environment import resolve_transformers_model_source
 from .errors import TranslationError
 from .models import Sentence
 
@@ -65,7 +67,7 @@ SYSTEM_PROMPT = """你是日语音声、广播剧和 ASMR 的简体中文配音�
 1. 每个输入 id 必须输出一项并保持原顺序，不得合并、拆分、遗漏或改写 id。
 2. 忠实翻译实义台词。中文应自然、简洁、适合朗读，并保持称呼、敬语、语气和专名一致。
 3. 如果整句只有笑声、哭声、喘息、呻吟、亲吻声、呼吸声、拟声效果、舞台提示、无意义重复音
-   或拉长音，zh 必须是空字符串。不得把声音效果翻成“哈哈哈”“啊啊啊”“嗯嗯嗯”等中文配音。
+   或拉长音，zh 必须是空字符串。不得把声音效果翻成"哈哈哈""啊啊啊""嗯嗯嗯"等中文配音。
 4. 如果非语言声音与实义台词混在同一句，只翻译实义台词；删除句首、句中、句尾无语义的
    「あ」「え」「う」「ん」「ふふ」「えーと」等填充音。具有答复、否定、确认、呼唤或惊讶
    等明确交际作用时才翻译。
@@ -74,6 +76,242 @@ SYSTEM_PROMPT = """你是日语音声、广播剧和 ASMR 的简体中文配音�
 7. 只输出严格 JSON：
 {"translations":[{"id":"s000001","zh":"中文台词；无实义时为空字符串"}]}
 """
+
+
+# Hunyuan Hy-MT2 only emits the translation itself, so it cannot follow the
+# strict JSON envelope used by the LLM adapters.  These prompts match the
+# official ZH<=>XX templates published in the model card, with terminology
+# injection reused for translation-memory consistency.  See:
+# https://huggingface.co/tencent/Hy-MT2-1.8B
+HUNYUAN_TRANSLATION_PROMPT = (
+    "将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n{source_text}"
+)
+HUNYUAN_TERMINOLOGY_PROMPT = (
+    "参考下面的翻译：\n{terminology}\n\n"
+    "将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n{source_text}"
+)
+
+# Hunyuan Hy-MT2 publishes these recommended generation parameters in its
+# model card; they are kept fixed here because the model was tuned for them.
+_HUNYUAN_DEFAULT_TEMPERATURE = 0.7
+_HUNYUAN_DEFAULT_TOP_P = 0.6
+_HUNYUAN_DEFAULT_TOP_K = 20
+_HUNYUAN_DEFAULT_REPETITION_PENALTY = 1.05
+
+# Pure non-verbal Japanese lines should not produce a Chinese line.  Hy-MT2 is
+# a translation model and will otherwise emit a literal transcription such as
+# "呵呵呵" for "ふふふ", which the dubbing pipeline would then synthesise.
+# This matches the LLM SYSTEM_PROMPT rule that non-speech gets an empty zh.
+_FILLER_ONLY_PATTERN = re.compile(
+    r"^[\s\u3000]*("
+    r"\u3042\u3063|\u3042\u30fc|\u3042\u306f\u306f+|\u3042\u306f+"
+    r"|\u3046\u3063|\u3046\u30fc|\u3046\u3093+|\u3046\u308f+"
+    r"|\u3048\u3063|\u3048\u30fc"
+    r"|\u304a\u3063|\u304a\u30fc|\u304a\u3044"
+    r"|\u304b\u306f+|\u304f\u3063|\u304f\u30fc"
+    r"|\u3050\u3063|\u3050\u306c+|\u3050\u30fc"
+    r"|\u3053\u3053\u3053+|\u3051\u3063|\u3051\u30fc"
+    r"|\u3053\u3093\u3053\u3093+|\u3053\u30fc\u3093"
+    r"|\u3055\u3063|\u3057\u3045+|\u3057\u30fc+"
+    r"|\u3059\u3063|\u3059\u30fc+|\u3059\u3093\u3081+"
+    r"|\u305d\u30fc+|\u305d\u3063"
+    r"|\u305f\u3063|\u3066\u3044\u3063|\u3066\u3044+"
+    r"|\u306a\u304b+|\u306a\u30fc+"
+    r"|\u306b\u3083\u30fc+|\u306b\u3083\u3063|\u306b\u30fc+"
+    r"|\u306d\u30fc+|\u306d\u3048+|\u306d\u3063"
+    r"|\u306f\u3063|\u306f\u3066+|\u306f\u30fc+|\u306f\u3044+"
+    r"|\u3072\u3083\u30fc+|\u3072\u3083\u3063"
+    r"|\u3072\u3063|\u3072\u30fc+|\u3072\u3044+"
+    r"|\u3075\u30fc+|\u3075\u3045+|\u3075\u3063|\u3075\u3066+|\u3075\u3093+|\u3075\u3080+"
+    r"|\u3078\u30fc+|\u3078\u3063"
+    r"|\u307b\u30fc+|\u307b\u3063|\u307b\u308d+"
+    r"|\u307e\u30fc+|\u307e\u3063"
+    r"|\u3080\u3063|\u3080\u30fc+|\u3080\u308b+"
+    r"|\u3081\u30fc+|\u3081\u3063"
+    r"|\u3082\u3046+|\u3082\u3063"
+    r"|\u3084\u3063|\u3084\u30fc+|\u3084\u308c+"
+    r"|\u3086\u3063|\u3086\u30fc+"
+    r"|\u3088\u3063|\u3088\u30fc+|\u3088\u3044+"
+    r"|\u308f\u30fc+|\u308f\u3063"
+    r"|\u3093\u30fc+|\u3093\u3063"
+    r"|\u3093\u3082+|\u3046\u3093+"
+    r"|[\u3041-\u309f]{0,3}[\u3002\u3001\uff01\uff1f\u3002]*"
+    r")[\s\u3000\u3002\u3001\uff01\uff1f\u301c\uff5e\u2026]*$"
+)
+
+
+def _is_fillter_only(ja_text: str) -> bool:
+    """Return True for lines that are only non-verbal sounds or punctuation."""
+    if not ja_text.strip():
+        return True
+    return bool(_FILLER_ONLY_PATTERN.match(ja_text.strip()))
+
+
+def _cleanup_cuda() -> None:
+    """Free GPU memory after a local Transformers session, mirroring ASR/TTS."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+
+
+class HunyuanTranslator:
+    """Local Transformers adapter for Tencent Hunyuan Hy-MT2.
+
+    Loads the model like the bundled ASR/TTS backends (resolve_transformers_model_source
+    + AutoModelForCausalLM) and translates each sentence individually, because the
+    model is trained to emit only the translation rather than a JSON envelope.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        device: str = "cuda",
+        temperature: float = _HUNYUAN_DEFAULT_TEMPERATURE,
+        top_p: float = _HUNYUAN_DEFAULT_TOP_P,
+        top_k: int = _HUNYUAN_DEFAULT_TOP_K,
+        repetition_penalty: float = _HUNYUAN_DEFAULT_REPETITION_PENALTY,
+        max_new_tokens: int = 4_096,
+    ) -> None:
+        if not model.strip():
+            raise TranslationError("翻译模型 ID 不能为空。")
+        self.model_id = model.strip()
+        self.device = device.strip() or "cpu"
+        self.temperature = float(temperature)
+        self.top_p = float(top_p)
+        self.top_k = int(top_k)
+        self.repetition_penalty = float(repetition_penalty)
+        self.max_new_tokens = int(max_new_tokens)
+        self._tokenizer = None
+        self._model = None
+        self._torch = None
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise TranslationError(
+                "缺少 transformers 或 torch；请在“设备与模型”页安装本地默认运行时。"
+            ) from exc
+        use_cuda = self.device.startswith("cuda")
+        if use_cuda:
+            try:
+                if not torch.cuda.is_available():
+                    raise TranslationError(
+                        "未检测到 PyTorch CUDA；请在设置中将翻译设备切换为 cpu，"
+                        "或重新安装带 CUDA 的 PyTorch。"
+                    )
+            except (AttributeError, RuntimeError) as exc:
+                raise TranslationError(f"无法检测 CUDA 设备：{exc}") from exc
+        torch.set_float32_matmul_precision("high")
+        source, revision = resolve_transformers_model_source(self.model_id)
+        dtype = torch.bfloat16 if use_cuda else torch.float32
+        device_map = "cuda:0" if use_cuda else "cpu"
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                source,
+                revision=revision,
+                trust_remote_code=True,
+            )
+            self._model = AutoModelForCausalLM.from_pretrained(
+                source,
+                revision=revision,
+                dtype=dtype,
+                device_map=device_map,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+            self._model.eval()
+            self._torch = torch
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise TranslationError(
+                f"无法加载 Hunyuan Hy-MT2 翻译模型 {self.model_id}：{exc}"
+            ) from exc
+
+    def _generate(self, source_text: str, terminology: str) -> str:
+        assert self._tokenizer is not None
+        assert self._model is not None
+        assert self._torch is not None
+        if terminology.strip():
+            prompt = HUNYUAN_TERMINOLOGY_PROMPT.format(
+                terminology=terminology,
+                source_text=source_text,
+            )
+        else:
+            prompt = HUNYUAN_TRANSLATION_PROMPT.format(source_text=source_text)
+        messages = [{"role": "user", "content": prompt}]
+        inputs = self._tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_tensors="pt",
+        ).to(self._model.device)
+        with self._torch.no_grad():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=self.temperature > 0,
+                temperature=self.temperature if self.temperature > 0 else 1.0,
+                top_p=self.top_p,
+                top_k=self.top_k,
+                repetition_penalty=self.repetition_penalty,
+                pad_token_id=self._tokenizer.pad_token_id
+                or self._tokenizer.eos_token_id,
+            )
+        # Slice off the prompt tokens before decoding so the model's own
+        # echoed instructions are not mistaken for the translation.
+        if isinstance(inputs, dict):
+            input_length = inputs["input_ids"].shape[-1]
+        else:
+            input_length = inputs.shape[-1]
+        generated = outputs[0][input_length:]
+        return self._tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+    def translate_chunk(
+        self,
+        chunk: TranslationChunk,
+        _full_context: str,
+        translation_memory: str,
+        _job_id: str,
+    ) -> dict[str, str]:
+        self._load()
+        # Reuse confirmed translations as Hy-MT2 terminology so character names
+        # and tone stay consistent with the LLM provider contract.
+        terminology = translation_memory.strip() if translation_memory != "[]" else ""
+        try:
+            results: dict[str, str] = {}
+            for sentence in chunk.sentences:
+                if _is_fillter_only(sentence.ja_text):
+                    results[sentence.id] = ""
+                    continue
+                translation = self._generate(sentence.ja_text, terminology)
+                results[sentence.id] = translation
+            return results
+        except TranslationError:
+            raise
+        except (RuntimeError, ValueError) as exc:
+            raise TranslationError(f"Hunyuan Hy-MT2 翻译失败：{exc}") from exc
+
+    def close(self) -> None:
+        self._model = None
+        self._tokenizer = None
+        self._torch = None
+        _cleanup_cuda()
+
+    def __enter__(self) -> HunyuanTranslator:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 def _chunks(
@@ -638,6 +876,7 @@ def translate_sentences(
     progress: Progress | None = None,
     on_batch: Callable[[], None] | None = None,
     client: httpx.Client | None = None,
+    device: str = "cuda",
 ) -> None:
     pending = [sentence for sentence in sentences if sentence.enabled and not sentence.zh_text]
     if not pending:
@@ -648,15 +887,22 @@ def translate_sentences(
     # This exact prefix is reused for every batch, enabling DeepSeek's prefix cache.
     full_context = _json_lines(sentences)
     if provider == "deepseek":
-        translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-            client=client,
-            system_prompt=system_prompt,
-            temperature=temperature,
-            top_p=top_p,
-            minimum_output_tokens=max_output_tokens,
+        translator: (
+            DeepSeekTranslator
+            | LLMTranslator
+            | MachineTranslationAPI
+            | HunyuanTranslator
+        ) = (
+            DeepSeekTranslator(
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+                client=client,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                top_p=top_p,
+                minimum_output_tokens=max_output_tokens,
+            )
         )
     elif provider in {"openai", "anthropic", "gemini", "openai_compatible"}:
         translator = LLMTranslator(
@@ -679,6 +925,12 @@ def translate_sentences(
             deepl_formality=deepl_formality,
             microsoft_region=microsoft_region,
             client=client,
+        )
+    elif provider == "hunyuan_mt":
+        translator = HunyuanTranslator(
+            model=model,
+            device=device,
+            max_new_tokens=max_output_tokens,
         )
     else:
         raise TranslationError(f"未知翻译服务：{provider}")

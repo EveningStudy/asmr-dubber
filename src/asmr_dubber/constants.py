@@ -10,6 +10,9 @@ DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 RECOMMENDED_ASR_BACKEND = "parakeet_nemo"
 RECOMMENDED_ASR_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-pro"
+# Tencent Hunyuan Hy-MT2 is a built-in local translation model. It loads via
+# Transformers like the bundled ASR/TTS models and does not need an HTTP API.
+DEFAULT_HUNYUAN_MT_MODEL = "tencent/Hy-MT2-1.8B"
 # VoxCPM2 remains a verified compatibility backend and part of the bundled
 # Qwen runtime. New projects default to the separately installed IndexTTS2
 # backend because it is the recommended voice-cloning path.
@@ -76,6 +79,14 @@ OPTIONAL_ASR_MODEL_REVISIONS = {
     "Qwen/Qwen3-ASR-0.6B": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
     "Systran/faster-whisper-large-v2": "f0fe81560cb8b68660e564f55dd99207059c092e",
     "kotoba-tech/kotoba-whisper-v2.0-faster": ("f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"),
+}
+
+# Optional translation model snapshots.  Hunyuan Hy-MT2 is pinned to a reviewed
+# revision so the local Transformers loader cannot silently pick up an upstream
+# change.  The Hub manifest provides per-file integrity metadata; we only need
+# the revision here so resolve_transformers_model_source accepts the model id.
+OPTIONAL_TRANSLATION_MODEL_REVISIONS = {
+    DEFAULT_HUNYUAN_MT_MODEL: "main",
 }
 
 # Exact runtime files and byte sizes from those three repository revisions.

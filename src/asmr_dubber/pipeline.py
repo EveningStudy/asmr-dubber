@@ -277,6 +277,7 @@ def _translate_project_impl(
         job_id=f"asmr_{project.source.sha256[:24]}",
         progress=progress,
         on_batch=checkpoint,
+        device=project.settings.translation_device,
     )
     checkpoint()
 

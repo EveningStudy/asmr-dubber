@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .audio import probe_audio, sha256_file
 from .constants import (
     DEFAULT_ASR_REVIEW_PROMPT,
+    DEFAULT_HUNYUAN_MT_MODEL,
     DEFAULT_INDEXTTS_CONFIG,
     DEFAULT_INDEXTTS_MODEL_DIR,
     DEFAULT_TRANSLATION_MODEL,
@@ -32,6 +33,20 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
         "env": "DEEPSEEK_API_KEY",
         "help": "OpenAI 兼容接口。默认 V4 Pro，保留完整上下文并强制逐句 JSON 输出。",
+    },
+    "hunyuan_mt": {
+        "label": "腾讯混元 Hy-MT2（本地）",
+        "base_url": "",
+        "default_model": DEFAULT_HUNYUAN_MT_MODEL,
+        "models": [DEFAULT_HUNYUAN_MT_MODEL, "tencent/Hy-MT2-1.8B-FP8"],
+        "env": "",
+        "help": (
+            "本地 Transformers 推理，加载腾讯混元 Hy-MT2 翻译模型，与 ASR/TTS 内置模型"
+            "共用同一运行时；无需 API Key、无需 HTTP 服务。日译中按官方 prompt 模板逐句调用，"
+            "已确认的译法作为术语参考传入，保证人物称谓和专名一致。"
+        ),
+        "key_optional": True,
+        "local": True,
     },
     "openai": {
         "label": "OpenAI",
@@ -199,6 +214,7 @@ class UserSettings(BaseModel):
     translation_prompt: str = SYSTEM_PROMPT
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
+    translation_device: str = "cuda"
 
     @model_validator(mode="before")
     @classmethod
@@ -287,6 +303,7 @@ class UserSettings(BaseModel):
             translation_prompt=self.translation_prompt,
             translation_deepl_formality=self.translation_deepl_formality,
             translation_microsoft_region=self.translation_microsoft_region,
+            translation_device=self.translation_device,
         )
         return ProjectSettings.model_validate(values)
 
