@@ -20,6 +20,7 @@ from asmr_dubber.model_packs import (
     MODEL_PACK_MANIFEST,
     ModelPackError,
     ModelPackSource,
+    _temporary_model_path,
     build_model_pack,
     discover_model_packs,
     import_discovered_model_packs,
@@ -52,6 +53,16 @@ def _manifest(
             }
         ],
     }
+
+
+def test_model_pack_temporary_name_stays_short_for_long_windows_paths(tmp_path: Path) -> None:
+    destination = tmp_path / "nested" / ("sample_diarization_japanese_" + "x" * 80 + ".mp3")
+
+    temporary = _temporary_model_path(destination)
+
+    assert temporary.parent == destination.parent
+    assert destination.name not in temporary.name
+    assert len(temporary.name) <= 40
 
 
 def _write_pack(
@@ -142,7 +153,7 @@ def test_bulk_import_rejects_a_corrupt_archive_in_the_inbox(tmp_path: Path) -> N
     directory.mkdir()
     (directory / "broken.zip").write_bytes(b"not a zip")
 
-    with pytest.raises(ModelPackError, match="broken.zip"):
+    with pytest.raises(ModelPackError, match=r"broken\.zip"):
         import_discovered_model_packs(
             directory=directory,
             home=tmp_path / "portable",

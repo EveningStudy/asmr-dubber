@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [string]$OutputDirectory = "",
-    [string]$Version = "0.3.4",
+    [string]$Version = "0.4.0",
     [switch]$KeepStaging
 )
 
@@ -106,7 +106,8 @@ function Expand-PackPayload {
     $Payload = Join-Path $ExtractRoot "payload"
     if (-not (Test-Path $Payload)) { throw "压缩包缺少 payload：$Archive" }
     Invoke-Robocopy -Source $Payload -Destination $PackagePortableRoot `
-        -ExcludedDirectories @("__pycache__") -ExcludedFiles @("*.pyc", "*.pyo")
+        -ExcludedDirectories @("__pycache__", "pkg_resources\tests") `
+        -ExcludedFiles @("*.pyc", "*.pyo")
     Remove-Item -Recurse -Force $ExtractRoot
 }
 
@@ -129,12 +130,13 @@ New-Item -ItemType Directory -Force -Path $PackageRoot, $PackagePortableRoot, $O
 Write-Host "正在复制项目文件..." -ForegroundColor Cyan
 Invoke-Robocopy -Source $Root -Destination $PackageRoot `
     -ExcludedDirectories @(
-        ".git", ".asmr-dubber", "model-packs", "dist", ".pytest_cache", ".ruff_cache",
+        ".git", ".asmr-dubber", ".venv", "model-packs", "dist", ".pytest_cache",
+        ".ruff_cache", ".audit-home", ".test-home", ".test-home-final", ".ui-qa-home",
         "__pycache__"
     ) `
     -ExcludedFiles @("*.pyc", "*.pyo")
 
-Write-Host "正在加入 Core、IndexTTS2 依赖和 FFmpeg..." -ForegroundColor Cyan
+Write-Host "正在加入基础档、IndexTTS2 依赖和 FFmpeg..." -ForegroundColor Cyan
 Expand-PackPayload -Archive $DependencyPack -Name "dependencies"
 
 Write-Host "正在加入 Parakeet 模型和 CUDA 运行时..." -ForegroundColor Cyan
@@ -171,12 +173,12 @@ $ExitCode = Invoke-ASMRDubberProcess `
         "-File", $RunCli, "doctor", "--no-network"
     ) `
     -WorkingDirectory $PackageRoot
-if ($ExitCode -ne 0) { throw "Recommended 便携环境检查失败（退出码 $ExitCode）。" }
+if ($ExitCode -ne 0) { throw "推荐档便携环境检查失败（退出码 $ExitCode）。" }
 
 $WinRAR = Join-Path $env:ProgramFiles "WinRAR\WinRAR.exe"
 if (-not (Test-Path $WinRAR)) { throw "找不到 WinRAR：$WinRAR" }
 Remove-Item -Force -ErrorAction SilentlyContinue $Output, "$Output.sha256"
-Write-Host "正在创建 Recommended ZIP（约 20 GB，可能需要较长时间）..." `
+Write-Host "正在创建推荐档 ZIP（约 20 GB，可能需要较长时间）..." `
     -ForegroundColor Cyan
 $ExitCode = Invoke-ASMRDubberProcess -FilePath $WinRAR `
     -ArgumentList @("a", "-afzip", "-m1", "-r", $Output, "ASMR-Dubber") `
@@ -189,6 +191,6 @@ $Size = (Get-Item $Output).Length
 if (-not $KeepStaging) {
     Remove-Item -Recurse -Force $StagingRoot
 }
-Write-Host "Recommended 免安装包已完成：$Output" -ForegroundColor Green
+Write-Host "推荐档免安装包已完成：$Output" -ForegroundColor Green
 Write-Host "大小：$Size"
 Write-Host "SHA-256：$Hash"

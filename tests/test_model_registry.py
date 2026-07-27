@@ -13,36 +13,26 @@ def test_default_backends_use_verified_recommendations() -> None:
     assert TTS_BACKENDS["indextts2"].support_level == "verified"
 
 
-def test_common_asr_and_tts_backends_are_registered() -> None:
-    assert {
+def test_only_supported_asr_and_tts_backends_are_registered() -> None:
+    assert set(ASR_BACKENDS) == {
         "parakeet_nemo",
         "kotoba_whisper",
-        "qwen3_asr",
         "faster_whisper",
-        "openai_whisper",
-        "whisperx",
-        "funasr",
-        "openai_compatible_asr",
-    } <= ASR_BACKENDS.keys()
+    }
     assert ASR_BACKENDS["parakeet_nemo"].models[0] == (
         "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
     )
     assert "large-v2" in ASR_BACKENDS["faster_whisper"].models
     assert "kotoba-tech/kotoba-whisper-v2.0-faster" in (ASR_BACKENDS["faster_whisper"].models)
-    assert {
-        "voxcpm2",
-        "qwen3_tts",
+    assert set(TTS_BACKENDS) == {
         "indextts2",
         "gpt_sovits",
         "cosyvoice",
-        "f5_tts",
         "fish_speech",
-        "xtts_v2",
-    } <= TTS_BACKENDS.keys()
+    }
     assert TTS_BACKENDS["indextts2"].reference_text == "unused"
-    assert TTS_BACKENDS["qwen3_tts"].reference_text == "required"
-    assert "stable_hifi" in TTS_BACKENDS["voxcpm2"].clone_modes
-    assert "stable_hifi" not in TTS_BACKENDS["indextts2"].clone_modes
+    assert TTS_BACKENDS["gpt_sovits"].reference_text == "required"
+    assert TTS_BACKENDS["fish_speech"].api_key is True
 
 
 def test_installable_backends_come_from_registry_capabilities() -> None:
@@ -59,14 +49,14 @@ def test_installable_backends_come_from_registry_capabilities() -> None:
 
 
 def test_backend_registry_declares_execution_capabilities() -> None:
-    qwen_asr = ASR_BACKENDS["qwen3_asr"]
-    assert qwen_asr.execution.batch_strategy == "native_list"
-    assert qwen_asr.execution.quality_sensitive_batch is True
-    assert "细微结果差异" in qwen_asr.execution_label
+    faster = ASR_BACKENDS["faster_whisper"]
+    assert faster.execution.batch_strategy == "internal_chunks"
+    assert faster.execution.quality_sensitive_batch is True
+    assert "细微结果差异" in faster.execution_label
 
-    qwen_tts = TTS_BACKENDS["qwen3_tts"]
-    assert qwen_tts.execution.reusable_reference_conditioning is True
-    assert qwen_tts.execution.persistent_session is True
+    external = TTS_BACKENDS["gpt_sovits"]
+    assert external.execution.reusable_reference_conditioning is True
+    assert external.execution.batch_strategy == "request_concurrency"
 
     index = TTS_BACKENDS["indextts2"]
     assert index.execution.progress_strategy == "streamed_process"

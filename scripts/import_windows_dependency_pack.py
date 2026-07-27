@@ -23,6 +23,13 @@ ALLOWED_PREFIXES = (
     "payload/runtimes/index-tts/.venv/",
     "payload/runtimes/ffmpeg-shared/",
 )
+OPTIONAL_PAYLOAD_PREFIXES = (
+    # setuptools ships its own test fixtures. They are not imported by the
+    # application and contain unnecessarily deep paths that exceed the legacy
+    # Windows path limit when a portable folder is nested deeply.
+    "payload/runtimes/python/cpython-3.11.13-windows-x86_64-none/Lib/"
+    "site-packages/pkg_resources/tests/",
+)
 WINDOWS_RESERVED = {
     "con",
     "prn",
@@ -35,6 +42,23 @@ WINDOWS_RESERVED = {
 
 class DependencyPackError(RuntimeError):
     pass
+
+
+def _windows_io_path(path: Path) -> Path:
+    """Use Win32's extended path namespace without changing the physical location."""
+
+    if os.name != "nt":
+        return path
+    value = os.path.abspath(os.fspath(path))
+    if value.startswith("\\\\?\\"):
+        return Path(value)
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + value[2:])
+    return Path("\\\\?\\" + value)
+
+
+def _remove_tree(path: Path, *, ignore_errors: bool = False) -> None:
+    shutil.rmtree(_windows_io_path(path), ignore_errors=ignore_errors)
 
 
 def _safe_member(name: str, *, directory: bool) -> PurePosixPath:
@@ -110,14 +134,21 @@ def _validate_members(handle: zipfile.ZipFile) -> None:
             raise DependencyPackError("dependency pack exceeds the uncompressed size limit")
 
 
+def _is_optional_payload(filename: str) -> bool:
+    return any(filename.startswith(prefix) for prefix in OPTIONAL_PAYLOAD_PREFIXES)
+
+
 def _extract(handle: zipfile.ZipFile, staging: Path) -> None:
     for info in handle.infolist():
         if info.is_dir() or not info.filename.startswith(PAYLOAD_PREFIX):
             continue
+        if _is_optional_payload(info.filename):
+            continue
         relative = PurePosixPath(info.filename).relative_to(PAYLOAD_PREFIX.rstrip("/"))
         destination = staging.joinpath(*relative.parts)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with handle.open(info, "r") as source, destination.open("wb") as target:
+        io_destination = _windows_io_path(destination)
+        io_destination.parent.mkdir(parents=True, exist_ok=True)
+        with handle.open(info, "r") as source, io_destination.open("wb") as target:
             shutil.copyfileobj(source, target, length=4 * 1024 * 1024)
 
 
@@ -150,7 +181,7 @@ def _install_component(
     destination.parent.mkdir(parents=True, exist_ok=True)
     backup = destination.with_name(f".{destination.name}.dependency-pack-backup")
     if backup.exists():
-        shutil.rmtree(backup)
+        _remove_tree(backup)
     if destination.exists():
         os.replace(destination, backup)
         backups.append((destination, backup))
@@ -161,9 +192,12 @@ def import_pack(archive: Path, portable: Path, sha256: str) -> None:
     if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
         raise DependencyPackError("dependency pack SHA-256 is invalid")
     portable.mkdir(parents=True, exist_ok=True)
-    temp_root = portable / "temp"
-    temp_root.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix="recommended-dependencies-", dir=temp_root))
+    # Keep the extraction path short. A dependency archive may contain a
+    # legitimate but deep site-packages path; adding a long random prefix under
+    # `.asmr-dubber/temp` can push it over Windows' legacy 260-character limit.
+    staging_parent = portable / "t"
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix="d-", dir=staging_parent))
     backups: list[tuple[Path, Path]] = []
     installed: list[str] = []
     try:
@@ -200,16 +234,16 @@ def import_pack(archive: Path, portable: Path, sha256: str) -> None:
         for relative in reversed(installed):
             destination = portable / relative
             if destination.exists():
-                shutil.rmtree(destination)
+                _remove_tree(destination)
         for original, backup in reversed(backups):
             if backup.exists() and not original.exists():
                 os.replace(backup, original)
         raise
     else:
         for _original, backup in backups:
-            shutil.rmtree(backup, ignore_errors=True)
+            _remove_tree(backup, ignore_errors=True)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        _remove_tree(staging, ignore_errors=True)
 
 
 def main() -> None:

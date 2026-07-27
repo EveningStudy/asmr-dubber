@@ -39,13 +39,10 @@ function Install-ASMRDubberSharedFFmpeg {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$DataRoot,
-        [string]$AssetUrl = (
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/" +
-            "ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
-        ),
-        [string]$ChecksumsUrl = (
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256"
-        )
+        [string]$AssetUrl = "",
+        [string]$ChecksumsUrl = "",
+        [string]$ExpectedSha256 = `
+            "34db93b66a56125ec10547b12a7996e2dbca8eba6a1aa14b00b8a281bc87cd02"
     )
 
     if (-not (Get-Command Get-ASMRDubberMirrorConfiguration -ErrorAction SilentlyContinue)) {
@@ -59,7 +56,10 @@ function Install-ASMRDubberSharedFFmpeg {
         return $Existing
     }
 
-    $AssetName = [System.IO.Path]::GetFileName(([Uri]$AssetUrl).AbsolutePath)
+    $AssetName = "ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
+    if ($AssetUrl) {
+        $AssetName = [System.IO.Path]::GetFileName(([Uri]$AssetUrl).AbsolutePath)
+    }
     if (-not $AssetName.EndsWith(".zip", [StringComparison]::OrdinalIgnoreCase)) {
         throw "FFmpeg 下载地址不是 ZIP 文件：$AssetUrl"
     }
@@ -70,16 +70,30 @@ function Install-ASMRDubberSharedFFmpeg {
     $ChecksumsFile = Join-Path $DownloadRoot "btbn-checksums.sha256"
     New-Item -ItemType Directory -Force -Path $DownloadRoot | Out-Null
 
-    Write-Host "正在获取共享版 FFmpeg 校验信息..." -ForegroundColor Cyan
-    Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
-        -Url $ChecksumsUrl -Destination $ChecksumsFile | Out-Null
-    $ChecksumLine = Get-Content $ChecksumsFile | Where-Object {
-        $_ -match ("^[0-9a-fA-F]{64}\s+" + [Regex]::Escape($AssetName) + "$")
-    } | Select-Object -First 1
-    if (-not $ChecksumLine) {
-        throw "FFmpeg 校验文件中找不到 $AssetName。"
+    $ExpectedHash = $ExpectedSha256.ToLowerInvariant()
+    if ($ExpectedHash -notmatch "^[0-9a-f]{64}$") {
+        throw "FFmpeg 固定 SHA-256 无效。"
     }
-    $ExpectedHash = ($ChecksumLine -split "\s+", 2)[0].ToLowerInvariant()
+    $ChecksumUrls = @(Get-ASMRDubberMirrorList -Configuration $MirrorConfiguration `
+        -Name "ffmpeg_checksum_files_windows" -Preferred $ChecksumsUrl)
+    foreach ($ChecksumCandidate in $ChecksumUrls) {
+        try {
+            Write-Host "正在核对共享版 FFmpeg 发布校验信息..." -ForegroundColor Cyan
+            Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+                -Url $ChecksumCandidate -Destination $ChecksumsFile | Out-Null
+            $ChecksumLine = Get-Content $ChecksumsFile | Where-Object {
+                $_ -match ("^[0-9a-fA-F]{64}\s+" + [Regex]::Escape($AssetName) + "$")
+            } | Select-Object -First 1
+            if (-not $ChecksumLine) { throw "校验文件中找不到 $AssetName。" }
+            $PublishedHash = ($ChecksumLine -split "\s+", 2)[0].ToLowerInvariant()
+            if ($PublishedHash -ne $ExpectedHash) {
+                throw "发布校验值与程序固定值不一致。"
+            }
+            break
+        } catch {
+            Write-Warning "FFmpeg 校验文件不可用，将继续使用程序固定 SHA-256：$($_.Exception.Message)"
+        }
+    }
 
     $NeedsDownload = $true
     if (Test-Path $Archive) {
@@ -88,8 +102,23 @@ function Install-ASMRDubberSharedFFmpeg {
     }
     if ($NeedsDownload) {
         Write-Host "正在下载便携式 LGPL shared FFmpeg（约 70 MB）..." -ForegroundColor Cyan
-        Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
-            -Url $AssetUrl -Destination $Archive -Resume | Out-Null
+        $ArchiveReady = $false
+        $Errors = New-Object System.Collections.Generic.List[string]
+        foreach ($Candidate in Get-ASMRDubberMirrorList `
+            -Configuration $MirrorConfiguration -Name "ffmpeg_shared_archives_windows" `
+            -Preferred $AssetUrl) {
+            try {
+                Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+                    -Url $Candidate -Destination $Archive -Sha256 $ExpectedHash -Resume | Out-Null
+                $ArchiveReady = $true
+                break
+            } catch {
+                [void]$Errors.Add("$Candidate：$($_.Exception.Message)")
+            }
+        }
+        if (-not $ArchiveReady) {
+            throw "FFmpeg 下载失败。请上传 ModelScope 镜像文件后重试：$($Errors -join '；')"
+        }
     }
     $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
     if ($ActualHash -ne $ExpectedHash) {

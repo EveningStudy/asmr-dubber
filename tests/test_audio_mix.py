@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -12,12 +13,14 @@ from asmr_dubber.audio import (
     extract_reference,
     make_analysis_copy,
     mix_original_and_stem,
+    mux_mixed_video,
     probe_audio,
     project_file_exists,
     sentence_events,
     sha256_file,
     verify_source,
 )
+from asmr_dubber.environment import ffmpeg_executable
 from asmr_dubber.errors import ProjectError
 from asmr_dubber.models import Sentence
 
@@ -90,6 +93,7 @@ def test_float_mix_option_preserves_samples_above_full_scale(tmp_path: Path) -> 
         output,
         probe_audio(source),
         output_codec="pcm_f32le",
+        peak_protection=False,
     )
 
     data, _ = sf.read(output, dtype="float32")
@@ -116,6 +120,49 @@ def test_source_copy_hashes_while_copying_and_rejects_path_escape(tmp_path: Path
     info.path = "../input.wav"
     with pytest.raises(ProjectError, match="超出项目目录"):
         verify_source(project_dir, info)
+
+
+def test_video_input_is_detected_and_mixed_audio_is_muxed_without_reencoding_video(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.mkv"
+    subprocess.run(
+        [
+            ffmpeg_executable(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=160x90:r=10:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000:duration=1",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "pcm_s16le",
+            str(source),
+        ],
+        check=True,
+    )
+    info = probe_audio(source)
+    assert info.media_type == "video"
+    assert info.video_width == 160
+    assert info.video_height == 90
+    assert info.video_codec == "mpeg4"
+
+    mixed = tmp_path / "mixed.wav"
+    sf.write(mixed, np.zeros(16_000, dtype=np.float32), 16_000, subtype="PCM_24")
+    output = mux_mixed_video(source, mixed, tmp_path / "output.mp4")
+
+    output_info = probe_audio(output)
+    assert output.is_file()
+    assert output_info.media_type == "video"
+    assert output_info.video_codec == info.video_codec
 
 
 def test_sentence_audio_path_cannot_escape_project(tmp_path: Path) -> None:

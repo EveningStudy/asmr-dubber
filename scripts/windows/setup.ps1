@@ -1,11 +1,12 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("Core", "Recommended", "Advanced", "Full")]
-    [string]$Profile = "Recommended",
+    [ValidateSet("基础", "推荐", "进阶", "Core", "Recommended", "Advanced")]
+    [string]$Profile = "推荐",
     [string]$IndexUrl = "",
     [string]$PythonMirror = "",
     [string]$HuggingFaceEndpoint = "",
     [string]$TorchIndexUrl = "",
+    [string]$LocalCacheRoot = "",
     [switch]$SkipRecommendedTTS
 )
 
@@ -18,6 +19,18 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
 . (Join-Path $Root "scripts\mirrors.ps1")
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
+if ($LocalCacheRoot) {
+    if (-not (Test-Path -LiteralPath $LocalCacheRoot -PathType Container)) {
+        throw "只读本地缓存目录不存在：$LocalCacheRoot"
+    }
+    $ResolvedLocalCacheRoot = (Resolve-Path -LiteralPath $LocalCacheRoot).Path
+    $ExistingLocalRoots = @(
+        $env:ASMR_DUBBER_LOCAL_CACHE_ROOTS -split ";" |
+            Where-Object { $_ -and $_.Trim() }
+    )
+    $env:ASMR_DUBBER_LOCAL_CACHE_ROOTS = `
+        (@($ResolvedLocalCacheRoot) + $ExistingLocalRoots | Select-Object -Unique) -join ";"
+}
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $DataRoot = $Paths.Home
@@ -28,6 +41,15 @@ $Venv = $Paths.Venv
 $Python = $Paths.Python
 . (Join-Path $Root "scripts\windows-runtime.ps1")
 . (Join-Path $Root "scripts\windows\recommended-dependencies.ps1")
+. (Join-Path $Root "scripts\windows\wheelhouse.ps1")
+. (Join-Path $Root "scripts\windows\python-runtime.ps1")
+
+$Profile = switch ($Profile) {
+    "Core" { "基础" }
+    "Recommended" { "推荐" }
+    "Advanced" { "进阶" }
+    default { $Profile }
+}
 
 function Invoke-Checked {
     param(
@@ -54,39 +76,50 @@ $PreferredIndex = if ($IndexUrl) {
 } elseif ($env:ASMR_DUBBER_PYPI_MIRROR) {
     $env:ASMR_DUBBER_PYPI_MIRROR
 } else { "" }
-$PreferredHuggingFace = if ($HuggingFaceEndpoint) {
-    $HuggingFaceEndpoint
-} elseif ($env:ASMR_DUBBER_HF_ENDPOINT) {
-    $env:ASMR_DUBBER_HF_ENDPOINT
-} else { "" }
-$HuggingFaceEndpoints = @(Get-ASMRDubberMirrorList `
-    -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
-    -Preferred $PreferredHuggingFace)
-$env:ASMR_DUBBER_HF_ENDPOINTS = $HuggingFaceEndpoints -join ";"
-$env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
+$HuggingFaceEndpoints = @(Set-ASMRDubberHuggingFaceEnvironment `
+    -Configuration $MirrorConfiguration -Preferred $HuggingFaceEndpoint)
+$PreferredHuggingFace = [string]($HuggingFaceEndpoints | Select-Object -First 1)
 
 Write-Host "ASMR Dubber · Windows 安装" -ForegroundColor Cyan
 Write-Host "项目目录：$Root"
 Write-Host "数据目录：$DataRoot"
 Write-Host "安装配置：$Profile"
+if (Test-ASMRDubberExternalDownloadsAllowed -Configuration $MirrorConfiguration) {
+    Write-Host "下载策略：ModelScope 优先；已显式允许海外备用源。" -ForegroundColor Yellow
+} else {
+    Write-Host "下载策略：ModelScope 优先；GitHub/Hugging Face/官方海外源已关闭。" `
+        -ForegroundColor Green
+}
+if ($env:ASMR_DUBBER_LOCAL_CACHE_ROOTS) {
+    Write-Host "只读本地缓存：$($env:ASMR_DUBBER_LOCAL_CACHE_ROOTS)" -ForegroundColor DarkGray
+}
 $StorageEstimate = switch ($Profile) {
-    "Core" {
+    "基础" {
         [pscustomobject]@{ Installed = "约 2 GB"; Free = "至少 5 GB" }
     }
-    "Recommended" {
+    "推荐" {
         [pscustomobject]@{ Installed = "约 24–28 GB"; Free = "至少 35 GB" }
     }
-    "Advanced" {
-        [pscustomobject]@{ Installed = "约 30–35 GB"; Free = "至少 45 GB" }
-    }
-    "Full" {
-        [pscustomobject]@{ Installed = "约 42–48 GB"; Free = "至少 60 GB" }
+    "进阶" {
+        [pscustomobject]@{ Installed = "约 33–39 GB"; Free = "至少 50 GB" }
     }
 }
 Write-Host "预计安装后占用：$($StorageEstimate.Installed)"
 Write-Host "建议安装前可用空间：$($StorageEstimate.Free)"
-if ($Profile -ne "Core") {
-    Write-Host "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS/ASR，实际占用将减少。" `
+if ($Profile -eq "进阶") {
+    Write-Host "进阶档位会安装以下固定模型：" -ForegroundColor Cyan
+    Write-Host "  ASR（语音识别）Parakeet CTC 1.1B JA GAL"
+    Write-Host "  ASR（语音识别）Parakeet TDT/CTC 0.6B JA"
+    Write-Host "  ASR（语音识别）Kotoba-Whisper v2.2（kotoba-tech/kotoba-whisper-v2.2）"
+    Write-Host "  ASR（语音识别）Faster-Whisper large-v2（Systran/faster-whisper-large-v2）"
+    Write-Host "  VAD（语音活动检测）日语 ASMR 专用 Whisper VAD ONNX"
+    Write-Host "  时间戳对齐：Qwen3 ForcedAligner 0.6B（阿里 Qwen）"
+    Write-Host "  TTS（语音合成）IndexTTS2 checkpoints（仅 NVIDIA GPU）"
+    Write-Host "不会自动安装 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它识别模型。" `
+        -ForegroundColor DarkGray
+}
+if ($Profile -ne "基础") {
+    Write-Host "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS（语音合成），实际占用将减少。" `
         -ForegroundColor DarkGray
 }
 
@@ -157,28 +190,11 @@ $ManagedPython = Get-ChildItem `
     (Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-3.12.*-windows-x86_64-none\python.exe") `
     -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
 if (-not $ManagedPython) {
-    $PythonMirrors = Get-ASMRDubberMirrorList `
-        -Configuration $MirrorConfiguration -Name "python_install_mirrors" `
-        -Preferred $PythonMirror
-    $PythonInstalled = $false
-    foreach ($Candidate in $PythonMirrors) {
-        Write-Host "使用 Python 下载源：$Candidate" -ForegroundColor DarkGray
-        $env:UV_PYTHON_INSTALL_MIRROR = $Candidate
-        $ExitCode = Invoke-ASMRDubberProcess -FilePath $Uv `
-            -ArgumentList @("python", "install", "3.12", "--managed-python", "--no-bin") `
-            -WorkingDirectory $Root
-        if ($ExitCode -eq 0) {
-            $PythonInstalled = $true
-            break
-        }
-        Write-Warning "当前 Python 下载源失败，自动切换。"
-    }
-    if (-not $PythonInstalled) {
-        throw "所有 Python 下载源均失败。"
-    }
-    $ManagedPython = Get-ChildItem `
-        (Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-3.12.*-windows-x86_64-none\python.exe") `
-        -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    $ManagedPython = Install-ASMRDubberManagedPythonArchive `
+        -Root $Root -Paths $Paths -MirrorConfiguration $MirrorConfiguration `
+        -Version "3.12.13" -BuildDate "20260718" `
+        -Sha256 "0d422a1439ec308e03f47df551bc30f5994727c456e414b026d202bcda9b7c1c" `
+        -MirrorName "python312_windows_archives" -PreferredBaseUrl $PythonMirror
 }
 if (-not $ManagedPython) {
     throw "Python 3.12 安装命令已完成，但没有找到解释器。"
@@ -197,43 +213,30 @@ if (-not $NvidiaSmi) {
         $NvidiaSmi = $SystemNvidiaSmi
     }
 }
-$InstallDefaultModels = $false
 $InstallAdvancedModels = $false
 $InstallRecommendedTTS = $false
 $InstallParakeet = $false
 $Extra = switch ($Profile) {
-    "Core" { ".[ui]" }
-    "Recommended" {
+    "基础" { ".[ui]" }
+    "推荐" {
         $InstallParakeet = $true
         if ($NvidiaSmi) {
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
         }
         ".[ui]"
     }
-    "Advanced" {
+    "进阶" {
         $InstallParakeet = $true
         $InstallAdvancedModels = $true
         if ($NvidiaSmi) {
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
         }
-        ".[ui,asr-faster-whisper,asr-kotoba-whisper]"
-    }
-    "Full" {
-        $InstallParakeet = $true
-        $InstallAdvancedModels = $true
-        if ($NvidiaSmi) {
-            $InstallDefaultModels = $true
-            $InstallRecommendedTTS = -not $SkipRecommendedTTS
-            ".[ui,local-default,asr-faster-whisper,asr-kotoba-whisper,asr-openai-whisper,asr-funasr]"
-        } else {
-            Write-Warning "未检测到 NVIDIA GPU；跳过 CUDA 专用 Qwen3-ASR/VoxCPM2。"
-            ".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-openai-whisper,asr-funasr]"
-        }
+        ".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
     }
 }
 
 $RecommendedDependenciesReady = $false
-if ($Profile -ne "Core" -and $NvidiaSmi) {
+if ($Profile -ne "基础" -and $NvidiaSmi) {
     $RecommendedDependenciesReady = Import-ASMRDubberRecommendedDependencies `
         -Root $Root -PortableRoot $DataRoot -Python $ManagedPython.FullName `
         -MirrorConfiguration $MirrorConfiguration
@@ -242,53 +245,89 @@ if ($Profile -ne "Core" -and $NvidiaSmi) {
     $Python = $Paths.Python
 }
 
+$AdvancedDependenciesReady = $false
 if ($InstallAdvancedModels -and $NvidiaSmi) {
+    $AdvancedDependenciesReady = Import-ASMRDubberAdvancedDependencies `
+        -Root $Root -PortableRoot $DataRoot -Python $ManagedPython.FullName `
+        -MirrorConfiguration $MirrorConfiguration
+    $Python = $Paths.Python
+}
+
+if ($InstallAdvancedModels -and $NvidiaSmi -and -not $AdvancedDependenciesReady) {
     Write-Host "检测到 NVIDIA GPU，正在安装官方 CUDA 13.0 PyTorch..." -ForegroundColor Cyan
-    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
-        -IndexOption "--index" -Arguments @(
-            "pip", "install", "--python", $Python, "--reinstall",
-            "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130"
-        )
+    $CudaWheelhouse = Get-ASMRDubberWheelhouse `
+        -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+        -ArchiveName "ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip" `
+        -ArchiveMirrorName "windows_cuda_wheelhouse_archives" `
+        -ChecksumMirrorName "windows_cuda_wheelhouse_checksums"
+    $CudaArguments = @(
+        "pip", "install", "--python", $Python, "--reinstall",
+        "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130"
+    )
+    if ($CudaWheelhouse) {
+        Write-Host "使用 ModelScope CUDA wheelhouse。" -ForegroundColor Green
+        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
+            -Wheelhouse $CudaWheelhouse -Arguments $CudaArguments `
+            -FailureMessage "CUDA PyTorch wheelhouse 安装失败"
+    } else {
+        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+            -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
+            -IndexOption "--index" -Arguments $CudaArguments
+    }
 }
 
 $ApplicationDependenciesReady = (
-    $Profile -eq "Recommended" -and
-    (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot)
+    $AdvancedDependenciesReady -or
+    ($Profile -eq "推荐" -and (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot))
 )
 if (-not $ApplicationDependenciesReady) {
     Write-Host "正在安装应用依赖：$Extra" -ForegroundColor Cyan
-    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-        -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
-    # PyTorch 2.11 requires setuptools <82. Upgrade existing portable environments
-    # to the newest compatible release instead of retaining an older installer.
-    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-        -Arguments @(
-            "pip", "install", "--python", $Python, "setuptools>=78.1.1,<82"
-        )
+    $ApplicationWheelhouse = Get-ASMRDubberWheelhouse `
+        -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+        -ArchiveName "ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip" `
+        -ArchiveMirrorName "windows_application_wheelhouse_archives" `
+        -ChecksumMirrorName "windows_application_wheelhouse_checksums"
+    if ($ApplicationWheelhouse) {
+        Write-Host "使用 ModelScope 应用依赖 wheelhouse。" -ForegroundColor Green
+        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
+            -Wheelhouse $ApplicationWheelhouse -Arguments @(
+                "pip", "install", "--python", $Python, "--editable", $Extra,
+                "setuptools>=78.1.1,<82"
+            ) -FailureMessage "应用依赖 wheelhouse 安装失败"
+    } else {
+        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+            -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+            -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
+        # PyTorch 2.11 requires setuptools <82. Upgrade existing portable environments
+        # to the newest compatible release instead of retaining an older installer.
+        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+            -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+            -Arguments @(
+                "pip", "install", "--python", $Python, "setuptools>=78.1.1,<82"
+            )
+    }
 } else {
-    Write-Host "应用依赖已由 Windows Recommended 依赖包提供。" -ForegroundColor Green
+    Write-Host "应用依赖已由 Windows 依赖包提供。" -ForegroundColor Green
 }
 Invoke-Checked -FilePath $Python `
     -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
     -FailureMessage "应用字节码刷新失败"
 
 $LocalPackIds = switch ($Profile) {
-    "Core" { @() }
-    "Recommended" { @("parakeet-ja-windows", "indextts2-checkpoints") }
-    "Advanced" {
+    "基础" { @() }
+    "推荐" { @("parakeet-ja-windows", "indextts2-checkpoints") }
+    "进阶" {
         @(
             "parakeet-ja-windows",
             "indextts2-checkpoints",
             "kotoba-whisper-v2.2",
-            "faster-whisper-large-v2"
+            "faster-whisper-large-v2",
+            "qwen3-forced-aligner",
+            "whisper-vad-asmr-onnx"
         )
     }
-    "Full" { $null }
 }
-if ($Profile -ne "Core") {
+if ($Profile -ne "基础") {
     Write-Host "正在检测并导入当前档位的本地模型包..." -ForegroundColor Cyan
     $ImportArguments = @("-m", "asmr_dubber.cli", "import-model-packs", "--all")
     foreach ($PackId in @($LocalPackIds)) {
@@ -300,33 +339,24 @@ if ($Profile -ne "Core") {
 }
 
 if ($InstallAdvancedModels) {
-    Write-Host "正在准备 Advanced ASR 模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2..." `
-        -ForegroundColor Cyan
+    Write-Host (
+        "正在准备进阶分析模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2、" +
+        "Qwen3 ForcedAligner 与日语 ASMR 专用 VAD..."
+    ) -ForegroundColor Cyan
     Invoke-Checked -FilePath $Python `
         -ArgumentList @(
-            "-m", "asmr_dubber.cli", "download-models", "--backend", "advanced-asr"
+            "-m", "asmr_dubber.cli", "download-models", "--backend", "进阶语音识别"
         ) `
-        -FailureMessage "Advanced ASR 模型下载或校验失败"
-}
-
-if ($InstallDefaultModels) {
-    $SharedFFmpegBin = Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
-    Write-Host "共享版 FFmpeg：$SharedFFmpegBin" -ForegroundColor DarkGray
-    Write-Host "正在下载并校验默认模型（已有缓存会复用）..." -ForegroundColor Cyan
-    Invoke-Checked -FilePath $Python `
-        -ArgumentList @(
-            "-m", "asmr_dubber.cli", "download-models", "--backend", "all"
-        ) `
-        -FailureMessage "默认模型下载或校验失败"
+        -FailureMessage "进阶识别、VAD 与时间戳模型下载或校验失败"
 }
 
 if ($InstallParakeet) {
-    Write-Host "正在安装推荐 ASR：Parakeet 日语..." -ForegroundColor Cyan
+    Write-Host "正在安装推荐 ASR（语音识别）：Parakeet 日语..." -ForegroundColor Cyan
     & (Join-Path $PSScriptRoot "install-parakeet.ps1") -Variant Auto
 }
 
 if ($InstallRecommendedTTS) {
-    Write-Host "正在安装推荐 TTS：IndexTTS2（约需 20 GB）..." -ForegroundColor Cyan
+    Write-Host "正在安装推荐 TTS（语音合成）：IndexTTS2（约需 20 GB）..." -ForegroundColor Cyan
     & (Join-Path $PSScriptRoot "install-indextts2.ps1") `
         -IndexUrl $PreferredIndex -HuggingFaceEndpoint $PreferredHuggingFace
 }

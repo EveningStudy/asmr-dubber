@@ -25,18 +25,18 @@ from .environment import (
     resolve_transformers_model_source,
 )
 from .errors import AsmrDubberError
-from .model_registry import ASR_BACKENDS
 from .models import ProjectSettings, Sentence
 from .platforms import current_platform, isolated_runtime_environment, portable_home
 from .segmentation import TimedToken, restore_punctuation, split_timed_tokens
-from .user_settings import saved_service_key
+from .vad import (
+    build_condensed_analysis_audio,
+    detect_asmr_speech,
+    map_analysis_time,
+)
 
 Progress = Callable[[str, int, int], None]
 
-_QWEN_CHUNK_SECONDS = 90.0
-_QWEN_BOUNDARY_SEARCH_SECONDS = 5.0
-_QWEN_BOUNDARY_WINDOW_SECONDS = 0.1
-_PARAKEET_AUTO_CHUNK_SECONDS = 30.0
+_PARAKEET_AUTO_CHUNK_SECONDS = 120.0
 _PARAKEET_BOUNDARY_SEARCH_SECONDS = 5.0
 _PARAKEET_BOUNDARY_WINDOW_SECONDS = 0.1
 _TRANSFORMERS_ASR_PIPELINE_LOCK = threading.Lock()
@@ -76,50 +76,6 @@ def _offset_finite_token(text: Any, start: Any, end: Any, offset: float) -> Time
         return None
 
 
-def _qwen_chunk_ranges(
-    waveform: np.ndarray,
-    sample_rate: int,
-    chunk_seconds: float = _QWEN_CHUNK_SECONDS,
-    search_seconds: float = _QWEN_BOUNDARY_SEARCH_SECONDS,
-    window_seconds: float = _QWEN_BOUNDARY_WINDOW_SECONDS,
-) -> list[tuple[int, int]]:
-    """Split long ASR input near quiet boundaries without gaps or overlap."""
-    total_samples = int(waveform.shape[0])
-    if total_samples <= 0 or sample_rate <= 0:
-        return []
-    target_samples = max(1, int(round(chunk_seconds * sample_rate)))
-    if total_samples <= target_samples:
-        return [(0, total_samples)]
-
-    search_samples = max(0, int(round(search_seconds * sample_rate)))
-    window_samples = max(1, int(round(window_seconds * sample_rate)))
-    ranges: list[tuple[int, int]] = []
-    start = 0
-    while total_samples - start > target_samples:
-        target = start + target_samples
-        left = max(start + 1, target - search_samples)
-        right = min(total_samples, target + search_samples)
-        # Only the boundary search window needs absolute amplitudes.  Building
-        # abs(waveform) for a multi-hour recording used to duplicate the entire
-        # decoded signal in memory.
-        region = np.abs(waveform[left:right])
-        if region.size <= window_samples:
-            boundary = target
-        else:
-            # A cumulative sum finds the quietest short window in linear time.
-            prefix = np.empty(region.size + 1, dtype=np.float64)
-            prefix[0] = 0.0
-            np.cumsum(region, dtype=np.float64, out=prefix[1:])
-            energies = prefix[window_samples:] - prefix[:-window_samples]
-            boundary = left + int(np.argmin(energies)) + (window_samples // 2)
-        boundary = min(total_samples, max(start + 1, boundary))
-        ranges.append((start, boundary))
-        start = boundary
-
-    ranges.append((start, total_samples))
-    return ranges
-
-
 def _audio_file_chunk_ranges(
     audio_path: Path,
     chunk_seconds: float,
@@ -130,11 +86,11 @@ def _audio_file_chunk_ranges(
     with sf.SoundFile(audio_path) as audio:
         sample_rate = audio.samplerate
         total_samples = len(audio)
-        target_samples = max(1, int(round(chunk_seconds * sample_rate)))
+        target_samples = max(1, round(chunk_seconds * sample_rate))
         if total_samples <= target_samples:
             return sample_rate, [(0, total_samples)]
-        search_samples = max(0, int(round(search_seconds * sample_rate)))
-        window_samples = max(1, int(round(window_seconds * sample_rate)))
+        search_samples = max(0, round(search_seconds * sample_rate))
+        window_samples = max(1, round(window_seconds * sample_rate))
         ranges: list[tuple[int, int]] = []
         start = 0
         while total_samples - start > target_samples:
@@ -174,7 +130,7 @@ def _finish_tokens(
 ) -> tuple[list[Sentence], str]:
     values = list(tokens)
     if not values:
-        raise AsmrDubberError("识别出了文字，但所选 ASR 没有返回可用时间戳。")
+        raise AsmrDubberError("识别出了文字，但所选 ASR（语音识别）后端没有返回可用时间戳。")
     punctuated = restore_punctuation(values, full_text)
     sentences = split_timed_tokens(
         punctuated,
@@ -196,164 +152,6 @@ def _cleanup_cuda() -> None:
             torch.cuda.synchronize()
     except ImportError:
         pass
-
-
-def _transcribe_qwen3(
-    analysis_audio: Path,
-    settings: ProjectSettings,
-    progress: Progress | None,
-) -> tuple[list[Sentence], str]:
-    use_cuda = settings.asr_device.startswith("cuda")
-    if use_cuda:
-        require_cuda()
-    try:
-        import torch
-        from qwen_asr import Qwen3ASRModel
-    except ImportError as exc:
-        raise AsmrDubberError("缺少 qwen-asr；请在“设备与模型”页安装 Qwen3-ASR。") from exc
-
-    if progress:
-        progress(f"加载 Qwen3-ASR 与强制对齐器：{settings.asr_model}", 0, 1)
-    torch.set_float32_matmul_precision("high")
-    model = None
-    try:
-        dtype = torch.bfloat16 if use_cuda else torch.float32
-        device_map = "cuda:0" if use_cuda else "cpu"
-        model_source, model_revision = resolve_transformers_model_source(settings.asr_model)
-        aligner_source, aligner_revision = resolve_transformers_model_source(settings.aligner_model)
-        model = Qwen3ASRModel.from_pretrained(
-            model_source,
-            revision=model_revision,
-            dtype=dtype,
-            device_map=device_map,
-            max_inference_batch_size=settings.asr_batch_size,
-            max_new_tokens=settings.asr_max_new_tokens,
-            forced_aligner=aligner_source,
-            forced_aligner_kwargs={
-                "dtype": dtype,
-                "device_map": device_map,
-                "revision": aligner_revision,
-            },
-        )
-        try:
-            waveform, sample_rate = sf.read(
-                analysis_audio,
-                dtype="float32",
-                always_2d=False,
-            )
-        except (OSError, RuntimeError) as exc:
-            raise AsmrDubberError(f"无法读取 ASR 分析音频：{exc}") from exc
-        waveform = np.asarray(waveform, dtype=np.float32)
-        if waveform.ndim == 2:
-            waveform = waveform.mean(axis=1, dtype=np.float32)
-        elif waveform.ndim != 1:
-            raise AsmrDubberError(f"ASR 分析音频的维度无效：{waveform.ndim}")
-        chunk_ranges = _qwen_chunk_ranges(waveform, int(sample_rate))
-        if not chunk_ranges:
-            raise AsmrDubberError("ASR 分析音频为空。")
-
-        tokens: list[TimedToken] = []
-        full_text_parts: list[str] = []
-        languages: list[str] = []
-        chunk_total = len(chunk_ranges)
-
-        def consume_result(result: Any, chunk_index: int, start_sample: int) -> None:
-            offset_seconds = start_sample / sample_rate
-            text = str(getattr(result, "text", "") or "")
-            language = str(getattr(result, "language", "") or "")
-            if text:
-                full_text_parts.append(text)
-            if language and language not in languages:
-                languages.append(language)
-            for item in getattr(result, "time_stamps", None) or []:
-                token = _offset_finite_token(
-                    getattr(item, "text", ""),
-                    getattr(item, "start_time", None),
-                    getattr(item, "end_time", None),
-                    offset_seconds,
-                )
-                if token is not None:
-                    tokens.append(token)
-            if progress:
-                progress(
-                    f"已完成日语识别：{chunk_index}/{chunk_total} 段",
-                    chunk_index,
-                    chunk_total,
-                )
-
-        # Batch size 1 remains the quality-first default.  Values above 1 are
-        # an explicit user opt-in: Qwen's batch path is faster but floating
-        # point differences can produce small punctuation/segmentation changes.
-        requested_batch = max(1, settings.asr_batch_size)
-        cursor = 0
-        while cursor < chunk_total:
-            batch_ranges = chunk_ranges[cursor : cursor + requested_batch]
-            first_start, _ = batch_ranges[0]
-            _, last_end = batch_ranges[-1]
-            if progress:
-                first_index = cursor + 1
-                last_index = cursor + len(batch_ranges)
-                segment_label = (
-                    f"第 {first_index}/{chunk_total} 段"
-                    if first_index == last_index
-                    else f"第 {first_index}–{last_index}/{chunk_total} 段"
-                )
-                progress(
-                    (
-                        f"识别日语并生成时间戳：{segment_label}"
-                        f"（{_clock(first_start / sample_rate)}–"
-                        f"{_clock(last_end / sample_rate)}）"
-                    ),
-                    cursor,
-                    chunk_total,
-                )
-
-            batch_audio = [
-                (waveform[start_sample:end_sample], int(sample_rate))
-                for start_sample, end_sample in batch_ranges
-            ]
-            audio_input: Any = batch_audio[0] if len(batch_audio) == 1 else batch_audio
-            try:
-                results = model.transcribe(
-                    audio=audio_input,
-                    language="Japanese",
-                    return_time_stamps=True,
-                )
-            except torch.cuda.OutOfMemoryError:
-                if len(batch_audio) == 1:
-                    raise
-                # An explicitly requested batch may be too large for a
-                # particular model/GPU.  Falling back to one chunk at a time
-                # preserves resumability and the quality-first behavior.
-                torch.cuda.empty_cache()
-                if progress:
-                    progress(
-                        "ASR 批处理显存不足，自动改为逐段识别",
-                        cursor,
-                        chunk_total,
-                    )
-                requested_batch = 1
-                continue
-            if len(results) != len(batch_ranges):
-                raise AsmrDubberError(
-                    f"Qwen3-ASR 请求 {len(batch_ranges)} 段但返回 {len(results)} 个结果。"
-                )
-            for offset, (result, (start_sample, _)) in enumerate(
-                zip(results, batch_ranges, strict=True),
-                start=1,
-            ):
-                consume_result(result, cursor + offset, start_sample)
-            cursor += len(batch_ranges)
-
-        return _finish_tokens(
-            tokens,
-            "".join(full_text_parts),
-            ",".join(languages) or "Japanese",
-            settings,
-        )
-    finally:
-        del model
-        _cleanup_cuda()
 
 
 def _transcribe_faster_whisper(
@@ -390,7 +188,7 @@ def _transcribe_faster_whisper(
             # therefore crash the native process instead of raising Python.
             # Native segment timestamps remain valid and avoid that path.
             "word_timestamps": not is_kotoba_faster,
-            "vad_filter": settings.asr_vad_filter,
+            "vad_filter": settings.asr_vad_mode == "backend",
             "vad_parameters": {"min_silence_duration_ms": settings.asr_vad_min_silence_ms},
             "condition_on_previous_text": (
                 False if is_kotoba_faster else settings.asr_condition_on_previous_text
@@ -445,7 +243,7 @@ def _transcribe_kotoba_whisper(
         raise AsmrDubberError(
             f"Kotoba-Whisper 模型尚未完整下载：{settings.asr_model}。"
             "识别流程不会在后台自动下载模型；请先安装该模型，"
-            "或切换到已经完整安装的 ASR 模型。未完成的下载文件已保留。"
+            "或切换到已经完整安装的 ASR（语音识别）模型。未完成的下载文件已保留。"
         )
     try:
         import torch
@@ -485,41 +283,54 @@ def _transcribe_kotoba_whisper(
             batch_size=max(1, settings.asr_batch_size),
             ignore_warning=True,
         )
-        waveform, sample_rate = sf.read(
+        sample_rate, chunk_ranges = _audio_file_chunk_ranges(
             analysis_audio,
-            dtype="float32",
-            always_2d=False,
+            settings.asr_kotoba_chunk_seconds,
         )
-        if waveform.ndim > 1:
-            waveform = waveform.mean(axis=1)
-        result = _run_transformers_asr_pipeline(
-            pipe,
-            {"array": waveform, "sampling_rate": sample_rate},
-            # Kotoba's distilled two-layer decoder inherits alignment-head
-            # indices from the 32-layer Whisper teacher.  Word timestamp
-            # extraction therefore indexes nonexistent layers.  Native
-            # Whisper timestamp tokens remain valid and provide stable
-            # segment ranges for our punctuation/pause splitter.
-            return_timestamps=True,
-            generate_kwargs={
-                "language": "ja",
-                "task": "transcribe",
-                "condition_on_prev_tokens": settings.asr_condition_on_previous_text,
-            },
-        )
-        if not isinstance(result, Mapping):
-            raise AsmrDubberError("Kotoba-Whisper 返回的结果格式无效。")
         tokens: list[TimedToken] = []
-        for item in result.get("chunks", []) or []:
-            if not isinstance(item, Mapping):
-                continue
-            timestamp = item.get("timestamp")
-            if not isinstance(timestamp, (tuple, list)) or len(timestamp) != 2:
-                continue
-            token = _finite_token(item.get("text"), timestamp[0], timestamp[1])
-            if token:
-                tokens.append(token)
-        return _finish_tokens(tokens, str(result.get("text", "")), "Japanese", settings)
+        full_text: list[str] = []
+        with sf.SoundFile(analysis_audio) as audio:
+            for index, (start_sample, end_sample) in enumerate(chunk_ranges, start=1):
+                audio.seek(start_sample)
+                waveform = audio.read(
+                    end_sample - start_sample,
+                    dtype="float32",
+                    always_2d=False,
+                )
+                if waveform.ndim > 1:
+                    waveform = waveform.mean(axis=1)
+                if progress:
+                    progress(
+                        f"Kotoba-Whisper 正在识别第 {index}/{len(chunk_ranges)} 段",
+                        index - 1,
+                        len(chunk_ranges),
+                    )
+                result = _run_transformers_asr_pipeline(
+                    pipe,
+                    {"array": waveform, "sampling_rate": sample_rate},
+                    return_timestamps=True,
+                    generate_kwargs={
+                        "language": "ja",
+                        "task": "transcribe",
+                        "condition_on_prev_tokens": settings.asr_condition_on_previous_text,
+                    },
+                )
+                if not isinstance(result, Mapping):
+                    raise AsmrDubberError("Kotoba-Whisper 返回的结果格式无效。")
+                offset = start_sample / sample_rate
+                full_text.append(str(result.get("text", "")))
+                for item in result.get("chunks", []) or []:
+                    if not isinstance(item, Mapping):
+                        continue
+                    timestamp = item.get("timestamp")
+                    if not isinstance(timestamp, (tuple, list)) or len(timestamp) != 2:
+                        continue
+                    token = _offset_finite_token(
+                        item.get("text"), timestamp[0], timestamp[1], offset
+                    )
+                    if token:
+                        tokens.append(token)
+        return _finish_tokens(tokens, "".join(full_text), "Japanese", settings)
     finally:
         del pipe, processor, model
         _cleanup_cuda()
@@ -661,7 +472,7 @@ def _transcribe_parakeet(
     ]
     if settings.asr_model == "nvidia/parakeet-tdt_ctc-0.6b-ja":
         base_command.extend(("--parakeet-decoder", settings.asr_parakeet_decoder))
-    if settings.asr_vad_filter:
+    if settings.asr_vad_mode == "backend":
         base_command.extend(
             (
                 "--vad",
@@ -677,12 +488,10 @@ def _transcribe_parakeet(
         base_command.append("--no-gpu")
     environment = isolated_runtime_environment("crispasr")
     environment["CRISPASR_CACHE_DIR"] = str(portable_home() / "cache" / "crispasr")
-    requested_chunk_seconds = settings.asr_chunk_seconds or _PARAKEET_AUTO_CHUNK_SECONDS
-    # CrispASR 0.8.21 accepts --chunk-seconds but ignores it after the 1.1B
-    # model auto-routes to fastconformer-ctc. Split the analysis copy ourselves
-    # for both recommended Parakeet models so no backend path can reserve memory
-    # for a multi-minute recording. Existing larger manual values are clamped.
-    chunk_seconds = min(requested_chunk_seconds, _PARAKEET_AUTO_CHUNK_SECONDS)
+    # CrispASR currently starts once per application-managed chunk. A larger,
+    # explicit default drastically reduces model reloads on long recordings,
+    # while the validated 15–600 second range still bounds peak memory.
+    chunk_seconds = settings.asr_chunk_seconds or _PARAKEET_AUTO_CHUNK_SECONDS
     sample_rate, chunk_ranges = _audio_file_chunk_ranges(native_input, chunk_seconds)
     if not chunk_ranges or chunk_ranges[-1][1] <= 0:
         raise AsmrDubberError("Parakeet 输入音频为空。")
@@ -705,12 +514,13 @@ def _transcribe_parakeet(
             errors="replace",
         )
         active_process = process
-        assert process.stdout is not None
+        stdout = process.stdout
+        assert stdout is not None
         output_queue: queue.Queue[str | None] = queue.Queue()
 
         def read_output() -> None:
             try:
-                for line in process.stdout:
+                for line in stdout:
                     output_queue.put(line)
             finally:
                 output_queue.put(None)
@@ -730,7 +540,7 @@ def _transcribe_parakeet(
                 process.wait()
                 raise AsmrDubberError(
                     f"Parakeet 识别超过 {settings.asr_timeout_seconds:g} 秒，已安全停止。"
-                    "可在设置中增加 ASR 超时，或缩短输入音频。"
+                    "可在设置中增加 ASR（语音识别）超时，或缩短输入音频。"
                 )
             try:
                 line = output_queue.get(timeout=min(0.25, remaining))
@@ -766,7 +576,7 @@ def _transcribe_parakeet(
         active_process = None
         if return_code != 0:
             if len(output_lines) > 42:
-                diagnostic_lines = output_lines[:12] + ["…"] + output_lines[-30:]
+                diagnostic_lines = [*output_lines[:12], "…", *output_lines[-30:]]
             else:
                 diagnostic_lines = output_lines
             detail = "\n".join(diagnostic_lines).strip()
@@ -850,230 +660,74 @@ def _transcribe_parakeet(
         _cleanup_cuda()
 
 
-def _transcribe_openai_whisper(
-    analysis_audio: Path,
-    settings: ProjectSettings,
-    progress: Progress | None,
-) -> tuple[list[Sentence], str]:
-    try:
-        import whisper
-    except ImportError as exc:
-        raise AsmrDubberError("官方 OpenAI Whisper 未安装。请安装 openai-whisper。") from exc
-    if progress:
-        progress(f"加载 OpenAI Whisper：{settings.asr_model}", 0, 1)
-    model = None
-    try:
-        model = whisper.load_model(settings.asr_model, device=settings.asr_device)
-        result = model.transcribe(
-            str(analysis_audio),
-            language="ja",
-            task="transcribe",
-            word_timestamps=True,
-            condition_on_previous_text=settings.asr_condition_on_previous_text,
-            initial_prompt=settings.asr_initial_prompt or None,
-            beam_size=settings.asr_beam_size,
-            verbose=False,
-        )
-        tokens: list[TimedToken] = []
-        for segment in result.get("segments", []):
-            words = segment.get("words") or []
-            if words:
-                for word in words:
-                    token = _finite_token(word.get("word"), word.get("start"), word.get("end"))
-                    if token:
-                        tokens.append(token)
-            else:
-                token = _finite_token(segment.get("text"), segment.get("start"), segment.get("end"))
-                if token:
-                    tokens.append(token)
-        return _finish_tokens(
-            tokens, str(result.get("text", "")), str(result.get("language", "ja")), settings
-        )
-    finally:
-        del model
-        _cleanup_cuda()
-
-
-def _transcribe_whisperx(
-    analysis_audio: Path,
-    settings: ProjectSettings,
-    progress: Progress | None,
-) -> tuple[list[Sentence], str]:
-    try:
-        import whisperx
-    except ImportError as exc:
-        raise AsmrDubberError("WhisperX 未安装。请在独立兼容环境安装 whisperx。") from exc
-    if progress:
-        progress(f"加载 WhisperX：{settings.asr_model}", 0, 2)
-    model = align_model = None
-    try:
-        audio = whisperx.load_audio(str(analysis_audio))
-        model = whisperx.load_model(
-            settings.asr_model,
-            settings.asr_device,
-            compute_type=settings.asr_compute_type,
-            language="ja",
-        )
-        result = model.transcribe(audio, batch_size=settings.asr_batch_size, language="ja")
-        if progress:
-            progress("WhisperX 日语强制对齐", 1, 2)
-        align_model, metadata = whisperx.load_align_model(
-            language_code=str(result.get("language", "ja")), device=settings.asr_device
-        )
-        aligned = whisperx.align(
-            result.get("segments", []),
-            align_model,
-            metadata,
-            audio,
-            settings.asr_device,
-            return_char_alignments=False,
-        )
-        tokens: list[TimedToken] = []
-        for segment in aligned.get("segments", []):
-            words = segment.get("words") or []
-            if words:
-                for word in words:
-                    token = _finite_token(word.get("word"), word.get("start"), word.get("end"))
-                    if token:
-                        tokens.append(token)
-            else:
-                token = _finite_token(segment.get("text"), segment.get("start"), segment.get("end"))
-                if token:
-                    tokens.append(token)
-        full_text = "".join(str(item.get("text", "")) for item in aligned.get("segments", []))
-        return _finish_tokens(tokens, full_text, str(result.get("language", "ja")), settings)
-    finally:
-        del model, align_model
-        _cleanup_cuda()
-
-
-def _transcribe_funasr(
-    analysis_audio: Path,
-    settings: ProjectSettings,
-    progress: Progress | None,
-) -> tuple[list[Sentence], str]:
-    try:
-        from funasr import AutoModel
-        from funasr.utils.postprocess_utils import rich_transcription_postprocess
-    except ImportError as exc:
-        raise AsmrDubberError("FunASR 未安装。请在兼容环境安装官方 funasr。") from exc
-    if progress:
-        progress(f"加载 FunASR：{settings.asr_model}", 0, 1)
-    kwargs: dict[str, Any] = {"model": settings.asr_model, "device": settings.asr_device}
-    if settings.asr_vad_filter:
-        kwargs["vad_model"] = settings.asr_funasr_vad_model
-        kwargs["punc_model"] = settings.asr_funasr_punc_model
-    model = None
-    try:
-        model = AutoModel(**kwargs)
-        results = model.generate(
-            input=str(analysis_audio),
-            batch_size_s=max(1, settings.asr_batch_size) * 60,
-            language="ja",
-        )
-        if not results:
-            raise AsmrDubberError("FunASR 没有返回结果。")
-        result = results[0]
-        full_text = rich_transcription_postprocess(str(result.get("text", "")))
-        tokens: list[TimedToken] = []
-        for segment in result.get("sentence_info", []) or []:
-            text = segment.get("sentence") or segment.get("text") or ""
-            text = rich_transcription_postprocess(str(text))
-            token = _finite_token(
-                text, float(segment.get("start", 0)) / 1000, float(segment.get("end", 0)) / 1000
-            )
-            if token:
-                tokens.append(token)
-        return _finish_tokens(tokens, full_text, "ja", settings)
-    finally:
-        del model
-        _cleanup_cuda()
-
-
-def _mapping_tokens(payload: Mapping[str, Any]) -> list[TimedToken]:
-    tokens: list[TimedToken] = []
-    for item in payload.get("words", []) or []:
-        if isinstance(item, Mapping):
-            token = _finite_token(
-                item.get("word") or item.get("text"), item.get("start"), item.get("end")
-            )
-            if token:
-                tokens.append(token)
-    if tokens:
-        return tokens
-    for item in payload.get("segments", []) or []:
-        if isinstance(item, Mapping):
-            token = _finite_token(item.get("text"), item.get("start"), item.get("end"))
-            if token:
-                tokens.append(token)
-    return tokens
-
-
-def _transcribe_openai_compatible(
-    analysis_audio: Path,
-    settings: ProjectSettings,
-    progress: Progress | None,
-) -> tuple[list[Sentence], str]:
-    import httpx
-
-    base = settings.asr_api_base_url.rstrip("/")
-    url = base if base.endswith("/audio/transcriptions") else f"{base}/audio/transcriptions"
-    key = saved_service_key(f"asr:{settings.asr_backend}")
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
-    if progress:
-        progress(f"调用 ASR 服务：{url}", 0, 1)
-    try:
-        with analysis_audio.open("rb") as handle:
-            response = httpx.post(
-                url,
-                headers=headers,
-                files={"file": (analysis_audio.name, handle, "audio/wav")},
-                data={
-                    "model": settings.asr_model,
-                    "language": "ja",
-                    "response_format": "verbose_json",
-                    "timestamp_granularities[]": "word",
-                    "prompt": settings.asr_initial_prompt,
-                },
-                timeout=settings.asr_timeout_seconds,
-            )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        detail = getattr(getattr(exc, "response", None), "text", "")
-        raise AsmrDubberError(
-            f"ASR HTTP 服务失败：{exc}{': ' + detail[:500] if detail else ''}"
-        ) from exc
-    if not isinstance(payload, Mapping):
-        raise AsmrDubberError("ASR 服务返回的 JSON 不是对象。")
-    return _finish_tokens(
-        _mapping_tokens(payload),
-        str(payload.get("text", "")),
-        str(payload.get("language", "ja")),
-        settings,
-    )
-
-
 def transcribe_japanese(
     analysis_audio: Path,
     settings: ProjectSettings,
     progress: Progress | None = None,
 ) -> tuple[list[Sentence], str]:
-    """Dispatch Japanese ASR through a capability-registered backend."""
-    backend = settings.asr_backend
-    if backend not in ASR_BACKENDS:
-        raise AsmrDubberError(f"未知 ASR 模型后端：{backend}")
+    """Run one of the three deliberately supported recognition families."""
+
     runners = {
         "parakeet_nemo": _transcribe_parakeet,
         "kotoba_whisper": _transcribe_kotoba_whisper,
-        "qwen3_asr": _transcribe_qwen3,
         "faster_whisper": _transcribe_faster_whisper,
-        "openai_whisper": _transcribe_openai_whisper,
-        "whisperx": _transcribe_whisperx,
-        "funasr": _transcribe_funasr,
-        "openai_compatible_asr": _transcribe_openai_compatible,
     }
-    result = runners[backend](analysis_audio, settings, progress)
+    try:
+        runner = runners[settings.asr_backend]
+    except KeyError as exc:
+        raise AsmrDubberError(
+            f"不支持的 ASR（语音识别）后端：{settings.asr_backend}。"
+            "请选择 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
+        ) from exc
+    if settings.asr_vad_mode == "asmr":
+        segments = detect_asmr_speech(
+            analysis_audio,
+            threshold=settings.asr_asmr_vad_threshold,
+            min_speech_ms=settings.asr_asmr_vad_min_speech_ms,
+            min_silence_ms=settings.asr_asmr_vad_min_silence_ms,
+            speech_pad_ms=settings.asr_asmr_vad_speech_pad_ms,
+            progress=progress,
+        )
+        if not segments:
+            raise AsmrDubberError(
+                "日语 ASMR 专用 VAD 没有检测到语音。请降低阈值、增加边界保留，或关闭 VAD。"
+            )
+        run_directory = portable_home() / "temp" / "asr" / f"asmr-vad-{uuid.uuid4().hex}"
+        run_directory.mkdir(parents=True, exist_ok=False)
+        condensed = run_directory / "speech.wav"
+        try:
+            timeline = build_condensed_analysis_audio(
+                analysis_audio,
+                condensed,
+                segments,
+                separator_seconds=max(0.65, settings.pause_split_seconds + 0.1),
+            )
+            inner_settings = settings.model_copy(
+                update={"asr_vad_mode": "off", "asr_vad_filter": False}
+            )
+            sentences, language = runner(condensed, inner_settings, progress)
+            remapped: list[Sentence] = []
+            for sentence in sentences:
+                start = map_analysis_time(sentence.start_seconds, timeline, end=False)
+                end = map_analysis_time(sentence.end_seconds, timeline, end=True)
+                if end <= start:
+                    continue
+                remapped.append(
+                    sentence.model_copy(
+                        update={
+                            "id": f"s{len(remapped) + 1:06d}",
+                            "start_seconds": start,
+                            "end_seconds": end,
+                        }
+                    )
+                )
+            if not remapped:
+                raise AsmrDubberError("ASMR VAD 识别结果无法映射回原始时间轴。")
+            result = remapped, language
+        finally:
+            shutil.rmtree(run_directory, ignore_errors=True)
+    else:
+        result = runner(analysis_audio, settings, progress)
     if progress:
-        progress(f"识别完成：{len(result[0])} 句", 1, 1)
+        progress(f"语音识别完成：{len(result[0])} 句", 1, 1)
     return result

@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("qwen3_asr", "faster_whisper", "kotoba_whisper", "openai_whisper", "funasr", "voxcpm2")]
+    [ValidateSet("faster_whisper", "kotoba_whisper")]
     [string]$Backend,
     [string]$TorchIndexUrl = ""
 )
@@ -18,6 +18,7 @@ $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 . (Join-Path $Root "scripts\mirrors.ps1")
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
+. (Join-Path $Root "scripts\windows\wheelhouse.ps1")
 $DataRoot = $Paths.Home
 $Uv = $Paths.Uv
 $Python = $Paths.Python
@@ -31,12 +32,8 @@ $PreferredIndex = if ($env:ASMR_DUBBER_PYPI_MIRROR) {
 } else { "" }
 
 $Extra = switch ($Backend) {
-    "qwen3_asr" { "local-default" }
-    "voxcpm2" { "local-default" }
     "faster_whisper" { "asr-faster-whisper" }
     "kotoba_whisper" { "asr-kotoba-whisper" }
-    "openai_whisper" { "asr-openai-whisper" }
-    "funasr" { "asr-funasr" }
 }
 
 function Invoke-Checked {
@@ -60,30 +57,45 @@ if (-not $NvidiaSmi) {
         $NvidiaSmi = $SystemNvidiaSmi
     }
 }
-if ($Extra -eq "local-default") {
-    Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot | Out-Null
-    if (-not $NvidiaSmi) {
-        throw "$Backend 需要 NVIDIA GPU；当前机器未检测到 nvidia-smi。"
+$InstallCudaTorch = ($Backend -eq "kotoba_whisper") -and $NvidiaSmi
+if ($InstallCudaTorch) {
+    Write-Host "检测到 NVIDIA GPU，正在安装 CUDA PyTorch..." -ForegroundColor Cyan
+    $CudaArguments = @(
+        "pip", "install", "--python", $Python, "--reinstall",
+        "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130"
+    )
+    $CudaWheelhouse = Get-ASMRDubberWheelhouse `
+        -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+        -ArchiveName "ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip" `
+        -ArchiveMirrorName "windows_cuda_wheelhouse_archives" `
+        -ChecksumMirrorName "windows_cuda_wheelhouse_checksums"
+    if ($CudaWheelhouse) {
+        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
+            -Wheelhouse $CudaWheelhouse -Arguments $CudaArguments `
+            -FailureMessage "CUDA PyTorch wheelhouse 安装失败"
+    } else {
+        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+            -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
+            -IndexOption "--index" -Arguments $CudaArguments
     }
 }
 
-$InstallCudaTorch = ($Extra -eq "local-default") -or (
-    ($Backend -eq "kotoba_whisper") -and $NvidiaSmi
+$ApplicationArguments = @(
+    "pip", "install", "--python", $Python, "--editable", "$Root[$Extra]"
 )
-if ($InstallCudaTorch) {
-    Write-Host "检测到 NVIDIA GPU，正在安装 CUDA PyTorch..." -ForegroundColor Cyan
+$ApplicationWheelhouse = Get-ASMRDubberWheelhouse `
+    -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+    -ArchiveName "ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip" `
+    -ArchiveMirrorName "windows_application_wheelhouse_archives" `
+    -ChecksumMirrorName "windows_application_wheelhouse_checksums"
+if ($ApplicationWheelhouse) {
+    Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
+        -Wheelhouse $ApplicationWheelhouse -Arguments $ApplicationArguments `
+        -FailureMessage "后端依赖 wheelhouse 安装失败"
+} else {
     Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $Root -MirrorName "pytorch_indexes" -Preferred $TorchIndexUrl `
-        -IndexOption "--index" -Arguments @(
-            "pip", "install", "--python", $Python, "--reinstall",
-            "torch==2.11.0+cu130", "torchaudio==2.11.0+cu130"
-        )
+        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments $ApplicationArguments
 }
-
-Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-    -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-    -Arguments @(
-        "pip", "install", "--python", $Python, "--editable", "$Root[$Extra]"
-    )
 
 Write-Host "后端运行环境安装完成。请重启 ASMR Dubber 后使用。" -ForegroundColor Green

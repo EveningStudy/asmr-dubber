@@ -1,4 +1,99 @@
 {
+  "download_policy": {
+    "provider": "modelscope-first",
+    "allow_external": false
+  },
+  "modelscope": {
+    "repository": "EveningStudyW/ASMR-Dubber-Portable-Mirror",
+    "revision": "master",
+    "base_url": "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Portable-Mirror/resolve/master"
+  },
+  "modelscope_artifacts": {
+    "uv_archives_windows": [
+      "uv-x86_64-pc-windows-msvc.zip"
+    ],
+    "uv_archives_linux": [
+      "artifacts/bootstrap/uv/0.11.30/uv-x86_64-unknown-linux-gnu.tar.gz"
+    ],
+    "python_install_mirrors": [
+      "artifacts/python-build-standalone/releases/download"
+    ],
+    "python312_windows_archives": [
+      "cpython-3.12.13%2B20260718-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+    ],
+    "python312_linux_archives": [
+      "artifacts/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    ],
+    "python311_windows_archives": [
+      "artifacts/python-build-standalone/releases/download/20251007/cpython-3.11.13%2B20251007-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+    ],
+    "python311_linux_archives": [
+      "artifacts/python-build-standalone/releases/download/20251007/cpython-3.11.13%2B20251007-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    ],
+    "windows_recommended_dependency_archives": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended/resolve/master/ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
+    ],
+    "windows_advanced_dependency_archives": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-Windows-Advanced-Dependencies-v1.0.0.zip"
+    ],
+    "windows_application_wheelhouse_archives": [
+      "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip"
+    ],
+    "windows_application_wheelhouse_checksums": [
+      "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip.sha256"
+    ],
+    "linux_application_wheelhouse_archives": [
+      "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz"
+    ],
+    "linux_application_wheelhouse_checksums": [
+      "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz.sha256"
+    ],
+    "windows_cuda_wheelhouse_archives": [
+      "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip"
+    ],
+    "windows_cuda_wheelhouse_checksums": [
+      "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip.sha256"
+    ],
+    "indextts2_wheelhouse_archives_windows": [
+      "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip"
+    ],
+    "indextts2_wheelhouse_checksums_windows": [
+      "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip.sha256"
+    ],
+    "indextts2_wheelhouse_archives_linux": [
+      "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz"
+    ],
+    "indextts2_wheelhouse_checksums_linux": [
+      "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz.sha256"
+    ],
+    "indextts2_source_archives": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS2/resolve/master/index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip"
+    ],
+    "ffmpeg_shared_archives_windows": [
+      "artifacts/runtimes/ffmpeg/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
+    ],
+    "ffmpeg_checksum_files_windows": [
+      "artifacts/runtimes/ffmpeg/btbn-checksums.sha256"
+    ],
+    "crispasr_windows_cpu_archives": [
+      "artifacts/runtimes/crispasr/v0.8.21/crispasr-windows-x86_64-cpu.zip"
+    ],
+    "crispasr_windows_cuda_archives": [
+      "artifacts/runtimes/crispasr/v0.8.21/crispasr-windows-x86_64-cuda.zip"
+    ],
+    "crispasr_linux_cpu_archives": [
+      "artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64.tar.gz"
+    ],
+    "crispasr_linux_cuda_archives": [
+      "artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz"
+    ],
+    "parakeet_11b_model_files": [
+      "artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf"
+    ],
+    "parakeet_06b_model_files": [
+      "artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf"
+    ]
+  },
   "pypi_indexes": [
     "https://pypi.tuna.tsinghua.edu.cn/simple",
     "https://mirrors.aliyun.com/pypi/simple",
@@ -21,6 +116,9 @@
     "https://releases.astral.sh/github/uv/releases/download/0.11.30/uv-x86_64-pc-windows-msvc.zip",
     "https://github.com/astral-sh/uv/releases/download/0.11.30/uv-x86_64-pc-windows-msvc.zip"
   ],
+  "uv_archives_linux": [
+    "https://github.com/astral-sh/uv/releases/download/0.11.30/uv-x86_64-unknown-linux-gnu.tar.gz"
+  ],
   "uv_installers_windows": [
     "https://astral.sh/uv/0.11.30/install.ps1"
   ],
@@ -33,12 +131,54 @@
     "https://ghproxy.net/https://github.com/astral-sh/python-build-standalone/releases/download",
     "https://github.com/astral-sh/python-build-standalone/releases/download"
   ],
+  "python312_windows_archives": [
+    "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+  ],
+  "python312_linux_archives": [
+    "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+  ],
+  "python311_windows_archives": [
+    "https://github.com/astral-sh/python-build-standalone/releases/download/20251007/cpython-3.11.13%2B20251007-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+  ],
+  "python311_linux_archives": [
+    "https://github.com/astral-sh/python-build-standalone/releases/download/20251007/cpython-3.11.13%2B20251007-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+  ],
+  "ffmpeg_shared_archives_windows": [
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
+  ],
+  "ffmpeg_checksum_files_windows": [
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256"
+  ],
+  "crispasr_windows_cpu_archives": [
+    "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.21/crispasr-windows-x86_64-cpu.zip"
+  ],
+  "crispasr_windows_cuda_archives": [
+    "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.21/crispasr-windows-x86_64-cuda.zip"
+  ],
+  "crispasr_linux_cpu_archives": [
+    "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.21/crispasr-linux-x86_64.tar.gz"
+  ],
+  "crispasr_linux_cuda_archives": [
+    "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz"
+  ],
   "model_pack_sources": {
     "parakeet-ja-windows": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Parakeet/resolve/master/ASMR-Dubber-ModelPack-parakeet-ja-windows-v0.2.1.zip"
     ],
     "indextts2-checkpoints": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS2/resolve/master/ASMR-Dubber-ModelPack-indextts2-checkpoints-v0.2.1.zip"
+    ],
+    "kotoba-whisper-v2.2": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-kotoba-whisper-v2.2-v1.0.0.zip"
+    ],
+    "faster-whisper-large-v2": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-faster-whisper-large-v2-v1.0.0.zip"
+    ],
+    "qwen3-forced-aligner": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-qwen3-forced-aligner-v1.0.0.zip"
+    ],
+    "whisper-vad-asmr-onnx": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-whisper-vad-asmr-onnx-v1.0.0.zip"
     ]
   },
   "indextts2_source_archives": [

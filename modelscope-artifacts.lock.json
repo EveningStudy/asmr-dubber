@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "release": "0.4.0",
+  "repository": "EveningStudyW/ASMR-Dubber-Portable-Mirror",
+  "revision": "master",
+  "artifacts": [
+    {
+      "id": "uv-windows-x86_64",
+      "path": "uv-x86_64-pc-windows-msvc.zip",
+      "size": 25710044,
+      "sha256": "be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e"
+    },
+    {
+      "id": "uv-linux-x86_64",
+      "path": "artifacts/bootstrap/uv/0.11.30/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "size": 26274137,
+      "sha256": "04bc7d180d6138bf6dc08387acf507a823f397a98fea55da36b0ccc7fbce3b68"
+    },
+    {
+      "id": "python-3.12.13-windows-x86_64",
+      "path": "cpython-3.12.13+20260718-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "size": 21932298,
+      "sha256": "0d422a1439ec308e03f47df551bc30f5994727c456e414b026d202bcda9b7c1c"
+    },
+    {
+      "id": "python-3.12.13-linux-x86_64",
+      "path": "artifacts/python-build-standalone/releases/download/20260718/cpython-3.12.13+20260718-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 34199823,
+      "sha256": "5854aa6ec71cad00334d5065633c210b2e7feb40956767a59a91791cadcf0b79"
+    },
+    {
+      "id": "python-3.11.13-windows-x86_64",
+      "path": "artifacts/python-build-standalone/releases/download/20251007/cpython-3.11.13+20251007-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "size": 25990147,
+      "sha256": "cde5153f59a67d9e108f2ed964526e9aed100eba180f54bee0496b4fd73a8b29"
+    },
+    {
+      "id": "python-3.11.13-linux-x86_64",
+      "path": "artifacts/python-build-standalone/releases/download/20251007/cpython-3.11.13+20251007-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 30157215,
+      "sha256": "43bfc42529843ecd1d9c08c4a239ede348f96ff0acaef2ec24b28dc059f4f0c3"
+    },
+    {
+      "id": "crispasr-windows-cpu",
+      "path": "artifacts/runtimes/crispasr/v0.8.21/crispasr-windows-x86_64-cpu.zip",
+      "size": 6077810,
+      "sha256": "c16ae6a69bad1c077c9bc01821fbbd6d3671a6ad114239eb0807cf3601e3b6f2"
+    },
+    {
+      "id": "crispasr-windows-cuda",
+      "path": "artifacts/runtimes/crispasr/v0.8.21/crispasr-windows-x86_64-cuda.zip",
+      "size": 691366170,
+      "sha256": "d7db946f4b73fa0fbf3a3e27d63a994eee51a90138384813d35f7863a59aeba3"
+    },
+    {
+      "id": "crispasr-linux-cpu",
+      "path": "artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64.tar.gz",
+      "size": 23042489,
+      "sha256": "55d48357052c6d9376ad6548c877f9fb1e0a79728ae5e24dfc84b29405d22434"
+    },
+    {
+      "id": "crispasr-linux-cuda13",
+      "path": "artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz",
+      "size": 212863648,
+      "sha256": "883edc02ed3666af9e76b26ca29e2fc5db0ce48f97e4b0ef575d482a3619c74d"
+    },
+    {
+      "id": "ffmpeg-windows-shared",
+      "path": "artifacts/runtimes/ffmpeg/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip",
+      "size": 70506235,
+      "sha256": "34db93b66a56125ec10547b12a7996e2dbca8eba6a1aa14b00b8a281bc87cd02"
+    },
+    {
+      "id": "ffmpeg-windows-checksums",
+      "path": "artifacts/runtimes/ffmpeg/btbn-checksums.sha256",
+      "size": 5296,
+      "sha256": "1305cfe1375c3a54e3bff0383db0a305373aa89771ca1cb74db22f4712d68a9e"
+    },
+    {
+      "id": "parakeet-ctc-1.1b-ja-f16",
+      "path": "artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf",
+      "size": 2134533952,
+      "sha256": "34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7"
+    },
+    {
+      "id": "parakeet-tdt-0.6b-ja",
+      "path": "artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf",
+      "size": 1246932800,
+      "sha256": "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
+    }
+  ],
+  "sidecar_verified_archives": [
+    "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip",
+    "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip",
+    "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip",
+    "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz",
+    "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz"
+  ]
+}

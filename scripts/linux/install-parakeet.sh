@@ -41,7 +41,10 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   EXPECTED="883edc02ed3666af9e76b26ca29e2fc5db0ce48f97e4b0ef575d482a3619c74d"
 fi
 ARCHIVE="$DOWNLOAD_ROOT/$ASSET"
-URL="https://github.com/CrispStrobe/CrispASR/releases/download/$VERSION/$ASSET"
+MIRROR_NAME="crispasr_linux_cpu_archives"
+if [[ "$ASSET" == *cuda13* ]]; then
+  MIRROR_NAME="crispasr_linux_cuda_archives"
+fi
 
 download_archive() {
   local attempt
@@ -50,8 +53,15 @@ download_archive() {
       [[ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" == "$EXPECTED" ]]; then
       return 0
     fi
-    rm -f "$ARCHIVE"
-    asmr_download "$ROOT" "$URL" "$ARCHIVE" "$EXPECTED"
+    local ready=0 url
+    while IFS= read -r url; do
+      [[ -n "$url" ]] || continue
+      if asmr_download "$ROOT" "$url" "$ARCHIVE" "$EXPECTED"; then
+        ready=1
+        break
+      fi
+    done < <(asmr_mirror_list "$ROOT" "$MIRROR_NAME")
+    [[ "$ready" == 1 ]] || return 1
     if [[ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" == "$EXPECTED" ]]; then
       return 0
     fi
@@ -74,20 +84,48 @@ mkdir -p "$RUNTIME_ROOT/bin"
 cp -a "$(dirname "$EXECUTABLE")/." "$RUNTIME_ROOT/bin/"
 rm -rf "$STAGING"
 
-"$PYTHON" "$ROOT/scripts/download_hf_file.py" \
-  --repo cstr/parakeet-ctc-1.1b-ja-GGUF \
-  --filename parakeet-ctc-1.1b-ja-f16.gguf \
-  --revision 7ccb2922f63cefe7c0d2735527c69aa46c05ceb9 \
-  --destination "$MODEL_ROOT/parakeet-ctc-1.1b-ja-f16.gguf" \
-  --minimum-bytes 2000000000 \
-  --endpoints "$(asmr_mirror_list "$ROOT" huggingface_endpoints | paste -sd ';' -)"
-"$PYTHON" "$ROOT/scripts/download_hf_file.py" \
-  --repo cstr/parakeet-tdt-0.6b-ja-GGUF \
-  --filename parakeet-tdt-0.6b-ja.gguf \
-  --revision 65341fce2b46d25ea51593b1f771ed9a73cf7108 \
-  --destination "$MODEL_ROOT/parakeet-tdt-0.6b-ja.gguf" \
-  --minimum-bytes 1000000000 \
-  --endpoints "$(asmr_mirror_list "$ROOT" huggingface_endpoints | paste -sd ';' -)"
+download_parakeet_model() {
+  local mirror_name="$1" destination="$2" expected="$3"
+  local repo="$4" filename="$5" revision="$6" minimum="$7" url
+  if [[ -f "$destination" ]] && \
+    [[ "$(sha256sum "$destination" | cut -d' ' -f1)" == "$expected" ]]; then
+    return 0
+  fi
+  while IFS= read -r url; do
+    [[ -n "$url" ]] || continue
+    if asmr_download "$ROOT" "$url" "$destination" "$expected"; then
+      return 0
+    fi
+  done < <(asmr_mirror_list "$ROOT" "$mirror_name")
+  if asmr_external_downloads_allowed "$ROOT"; then
+    "$PYTHON" "$ROOT/scripts/download_hf_file.py" \
+      --repo "$repo" --filename "$filename" --revision "$revision" \
+      --destination "$destination" --minimum-bytes "$minimum" \
+      --sha256 "$expected" \
+      --endpoints "$(asmr_mirror_list "$ROOT" huggingface_endpoints | paste -sd ';' -)"
+    return
+  fi
+  echo "$filename 的 ModelScope 下载失败；断点文件已保留。" >&2
+  echo "请上传镜像文件，安装器不会自动消耗 Hugging Face 流量。" >&2
+  return 1
+}
+
+download_parakeet_model \
+  parakeet_11b_model_files \
+  "$MODEL_ROOT/parakeet-ctc-1.1b-ja-f16.gguf" \
+  "$EXPECTED_11B" \
+  cstr/parakeet-ctc-1.1b-ja-GGUF \
+  parakeet-ctc-1.1b-ja-f16.gguf \
+  7ccb2922f63cefe7c0d2735527c69aa46c05ceb9 \
+  2000000000
+download_parakeet_model \
+  parakeet_06b_model_files \
+  "$MODEL_ROOT/parakeet-tdt-0.6b-ja.gguf" \
+  "$EXPECTED_06B" \
+  cstr/parakeet-tdt-0.6b-ja-GGUF \
+  parakeet-tdt-0.6b-ja.gguf \
+  65341fce2b46d25ea51593b1f771ed9a73cf7108 \
+  1000000000
 
 "$RUNTIME_ROOT/bin/crispasr" --version
 echo "Parakeet 已就绪；全部文件均位于 .asmr-dubber。"

@@ -116,6 +116,40 @@ def _translation_memory(sentences: Iterable[Sentence]) -> str:
     return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 
+def _context_for_chunk(
+    sentences: list[Sentence],
+    chunk: TranslationChunk,
+    maximum_sentences: int,
+) -> str:
+    if maximum_sentences <= 0:
+        return "[]"
+    positions = {sentence.id: index for index, sentence in enumerate(sentences)}
+    indices = [positions[item.id] for item in chunk.sentences if item.id in positions]
+    if not indices:
+        return "[]"
+    first, last = min(indices), max(indices)
+    room = max(0, maximum_sentences - (last - first + 1))
+    start = max(0, first - room // 2)
+    end = min(len(sentences), last + 1 + (room - (first - start)))
+    if end - start < maximum_sentences:
+        start = max(0, end - maximum_sentences)
+    return _json_lines(sentences[start:end], field="both")
+
+
+def _bounded_translation_memory(
+    sentences: list[Sentence],
+    chunk: TranslationChunk,
+    maximum_sentences: int,
+) -> str:
+    if maximum_sentences <= 0:
+        return "[]"
+    current_ids = {sentence.id for sentence in chunk.sentences}
+    confirmed = [
+        sentence for sentence in sentences if sentence.zh_text and sentence.id not in current_ids
+    ]
+    return _translation_memory(confirmed[-maximum_sentences:])
+
+
 def _extract_json(content: str) -> dict:
     value = content.strip()
     if value.startswith("```"):
@@ -203,13 +237,14 @@ class DeepSeekTranslator:
                 if attempt == 1
                 else f"\n这是第 {attempt} 次校验重试：务必返回全部 id 和原顺序；无实义项用空 zh。"
             )
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {
-                    "role": "user",
-                    "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
-                },
-            ]
+            messages = [{"role": "system", "content": self.system_prompt}]
+            if full_context != "[]":
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
+                    }
+                )
             if translation_memory != "[]":
                 messages.append(
                     {
@@ -347,13 +382,14 @@ class LLMTranslator:
             if attempt == 1
             else f"\n这是第 {attempt} 次校验重试：务必返回全部 id 和原顺序；无实义项用空 zh。"
         )
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {
-                "role": "user",
-                "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
-            },
-        ]
+        messages = [{"role": "system", "content": self.system_prompt}]
+        if full_context != "[]":
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
+                }
+            )
         if translation_memory != "[]":
             messages.append(
                 {
@@ -634,6 +670,9 @@ def translate_sentences(
     max_output_tokens: int = 16_384,
     deepl_formality: str = "default",
     microsoft_region: str = "",
+    send_context: bool = True,
+    context_sentences: int = 24,
+    memory_sentences: int = 50,
     job_id: str = "asmr_dubber",
     progress: Progress | None = None,
     on_batch: Callable[[], None] | None = None,
@@ -645,8 +684,6 @@ def translate_sentences(
             progress("所有句子已有中文翻译", 1, 1)
         return
     batches = _chunks(pending)
-    # This exact prefix is reused for every batch, enabling DeepSeek's prefix cache.
-    full_context = _json_lines(sentences)
     if provider == "deepseek":
         translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(
             api_key=api_key,
@@ -696,8 +733,16 @@ def translate_sentences(
             try:
                 translations = translator.translate_chunk(
                     chunk,
-                    full_context,
-                    _translation_memory(sentences),
+                    (
+                        _context_for_chunk(sentences, chunk, context_sentences)
+                        if send_context
+                        else "[]"
+                    ),
+                    (
+                        _bounded_translation_memory(sentences, chunk, memory_sentences)
+                        if send_context
+                        else "[]"
+                    ),
                     job_id,
                 )
             except _OutputLengthTranslationError as exc:

@@ -9,7 +9,7 @@ _asmr_proxy_probe() {
   local proxy="$1"
   curl -4 --fail --silent --output /dev/null \
     --proxy "$proxy" --noproxy "" --connect-timeout 5 --max-time 15 \
-    "${HF_ENDPOINT:-https://huggingface.co}/robots.txt"
+    "${ASMR_DUBBER_NETWORK_PROBE_URL:-https://modelscope.cn/robots.txt}"
 }
 
 _asmr_tcp_open() {

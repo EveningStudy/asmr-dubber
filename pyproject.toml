@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asmr-dubber"
-version = "0.3.4"
+version = "0.4.0"
 description = "Japanese ASMR to Chinese voice-cloned sentence dubbing for Windows and Linux"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{name = "ASMR Dubber contributors"}]
+maintainers = [{name = "ASMR Dubber maintainers"}]
 keywords = ["ASMR", "Japanese", "Chinese", "voice-cloning", "dubbing", "TTS", "ASR"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -38,20 +40,9 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["gradio==6.17.3"]
-# The application shell intentionally stays small and portable. Local AI
-# stacks are optional because their PyTorch/Python requirements differ widely.
-local-default = [
-  "datasets==3.6.0",
-  "numba==0.63.1",
-  "llvmlite==0.46.0",
-  "pynndescent==0.5.13",
-  "qwen-asr==0.0.6",
-  "torch==2.11.0",
-  "torchaudio==2.11.0",
-  "torchcodec==0.13.0",
-  "transformers==4.57.6",
-  "voxcpm==2.0.3",
-]
+# Only the three supported recognition families live in the main environment.
+# IndexTTS2 is intentionally isolated and external synthesis services need no
+# extra Python stack in this application.
 asr-faster-whisper = [
   "faster-whisper>=1.2.1,<2",
   # CTranslate2's Windows CUDA build targets CUDA 12. PyTorch may use a
@@ -64,13 +55,29 @@ asr-kotoba-whisper = [
   "torchaudio>=2.6,<2.12",
   "transformers>=4.57,<5",
 ]
-asr-openai-whisper = ["openai-whisper>=20250625"]
-asr-funasr = ["funasr>=1.3.0,<2"]
+asr-forced-aligner = [
+  "qwen-asr==0.0.6",
+  "torch>=2.6,<2.12",
+  "torchaudio>=2.6,<2.12",
+  "transformers>=4.57,<5",
+]
+asr-asmr-vad = [
+  "onnxruntime>=1.20,<2",
+  "transformers>=4.57,<5",
+]
 dev = [
+  "pyright>=1.1.400",
   "pytest>=8.3.0",
   "pytest-cov>=6.0.0",
   "ruff>=0.9.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/EveningStudy/ASMR-Dubber"
+Documentation = "https://github.com/EveningStudy/ASMR-Dubber/tree/main/docs"
+Repository = "https://github.com/EveningStudy/ASMR-Dubber.git"
+Issues = "https://github.com/EveningStudy/ASMR-Dubber/issues"
+"Release notes" = "https://github.com/EveningStudy/ASMR-Dubber/blob/main/docs/RELEASE.md"
 
 [project.scripts]
 asmr-dubber = "asmr_dubber.cli:app"
@@ -89,7 +96,10 @@ include = [
   "/ASMR-Dubber.exe",
   "/ASMR-Dubber-Setup.exe",
   "/mirrors.json",
+  "/modelscope-artifacts.lock.json",
   "/README.md",
+  "/CONTRIBUTING.md",
+  "/SECURITY.md",
   "/LICENSE",
   "/docs",
   "/.github",
@@ -103,11 +113,23 @@ include = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+
+[tool.pyright]
+include = ["src/asmr_dubber"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingImports = false
+reportMissingTypeStubs = false
+reportPrivateImportUsage = false
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PERF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/asmr_dubber/ui.py" = ["B008"]

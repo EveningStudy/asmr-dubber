@@ -50,7 +50,29 @@ foreach ($Item in $Sources) {
             throw "Windows 启动器编译失败（退出码 $CompileExitCode）。"
         }
         [void][System.Reflection.AssemblyName]::GetAssemblyName($TemporaryOutput)
-        Move-Item -Force $TemporaryOutput $Item.Output
+        if (Test-Path -LiteralPath $Item.Output -PathType Leaf) {
+            # Move-Item -Force does not reliably replace an existing file on
+            # every supported PowerShell version. Both files are on the same
+            # volume, so File.Replace gives us an atomic launcher update. A
+            # running old launcher can keep its backup locked until exit; put
+            # that backup below the ignored portable temp tree, not beside the
+            # release executables.
+            $BackupDirectory = Join-Path $ProjectRoot ".asmr-dubber\temp\launcher-backups"
+            New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
+            $BackupOutput = Join-Path $BackupDirectory (
+                [System.IO.Path]::GetFileName($Item.Output) + "." +
+                [guid]::NewGuid().ToString("N") + ".old"
+            )
+            [System.IO.File]::Replace(
+                $TemporaryOutput,
+                $Item.Output,
+                $BackupOutput,
+                $true
+            )
+            Remove-Item -LiteralPath $BackupOutput -Force -ErrorAction SilentlyContinue
+        } else {
+            [System.IO.File]::Move($TemporaryOutput, $Item.Output)
+        }
     } finally {
         Remove-Item -Force -ErrorAction SilentlyContinue $TemporaryOutput
     }

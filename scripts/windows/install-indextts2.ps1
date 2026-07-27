@@ -19,6 +19,8 @@ $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
 . (Join-Path $Root "scripts\windows\recommended-dependencies.ps1")
+. (Join-Path $Root "scripts\windows\wheelhouse.ps1")
+. (Join-Path $Root "scripts\windows\python-runtime.ps1")
 $DataRoot = $Paths.Home
 $RuntimeRoot = Join-Path $DataRoot "runtimes\index-tts"
 $ModelDir = Join-Path $RuntimeRoot "checkpoints"
@@ -38,8 +40,14 @@ if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
     if ($LASTEXITCODE -eq 0) {
         & $Paths.Python -m asmr_dubber.cli import-model-packs --all `
             --pack-id indextts2-checkpoints
+        if ($LASTEXITCODE -ne 0) {
+            throw "IndexTTS2 ModelScope 模型包已下载，但导入失败。"
+        }
     } else {
-        Write-Warning "远程 IndexTTS2 模型包不可用，将继续使用原始下载源。"
+        throw (
+            "IndexTTS2 ModelScope 模型包下载未完成。断点文件已保留；" +
+            "请重新运行安装继续，不会改用另一条 11 GB 下载链路。"
+        )
     }
 }
 $env:UV_LINK_MODE = "copy"
@@ -50,16 +58,8 @@ $PreferredIndex = if ($IndexUrl) {
 } elseif ($env:ASMR_DUBBER_PYPI_MIRROR) {
     $env:ASMR_DUBBER_PYPI_MIRROR
 } else { "" }
-$PreferredHuggingFace = if ($HuggingFaceEndpoint) {
-    $HuggingFaceEndpoint
-} elseif ($env:ASMR_DUBBER_HF_ENDPOINT) {
-    $env:ASMR_DUBBER_HF_ENDPOINT
-} else { "" }
-$HuggingFaceEndpoints = @(Get-ASMRDubberMirrorList `
-    -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
-    -Preferred $PreferredHuggingFace)
-$env:ASMR_DUBBER_HF_ENDPOINTS = $HuggingFaceEndpoints -join ";"
-$env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
+$HuggingFaceEndpoints = @(Set-ASMRDubberHuggingFaceEnvironment `
+    -Configuration $MirrorConfiguration -Preferred $HuggingFaceEndpoint)
 
 function Invoke-Process {
     param(
@@ -175,13 +175,30 @@ if ($IndexRuntimeReady) {
     $IndexRuntimeReady = $ImportCheck -eq 0
 }
 if ($IndexRuntimeReady) {
-    Write-Host "IndexTTS2 Python/CUDA 依赖已由 Recommended 依赖包提供。" `
+    Write-Host "IndexTTS2 Python/CUDA 依赖已由“推荐”依赖包提供。" `
         -ForegroundColor Green
 } else {
     Write-Host "正在安装 IndexTTS2 独立 Python/CUDA 环境..." -ForegroundColor Cyan
-    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-        -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-        -Arguments @("sync")
+    Install-ASMRDubberManagedPythonArchive `
+        -Root $Root -Paths $Paths -MirrorConfiguration $MirrorConfiguration `
+        -Version "3.11.13" -BuildDate "20251007" `
+        -Sha256 "cde5153f59a67d9e108f2ed964526e9aed100eba180f54bee0496b4fd73a8b29" `
+        -MirrorName "python311_windows_archives" | Out-Null
+    $IndexWheelhouse = Get-ASMRDubberWheelhouse `
+        -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+        -ArchiveName "ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip" `
+        -ArchiveMirrorName "indextts2_wheelhouse_archives_windows" `
+        -ChecksumMirrorName "indextts2_wheelhouse_checksums_windows"
+    if ($IndexWheelhouse) {
+        Write-Host "使用 ModelScope IndexTTS2 wheelhouse。" -ForegroundColor Green
+        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $RuntimeRoot `
+            -Wheelhouse $IndexWheelhouse -Arguments @("sync") `
+            -FailureMessage "IndexTTS2 wheelhouse 安装失败"
+    } else {
+        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+            -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+            -Arguments @("sync")
+    }
 }
 
 $SharedFFmpeg = Install-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
@@ -224,14 +241,22 @@ if (Test-IndexTTSCheckpointsComplete) {
         ) `
         -WorkingDirectory $RuntimeRoot
     if ($Download.ExitCode -ne 0) {
-        Write-Warning "ModelScope 不可用，改用 Hugging Face 镜像续传。"
-        $env:USE_MODELSCOPE = "false"
-        $Download = Invoke-Process -FilePath $IndexPython `
-            -ArgumentList @(
-                "-m", "indextts.cli_v2", "download", "--source", "auto",
-                "--model-dir", $ModelDir
-            ) `
-            -WorkingDirectory $RuntimeRoot
+        if (Test-ASMRDubberExternalDownloadsAllowed -Configuration $MirrorConfiguration) {
+            Write-Warning "ModelScope 不可用；已显式允许海外源，改用 Hugging Face 续传。"
+            $env:USE_MODELSCOPE = "false"
+            $Download = Invoke-Process -FilePath $IndexPython `
+                -ArgumentList @(
+                    "-m", "indextts.cli_v2", "download", "--source", "auto",
+                    "--model-dir", $ModelDir
+                ) `
+                -WorkingDirectory $RuntimeRoot
+        } else {
+            throw (
+                "IndexTTS2 的 ModelScope 下载失败（退出码 $($Download.ExitCode)）。" +
+                "断点文件已保留；请补齐 ModelScope 仓库文件后重试。" +
+                "安装器不会自动消耗 Hugging Face 流量。"
+            )
+        }
     }
     if ($Download.ExitCode -ne 0) {
         throw "IndexTTS2 模型下载失败（退出码 $($Download.ExitCode)）。"
@@ -251,5 +276,5 @@ if ($Check.ExitCode -ne 0) {
 }
 
 Write-Host ""
-Write-Host "IndexTTS2 安装完成。重启 ASMR Dubber 后在 TTS 设置中选择它。" -ForegroundColor Green
+Write-Host "IndexTTS2 安装完成。重启后在 TTS（语音合成）设置中选择它。" -ForegroundColor Green
 Write-Host "模型目录：$ModelDir"

@@ -31,11 +31,9 @@ def smoke_asr(
     settings = ProjectSettings(
         asr_backend=backend,
         asr_model=model,
-        aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
         asr_device=device,
         asr_compute_type=compute_type,
         asr_batch_size=1,
-        asr_max_new_tokens=1024,
     )
     sentences, language = transcribe_japanese(audio.resolve(), settings, _progress)
     if not sentences:
@@ -54,48 +52,6 @@ def smoke_asr(
             }
             for item in sentences
         ],
-    }
-
-
-def smoke_tts(reference: Path, workdir: Path) -> dict[str, object]:
-    workdir.mkdir(parents=True, exist_ok=True)
-    source = workdir / f"source{reference.suffix.lower()}"
-    shutil.copy2(reference, source)
-    info = probe_audio(source)
-    sentence = Sentence(
-        id="s0001",
-        start_seconds=0,
-        end_seconds=min(info.duration_seconds, 3.5),
-        ja_text="今日は一緒にゆっくり休みましょう。",
-        zh_text="今天让我们一起慢慢休息吧。",
-    )
-    settings = ProjectSettings(
-        tts_backend="voxcpm2",
-        tts_model="openbmb/VoxCPM2",
-        tts_device="cuda",
-        tts_clone_mode="stable_reference",
-        tts_reference_sentence_id=sentence.id,
-        tts_inference_timesteps=4,
-    )
-    project = DubProject(source=info, settings=settings, sentences=[sentence])
-    failures = synthesize_sentences(
-        project,
-        workdir,
-        source,
-        force=True,
-        progress=_progress,
-    )
-    if failures or not sentence.tts_file:
-        raise RuntimeError(f"VoxCPM smoke test failed: {failures}")
-    output = workdir / sentence.tts_file
-    audio_info = sf.info(output)
-    if audio_info.frames <= 0:
-        raise RuntimeError("VoxCPM smoke test produced empty audio")
-    return {
-        "backend": "voxcpm2",
-        "output": str(output.resolve()),
-        "duration": audio_info.duration,
-        "sample_rate": audio_info.samplerate,
     }
 
 
@@ -146,17 +102,16 @@ def smoke_indextts(reference: Path, workdir: Path, model_dir: Path) -> dict[str,
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--asr-audio", type=Path)
-    parser.add_argument("--asr-backend", choices=ASR_BACKENDS, default="qwen3_asr")
+    parser.add_argument("--asr-backend", choices=ASR_BACKENDS, default="parakeet_nemo")
     parser.add_argument("--asr-model")
     parser.add_argument("--asr-device", default="cuda")
     parser.add_argument("--asr-compute-type", default="float16")
-    parser.add_argument("--tts-reference", type=Path)
     parser.add_argument("--indextts-reference", type=Path)
     parser.add_argument("--indextts-model-dir", type=Path)
     parser.add_argument("--workdir", type=Path, default=Path(".smoke-models"))
     args = parser.parse_args()
-    if not args.asr_audio and not args.tts_reference and not args.indextts_reference:
-        parser.error("provide an ASR audio or TTS reference")
+    if not args.asr_audio and not args.indextts_reference:
+        parser.error("provide an ASR audio or IndexTTS2 reference")
     if args.indextts_reference and not args.indextts_model_dir:
         parser.error("--indextts-reference requires --indextts-model-dir")
     result: dict[str, object] = {}
@@ -169,8 +124,6 @@ def main() -> int:
             device=args.asr_device,
             compute_type=args.asr_compute_type,
         )
-    if args.tts_reference:
-        result["tts"] = smoke_tts(args.tts_reference, args.workdir)
     if args.indextts_reference:
         result["indextts"] = smoke_indextts(
             args.indextts_reference,

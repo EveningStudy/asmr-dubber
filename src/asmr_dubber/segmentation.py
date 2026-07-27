@@ -28,11 +28,11 @@ def clean_japanese_text(text: str) -> str:
 
 
 def restore_punctuation(tokens: list[TimedToken], full_text: str) -> list[TimedToken]:
-    """Attach punctuation from Qwen's transcript to aligner tokens.
+    """Attach punctuation from a full transcript to timestamped tokens.
 
-    The forced aligner timestamps Japanese words/characters but can omit punctuation.
-    Qwen's ASR transcript retains it. Exact monotonic matching lets us keep timestamps
-    while recovering sentence boundaries without asking another model to retime text.
+    Some recognition backends timestamp Japanese words or characters but omit
+    punctuation. Exact monotonic matching keeps their timestamps while recovering
+    sentence boundaries from the backend's full transcript.
     """
     if not tokens or not full_text.strip():
         return tokens

@@ -1,42 +1,103 @@
-# 第三方软件、模型与许可证说明
+# 第三方软件、模型与服务
 
-ASMR Dubber 自身代码采用 MIT License。Git 仓库、源码包和程序包**不包含模型权重**；Release 可以另行提供名称明确的独立离线模型包。安装器会按用户选择导入离线包或从对应上游下载软件和模型。每个离线包保留适用的许可证和归属说明。下载、使用和分发第三方组件时，用户必须遵守其当前许可证、服务条款和适用法律。本文件是信息性清单，不构成法律意见，也不会替代上游许可证全文。
+ASMR Dubber 自身代码采用 [MIT License](../LICENSE)。这个许可证只覆盖本仓库有权许可的代码，
+不自动覆盖模型权重、第三方运行时、输入作品、参考声音、云服务或生成内容。
 
-## 支持的下载组件
+项目下载包通常不包含大型模型。Setup 下载或离线包导入的第三方内容仍受各自许可证约束。
+本页用于指出边界和上游来源，不替代许可证全文，也不构成法律意见。发布、商用或重新分发前，
+应读取实际制品中随附的许可证和 notices。
 
-| 组件 | 上游 | 许可证/说明 |
+## 识别、VAD 和对齐
+
+| 组件 | 上游 | 上游标示的许可证 |
 |---|---|---|
-| CrispASR v0.8.21 | <https://github.com/CrispStrobe/CrispASR> | MIT；安装器固定 Release 并校验 SHA-256 |
-| Parakeet CTC 1.1B JA GAL | <https://huggingface.co/grider-transwithai/parakeet-ctc-1.1b-ja> | Apache-2.0；只使用 GAL 来源的 F16 GGUF |
-| Parakeet TDT/CTC 0.6B JA | <https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja> | CC-BY-4.0；F16 GGUF 来自 cstr 转换仓库 |
-| Kotoba-Whisper v2.x | <https://huggingface.co/kotoba-tech/kotoba-whisper-v2.2> | 模型卡标记 Apache-2.0 |
-| Faster-Whisper large-v2 | <https://huggingface.co/Systran/faster-whisper-large-v2> | 模型卡标记 MIT |
-| Qwen3-ASR 1.7B/0.6B | <https://huggingface.co/Qwen/Qwen3-ASR-1.7B> | 模型卡标记 Apache-2.0 |
-| Qwen3 ForcedAligner 0.6B | <https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B> | 以模型仓库当前许可证为准 |
-| VoxCPM2 | <https://huggingface.co/openbmb/VoxCPM2> | 模型卡与上游代码标记 Apache-2.0 |
-| PyTorch / TorchAudio | <https://pytorch.org/> | BSD-style；以 wheel 内许可证为准 |
-| FFmpeg shared build | <https://github.com/BtbN/FFmpeg-Builds> | Windows 安装器选择 LGPL shared build；许可证随运行时保存 |
-| uv / managed CPython | <https://github.com/astral-sh/uv> | Apache-2.0/MIT；CPython 使用 PSF License |
+| CrispASR | [CrispStrobe/CrispASR](https://github.com/CrispStrobe/CrispASR) | MIT；模型权重另行适用各模型许可证 |
+| Parakeet CTC 1.1B JA | [grider-transwithai/parakeet-ctc-1.1b-ja](https://huggingface.co/grider-transwithai/parakeet-ctc-1.1b-ja) | Apache-2.0 |
+| Parakeet TDT/CTC 0.6B JA | [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | CC BY 4.0 |
+| Kotoba-Whisper v2.2 | [kotoba-tech/kotoba-whisper-v2.2](https://huggingface.co/kotoba-tech/kotoba-whisper-v2.2) | Apache-2.0 |
+| Faster-Whisper large-v2 权重 | [Systran/faster-whisper-large-v2](https://huggingface.co/Systran/faster-whisper-large-v2) | MIT；由 OpenAI Whisper large-v2 转换 |
+| Faster-Whisper 代码 | [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) | 以仓库 LICENSE 为准；同时依赖 CTranslate2 |
+| 日语 ASMR Whisper VAD ONNX | [TransWithAI/Whisper-Vad-EncDec-ASMR-onnx](https://huggingface.co/TransWithAI/Whisper-Vad-EncDec-ASMR-onnx) | MIT；模型卡同时说明其基于 Whisper 表征 |
+| Qwen3 ForcedAligner 0.6B | [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | Apache-2.0 |
 
-安装器固定默认模型 revision，并对必要大权重校验 SHA-256，但许可证和模型输出责任仍由各上游条款决定。
+模型包中的格式转换、量化或镜像分发不会把上游许可证改成 ASMR Dubber 的 MIT License。
+归属、引用、再分发和衍生模型义务应按模型卡及包内文件执行。
 
 ## IndexTTS2
 
-IndexTTS2 来自 <https://github.com/index-tts/index-tts>，代码和模型受 **bilibili Model Use License Agreement** 约束，不是本项目的 MIT License。该许可证包含使用限制、下游义务、合规要求和特定规模组织的额外授权条件。安装器把上游 `LICENSE`、`LICENSE_ZH.txt` 及 checkpoints 许可证保留在
-IndexTTS2 独立运行时目录。运行安装器或使用模型前请完整阅读并决定是否接受；不同意时不要安装或使用 IndexTTS2。
+IndexTTS2 来自 [index-tts/index-tts](https://github.com/index-tts/index-tts)。上游仓库的代码、
+权重和模型输出受独立的 **bilibili Model Use License Agreement** 约束，不属于 OSI MIT
+许可证。
 
-ASMR Dubber 没有修改 IndexTTS2 模型权重；Release 可以单独提供保留上游中英文许可证和 README 的 checkpoints 离线包。获取、分发或使用该模型即受上游许可证约束，不代表 bilibili 或 IndexTTS2 权利人对本项目提供背书、保证或认可。
+该协议包含使用限制、下游分发义务、合规责任、高风险场景条款，以及针对特定用户规模或营收
+组织的单独授权条件。上游 README 也要求商业使用与合作方联系作者。不要根据“GitHub 可下载”
+推断任何用途都自动获准。
 
-## 可选后端
+安装器固定一份上游源码 revision，并在隔离运行时保留 `LICENSE`、`LICENSE_ZH.txt` 和相关
+说明。运行或分发前应阅读这些原文；不同意时不要安装或使用 IndexTTS2。
 
-Qwen3-TTS、Faster-Whisper、OpenAI Whisper、WhisperX、FunASR/SenseVoice、GPT-SoVITS、CosyVoice、F5-TTS、Fish Speech、XTTS-v2 及其模型均从各自上游安装或由用户启动。它们的代码许可证、模型许可、训练数据声明和商用条件可能不同且会变化；请在启用前阅读对应仓库和模型卡。
+## 基础运行时和媒体组件
 
-云端翻译/语音 API（DeepSeek、OpenAI、Anthropic、Google、Microsoft、DeepL、Fish Audio 等）受供应商服务条款、数据处理政策、地区可用性和计费规则约束。本项目不提供这些服务，也不授予其使用权。
+安装器可能获取以下软件：
 
-## Python 依赖
+- [uv](https://github.com/astral-sh/uv)；
+- [python-build-standalone](https://github.com/astral-sh/python-build-standalone) 打包的 CPython；
+- [CPython](https://www.python.org/)；
+- [FFmpeg](https://ffmpeg.org/) 与 BtbN 的 Windows shared 构建；
+- [PyTorch](https://pytorch.org/)、TorchAudio、Transformers、ONNX Runtime、CTranslate2；
+- `pyproject.toml` 和 `uv.lock` 中列出的 Python 直接与传递依赖。
 
-Python 直接和传递依赖记录在 `pyproject.toml` 与 `uv.lock`。安装后的发行包/wheel 包含各项目自己的metadata 与许可证文件。发布者在重新分发打包后的依赖或独立可执行程序时，应生成完整许可证清单并保留原始 notices；本项目的 Source Release 默认不重新分发这些 wheel。
+这些组件分别适用自己的许可证。FFmpeg 的义务取决于实际构建配置；本项目选择的 Windows
+归档名称标示为 LGPL shared 构建，但重新分发者仍应以归档内许可证、构建信息和实际链接库为
+准。不要删除 DLL、wheel、Python 发行包或源码归档随附的许可证。
 
-## 音频和声音权利
+发布含运行时或 wheelhouse 的安装包时，维护者应从最终制品生成依赖清单，并检查 notices，
+而不是只复制本页。
 
-开源模型许可证不自动授予参考音频、声优声音、角色、作品或生成内容的权利。用户必须自行取得必要授权，不得使用本工具实施冒充、欺诈、骚扰、诽谤或侵犯隐私/人格权的行为。
+## 外部 TTS（语音合成）服务
+
+ASMR Dubber 只实现以下服务的客户端适配，不分发或启动它们的服务端代码和模型：
+
+- [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)；
+- [CosyVoice](https://github.com/FunAudioLLM/CosyVoice)；
+- [Fish Speech](https://github.com/fishaudio/fish-speech) 与兼容的 Fish Audio 云服务。
+
+同一项目名称下的代码、预训练权重、训练数据和托管 API 可能采用不同条款。自建服务请检查
+实际 checkout 和模型卡；云服务请检查账户对应的服务协议、价格、内容政策和数据处理说明。
+
+## 翻译和云 API
+
+DeepSeek、OpenAI、Anthropic、Google、Microsoft、DeepL 和 Fish Audio 等 API 由相应供应商
+提供。ASMR Dubber 不转售这些服务，也不授予调用权限。用户自行承担：
+
+- 账户、地区、配额和费用；
+- 输入文字或音频是否允许发送给该供应商；
+- 供应商的数据保留、训练、隐私和内容政策；
+- 服务输出的使用限制和准确性复核。
+
+OpenAI-compatible 只是请求格式，不说明服务端采用何种代码、模型或许可证。
+
+## 输入作品、声音和生成内容
+
+模型许可证不会自动授予作品版权、表演者权、声音人格权、角色权利或隐私权。使用者必须确认：
+
+- 有权复制和处理输入媒体；
+- 有权把参考声音用于克隆或合成；
+- 有权把所需文字和音频发送给所选外部服务；
+- 发布时遵守适用的合成内容标识、平台规则和当地法律。
+
+不得使用本工具实施冒充、欺诈、骚扰、诽谤、未经许可的声音克隆，或其它侵犯知识产权、隐私
+与人格权益的行为。
+
+## 发布者检查清单
+
+重新分发 ASMR Dubber、便携运行时或模型包时，至少完成：
+
+1. 锁定每个第三方制品的准确版本或 revision；
+2. 保留原始 `LICENSE`、`NOTICE`、模型卡和归属文件；
+3. 确认转换/量化模型的来源和许可链；
+4. 检查 wheelhouse 和二进制的传递依赖；
+5. 在最终归档上核对许可证文件确实存在；
+6. 对不能再分发的组件只提供用户自行获取的安装路径。
+
+发现本清单与上游制品不一致时，应以实际许可证原文为准，并提交修正文档的 Issue 或补丁。

@@ -45,7 +45,8 @@ function Copy-DependencyTree {
     $Arguments = @(
         $Source, $Destination, "/E", "/COPY:DAT", "/DCOPY:DAT", "/R:2", "/W:1",
         "/MT:16", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
-        "/XD", "__pycache__", "/XF", "*.pyc", "*.pyo"
+        "/XD", "__pycache__", (Join-Path $Source "Lib\site-packages\pkg_resources\tests"),
+        "/XF", "*.pyc", "*.pyo"
     )
     $ExitCode = Invoke-ASMRDubberProcess `
         -FilePath (Join-Path $env:SystemRoot "System32\robocopy.exe") `
@@ -68,11 +69,11 @@ $CoreVenv = Join-Path $Payload "venv"
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Staging
 New-Item -ItemType Directory -Force -Path $CoreVenv, $OutputRoot | Out-Null
 
-Write-Host "正在建立最小 Windows Core/UI 环境..." -ForegroundColor Cyan
+Write-Host "正在建立最小 Windows 基础/UI 环境..." -ForegroundColor Cyan
 $Create = Invoke-ASMRDubberProcess -FilePath $Uv `
     -ArgumentList @("venv", "--python", $BasePython.FullName, $CoreVenv) `
     -WorkingDirectory $Root
-if ($Create -ne 0) { throw "Core/UI 虚拟环境创建失败。" }
+if ($Create -ne 0) { throw "基础/UI 虚拟环境创建失败。" }
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
     -Uv $Uv -Root $Root -MirrorName "pypi_indexes" `
@@ -83,7 +84,7 @@ Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
 $CoreCheck = Invoke-ASMRDubberProcess -FilePath (Join-Path $CoreVenv "Scripts\python.exe") `
     -ArgumentList @("-c", "import asmr_dubber.ui, av, gradio, soundfile, setuptools") `
     -WorkingDirectory $Root
-if ($CoreCheck -ne 0) { throw "Core/UI 环境检查失败。" }
+if ($CoreCheck -ne 0) { throw "基础/UI 环境检查失败。" }
 
 Write-Host "正在收集 IndexTTS2 CUDA/Torch 环境与 Python 3.11..." -ForegroundColor Cyan
 $IndexTarget = Join-Path $Payload "runtimes\index-tts\.venv"
@@ -114,7 +115,7 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $Utf8NoBom
 )
 $Notices = @"
-ASMR Dubber Windows Recommended dependency pack
+ASMR Dubber Windows 推荐档依赖包
 
 This archive redistributes unmodified installed dependencies for Windows x86_64.
 Package license files remain inside their *.dist-info directories.

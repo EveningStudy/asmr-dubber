@@ -6,31 +6,33 @@ import pytest
 
 from asmr_dubber import __version__, environment
 from asmr_dubber.constants import (
-    DEFAULT_ASR_MODEL,
     MODEL_REQUIRED_FILES,
     OPTIONAL_ASR_MODEL_REVISIONS,
 )
 from asmr_dubber.errors import EnvironmentError
 
+OPTIONAL_MODEL = "kotoba-tech/kotoba-whisper-v2.2"
+
 
 def test_partial_model_snapshot_is_not_usable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(environment, "portable_home", lambda: tmp_path / "portable")
     monkeypatch.setattr(
         "huggingface_hub.snapshot_download",
         lambda **_kwargs: str(tmp_path),
     )
-    assert environment.cached_model_path(DEFAULT_ASR_MODEL) is None
+    assert environment.cached_model_path(OPTIONAL_MODEL) is None
 
 
 def test_complete_model_snapshot_is_usable(monkeypatch, tmp_path: Path) -> None:
     # Substitute tiny expected files so the test verifies completeness logic
     # without creating sparse multi-gigabyte fixtures.
-    monkeypatch.setitem(MODEL_REQUIRED_FILES, DEFAULT_ASR_MODEL, {"weight.bin": 3})
+    monkeypatch.setitem(MODEL_REQUIRED_FILES, OPTIONAL_MODEL, {"weight.bin": 3})
     (tmp_path / "weight.bin").write_bytes(b"abc")
     monkeypatch.setattr(
         "huggingface_hub.snapshot_download",
         lambda **_kwargs: str(tmp_path),
     )
-    assert environment.cached_model_path(DEFAULT_ASR_MODEL) == tmp_path.resolve()
+    assert environment.cached_model_path(OPTIONAL_MODEL) == tmp_path.resolve()
 
 
 def test_local_transformers_model_rejects_internal_kernel_field(tmp_path: Path) -> None:
@@ -92,7 +94,10 @@ def test_release_files_are_present() -> None:
         "README.md",
         "LICENSE",
         "docs/THIRD_PARTY_NOTICES.md",
-        "docs/CHANGELOG.md",
+        "docs/INSTALLATION.md",
+        "docs/USER_GUIDE.md",
+        "docs/CLI.md",
+        "docs/RELEASE.md",
         "scripts/linux/setup.sh",
         "scripts/windows/setup.ps1",
         "scripts/linux/run-ui.sh",

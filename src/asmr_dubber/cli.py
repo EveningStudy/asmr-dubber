@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 import importlib.metadata
 import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn, cast
 
 import typer
 from dotenv import load_dotenv
@@ -16,14 +15,7 @@ from rich.table import Table
 
 from .asr import transcribe_japanese
 from .audio import make_analysis_copy
-from .constants import (
-    DEFAULT_ALIGNER_MODEL,
-    DEFAULT_ASR_MODEL,
-    DEFAULT_TTS_MODEL,
-    MODEL_LFS_SHA256,
-    MODEL_REVISIONS,
-    OPTIONAL_ASR_MODEL_REVISIONS,
-)
+from .constants import ASMR_VAD_MODEL, DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, cuda_summary, ffmpeg_version
 from .errors import AsmrDubberError
 from .model_pack_download import ModelPackDownloadError, prepare_remote_model_pack
@@ -40,6 +32,7 @@ from .pipeline import (
     create_project,
     default_projects_dir,
     export_transcript,
+    generate_subtitles,
     mix_project,
     reload_project,
     synthesize_project,
@@ -52,6 +45,7 @@ from .runtime_manager import (
     download_backend_models,
     install_backend,
 )
+from .subtitles import SubtitleLanguage
 from .user_settings import PROVIDER_PRESETS, load_user_settings, resolve_api_key
 
 load_dotenv()
@@ -75,18 +69,18 @@ class ConsoleProgress:
             self.last = label
 
 
-def _fail(exc: Exception) -> None:
+def _fail(exc: Exception) -> NoReturn:
     console.print(f"[bold red]错误：[/bold red]{exc}")
     raise typer.Exit(code=1) from exc
 
 
 @app.command("create")
 def create_command(
-    input_audio: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
+    input_media: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
     projects_root: Annotated[Path | None, typer.Option("--projects-root")] = None,
     overlap: Annotated[float | None, typer.Option("--overlap")] = None,
 ) -> None:
-    """建立项目并保存原始音频副本。"""
+    """从音频或视频建立项目并保存原始文件副本。"""
     try:
         settings = load_user_settings().to_project_settings()
         if overlap is not None:
@@ -94,7 +88,7 @@ def create_command(
             values["global_overlap_seconds"] = overlap
             settings = ProjectSettings.model_validate(values)
         _, directory = create_project(
-            input_audio,
+            input_media,
             projects_root,
             settings=settings,
         )
@@ -108,7 +102,7 @@ def analyze_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
     force: Annotated[bool, typer.Option("--force", help="丢弃原识别结果并重跑")] = False,
 ) -> None:
-    """使用项目设置中选定的 ASR 后端识别、对齐和切句。"""
+    """使用项目设置中选定的 ASR（语音识别）后端识别、对齐和切句。"""
     try:
         project, directory = reload_project(project_path)
         analyze_project(project, directory, force=force, progress=ConsoleProgress())
@@ -139,7 +133,7 @@ def synthesize_command(
         list[str] | None, typer.Option("--sentence", "-s", help="只重做指定句子 id，可重复")
     ] = None,
 ) -> None:
-    """使用项目设置中选定的 TTS 后端克隆全部中文。"""
+    """使用项目设置中选定的 TTS（语音合成）后端克隆全部中文。"""
     try:
         project, directory = reload_project(project_path)
         synthesize_project(
@@ -156,13 +150,42 @@ def synthesize_command(
 
 @app.command("mix")
 def mix_command(project_path: Annotated[Path, typer.Argument(exists=True)]) -> None:
-    """将中文轨与原轨相加并输出浏览器兼容的 24-bit PCM WAV。"""
+    """将中文轨与原轨相加；视频项目同时保留画面并输出视频。"""
     try:
         project, directory = reload_project(project_path)
         output = mix_project(project, directory, progress=ConsoleProgress())
     except AsmrDubberError as exc:
         _fail(exc)
     console.print(f"[bold green]{output}[/bold green]")
+    if project.output_video_file:
+        console.print(f"[bold green]{directory / project.output_video_file}[/bold green]")
+
+
+@app.command("subtitles")
+def subtitles_command(
+    project_path: Annotated[Path, typer.Argument(exists=True)],
+    language: Annotated[
+        str,
+        typer.Option("--language", "-l", help="bilingual、zh 或 ja"),
+    ] = "bilingual",
+) -> None:
+    """独立生成 SRT/LRC；视频项目同时生成带字幕视频。"""
+    try:
+        if language not in {"bilingual", "zh", "ja"}:
+            raise ValueError("--language 只能是 bilingual、zh 或 ja。")
+        project, directory = reload_project(project_path)
+        srt, lrc, video = generate_subtitles(
+            project,
+            directory,
+            language=cast(SubtitleLanguage, language),
+            progress=ConsoleProgress(),
+        )
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[bold green]{srt}[/bold green]")
+    console.print(f"[bold green]{lrc}[/bold green]")
+    if video is not None:
+        console.print(f"[bold green]{video}[/bold green]")
 
 
 @app.command("set-timing")
@@ -196,6 +219,8 @@ def set_timing_command(
         project.settings = ProjectSettings.model_validate(settings)
         project.chinese_stem_file = None
         project.output_file = None
+        project.output_video_file = None
+        project.subtitle_video_file = None
         save_project(project, directory)
         export_transcript(project, directory)
     except (AsmrDubberError, ValueError) as exc:
@@ -266,8 +291,8 @@ def doctor_command(
         table.add_row(distribution, version)
     user_settings = load_user_settings()
     for kind, backend_id, registry in (
-        ("ASR", user_settings.asr_backend, ASR_BACKENDS),
-        ("TTS", user_settings.tts_backend, TTS_BACKENDS),
+        ("ASR（语音识别）", user_settings.asr_backend, ASR_BACKENDS),
+        ("TTS（语音合成）", user_settings.tts_backend, TTS_BACKENDS),
     ):
         spec = registry.get(backend_id)
         if spec is None:
@@ -321,69 +346,48 @@ def download_models_command(
         str,
         typer.Option(
             "--backend",
-            help="qwen3_asr、voxcpm2、advanced-asr 或 all",
+            help=(
+                "Kotoba-Whisper v2.2、Faster-Whisper large-v2、Qwen3 ForcedAligner "
+                "和 ASMR VAD，或 all；advanced-asr 为旧别名"
+            ),
         ),
     ] = "all",
 ) -> None:
-    """下载并校验固定版本的内置模型。"""
-    from .mirrors import snapshot_download_with_fallback
+    """下载并校验进阶档的识别、VAD 和时间戳模型。"""
 
-    advanced_asr_models = (
-        "kotoba-tech/kotoba-whisper-v2.2",
-        "Systran/faster-whisper-large-v2",
-    )
-    backend_models = {
-        "qwen3_asr": (DEFAULT_ASR_MODEL, DEFAULT_ALIGNER_MODEL),
-        "voxcpm2": (DEFAULT_TTS_MODEL,),
-        "advanced-asr": advanced_asr_models,
-        "all": tuple(MODEL_REVISIONS),
-    }
-    model_ids = backend_models.get(backend)
-    if model_ids is None:
-        _fail(ValueError("--backend 必须是 qwen3_asr、voxcpm2、advanced-asr 或 all。"))
-    if backend == "advanced-asr":
+    if backend not in {"进阶语音识别", "advanced-asr", "all"}:
+        _fail(ValueError("--backend 必须是“进阶语音识别”或 all。"))
+    for backend_id in ("kotoba_whisper", "faster_whisper"):
+        console.print(f"[cyan]准备 {ASR_BACKENDS[backend_id].label}[/cyan]")
         try:
-            imported = import_discovered_model_packs(
-                pack_ids={"kotoba-whisper-v2.2", "faster-whisper-large-v2"},
-                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-                progress=ConsoleProgress(),
+            detail = download_backend_models(
+                backend_id,
+                log_callback=lambda message: console.print(f"[cyan]{message}[/cyan]"),
             )
-        except ModelPackError as exc:
+        except AsmrDubberError as exc:
             _fail(exc)
-        if imported:
-            console.print(f"[green]已处理 {len(imported)} 个本地离线模型包。[/green]")
-    for index, model_id in enumerate(model_ids, start=1):
-        cached = cached_model_path(model_id)
-        revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
-        if revision is None:
-            _fail(AsmrDubberError(f"模型没有固定版本：{model_id}"))
-        if cached is not None:
-            path = cached
-            console.print(f"[cyan][{index}/{len(model_ids)}] 复用本地模型 {model_id}[/cyan]")
-        else:
-            console.print(f"[cyan][{index}/{len(model_ids)}] 下载 {model_id}[/cyan]")
-            try:
-                path = snapshot_download_with_fallback(
-                    repo_id=model_id,
-                    revision=revision,
-                    max_workers=2,
-                )
-            except Exception as exc:
-                _fail(AsmrDubberError(f"模型下载失败 {model_id}：{exc}"))
-            cached = cached_model_path(model_id)
-        if cached is None:
-            _fail(AsmrDubberError(f"模型快照不完整：{model_id}"))
-        known_hashes = MODEL_LFS_SHA256.get(model_id, {})
-        if known_hashes:
-            console.print(f"[cyan]校验大权重 SHA-256：{model_id}[/cyan]")
-        for relative, expected in known_hashes.items():
-            digest = hashlib.sha256()
-            with (cached / relative).open("rb") as handle:
-                while block := handle.read(8 * 1024 * 1024):
-                    digest.update(block)
-            if digest.hexdigest() != expected:
-                _fail(AsmrDubberError(f"模型权重校验失败：{model_id}/{relative}"))
-        console.print(f"[green]完成：[/green]{path}")
+        console.print(f"[green]{detail}[/green]")
+    for pack_id, model_id, label in (
+        ("qwen3-forced-aligner", DEFAULT_ALIGNER_MODEL, "Qwen3 ForcedAligner 0.6B"),
+        ("whisper-vad-asmr-onnx", ASMR_VAD_MODEL, "日语 ASMR 专用 Whisper VAD"),
+    ):
+        if cached_model_path(model_id) is not None:
+            console.print(f"[green]复用已安装模型：{label}[/green]")
+            continue
+        console.print(f"[cyan]准备 {label}[/cyan]")
+        try:
+            archive = prepare_remote_model_pack(
+                pack_id,
+                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+            )
+            if archive is None:
+                raise ModelPackDownloadError(f"没有为 {pack_id} 配置 ModelScope 模型包。")
+            import_model_pack(archive, progress=ConsoleProgress())
+        except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
+            _fail(exc)
+        if cached_model_path(model_id) is None:
+            _fail(ModelPackError(f"{label} 导入后未通过完整性检查。"))
+        console.print(f"[green]{label} 已通过完整性检查。[/green]")
 
 
 @app.command("list-model-packs")
@@ -531,18 +535,20 @@ def verify_asr_command(
     compute_type: Annotated[str, typer.Option("--compute-type")] = "float16",
     decoder: Annotated[str, typer.Option("--decoder")] = "tdt",
 ) -> None:
-    """用短音频真实加载一个 ASR 后端，不执行翻译或写入项目。"""
+    """用短音频真实加载一个 ASR（语音识别）后端，不翻译或写入项目。"""
     token = uuid.uuid4().hex
     temporary = portable_home() / "temp" / f"verify-asr-{token}.wav"
     try:
         analysis = make_analysis_copy(audio.resolve(), temporary)
-        settings = ProjectSettings(
-            asr_backend=backend,
-            asr_model=model,
-            asr_device=device,
-            asr_compute_type=compute_type,
-            asr_parakeet_decoder=decoder,
-            asr_batch_size=1,
+        settings = ProjectSettings.model_validate(
+            {
+                "asr_backend": backend,
+                "asr_model": model,
+                "asr_device": device,
+                "asr_compute_type": compute_type,
+                "asr_parakeet_decoder": decoder,
+                "asr_batch_size": 1,
+            }
         )
         sentences, language = transcribe_japanese(analysis, settings)
     except (AsmrDubberError, ValueError) as exc:

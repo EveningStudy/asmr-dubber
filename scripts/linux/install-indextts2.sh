@@ -6,6 +6,8 @@ source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
 source "$ROOT/scripts/mirrors.sh"
 asmr_apply_mirror_environment "$ROOT"
+source "$ROOT/scripts/linux/python-runtime.sh"
+source "$ROOT/scripts/linux/wheelhouse.sh"
 
 source "$ROOT/scripts/network-bridge.sh"
 asmr_prepare_network
@@ -24,7 +26,7 @@ STAGING="$INDEX_ROOT.staging"
 PYTHON="$ASMR_DUBBER_VENV/bin/python"
 
 if [[ ! -x "$ASMR_DUBBER_UV" || ! -x "$PYTHON" ]]; then
-  echo "缺少应用运行时。请先运行 bash $ROOT/scripts/linux/setup.sh Core。" >&2
+  echo "缺少应用运行时。请先运行 bash $ROOT/scripts/linux/setup.sh 基础。" >&2
   exit 1
 fi
 mkdir -p "$DOWNLOAD_ROOT"
@@ -34,7 +36,9 @@ if [[ "${ASMR_DUBBER_MODEL_PACKS_PREPARED:-}" != "1" ]]; then
     "$PYTHON" -m asmr_dubber.cli import-model-packs --all \
       --pack-id indextts2-checkpoints
   else
-    echo "远程 IndexTTS2 模型包不可用，将继续使用原始下载源。" >&2
+    echo "IndexTTS2 ModelScope 模型包下载未完成；断点文件已保留。" >&2
+    echo "请重新运行安装继续，不会改用另一条 11 GB 下载链路。" >&2
+    exit 1
   fi
 fi
 
@@ -114,15 +118,38 @@ if [[ "$SOURCE_READY" == 0 ]]; then
 fi
 
 echo "安装 IndexTTS2 隔离运行时..."
+asmr_install_python_runtime \
+  "$ROOT" \
+  "3.11.13" \
+  "20251007" \
+  "43bfc42529843ecd1d9c08c4a239ede348f96ff0acaef2ec24b28dc059f4f0c3" \
+  "python311_linux_archives"
 SYNC_READY=0
-while IFS= read -r index; do
-  echo "使用软件源：$index"
-  if (cd "$INDEX_ROOT" && "$ASMR_DUBBER_UV" sync --default-index "$index"); then
+if asmr_prepare_wheelhouse \
+  "$ROOT" \
+  "ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz" \
+  "indextts2_wheelhouse_archives_linux" \
+  "indextts2_wheelhouse_checksums_linux"; then
+  echo "使用 ModelScope IndexTTS2 wheelhouse：$ASMR_WHEELHOUSE_RESULT"
+  if (cd "$INDEX_ROOT" && "$ASMR_DUBBER_UV" sync \
+    --offline --find-links "$ASMR_WHEELHOUSE_RESULT"); then
     SYNC_READY=1
-    break
   fi
-  echo "当前软件源失败，自动切换。" >&2
-done < <(asmr_mirror_list "$ROOT" pypi_indexes)
+else
+  WHEELHOUSE_STATUS=$?
+  if [[ "$WHEELHOUSE_STATUS" == 2 ]]; then
+    echo "IndexTTS2 ModelScope wheelhouse 已发布但不完整，拒绝静默切换。" >&2
+    exit 1
+  fi
+  while IFS= read -r index; do
+    echo "使用软件源：$index"
+    if (cd "$INDEX_ROOT" && "$ASMR_DUBBER_UV" sync --default-index "$index"); then
+      SYNC_READY=1
+      break
+    fi
+    echo "当前软件源失败，自动切换。" >&2
+  done < <(asmr_mirror_list "$ROOT" pypi_indexes)
+fi
 if [[ "$SYNC_READY" != 1 ]]; then
   echo "IndexTTS2 依赖安装失败：所有软件源均不可用。" >&2
   exit 1
@@ -155,9 +182,15 @@ else
   if ! USE_MODELSCOPE=true \
     MODELSCOPE_DOWNLOAD_PARALLELS="${MODELSCOPE_DOWNLOAD_PARALLELS:-4}" \
     "$INDEX_CLI" download --source modelscope --model-dir "$MODEL_DIR"; then
-    echo "ModelScope 不可用，改用 Hugging Face 镜像。" >&2
-    HF_ENDPOINT="$(asmr_mirror_list "$ROOT" huggingface_endpoints | head -n 1)" \
-      "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"
+    if asmr_external_downloads_allowed "$ROOT"; then
+      echo "ModelScope 不可用；已显式允许海外源，改用 Hugging Face。" >&2
+      HF_ENDPOINT="$(asmr_mirror_list "$ROOT" huggingface_endpoints | head -n 1)" \
+        "$INDEX_CLI" download --source auto --model-dir "$MODEL_DIR"
+    else
+      echo "IndexTTS2 的 ModelScope 下载失败；断点文件已保留。" >&2
+      echo "安装器不会自动消耗 Hugging Face 流量；请补齐 ModelScope 文件后重试。" >&2
+      exit 1
+    fi
   fi
 fi
 

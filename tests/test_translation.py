@@ -138,6 +138,55 @@ def test_deepseek_request_uses_pro_non_thinking_and_prior_translation_memory() -
     assert sentences[1].zh_text == "开始吧。"
 
 
+def test_translation_can_omit_full_context_and_translation_memory() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '{"translations":[{"id":"s000002","zh":"开始吧。"}]}'
+                        },
+                    }
+                ]
+            },
+        )
+
+    sentences = [
+        Sentence(
+            id="s000001",
+            start_seconds=0.0,
+            end_seconds=1.0,
+            ja_text="お姉ちゃん。",
+            zh_text="姐姐。",
+        ),
+        Sentence(
+            id="s000002",
+            start_seconds=1.0,
+            end_seconds=2.0,
+            ja_text="始めましょう。",
+        ),
+    ]
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        translate_sentences(
+            sentences,
+            api_key="secret-test-key",
+            model="deepseek-v4-pro",
+            send_context=False,
+            client=client,
+        )
+
+    messages = seen["payload"]["messages"]
+    assert len(messages) == 2
+    assert "完整日文转写" not in json.dumps(messages, ensure_ascii=False)
+    assert "姐姐。" not in json.dumps(messages, ensure_ascii=False)
+
+
 def test_translation_batches_are_small_and_checkpointed() -> None:
     calls: list[list[str]] = []
     checkpoints = 0

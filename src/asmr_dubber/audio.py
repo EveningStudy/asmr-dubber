@@ -52,6 +52,21 @@ def probe_audio(path: str | Path, sha256: str | None = None) -> AudioInfo:
             if not container.streams.audio:
                 raise ProjectError(f"文件中没有音轨：{source}")
             stream = container.streams.audio[0]
+            video_stream = next(
+                (
+                    candidate
+                    for candidate in container.streams.video
+                    if not bool(
+                        getattr(candidate, "disposition", 0)
+                        & getattr(
+                            type(getattr(candidate, "disposition", 0)),
+                            "attached_pic",
+                            0,
+                        )
+                    )
+                ),
+                None,
+            )
             context = stream.codec_context
             if stream.duration is not None and stream.time_base is not None:
                 duration = float(stream.duration * stream.time_base)
@@ -70,6 +85,12 @@ def probe_audio(path: str | Path, sha256: str | None = None) -> AudioInfo:
             channels = int(context.channels or 0)
             layout = context.layout.name if context.layout else None
             codec = context.name
+            video_context = video_stream.codec_context if video_stream is not None else None
+            video_rate = getattr(video_stream, "average_rate", None)
+            try:
+                frame_rate = float(video_rate) if video_rate is not None else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                frame_rate = None
     except ProjectError:
         raise
     except Exception as exc:  # PyAV moved its public exception classes across releases.
@@ -84,6 +105,19 @@ def probe_audio(path: str | Path, sha256: str | None = None) -> AudioInfo:
         channels=channels,
         channel_layout=layout,
         codec=codec,
+        media_type="video" if video_stream is not None else "audio",
+        video_codec=video_context.name if video_context is not None else None,
+        video_width=(
+            int(video_context.width)
+            if video_context is not None and video_context.width > 0
+            else None
+        ),
+        video_height=(
+            int(video_context.height)
+            if video_context is not None and video_context.height > 0
+            else None
+        ),
+        video_frame_rate=frame_rate if frame_rate and frame_rate > 0 else None,
     )
 
 
@@ -115,7 +149,7 @@ def copy_source_verbatim(
 ) -> tuple[Path, AudioInfo]:
     original = Path(source).expanduser().resolve()
     if not original.is_file():
-        raise ProjectError(f"找不到输入音频：{original}")
+        raise ProjectError(f"找不到输入文件：{original}")
     project_dir.mkdir(parents=True, exist_ok=True)
     suffix = original.suffix.lower() or ".audio"
     destination = project_dir / f"source{suffix}"
@@ -136,7 +170,7 @@ def copy_source_verbatim(
                     digest.update(block)
                     copied += len(block)
                     if progress:
-                        progress("建立项目：保存源音频", copied, total)
+                        progress("建立项目：保存源文件", copied, total)
             shutil.copystat(original, temporary)
             temporary.replace(destination)
         finally:
@@ -171,20 +205,20 @@ def project_file_exists(project_dir: Path, stored_path: str | None, label: str) 
 
 def verify_source(project_dir: Path, info: AudioInfo) -> Path:
     root = project_dir.resolve()
-    source = resolve_project_path(project_dir, info.path, "项目源音频")
+    source = resolve_project_path(project_dir, info.path, "项目源文件")
     if source.parent != root:
-        raise ProjectError("项目源音频路径超出项目目录。")
+        raise ProjectError("项目源文件路径超出项目目录。")
     if not source.is_file():
-        raise ProjectError(f"项目源音频丢失：{source}")
+        raise ProjectError(f"项目源文件丢失：{source}")
     actual = _verified_source_digest(source)
     if actual != info.sha256:
-        raise ProjectError("项目源音频已发生变化。为防止时间轴错位，已停止处理；请新建项目。")
+        raise ProjectError("项目源文件已发生变化。为防止时间轴错位，已停止处理；请新建项目。")
     return source
 
 
-def _run_ffmpeg(arguments: list[str]) -> None:
+def _run_ffmpeg(arguments: list[str], *, cwd: Path | None = None) -> None:
     command = [ffmpeg_executable(), "-hide_banner", "-loglevel", "error", *arguments]
-    completed = subprocess.run(command, capture_output=True, text=True)
+    completed = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
     if completed.returncode != 0:
         detail = completed.stderr.strip() or "unknown ffmpeg error"
         raise AsmrDubberError(f"ffmpeg 失败：{detail}")
@@ -307,7 +341,7 @@ def active_rms_dbfs(waveform: np.ndarray, sample_rate: int, frame_ms: float = 50
     samples = np.asarray(waveform, dtype=np.float32).reshape(-1)
     if samples.size == 0:
         return float("-inf")
-    frame_size = max(1, int(round(sample_rate * frame_ms / 1000.0)))
+    frame_size = max(1, round(sample_rate * frame_ms / 1000.0))
     padding = (-samples.size) % frame_size
     if padding:
         samples = np.pad(samples, (0, padding))
@@ -339,7 +373,7 @@ def prepare_chinese_clip(
         gain_db = min(target_active_rms_dbfs - level, max_loudness_boost_db)
         clip *= np.float32(10.0 ** (gain_db / 20.0))
 
-    fade_frames = min(int(round(sample_rate * fade_ms / 1000.0)), clip.size // 2)
+    fade_frames = min(round(sample_rate * fade_ms / 1000.0), clip.size // 2)
     if fade_frames > 0:
         fade_in = np.linspace(0.0, 1.0, fade_frames, endpoint=False, dtype=np.float32)
         fade_out = np.linspace(1.0, 0.0, fade_frames, endpoint=False, dtype=np.float32)
@@ -357,16 +391,47 @@ def _sum_with_peak_ceiling(
     current: np.ndarray,
     addition: np.ndarray,
     peak_dbfs: float | None,
+    sample_rate: int,
 ) -> np.ndarray:
     combined = np.asarray(current, dtype=np.float32) + np.asarray(addition, dtype=np.float32)
     if peak_dbfs is None:
         return combined
     ceiling = np.float32(10.0 ** (peak_dbfs / 20.0))
     frame_peak = np.max(np.abs(combined), axis=1)
-    scale = np.ones_like(frame_peak, dtype=np.float32)
+    target = np.ones_like(frame_peak, dtype=np.float32)
     over = frame_peak > ceiling
-    scale[over] = ceiling / frame_peak[over]
-    return combined * scale[:, None]
+    target[over] = ceiling / frame_peak[over]
+    # A limiter needs an immediate attack to guarantee the ceiling, followed
+    # by a smooth 50 ms release instead of independent per-sample gain jumps.
+    release = math.exp(-1.0 / max(1.0, sample_rate * 0.050))
+    envelope = np.empty_like(target)
+    gain = np.float32(1.0)
+    for index, requested in enumerate(target):
+        if requested < gain:
+            gain = requested
+        else:
+            gain = np.float32(release * gain + (1.0 - release) * requested)
+        envelope[index] = gain
+    return combined * envelope[:, None]
+
+
+def _route_mono_to_channels(
+    waveform: np.ndarray,
+    channels: int,
+    channel_layout: str | None,
+    routing: str,
+) -> np.ndarray:
+    if channels == 1:
+        return waveform[:, None]
+    if channels == 2 or routing == "all":
+        return np.broadcast_to(waveform[:, None], (len(waveform), channels))
+    values = np.zeros((len(waveform), channels), dtype=np.float32)
+    # FFmpeg/soundfile use center as the third channel for conventional
+    # 3.0/5.1/7.1 layouts. Unknown multichannel layouts still avoid spraying a
+    # mono voice into every surround channel.
+    center = 2 if channels >= 3 else 0
+    values[:, center] = waveform
+    return values
 
 
 def build_chinese_stem(
@@ -384,6 +449,7 @@ def build_chinese_stem(
     line_peak_dbfs: float = -9.0,
     stem_peak_dbfs: float | None = -3.0,
     fade_ms: float = 8.0,
+    channel_routing: str = "auto",
     progress: Progress | None = None,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -392,13 +458,13 @@ def build_chinese_stem(
     gain = 10.0 ** (chinese_gain_db / 20.0)
 
     prepared: list[tuple[StemEvent, int]] = []
-    total_frames = int(math.ceil(source_info.duration_seconds * rate))
+    total_frames = math.ceil(source_info.duration_seconds * rate)
     for event in events:
         clip_info = sf.info(event.audio_path)
         if clip_info.samplerate <= 0 or clip_info.frames <= 0:
             raise ProjectError(f"中文句子 {event.sentence_id} 的音频参数无效。")
         resampled_frames = math.ceil(clip_info.frames * rate / clip_info.samplerate)
-        start_frame = int(round(event.start_seconds * rate))
+        start_frame = round(event.start_seconds * rate)
         prepared.append((event, start_frame))
         total_frames = max(total_frames, start_frame + resampled_frames)
 
@@ -441,14 +507,14 @@ def build_chinese_stem(
                             0,
                             min(
                                 source_reference.frames,
-                                int(round(event.source_start_seconds * source_rate)),
+                                round(event.source_start_seconds * source_rate),
                             ),
                         )
                         window_end = max(
                             window_start,
                             min(
                                 source_reference.frames,
-                                int(round(event.source_end_seconds * source_rate)),
+                                round(event.source_end_seconds * source_rate),
                             ),
                         )
                         source_reference.seek(window_start)
@@ -458,7 +524,10 @@ def build_chinese_stem(
                             always_2d=True,
                         )
                         source_level = active_rms_dbfs(
-                            np.mean(source_window, axis=1, dtype=np.float32),
+                            np.asarray(
+                                np.mean(source_window, axis=1, dtype=np.float32),
+                                dtype=np.float32,
+                            ),
                             source_rate,
                         )
                         if math.isfinite(source_level):
@@ -491,13 +560,19 @@ def build_chinese_stem(
                         )
                     stem.seek(start_frame)
                     current = stem.read(len(usable), dtype="float32", always_2d=True)
-                    values = np.broadcast_to(usable[:, None], (len(usable), channels))
+                    values = _route_mono_to_channels(
+                        usable,
+                        channels,
+                        source_info.channel_layout,
+                        channel_routing,
+                    )
                     stem.seek(start_frame)
                     stem.write(
                         _sum_with_peak_ceiling(
                             current,
                             values,
                             stem_peak_dbfs,
+                            rate,
                         )
                     )
                 if progress:
@@ -522,38 +597,255 @@ def mix_original_and_stem(
     source_info: AudioInfo,
     *,
     output_codec: str = "pcm_s24le",
+    peak_protection: bool = True,
+    peak_limit_dbfs: float = -1.0,
 ) -> Path:
-    """Add the Chinese stem without gain, normalization, limiting, or timeline edits.
+    """Add the Chinese stem with optional transparent final peak protection.
 
     The default 24-bit PCM WAV provides high-resolution browser playback.
     Internal stems remain float32.
     """
     if output_codec not in {"pcm_s24le", "pcm_f32le"}:
         raise ValueError(f"unsupported mix output codec: {output_codec}")
+    if not -12.0 <= peak_limit_dbfs < 0.0:
+        raise ValueError("peak_limit_dbfs must be between -12 and 0 dBFS")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    _run_ffmpeg(
-        [
-            "-y",
-            "-i",
-            str(source),
-            "-i",
-            str(stem),
-            "-filter_complex",
-            "[0:a:0][1:a:0]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[out]",
-            "-map",
-            "[out]",
-            "-map_metadata",
-            "0",
-            "-vn",
-            "-ar",
-            str(source_info.sample_rate),
-            "-ac",
-            str(source_info.channels),
-            "-c:a",
-            output_codec,
-            "-rf64",
-            "auto",
-            str(destination),
-        ]
+    mix_filter = "[0:a:0][1:a:0]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0"
+    if peak_protection:
+        limit = 10.0 ** (peak_limit_dbfs / 20.0)
+        mix_filter += f",alimiter=limit={limit:.8f}:attack=5:release=50:level=false:latency=true"
+    mix_filter += "[out]"
+    temporary = destination.with_name(
+        f".{destination.stem}.{uuid.uuid4().hex}.tmp{destination.suffix}"
     )
+    try:
+        _run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(source),
+                "-i",
+                str(stem),
+                "-filter_complex",
+                mix_filter,
+                "-map",
+                "[out]",
+                "-map_metadata",
+                "0",
+                "-vn",
+                "-ar",
+                str(source_info.sample_rate),
+                "-ac",
+                str(source_info.channels),
+                "-c:a",
+                output_codec,
+                "-rf64",
+                "auto",
+                str(temporary),
+            ]
+        )
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
     return destination
+
+
+def mux_mixed_video(
+    source_video: Path,
+    mixed_audio: Path,
+    destination: Path,
+) -> Path:
+    """Copy the original video stream and attach the completed mixed audio.
+
+    MP4/AAC is attempted first for broad playback support. If the source video
+    codec cannot be copied into MP4, Matroska/FLAC keeps both streams without a
+    video re-encode or a lossy audio encode.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        (
+            destination.with_suffix(".mp4"),
+            ["-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"],
+        ),
+        (destination.with_suffix(".mkv"), ["-c:a", "flac"]),
+    ]
+    failures: list[str] = []
+    for output, audio_arguments in candidates:
+        temporary = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.tmp{output.suffix}")
+        try:
+            _run_ffmpeg(
+                [
+                    "-y",
+                    "-i",
+                    str(source_video),
+                    "-i",
+                    str(mixed_audio),
+                    "-map",
+                    "0:v?",
+                    "-map",
+                    "1:a:0",
+                    "-map",
+                    "0:a?",
+                    "-map",
+                    "0:s?",
+                    "-map",
+                    "0:t?",
+                    "-map_metadata",
+                    "0",
+                    "-map_chapters",
+                    "0",
+                    "-c",
+                    "copy",
+                    *audio_arguments,
+                    "-disposition:a",
+                    "0",
+                    "-disposition:a:0",
+                    "default",
+                    str(temporary),
+                ]
+            )
+            temporary.replace(output)
+            return output
+        except AsmrDubberError as exc:
+            failures.append(str(exc))
+        finally:
+            temporary.unlink(missing_ok=True)
+    raise AsmrDubberError("无法把混音音轨封装回视频：" + "；".join(failures[-2:]))
+
+
+def render_subtitled_video(
+    source_video: Path,
+    subtitle_file: Path,
+    destination: Path,
+    *,
+    replacement_audio: Path | None = None,
+    subtitle_language: str = "bilingual",
+) -> Path:
+    """Create a video with subtitles, preferring a burned-in MP4.
+
+    The original source is never modified. When hard-subtitle support is not
+    present in the bundled FFmpeg, the function falls back to an embedded,
+    selectable subtitle stream while still copying the original video stream.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    render_dir = destination.parent / f".subtitle-render-{uuid.uuid4().hex}"
+    render_dir.mkdir(parents=True)
+    local_subtitle = render_dir / "subtitle.srt"
+    shutil.copyfile(subtitle_file, local_subtitle)
+    failures: list[str] = []
+    input_arguments = ["-i", str(source_video)]
+    audio_maps = ["-map", "0:a?"]
+    if replacement_audio is not None:
+        input_arguments.extend(["-i", str(replacement_audio)])
+        audio_maps = ["-map", "1:a:0", "-map", "0:a?"]
+
+    video_encoders = [
+        ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"],
+        ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"],
+        ["-c:v", "mpeg4", "-q:v", "2", "-pix_fmt", "yuv420p"],
+    ]
+    audio_variants = (
+        [["-c:a", "aac", "-b:a", "320k"]]
+        if replacement_audio is not None
+        else [["-c:a", "copy"], ["-c:a", "aac", "-b:a", "320k"]]
+    )
+    try:
+        output = destination.with_suffix(".mp4")
+        for video_arguments in video_encoders:
+            for audio_arguments in audio_variants:
+                temporary = output.with_name(
+                    f".{output.stem}.{uuid.uuid4().hex}.tmp{output.suffix}"
+                )
+                try:
+                    _run_ffmpeg(
+                        [
+                            "-y",
+                            *input_arguments,
+                            "-vf",
+                            "subtitles=filename=subtitle.srt:charenc=UTF-8",
+                            "-map",
+                            "0:v:0",
+                            *audio_maps,
+                            "-map_metadata",
+                            "0",
+                            "-map_chapters",
+                            "0",
+                            *video_arguments,
+                            *audio_arguments,
+                            "-movflags",
+                            "+faststart",
+                            str(temporary),
+                        ],
+                        cwd=render_dir,
+                    )
+                    temporary.replace(output)
+                    return output
+                except AsmrDubberError as exc:
+                    failures.append(str(exc))
+                finally:
+                    temporary.unlink(missing_ok=True)
+
+        # A selectable subtitle track is a reliable fallback for FFmpeg builds
+        # without libass or a usable video encoder.
+        subtitle_input_index = 2 if replacement_audio is not None else 1
+        soft_candidates = [
+            (
+                destination.with_suffix(".mp4"),
+                ["-c:s", "mov_text"],
+                [["-c:a", "aac", "-b:a", "320k"]]
+                if replacement_audio is not None
+                else [["-c:a", "copy"], ["-c:a", "aac", "-b:a", "320k"]],
+            ),
+            (
+                destination.with_suffix(".mkv"),
+                ["-c:s", "srt"],
+                [["-c:a", "flac"]] if replacement_audio is not None else [["-c:a", "copy"]],
+            ),
+        ]
+        for output, subtitle_arguments, fallback_audio_variants in soft_candidates:
+            for audio_arguments in fallback_audio_variants:
+                temporary = output.with_name(
+                    f".{output.stem}.{uuid.uuid4().hex}.tmp{output.suffix}"
+                )
+                try:
+                    _run_ffmpeg(
+                        [
+                            "-y",
+                            *input_arguments,
+                            "-f",
+                            "srt",
+                            "-i",
+                            str(local_subtitle),
+                            "-map",
+                            "0:v:0",
+                            *audio_maps,
+                            "-map",
+                            f"{subtitle_input_index}:s:0",
+                            "-map",
+                            "0:s?",
+                            "-map_metadata",
+                            "0",
+                            "-map_chapters",
+                            "0",
+                            "-c:v",
+                            "copy",
+                            *audio_arguments,
+                            *subtitle_arguments,
+                            "-metadata:s:s:0",
+                            "language="
+                            + {"zh": "zho", "ja": "jpn", "bilingual": "und"}.get(
+                                subtitle_language, "und"
+                            ),
+                            str(temporary),
+                        ],
+                        cwd=render_dir,
+                    )
+                    temporary.replace(output)
+                    return output
+                except AsmrDubberError as exc:
+                    failures.append(str(exc))
+                finally:
+                    temporary.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(render_dir, ignore_errors=True)
+    raise AsmrDubberError("生成带字幕视频失败：" + "；".join(failures[-3:]))

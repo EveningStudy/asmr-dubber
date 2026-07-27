@@ -32,8 +32,16 @@ jobs:
         run: uv run --no-sync ruff check src tests scripts
       - name: Check formatting
         run: uv run --no-sync ruff format --check src tests scripts
-      - name: Test
-        run: uv run --no-sync pytest
+      - name: Type check
+        run: uv run --no-sync pyright
+      - name: Verify ModelScope artifact contract
+        run: uv run --no-sync python scripts/verify_modelscope_artifacts.py
+      - name: Test with coverage floor
+        run: >-
+          uv run --no-sync pytest
+          --cov=asmr_dubber
+          --cov-report=term-missing
+          --cov-fail-under=65
       - name: Build UI graph
         run: >-
           uv run --no-sync python -c

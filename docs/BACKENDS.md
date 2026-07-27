@@ -1,124 +1,231 @@
 # 后端指南
 
-后端注册表定义模型、设备、运行方式、参考要求、安装器和支持等级。后端失败时不会静默切换模型。
+ASMR Dubber 的本地语音范围刻意保持精简：ASR（语音识别）只接入 Parakeet、
+Kotoba-Whisper 和 Faster-Whisper 三个系列；TTS（语音合成）只接入 IndexTTS2 以及三类
+外部 API。界面、项目校验、安装器和任务分发使用同一份白名单。
 
-支持等级：
+任务失败时程序会报告当前后端，不会悄悄改用另一个模型。这样同一项目的结果和资源需求才
+可复现。
 
-- **已验证**：完成真实模型加载和输出验收。
-- **支持**：适配器和自动化测试完整，硬件组合仍需用户验证。
-- **实验性**：上游接口或依赖变化较快。
-- **社区适配**：提供通用接口，依赖社区维护。
+## 一览
 
-## 推荐 ASR
+### ASR（语音识别）
 
-### Parakeet 日语
+| 后端 | 设备 | 建议显存 | 安装方案中的模型 | 适合场景 |
+|---|---|---:|---|---|
+| Parakeet 日语 / CrispASR | CPU、NVIDIA CUDA | 6 GB | 推荐、进阶 | 默认主识别，日语质量优先 |
+| Kotoba-Whisper | CPU、NVIDIA CUDA | 6 GB | 进阶安装 v2.2 | 日语 Whisper 对照与复核 |
+| Faster-Whisper | CPU、NVIDIA CUDA | 6 GB | 进阶安装 large-v2 | CPU `int8`、词级时间戳和 Whisper 兼容性 |
 
-默认使用 `parakeet-ctc-1.1b-ja` 的 GAL checkpoint。安装器同时准备 1.1B 和
-`parakeet-tdt_ctc-0.6b-ja`，设置中可直接切换。
+Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较小任务，但还要给驱动、
+音频和中间张量留空间。显存接近下限时保持批大小 1。
 
-| 模型 | 用途 |
-|---|---|
-| Parakeet CTC 1.1B JA GAL | 默认；质量优先 |
-| Parakeet TDT/CTC 0.6B JA | 低资源或对照；默认使用 TDT 解码 |
+### TTS（语音合成）
 
-两者通过固定版本 CrispASR F16 运行时执行，不向主 Python 安装 NVIDIA NeMo。1.1B 的 token时间戳会按标点、停顿和最长句长切分，不会把完整录音合并为一行。长音频默认使用运行时的流式编码；“分块上限”保持 `0`。
+| 后端 | 运行位置 | 参考文字 | API Key |
+|---|---|---|---|
+| IndexTTS2 | 本机 NVIDIA CUDA | 不需要 | 不需要 |
+| GPT-SoVITS API | 用户管理的本机、容器或远程服务 | 需要准确日文 | 取决于服务端 |
+| CosyVoice API | 用户管理的 FastAPI 服务 | 零样本需要；跨语言不需要 | 取决于服务端 |
+| Fish Speech / Fish Audio API | 自建或云端服务 | 需要 | 云服务通常需要 |
+
+IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。其它三种后端只在本程序中运行 HTTP 客户端，
+服务端硬件和模型由用户自行管理。
+
+## 安装方案中的固定模型
+
+“推荐”安装两个 Parakeet 模型；“进阶”安装以下完整组合：
+
+1. Parakeet CTC 1.1B JA GAL；
+2. Parakeet TDT/CTC 0.6B JA；
+3. `kotoba-tech/kotoba-whisper-v2.2`；
+4. `Systran/faster-whisper-large-v2`；
+5. `TransWithAI/Whisper-Vad-EncDec-ASMR-onnx`；
+6. `Qwen/Qwen3-ForcedAligner-0.6B`；
+7. IndexTTS2 checkpoints，仅 NVIDIA GPU。
+
+注册表可以识别同系列的若干其它模型 ID，但分档安装不会下载它们。详见
+[安装指南](INSTALLATION.md)。
+
+## Parakeet 日语
+
+Parakeet 通过固定的 CrispASR F16 运行时执行，不在主 Python 环境中安装 NVIDIA NeMo。
+
+| 模型 ID | 本地文件 | 用途 |
+|---|---|---|
+| `grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | `parakeet-ctc-1.1b-ja-f16.gguf` | 默认，质量优先 |
+| `nvidia/parakeet-tdt_ctc-0.6b-ja` | `parakeet-tdt-0.6b-ja.gguf` | 更省资源，可选 TDT/CTC 解码头 |
+
+长音频默认按 120 秒分块，范围是 15–600 秒。1.1B 输出的 token 时间戳会再按标点、停顿和
+单句最长时间整理成句子。CrispASR 子进程有明确超时，任务结束后清理临时目录。
+
+独立安装或修复：
 
 ```powershell
-./scripts/windows/install-parakeet.ps1 -Variant Auto
+.\scripts\windows\install-parakeet.ps1 -Variant Auto
 ```
 
 ```bash
 bash scripts/linux/install-parakeet.sh
 ```
 
-### Kotoba-Whisper
+## Kotoba-Whisper
 
-- `kotoba-whisper-v2.2`：默认 Kotoba 模型，15 秒分块。
-- `kotoba-whisper-v2.1`：兼容旧项目。
-- `kotoba-whisper-v2.0-faster`：在 Faster-Whisper 后端中使用。
+Kotoba-Whisper 使用 Transformers 和 PyTorch。分档安装准备经过固定 revision 校验的 v2.2；
+注册表还允许选择同系列的 v2.1 和 v2.0，但这些变体必须先完整下载到本地缓存。
 
-应用只使用 ASR 核心，不启用需要 gated pyannote 模型的说话人分离。
-内置 Transformers 模型使用固定 Hub revision。自定义模型需先下载到本地目录再选择，应用不会让兼容运行时直接加载任意远程仓库。
+音频默认按 30 秒分块，范围是 5–120 秒。较小分块降低峰值内存，较大分块保留更多上下文。
+它适合作为 Parakeet 的第二意见，也可以独立作为主识别器。
 
-### Faster-Whisper
+Kotoba-Whisper 没有在本项目中暴露“后端自带 VAD”选项。需要预处理时使用独立 ASMR VAD，
+或直接保留完整音频。
 
-日语默认 `large-v2`。GPU 使用 `float16` 或 `int8_float16`；CPU 使用 `int8`。VAD 默认关闭。`large-v3` 系列保留为可选模型。
+## Faster-Whisper
 
+Faster-Whisper 使用 CTranslate2，支持词级时间戳。分档安装固定准备
+`Systran/faster-whisper-large-v2`；注册表中的其它 Faster-Whisper 模型需要用户自行准备完整
+本地缓存。
 
-### Qwen3-ASR
+常用计算方式：
 
-Qwen3-ASR 先生成完整转写，再由 ForcedAligner 计算词级时间戳。提供 1.7B 和 0.6B，当前适配面向CUDA。
+- NVIDIA GPU：`float16`，显存紧张时尝试 `int8_float16`；
+- CPU：`int8`；
+- 后端 VAD 默认不启用，只有在设置中明确选择后才处理静音区间。
 
-## 多 ASR 校对
+Windows 的 CTranslate2 CUDA 构建需要其对应的 CUDA 12 BLAS 运行库。安装器把这些 DLL 放在
+主程序私有环境并只修改当前进程的搜索路径，不要求安装系统级 CUDA Toolkit。
 
-开启后，各 ASR 串行执行并在下一模型加载前释放。候选按时间窗口对齐，LLM 必须引用候选`evidence_；程序只从被引用的真实时间戳计算最终边界。背景信息只用于专名和上下文消歧。
+## VAD、识别和时间戳如何组合
 
-输出：
+一次识别任务可以看成三段：
+
+```text
+原媒体 → 可选 VAD → ASR 文字与初始边界 → 可选 Qwen3 对齐 → 句子表
+```
+
+### 后端 VAD
+
+Parakeet/CrispASR 和 Faster-Whisper 可以使用各自的 Silero VAD。它跟随后端运行，设置较少，
+适合普通语音。ASMR 中的耳语和低响度发声容易靠近阈值，发现漏句时应关闭做对照。
+
+### 日语 ASMR 专用 VAD
+
+`TransWithAI/Whisper-Vad-EncDec-ASMR-onnx` 是独立预处理模型，通过 ONNX Runtime 在 CPU
+运行。它读取程序生成的 16 kHz 单声道分析副本，按 30 秒块输出 20 ms 帧级概率，再把保留
+区间映射回原媒体时间。它可以放在 Parakeet、Kotoba-Whisper 或 Faster-Whisper 前面，原文件
+不会被裁剪或改写。
+
+### Qwen3 ForcedAligner
+
+`Qwen/Qwen3-ForcedAligner-0.6B` 接收任一支持识别器得到的日文，只重算句子起止边界。它不
+是识别后端，也不参与修改文字。
+
+单模型识别可以直接启用；多模型校对也可以把它选为最终时间戳来源。单句对齐失败时保留 ASR
+原边界，并把原因写进 `analysis/asr_forced_alignment.json` 或
+`analysis/asr_review.json`。
+
+## 多模型交叉校对
+
+多模型模式让已安装的 Parakeet、Kotoba-Whisper 和 Faster-Whisper 依次识别，再由 LLM 在
+时间窗口内选择证据。它不是简单多数投票：日语专用模型一致、上下文、重复幻觉和候选置信度
+都会影响判断。
+
+界面只列出本地模型和运行依赖都完整的组合。文字优先来源必须是已安装识别器；最终时间戳可
+来自某个候选，也可由 Qwen3 ForcedAligner 重算。LLM 只能引用真实候选的 `evidence_ids`，
+程序再从这些候选计算边界，不接受模型自行编造时间。
+
+审计文件：
 
 ```text
 analysis/asr_candidates.json
 analysis/asr_review.json
 ```
 
-校对使用“翻译设置”中的 DeepSeek、OpenAI、Claude、Gemini 或 OpenAI-compatible 模型。DeepL、Google Cloud Translation 和 Microsoft Translator 不能执行此步骤。
+DeepSeek、OpenAI、Anthropic Claude、Google Gemini 和 OpenAI-compatible LLM 可以校对。
+DeepL、Google Cloud Translation 和 Microsoft Azure Translator 只能翻译，不能做这一步。
 
-## 其他 ASR
+## IndexTTS2
 
-| 后端 | 接口 |
-|---|---|
-| OpenAI Whisper | 官方 Python API，词级时间戳 |
-| WhisperX | Whisper + 日语对齐模型 |
-| FunASR / SenseVoice | `sentence_info`、VAD 和标点模型 |
-| OpenAI-compatible ASR | `/v1/audio/transcriptions`，要求 `verbose_json` words/segments |
-
-## 推荐 TTS
-
-### IndexTTS2
-
-IndexTTS2 是默认 TTS。
+IndexTTS2 安装在 `.asmr-dubber/runtimes/index-tts` 的隔离环境中，避免它的固定依赖与主程序
+冲突。模型 checkpoints 默认在该目录下，由 Setup 或“设备与模型”准备。
 
 ```powershell
-./scripts/windows/install-indextts2.ps1
+.\scripts\windows\install-indextts2.ps1
 ```
 
 ```bash
 bash scripts/linux/install-indextts2.sh
 ```
 
-参考音频不需要转写。默认使用 FP16 和确定性采样。IndexTTS2 可分别选择音色参考和
-情绪参考：默认用用户选中的项目参考句保持音色一致，并用每句话对应的日文原句提供情绪。
-两者也可改为项目参考句、逐句原句、外部音频等来源；文本情绪仅在选择该来源时启用。
+音色和情绪使用不同参考：
 
-## 其他 TTS
+- 音色默认取项目统一参考句；
+- 情绪默认取当前日语句；
+- 音色也可取当前句或外部音频；
+- 情绪也可取项目参考、音色参考、外部音频或文字描述。
 
-| 后端 | 接口与限制 |
+统一音色参考更适合单角色长项目。逐句参考会跟随场景变化，但短句、气声、音效和背景音乐也
+更容易造成音色漂移。推荐选 5–15 秒、单一说话人、清晰且包含实义语音的参考。
+
+IndexTTS2 使用独立的 bilibili Model Use License，不属于本项目 MIT License。安装和使用前
+请阅读上游条款。
+
+## GPT-SoVITS API
+
+适配官方 `api_v2.py` 的 `/tts`：
+
+```text
+默认地址：http://127.0.0.1:9880
+```
+
+高质量克隆需要准确的参考日文。请求中的 `ref_audio_path` 是文件路径，不是上传字节；同机
+服务可以直接读取，Docker 需要把参考目录挂载到一致或可映射的位置，远程服务则需要双方约定
+可见路径。
+
+程序不会安装或启动 GPT-SoVITS 服务端，也不会判断服务端实际加载了哪个权重。
+
+## CosyVoice API
+
+适配官方 FastAPI runtime：
+
+```text
+默认地址：http://127.0.0.1:50000
+```
+
+- `zero_shot`：发送参考音频和对应文字；
+- `cross_lingual`：只发送参考音频，网页会隐藏无用的参考文字字段。
+
+不同 CosyVoice 发行版的模型名可能不同，模型输入框可以填写服务端实际接受的 ID。
+
+## Fish Speech / Fish Audio API
+
+适配兼容 `/v1/tts` 的自建或云端接口，请求使用 `references(audio + text)` 格式。参考音频按
+base64 发送，因此远程服务不需要访问本地路径。云服务通常需要 API Key，保存在便携密钥文件
+的 `tts:fish_speech` 项下。
+
+Fish API 版本变化较快。出现 4xx 或响应格式错误时，先对照服务端 OpenAPI，确认当前接口仍
+接受该请求结构。
+
+## 外部 API 并发和缓存
+
+外部 TTS 请求并发范围为 1–8，默认 2。提高并发只会让独立句子同时请求，不会并行修改本地
+运行环境。服务限流、显存不足或返回不稳定时先降到 1。
+
+逐句缓存键包含后端、模型、中文、参考音频摘要和相关参数。缓存只有在输入完全匹配时复用；
+程序不会因为文件名相同就把旧声音当成当前结果。
+
+## 翻译服务
+
+LLM 服务使用有界滑动上下文和翻译记忆，并要求每个输入句子 ID 恰好返回一项。普通机器翻译
+服务按句请求，不使用 LLM Prompt。
+
+| 服务 | 典型用途 |
 |---|---|
-| VoxCPM2 | 已验证兼容后端；CUDA；支持 VoxCPM 专属参考模式 |
-| Qwen3-TTS | 官方 Voice Clone API；高质量模式需要准确参考文本 |
-| GPT-SoVITS | 官方 `api_v2.py` `/tts`；参考路径必须对服务端可见 |
-| CosyVoice | FastAPI；zero-shot 或 cross-lingual |
-| F5-TTS | `f5-tts_infer-cli` |
-| Fish Speech | `/v1/tts` 兼容接口 |
-| XTTS-v2 | Coqui Python API；依赖兼容范围较窄 |
+| DeepSeek、OpenAI、Claude、Gemini | 上下文翻译和多 ASR 校对 |
+| OpenAI-compatible | Ollama、LM Studio、vLLM 或自建兼容接口 |
+| DeepL | 专业机器翻译 API |
+| Google Cloud Translation | Basic v2 逐句翻译 |
+| Microsoft Azure Translator | Translator Text v3 逐句翻译 |
 
-
-## 参考模式
-
-- **统一声纹，仅音色参考**：所有中文使用同一参考。
-- **逐句参考**：每句使用对应日语片段；短句、气声和音效会增加声纹漂移。
-- **统一声纹 + 逐句语气**、**Hi-Fi**：仅 VoxCPM2 的实验模式。
-
-这些通用参考模式不用于 IndexTTS2；它在自己的设置中分别管理音色和情绪来源。选择外部参考后，
-参考模式不再改变音色来源。需要参考文本的后端必须提供与音频准确对应的文本。
-
-## 翻译
-
-LLM 翻译使用严格 JSON：每个输入 ID 恰好返回一项并保持顺序。纯非语言内容返回空 `zh`，该句随即停用配音。DeepSeek 长输出会自动缩小批次并保存已经成功的结果。
-
-支持：
-
-- DeepSeek、OpenAI、Anthropic Claude、Google Gemini；
-- 本地或自定义 OpenAI-compatible 服务；
-- DeepL、Google Cloud Translation、Microsoft Translator。
-
-机器翻译 API 不使用自定义 Prompt，也不支持多 ASR 校对。
+云端会收到完成任务所需的文字；外部 TTS 还可能收到参考音频。是否适合发送由用户根据作品、
+隐私和供应商条款判断。许可证和服务边界见[第三方软件与模型说明](THIRD_PARTY_NOTICES.md)。

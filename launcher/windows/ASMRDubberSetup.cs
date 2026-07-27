@@ -8,8 +8,8 @@ using System.Threading;
 [assembly: System.Reflection.AssemblyDescription("ASMR Dubber dependency installer and repair tool")]
 [assembly: System.Reflection.AssemblyCompany("ASMR Dubber contributors")]
 [assembly: System.Reflection.AssemblyProduct("ASMR Dubber")]
-[assembly: System.Reflection.AssemblyVersion("0.3.4.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.3.4.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.4.0.0")]
 
 namespace ASMRDubberSetup
 {
@@ -84,12 +84,15 @@ namespace ASMRDubberSetup
             Console.WriteLine("ASMR Dubber 依赖安装与修复");
             Console.WriteLine();
             Console.WriteLine(
-                "Core：" + (IsCoreInstalled(root) ? "已安装" : "未安装或不完整"));
+                "基础环境：" + (IsCoreInstalled(root) ? "已安装" : "未安装或不完整"));
             Console.WriteLine(
-                "Parakeet：" + (IsParakeetInstalled(root) ? "已安装" : "未安装或不完整"));
+                "ASR（语音识别）· Parakeet："
+                + (IsParakeetInstalled(root) ? "已安装" : "未安装或不完整"));
             Console.WriteLine(
-                "IndexTTS2：" + (IsIndexTtsInstalled(root) ? "已安装" : "未安装或不完整"));
+                "TTS（语音合成）· IndexTTS2："
+                + (IsIndexTtsInstalled(root) ? "已安装" : "未安装或不完整"));
             Console.WriteLine("重复运行会复用已完成的文件，并继续未完成的下载。");
+            Console.WriteLine("默认优先使用 ModelScope；不会自动切换到 GitHub 或 Hugging Face。");
             Console.WriteLine();
 
             string profile = PromptForProfile();
@@ -111,31 +114,36 @@ namespace ASMRDubberSetup
 
         private static string PromptForProfile()
         {
-            Console.WriteLine("1  Core：程序和网页界面，不下载大型模型");
+            Console.WriteLine("1  基础：程序和网页界面，不下载大型模型");
             Console.WriteLine("   安装后约 2 GB；建议至少预留 5 GB");
-            Console.WriteLine("2  Recommended：Core、Parakeet 1.1B/0.6B；");
-            Console.WriteLine("   NVIDIA 设备另外安装 IndexTTS2");
+            Console.WriteLine("2  推荐：基础环境、Parakeet 1.1B/0.6B；");
+            Console.WriteLine("   NVIDIA 设备另外安装 TTS（语音合成）IndexTTS2");
             Console.WriteLine("   安装后约 24–28 GB；建议至少预留 35 GB");
-            Console.WriteLine("3  Advanced：Recommended、Kotoba-Whisper v2.2、Faster-Whisper large-v2");
-            Console.WriteLine("   安装后约 30–35 GB；建议至少预留 45 GB");
-            Console.WriteLine("4  Full：Advanced，加上其余已集成且可自动安装的本地后端");
-            Console.WriteLine("   安装后约 42–48 GB；建议至少预留 60 GB");
-            Console.WriteLine("   无 NVIDIA GPU 时会跳过 CUDA 后端，实际占用将减少");
+            Console.WriteLine("3  进阶：明确安装以下 7 个固定模型");
+            Console.WriteLine("   ASR（语音识别）：Parakeet CTC 1.1B JA GAL");
+            Console.WriteLine("   ASR（语音识别）：Parakeet TDT/CTC 0.6B JA");
+            Console.WriteLine("   ASR（语音识别）：Kotoba-Whisper v2.2");
+            Console.WriteLine("   ASR（语音识别）：Faster-Whisper large-v2");
+            Console.WriteLine("   VAD（语音活动检测）：日语 ASMR 专用 Whisper VAD ONNX");
+            Console.WriteLine("   时间戳对齐：Qwen3 ForcedAligner 0.6B（阿里 Qwen）");
+            Console.WriteLine("   TTS（语音合成）：IndexTTS2 checkpoints（仅 NVIDIA GPU）");
+            Console.WriteLine("   不会自动安装 Kotoba v2.0/v2.1、large-v3 或其它识别模型");
+            Console.WriteLine("   安装后约 33–39 GB；建议至少预留 50 GB");
+            Console.WriteLine("   无 NVIDIA GPU 时会跳过 IndexTTS2，实际占用将减少");
             Console.WriteLine();
             while (true)
             {
-                Console.Write("选择 1、2、3 或 4（直接回车选择 Recommended）：");
+                Console.Write("选择 1、2 或 3（直接回车选择“推荐”）：");
                 string input = Console.ReadLine();
                 if (input == null)
                 {
                     throw new InvalidOperationException("没有收到输入。");
                 }
                 input = input.Trim();
-                if (input == "1") return "Core";
-                if (input == "" || input == "2") return "Recommended";
-                if (input == "3") return "Advanced";
-                if (input == "4") return "Full";
-                WriteError("请输入 1、2、3 或 4。");
+                if (input == "1") return "基础";
+                if (input == "" || input == "2") return "推荐";
+                if (input == "3") return "进阶";
+                WriteError("请输入 1、2 或 3。");
             }
         }
 

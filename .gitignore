@@ -20,6 +20,7 @@ projects/
 models/
 model-packs/*.zip
 model-packs/*.zip.sha256
+modelscope-upload/
 data/
 *.log
 .DS_Store

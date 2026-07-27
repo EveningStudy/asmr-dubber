@@ -2,8 +2,10 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
@@ -12,24 +14,26 @@ using System.Threading;
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("0.3.4.0")]
-[assembly: AssemblyFileVersion("0.3.4.0")]
+[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyFileVersion("0.4.0.0")]
 
 namespace ASMRDubberLauncher
 {
     internal static class Program
     {
-        private const string MutexName = "Local\\ASMRDubberPortableLauncher";
-        private const string LocalUrl = "http://127.0.0.1:7860";
+        private const string ProductMarker = "asmr-dubber-product-marker";
         private static Process activeProcess;
         private static IntPtr jobHandle;
         private static bool stopping;
+        private static bool ownsPortFile;
+        private static string localUrl = "http://127.0.0.1:7860";
 
         private static int Main(string[] args)
         {
             Console.OutputEncoding = new UTF8Encoding(false);
             Console.Title = "ASMR Dubber";
             string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
+            string mutexName = "Local\\ASMRDubberPortableLauncher-" + ProjectPathHash(root);
 
             if (args.Length == 2 && args[0] == "--self-test")
             {
@@ -37,12 +41,21 @@ namespace ASMRDubberLauncher
                 return 0;
             }
             bool created;
-            using (Mutex mutex = new Mutex(true, MutexName, out created))
+            using (Mutex mutex = new Mutex(true, mutexName, out created))
             {
                 if (!created)
                 {
                     Console.WriteLine("ASMR Dubber 已经在运行，正在打开浏览器……");
-                    OpenBrowser();
+                    int runningPort = ReadSavedPort(root);
+                    string runningUrl = UrlForPort(runningPort);
+                    if (ServerResponds(runningUrl))
+                    {
+                        OpenBrowser(runningUrl);
+                    }
+                    else
+                    {
+                        Console.WriteLine("暂时无法确认网页端口，请稍后再运行一次启动器。");
+                    }
                     return 0;
                 }
 
@@ -63,6 +76,10 @@ namespace ASMRDubberLauncher
                 finally
                 {
                     StopActiveProcessTree();
+                    if (ownsPortFile)
+                    {
+                        DeleteSavedPort(root);
+                    }
                     if (jobHandle != IntPtr.Zero)
                     {
                         NativeMethods.CloseHandle(jobHandle);
@@ -93,28 +110,38 @@ namespace ASMRDubberLauncher
                 return 2;
             }
 
-            if (ServerResponds())
+            int previousPort = ReadSavedPort(root);
+            string previousUrl = UrlForPort(previousPort);
+            if (ServerResponds(previousUrl))
             {
                 WriteSuccess("检测到已经运行的 ASMR Dubber，正在打开浏览器。");
-                OpenBrowser();
+                OpenBrowser(previousUrl);
                 return 0;
             }
+
+            int port = FindAvailablePort(7860, 100);
+            localUrl = UrlForPort(port);
+            SavePort(root, port);
+            ownsPortFile = true;
 
             Console.WriteLine();
             WriteInfo("正在启动 ASMR Dubber……");
             Console.WriteLine("运行期间请保留此终端窗口；按 Ctrl+C 或关闭窗口即可停止。");
             Console.WriteLine();
 
-            activeProcess = StartPowerShell(root, runScript, "");
+            activeProcess = StartPowerShell(
+                root,
+                runScript,
+                "-HostAddress \"127.0.0.1\" -Port " + port);
             DateTime deadline = DateTime.UtcNow.AddSeconds(90);
             bool opened = false;
             while (!activeProcess.HasExited)
             {
-                if (!opened && ServerResponds())
+                if (!opened && ServerResponds(localUrl))
                 {
                     opened = true;
-                    WriteSuccess("服务已就绪：" + LocalUrl);
-                    OpenBrowser();
+                    WriteSuccess("服务已就绪：" + localUrl);
+                    OpenBrowser(localUrl);
                 }
                 if (!opened && DateTime.UtcNow > deadline)
                 {
@@ -297,17 +324,28 @@ namespace ASMRDubberLauncher
             return File.Exists(windowsPowerShell) ? windowsPowerShell : null;
         }
 
-        private static bool ServerResponds()
+        private static bool ServerResponds(string url)
         {
             try
             {
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(LocalUrl + "/");
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url + "/");
                 request.Method = "GET";
                 request.Timeout = 1000;
+                request.ReadWriteTimeout = 1000;
+                request.AutomaticDecompression =
+                    DecompressionMethods.GZip | DecompressionMethods.Deflate;
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 {
-                    return (int)response.StatusCode >= 200
-                        && (int)response.StatusCode < 500;
+                    if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 400)
+                    {
+                        return false;
+                    }
+                    using (StreamReader reader = new StreamReader(
+                        response.GetResponseStream(), Encoding.UTF8, true))
+                    {
+                        string body = reader.ReadToEnd();
+                        return body.IndexOf(ProductMarker, StringComparison.Ordinal) >= 0;
+                    }
                 }
             }
             catch
@@ -316,16 +354,105 @@ namespace ASMRDubberLauncher
             }
         }
 
-        private static void OpenBrowser()
+        private static void OpenBrowser(string url)
         {
             try
             {
-                Process.Start(LocalUrl);
+                Process.Start(url);
             }
             catch
             {
-                Console.WriteLine("请在浏览器中打开：" + LocalUrl);
+                Console.WriteLine("请在浏览器中打开：" + url);
             }
+        }
+
+        private static string ProjectPathHash(string root)
+        {
+            string normalized = root.TrimEnd(Path.DirectorySeparatorChar)
+                .ToUpperInvariant();
+            using (SHA256 algorithm = SHA256.Create())
+            {
+                byte[] digest = algorithm.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+                StringBuilder result = new StringBuilder(16);
+                for (int index = 0; index < 8; index++)
+                {
+                    result.Append(digest[index].ToString("x2"));
+                }
+                return result.ToString();
+            }
+        }
+
+        private static string PortFile(string root)
+        {
+            return Path.Combine(root, ".asmr-dubber", "runtime", "ui-port.txt");
+        }
+
+        private static int ReadSavedPort(string root)
+        {
+            try
+            {
+                int port;
+                if (int.TryParse(File.ReadAllText(PortFile(root)).Trim(), out port)
+                    && port > 0 && port <= 65535)
+                {
+                    return port;
+                }
+            }
+            catch
+            {
+                // The first launch has no port marker yet.
+            }
+            return 7860;
+        }
+
+        private static void SavePort(string root, int port)
+        {
+            string path = PortFile(root);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, port.ToString(), new UTF8Encoding(false));
+        }
+
+        private static void DeleteSavedPort(string root)
+        {
+            try
+            {
+                File.Delete(PortFile(root));
+            }
+            catch
+            {
+                // A stale marker is harmless because every reuse verifies the page marker.
+            }
+        }
+
+        private static string UrlForPort(int port)
+        {
+            return "http://127.0.0.1:" + port;
+        }
+
+        private static int FindAvailablePort(int first, int count)
+        {
+            for (int port = first; port < first + count && port <= 65535; port++)
+            {
+                TcpListener listener = null;
+                try
+                {
+                    listener = new TcpListener(IPAddress.Loopback, port);
+                    listener.Start();
+                    return port;
+                }
+                catch (SocketException)
+                {
+                    // Try the next port.
+                }
+                finally
+                {
+                    if (listener != null)
+                    {
+                        listener.Stop();
+                    }
+                }
+            }
+            throw new InvalidOperationException("找不到可用的本机网页端口（7860–7959）。");
         }
 
         private static void CancelRequested(object sender, ConsoleCancelEventArgs e)

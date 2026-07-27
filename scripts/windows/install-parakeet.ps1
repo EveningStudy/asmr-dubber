@@ -36,8 +36,14 @@ if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
     & $Python -m asmr_dubber.cli prepare-model-pack parakeet-ja-windows
     if ($LASTEXITCODE -eq 0) {
         & $Python -m asmr_dubber.cli import-model-packs --all --pack-id parakeet-ja-windows
+        if ($LASTEXITCODE -ne 0) {
+            throw "Parakeet ModelScope 模型包已下载，但导入失败。"
+        }
     } else {
-        Write-Warning "远程 Parakeet 模型包不可用，将继续使用原始下载源。"
+        throw (
+            "Parakeet ModelScope 模型包下载未完成。断点文件已保留；" +
+            "请重新运行安装继续，不会另起一条大型模型下载。"
+        )
     }
 }
 
@@ -78,41 +84,40 @@ $ExpectedHash = if ($Variant -eq "CUDA") {
     "c16ae6a69bad1c077c9bc01821fbbd6d3671a6ad114239eb0807cf3601e3b6f2"
 }
 $Archive = Join-Path $DownloadRoot $Asset
-$Url = "https://github.com/CrispStrobe/CrispASR/releases/download/$Version/$Asset"
+$ArchiveMirrorName = if ($Variant -eq "CUDA") {
+    "crispasr_windows_cuda_archives"
+} else {
+    "crispasr_windows_cpu_archives"
+}
 
 function Get-CheckedDownload {
     param(
-        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$MirrorName,
         [Parameter(Mandatory = $true)][string]$Destination,
         [Parameter(Mandatory = $true)][string]$Sha256
     )
-    for ($Attempt = 1; $Attempt -le 2; $Attempt++) {
-        if (Test-Path $Destination) {
-            $Actual = Get-ASMRDubberFileSha256 -Path $Destination
-            if ($Actual -eq $Sha256) {
-                return
-            }
-            Remove-Item -Force $Destination
-        }
-
-        Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
-            -Url $Uri -Destination $Destination -Sha256 $Sha256 -Resume | Out-Null
-        $Actual = Get-ASMRDubberFileSha256 -Path $Destination
-        if ($Actual -eq $Sha256) {
-            return
-        }
-
-        Remove-Item -Force $Destination
-        Remove-Item -Force -ErrorAction SilentlyContinue "$Destination.partial"
-        if ($Attempt -lt 2) {
-            Write-Warning "SHA256 校验失败，将丢弃损坏文件并完整重试一次。"
+    if ((Test-Path $Destination) -and `
+        (Get-ASMRDubberFileSha256 -Path $Destination) -eq $Sha256) {
+        return
+    }
+    $Failures = New-Object System.Collections.Generic.List[string]
+    foreach ($Uri in Get-ASMRDubberMirrorList -Configuration $MirrorConfiguration `
+        -Name $MirrorName) {
+        try {
+            Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+                -Url $Uri -Destination $Destination -Sha256 $Sha256 -Resume | Out-Null
+            if ((Get-ASMRDubberFileSha256 -Path $Destination) -eq $Sha256) { return }
+            throw "SHA-256 校验失败。"
+        } catch {
+            [void]$Failures.Add("$Uri：$($_.Exception.Message)")
         }
     }
-    throw "SHA256 校验失败：$Destination"
+    throw "所有 $MirrorName 下载源均失败；断点文件已保留：$($Failures -join '；')"
 }
 
 Write-Host "正在安装 CrispASR $Version（$Variant）..." -ForegroundColor Cyan
-Get-CheckedDownload -Uri $Url -Destination $Archive -Sha256 $ExpectedHash
+Get-CheckedDownload -MirrorName $ArchiveMirrorName `
+    -Destination $Archive -Sha256 $ExpectedHash
 $Staging = Join-Path $Paths.Temp "crispasr-install"
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Staging
 New-Item -ItemType Directory -Force -Path $Staging | Out-Null
@@ -141,29 +146,60 @@ function Invoke-PythonChecked {
     }
 }
 
-Invoke-PythonChecked -Arguments @(
-    (Join-Path $Root "scripts\download_hf_file.py"),
-    "--repo", "cstr/parakeet-ctc-1.1b-ja-GGUF",
-    "--filename", "parakeet-ctc-1.1b-ja-f16.gguf",
-    "--revision", "7ccb2922f63cefe7c0d2735527c69aa46c05ceb9",
-    "--destination", (Join-Path $ModelRoot "parakeet-ctc-1.1b-ja-f16.gguf"),
-    "--minimum-bytes", "2000000000",
-    "--endpoints", ((Get-ASMRDubberMirrorList `
-        -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
-        -Preferred $PreferredHuggingFace) -join ";")
-) -FailureMessage "Parakeet 1.1B GAL F16 模型下载失败。"
+function Get-ParakeetModel {
+    param(
+        [Parameter(Mandatory = $true)][string]$MirrorName,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Sha256,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][string]$Revision,
+        [Parameter(Mandatory = $true)][long]$MinimumBytes
+    )
+    if ((Test-Path $Destination) -and `
+        (Get-ASMRDubberFileSha256 -Path $Destination) -eq $Sha256) { return }
+    $Failures = New-Object System.Collections.Generic.List[string]
+    foreach ($Uri in Get-ASMRDubberMirrorList -Configuration $MirrorConfiguration `
+        -Name $MirrorName) {
+        try {
+            Invoke-ASMRDubberDownload -Configuration $MirrorConfiguration `
+                -Url $Uri -Destination $Destination -Sha256 $Sha256 -Resume | Out-Null
+            return
+        } catch {
+            [void]$Failures.Add("$Uri：$($_.Exception.Message)")
+        }
+    }
+    if (Test-ASMRDubberExternalDownloadsAllowed -Configuration $MirrorConfiguration) {
+        Invoke-PythonChecked -Arguments @(
+            (Join-Path $Root "scripts\download_hf_file.py"),
+            "--repo", $Repository, "--filename", $FileName,
+            "--revision", $Revision, "--destination", $Destination,
+            "--minimum-bytes", ([string]$MinimumBytes),
+            "--sha256", $Sha256,
+            "--endpoints", ((Get-ASMRDubberMirrorList `
+                -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
+                -Preferred $PreferredHuggingFace) -join ";")
+        ) -FailureMessage "$FileName 下载失败。"
+        return
+    }
+    throw (
+        "$FileName 的 ModelScope 下载失败；断点文件已保留。" +
+        "请上传镜像文件，或显式允许海外源。$($Failures -join '；')"
+    )
+}
 
-Invoke-PythonChecked -Arguments @(
-    (Join-Path $Root "scripts\download_hf_file.py"),
-    "--repo", "cstr/parakeet-tdt-0.6b-ja-GGUF",
-    "--filename", "parakeet-tdt-0.6b-ja.gguf",
-    "--revision", "65341fce2b46d25ea51593b1f771ed9a73cf7108",
-    "--destination", (Join-Path $ModelRoot "parakeet-tdt-0.6b-ja.gguf"),
-    "--minimum-bytes", "1000000000",
-    "--endpoints", ((Get-ASMRDubberMirrorList `
-        -Configuration $MirrorConfiguration -Name "huggingface_endpoints" `
-        -Preferred $PreferredHuggingFace) -join ";")
-) -FailureMessage "Parakeet 0.6B 模型下载失败。"
+Get-ParakeetModel -MirrorName "parakeet_11b_model_files" `
+    -Destination $Installed11B -Sha256 $Expected11B `
+    -Repository "cstr/parakeet-ctc-1.1b-ja-GGUF" `
+    -FileName "parakeet-ctc-1.1b-ja-f16.gguf" `
+    -Revision "7ccb2922f63cefe7c0d2735527c69aa46c05ceb9" `
+    -MinimumBytes 2000000000
+Get-ParakeetModel -MirrorName "parakeet_06b_model_files" `
+    -Destination $Installed06B -Sha256 $Expected06B `
+    -Repository "cstr/parakeet-tdt-0.6b-ja-GGUF" `
+    -FileName "parakeet-tdt-0.6b-ja.gguf" `
+    -Revision "65341fce2b46d25ea51593b1f771ed9a73cf7108" `
+    -MinimumBytes 1000000000
 
 $SelfTest = Invoke-ASMRDubberProcess -FilePath (Join-Path $RuntimeBin "crispasr.exe") `
     -ArgumentList @("--version") -WorkingDirectory $Root

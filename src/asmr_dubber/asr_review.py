@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .errors import AsmrDubberError
+from .forced_alignment import align_sentences_with_qwen
 from .models import ProjectSettings, Sentence
 from .translation import LLMTranslator
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
@@ -132,7 +133,11 @@ def _build_windows(
     return windows
 
 
-def _window_payload(window: ReviewWindow) -> dict[str, Any]:
+def _window_payload(
+    window: ReviewWindow,
+    text_priority_source: str = "",
+    timestamp_priority_source: str = "",
+) -> dict[str, Any]:
     return {
         "window_id": window.id,
         "approximate_time": [round(window.start, 3), round(window.end, 3)],
@@ -142,6 +147,8 @@ def _window_payload(window: ReviewWindow) -> dict[str, Any]:
                 "source": item.source,
                 "text": item.text,
                 "time": [round(item.start, 3), round(item.end, 3)],
+                "text_priority": item.source == text_priority_source,
+                "timestamp_priority": item.source == timestamp_priority_source,
             }
             for item in window.evidence
         ],
@@ -156,9 +163,9 @@ def _extract_object(content: str) -> dict[str, Any]:
     try:
         payload = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise AsmrDubberError(f"ASR 校对模型返回的不是有效 JSON：{exc}") from exc
+        raise AsmrDubberError(f"ASR（语音识别）校对模型返回的不是有效 JSON：{exc}") from exc
     if not isinstance(payload, dict):
-        raise AsmrDubberError("ASR 校对 JSON 顶层必须是对象。")
+        raise AsmrDubberError("ASR（语音识别）校对 JSON 顶层必须是对象。")
     return payload
 
 
@@ -170,7 +177,7 @@ def _request_json(
     provider = settings.translation_provider
     if provider not in _LLM_PROVIDERS:
         raise AsmrDubberError(
-            "多 ASR 校对需要大模型；当前翻译供应商不是 LLM。"
+            "多 ASR（语音识别）校对需要大模型；当前翻译供应商不是 LLM。"
             "请改用 DeepSeek/OpenAI/Claude/Gemini/本地兼容接口。"
         )
     key = resolve_api_key(provider)
@@ -178,7 +185,7 @@ def _request_json(
     base_url = (settings.translation_base_url or str(preset["base_url"])).rstrip("/")
     if provider == "deepseek":
         if not key:
-            raise AsmrDubberError("多 ASR 校对缺少 DeepSeek API Key。")
+            raise AsmrDubberError("多 ASR（语音识别）校对缺少 DeepSeek API Key。")
         with httpx.Client(timeout=settings.asr_timeout_seconds) as client:
             response = client.post(
                 f"{base_url}/chat/completions",
@@ -197,7 +204,8 @@ def _request_json(
             )
             if response.status_code >= 400:
                 raise AsmrDubberError(
-                    f"DeepSeek ASR 校对失败（HTTP {response.status_code}）：{response.text[:800]}"
+                    "DeepSeek ASR（语音识别）校对失败"
+                    f"（HTTP {response.status_code}）：{response.text[:800]}"
                 )
             data = response.json()
             return str(data["choices"][0]["message"]["content"])
@@ -214,11 +222,11 @@ def _request_json(
         timeout_seconds=settings.asr_timeout_seconds,
     )
     try:
-        content, limited = adapter._request(messages, job_id)  # noqa: SLF001
+        content, limited = adapter._request(messages, job_id)
     finally:
         adapter.close()
     if limited:
-        raise AsmrDubberError("ASR 校对模型输出达到长度上限。")
+        raise AsmrDubberError("ASR（语音识别）校对模型输出达到长度上限。")
     return content
 
 
@@ -228,11 +236,11 @@ def _validate_results(
 ) -> dict[str, tuple[str, list[str], float]]:
     results = payload.get("results")
     if not isinstance(results, list):
-        raise AsmrDubberError("ASR 校对 JSON 缺少 results 数组。")
+        raise AsmrDubberError("ASR（语音识别）校对 JSON 缺少 results 数组。")
     expected = [window.id for window in targets]
     actual = [str(item.get("window_id", "")) for item in results if isinstance(item, Mapping)]
     if actual != expected:
-        raise AsmrDubberError("ASR 校对返回的 window_id 数量或顺序不一致。")
+        raise AsmrDubberError("ASR（语音识别）校对返回的 window_id 数量或顺序不一致。")
     validated: dict[str, tuple[str, list[str], float]] = {}
     for window, item in zip(targets, results, strict=True):
         assert isinstance(item, Mapping)
@@ -243,7 +251,7 @@ def _validate_results(
         allowed = {evidence.id for evidence in window.evidence}
         selected = [str(value) for value in ids]
         if any(value not in allowed for value in selected):
-            raise AsmrDubberError(f"{window.id} 引用了不存在的 ASR 证据。")
+            raise AsmrDubberError(f"{window.id} 引用了不存在的 ASR（语音识别）证据。")
         if text and not selected:
             raise AsmrDubberError(f"{window.id} 生成了文字但没有引用证据。")
         try:
@@ -274,10 +282,19 @@ def _review_chunk(
             "role": "user",
             "content": (
                 "以下包含目标窗口和少量相邻上下文。只输出 target_window_ids 中的项目：\n"
+                f"文字优先来源：{settings.asr_review_text_priority_model or '未指定'}\n"
+                f"时间戳优先来源：{settings.asr_review_timestamp_priority_model or '未指定'}\n"
                 + json.dumps(
                     {
                         "target_window_ids": target_ids,
-                        "windows": [_window_payload(window) for window in windows],
+                        "windows": [
+                            _window_payload(
+                                window,
+                                settings.asr_review_text_priority_model,
+                                settings.asr_review_timestamp_priority_model,
+                            )
+                            for window in windows
+                        ],
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
@@ -303,11 +320,24 @@ def _review_chunk(
                     }
                 )
                 time.sleep(min(4.0, 2 ** (attempt - 1) + random.random()))
-    raise AsmrDubberError(f"多 ASR 校对在 3 次尝试后失败：{last_error}") from last_error
+    raise AsmrDubberError(f"多 ASR（语音识别）校对在 3 次尝试后失败：{last_error}") from last_error
 
 
-def _evidence_range(window: ReviewWindow, selected_ids: list[str]) -> tuple[float, float]:
+def _evidence_range(
+    window: ReviewWindow,
+    selected_ids: list[str],
+    timestamp_priority_source: str = "",
+) -> tuple[float, float]:
     selected = [item for item in window.evidence if item.id in set(selected_ids)]
+    preferred = [item for item in window.evidence if item.source == timestamp_priority_source]
+    if selected and preferred:
+        # Text evidence still decides whether the window is kept.  Once it is
+        # kept, the user's time-priority recognizer provides the boundary even
+        # when its transcription text was not selected by the LLM.
+        return (
+            min(item.start for item in preferred),
+            max(item.end for item in preferred),
+        )
     by_source: dict[str, list[Evidence]] = {}
     for item in selected:
         by_source.setdefault(item.source, []).append(item)
@@ -322,12 +352,19 @@ def review_transcriptions(
     transcriptions: list[tuple[str, list[Sentence]]],
     settings: ProjectSettings,
     report_path: Path,
+    analysis_audio: Path | None = None,
     progress: Progress | None = None,
 ) -> list[Sentence]:
     """Resolve several timed ASR hypotheses while keeping timestamps evidence-bound."""
-    windows = _build_windows(transcriptions, settings.asr_review_max_drift_seconds)
+    ordered = list(transcriptions)
+    timestamp_priority = settings.asr_review_timestamp_priority_model
+    for index, (label, _sentences) in enumerate(ordered):
+        if label == timestamp_priority:
+            ordered.insert(0, ordered.pop(index))
+            break
+    windows = _build_windows(ordered, settings.asr_review_max_drift_seconds)
     if not windows:
-        raise AsmrDubberError("多 ASR 校对没有可比较的候选窗口。")
+        raise AsmrDubberError("多 ASR（语音识别）校对没有可比较的候选窗口。")
     reviewed: dict[str, tuple[str, list[str], float]] = {}
     chunk_size = 24
     total = math.ceil(len(windows) / chunk_size)
@@ -346,19 +383,24 @@ def review_transcriptions(
         )
 
     sentences: list[Sentence] = []
+    sentence_by_window: dict[str, Sentence] = {}
     report_results: list[dict[str, Any]] = []
     for window in windows:
         text, selected_ids, confidence = reviewed[window.id]
-        start, end = _evidence_range(window, selected_ids)
+        start, end = _evidence_range(
+            window,
+            selected_ids,
+            settings.asr_review_timestamp_priority_model,
+        )
         if text and end > start:
-            sentences.append(
-                Sentence(
-                    id=f"s{len(sentences) + 1:06d}",
-                    start_seconds=max(0.0, start),
-                    end_seconds=end,
-                    ja_text=text,
-                )
+            sentence = Sentence(
+                id=f"s{len(sentences) + 1:06d}",
+                start_seconds=max(0.0, start),
+                end_seconds=end,
+                ja_text=text,
             )
+            sentences.append(sentence)
+            sentence_by_window[window.id] = sentence
         report_results.append(
             {
                 "window_id": window.id,
@@ -366,19 +408,44 @@ def review_transcriptions(
                 "evidence_ids": selected_ids,
                 "confidence": confidence,
                 "computed_time": [start, end],
-                "candidates": _window_payload(window)["candidates"],
+                "text_priority_model": settings.asr_review_text_priority_model,
+                "timestamp_priority_model": settings.asr_review_timestamp_priority_model,
+                "candidates": _window_payload(
+                    window,
+                    settings.asr_review_text_priority_model,
+                    settings.asr_review_timestamp_priority_model,
+                )["candidates"],
             }
         )
     if not sentences:
-        raise AsmrDubberError("多 ASR 校对没有保留任何可信日语句子。")
+        raise AsmrDubberError("多 ASR（语音识别）校对没有保留任何可信日语句子。")
     sentences.sort(key=lambda item: (item.start_seconds, item.end_seconds))
     for index, sentence in enumerate(sentences, start=1):
         sentence.id = f"s{index:06d}"
+    alignment_report: list[dict[str, Any]] = []
+    if settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|"):
+        if analysis_audio is None:
+            raise AsmrDubberError("Qwen3 ForcedAligner 需要 ASR（语音识别）分析音频。")
+        alignment_report = align_sentences_with_qwen(
+            analysis_audio,
+            sentences,
+            settings,
+            progress=progress,
+        )
+    for item in report_results:
+        sentence = sentence_by_window.get(str(item["window_id"]))
+        if sentence is not None:
+            item["sentence_id"] = sentence.id
+            item["computed_time"] = [sentence.start_seconds, sentence.end_seconds]
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        json.dumps({"results": report_results}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"results": report_results, "timestamp_alignment": alignment_report},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     if progress:
-        progress(f"多 ASR 校对完成：保留 {len(sentences)} 句", total, total)
+        progress(f"多 ASR（语音识别）校对完成：保留 {len(sentences)} 句", total, total)
     return sentences

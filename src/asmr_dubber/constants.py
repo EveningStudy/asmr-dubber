@@ -4,16 +4,16 @@ from .platforms import user_data_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-PROJECT_SCHEMA_VERSION = 1
-DEFAULT_ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
+PROJECT_SCHEMA_VERSION = 2
 DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
+ASMR_VAD_MODEL = "TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
 RECOMMENDED_ASR_BACKEND = "parakeet_nemo"
 RECOMMENDED_ASR_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
+DEFAULT_ASR_REVIEW_TEXT_PRIORITY = (
+    "parakeet_nemo|grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
+)
+DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
 DEFAULT_TRANSLATION_MODEL = "deepseek-v4-pro"
-# VoxCPM2 remains a verified compatibility backend and part of the bundled
-# Qwen runtime. New projects default to the separately installed IndexTTS2
-# backend because it is the recommended voice-cloning path.
-DEFAULT_TTS_MODEL = "openbmb/VoxCPM2"
 RECOMMENDED_TTS_BACKEND = "indextts2"
 RECOMMENDED_TTS_MODEL = "IndexTTS2"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -29,7 +29,9 @@ DEFAULT_ASR_REVIEW_PROMPT = """你是日语语音识别校对专家。你会收�
    它们用于程序从真实 ASR 时间戳计算边界，不要自行输出或猜测时间。
 6. 若证据互相冲突且无法可靠判断，优先保留日语专用模型之间一致的部分，并降低 confidence；
    若基本确定是幻觉，ja 置空。
-7. 只输出严格 JSON：
+7. 输入会标记 text_priority。它是文字判断的优先来源，但不得压过多个模型一致的反证或明显幻觉。
+   timestamp_priority 只由程序计算时间边界，不要为了迁就它而改写 ja。
+8. 只输出严格 JSON：
 {"results":[{"window_id":"w000001","ja":"校对后的日文","evidence_ids":["w000001-c01"],"confidence":0.95}]}
 """
 DEFAULT_PROJECTS_DIR = user_data_dir() / "projects"
@@ -58,22 +60,19 @@ INDEXTTS_REQUIRED_DIRS = frozenset({"qwen0.6bemo4-merge", "hf_cache/w2v-bert-2.0
 # Pin the exact model snapshots validated for this release. Project manifests keep the
 # human-readable repository ids, while loaders resolve these revisions from the
 # local Hugging Face cache whenever they are available.
-MODEL_REVISIONS = {
-    DEFAULT_ASR_MODEL: "7278e1e70fe206f11671096ffdd38061171dd6e5",
-    DEFAULT_ALIGNER_MODEL: "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
-    DEFAULT_TTS_MODEL: "bffb3df5a29440629464e5e839f4d214c8714c3d",
-}
+MODEL_REVISIONS: dict[str, str] = {}
 
-# Recommended optional ASR snapshots are also pinned so an update upstream
+# Optional ASR snapshots in the recommended profile are also pinned so an update upstream
 # cannot silently change transcription behaviour between runs.  Their Hub
 # manifests provide per-file integrity metadata; unlike the bundled defaults,
 # these snapshots are allowed to evolve without duplicating every file size
 # in this repository.
 OPTIONAL_ASR_MODEL_REVISIONS = {
+    ASMR_VAD_MODEL: "6ac29e2cbf2f4f8e9b639861766a8639dd666e9c",
+    DEFAULT_ALIGNER_MODEL: "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
     "kotoba-tech/kotoba-whisper-v2.2": "9d33482a0eb9b57f1ad80708e8ac5538246d8355",
     "kotoba-tech/kotoba-whisper-v2.1": "57a9d8ab771a0124706b67d22509bedd07c36187",
     "kotoba-tech/kotoba-whisper-v2.0": "7eb575277d18909a4af8a24e3ae8cce2e99794ae",
-    "Qwen/Qwen3-ASR-0.6B": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
     "Systran/faster-whisper-large-v2": "f0fe81560cb8b68660e564f55dd99207059c092e",
     "kotoba-tech/kotoba-whisper-v2.0-faster": ("f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"),
 }
@@ -81,18 +80,12 @@ OPTIONAL_ASR_MODEL_REVISIONS = {
 # Exact runtime files and byte sizes from those three repository revisions.
 # This prevents a partially downloaded snapshot directory from being mistaken
 # for a usable offline model.
-MODEL_REQUIRED_FILES = {
-    DEFAULT_ASR_MODEL: {
-        "chat_template.json": 1161,
-        "config.json": 6194,
-        "generation_config.json": 142,
-        "merges.txt": 1671853,
-        "model-00001-of-00002.safetensors": 4220320824,
-        "model-00002-of-00002.safetensors": 478200688,
-        "model.safetensors.index.json": 64821,
-        "preprocessor_config.json": 330,
-        "tokenizer_config.json": 12487,
-        "vocab.json": 2776833,
+MODEL_REQUIRED_FILES: dict[str, dict[str, int]] = {
+    ASMR_VAD_MODEL: {
+        "inference.py": 25880,
+        "model.onnx": 119137398,
+        "model_metadata.json": 370,
+        "requirements.txt": 233,
     },
     DEFAULT_ALIGNER_MODEL: {
         "chat_template.json": 1161,
@@ -104,31 +97,12 @@ MODEL_REQUIRED_FILES = {
         "tokenizer_config.json": 12666,
         "vocab.json": 2776833,
     },
-    DEFAULT_TTS_MODEL: {
-        "audiovae.pth": 376951122,
-        "config.json": 4336,
-        "model.safetensors": 4580080592,
-        "special_tokens_map.json": 1632,
-        "tokenization_voxcpm2.py": 2895,
-        "tokenizer.json": 3676772,
-        "tokenizer_config.json": 5059,
-    },
 }
-
-MODEL_LFS_SHA256 = {
-    DEFAULT_ASR_MODEL: {
-        "model-00001-of-00002.safetensors": (
-            "a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6"
-        ),
-        "model-00002-of-00002.safetensors": (
-            "6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc"
-        ),
+MODEL_LFS_SHA256: dict[str, dict[str, str]] = {
+    ASMR_VAD_MODEL: {
+        "model.onnx": "cd47513515766d57f740e3094440dbbca9ab87e026b9cf21540d7ad588c0e047",
     },
     DEFAULT_ALIGNER_MODEL: {
-        "model.safetensors": ("47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7"),
-    },
-    DEFAULT_TTS_MODEL: {
-        "audiovae.pth": "94b5d51e107e0507d4acc976cfdadb64edd6fd06d1f751dadbf2fd1594274bf1",
-        "model.safetensors": ("f7f964cfa9da23653baec6e6f7750719977ad944ed9f95fe52fe3a620506891d"),
+        "model.safetensors": "47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7",
     },
 }

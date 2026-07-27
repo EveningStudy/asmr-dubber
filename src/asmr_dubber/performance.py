@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -9,7 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_WRITE_LOCK = threading.Lock()
+from .storage import atomic_write_text, exclusive_file_lock
+
 _MAX_EVENTS = 200
 
 
@@ -23,8 +23,7 @@ def _safe_detail(value: Any) -> str | int | float | bool | None:
 
 def _append_event(project_dir: Path, event: Mapping[str, Any]) -> None:
     destination = project_dir / "performance.json"
-    temporary = destination.with_name(".performance.json.tmp")
-    with _WRITE_LOCK:
+    with exclusive_file_lock(project_dir / ".performance.lock"):
         events: list[dict[str, Any]] = []
         if destination.is_file():
             try:
@@ -36,11 +35,7 @@ def _append_event(project_dir: Path, event: Mapping[str, Any]) -> None:
         events.append(dict(event))
         events = events[-_MAX_EVENTS:]
         payload = json.dumps(events, ensure_ascii=False, indent=2) + "\n"
-        try:
-            temporary.write_text(payload, encoding="utf-8")
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_write_text(destination, payload)
 
 
 @contextmanager

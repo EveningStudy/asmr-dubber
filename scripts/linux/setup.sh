@@ -4,16 +4,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-PROFILE="${1:-Recommended}"
+PROFILE="${1:-推荐}"
 case "$PROFILE" in
-  Core|Recommended|Advanced|Full) ;;
+  Core) PROFILE="基础" ;;
+  Recommended) PROFILE="推荐" ;;
+  Advanced) PROFILE="进阶" ;;
+  基础|推荐|进阶) ;;
   *)
-    echo "用法：bash scripts/linux/setup.sh [Core|Recommended|Advanced|Full]" >&2
+    echo "用法：bash scripts/linux/setup.sh [基础|推荐|进阶]" >&2
     exit 2
     ;;
 esac
-if [[ "$(uname -s)" != "Linux" || "$(getconf LONG_BIT)" != "64" ]]; then
-  echo "错误：Linux 安装脚本只支持 64 位 Linux；Windows 请双击 ASMR-Dubber.exe。" >&2
+if [[ "$(uname -s)" != "Linux" || "$(getconf LONG_BIT)" != "64" ]] || \
+  [[ "$(uname -m)" != "x86_64" ]]; then
+  echo "错误：Linux 安装脚本只支持 x86_64 64 位 Linux；Windows 请双击 ASMR-Dubber.exe。" >&2
   exit 1
 fi
 
@@ -21,6 +25,8 @@ source "$ROOT/scripts/portable-runtime.sh"
 asmr_init_portable_environment "$ROOT"
 source "$ROOT/scripts/mirrors.sh"
 asmr_apply_mirror_environment "$ROOT"
+source "$ROOT/scripts/linux/python-runtime.sh"
+source "$ROOT/scripts/linux/wheelhouse.sh"
 
 source "$ROOT/scripts/network-bridge.sh"
 asmr_prepare_network
@@ -41,39 +47,63 @@ echo "ASMR Dubber · Linux 安装"
 echo "项目目录：$ROOT"
 echo "数据目录：$DATA_ROOT"
 echo "安装配置：$PROFILE"
+if asmr_external_downloads_allowed "$ROOT"; then
+  echo "下载策略：ModelScope 优先；已显式允许海外备用源。"
+else
+  echo "下载策略：ModelScope 优先；GitHub/Hugging Face/官方海外源已关闭。"
+fi
+if [[ -n "${ASMR_DUBBER_LOCAL_CACHE_ROOTS:-}" ]]; then
+  echo "只读本地缓存：$ASMR_DUBBER_LOCAL_CACHE_ROOTS"
+fi
 case "$PROFILE" in
-  Core)
+  基础)
     echo "预计安装后占用：约 2 GB；建议安装前至少有 5 GB 可用空间"
     ;;
-  Recommended)
+  推荐)
     echo "预计安装后占用：约 24–28 GB；建议安装前至少有 35 GB 可用空间"
     ;;
-  Advanced)
-    echo "预计安装后占用：约 30–35 GB；建议安装前至少有 45 GB 可用空间"
-    ;;
-  Full)
-    echo "预计安装后占用：约 42–48 GB；建议安装前至少有 60 GB 可用空间"
+  进阶)
+    echo "预计安装后占用：约 33–39 GB；建议安装前至少有 50 GB 可用空间"
+    echo "固定 ASR 模型：Parakeet CTC 1.1B JA GAL、Parakeet TDT/CTC 0.6B JA"
+    echo "固定 ASR 模型：kotoba-tech/kotoba-whisper-v2.2"
+    echo "固定 ASR 模型：Systran/faster-whisper-large-v2"
+    echo "固定 VAD 模型：TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
+    echo "固定时间戳模型：Qwen/Qwen3-ForcedAligner-0.6B（阿里 Qwen）"
+    echo "固定 TTS 模型：IndexTTS2 checkpoints（仅 NVIDIA GPU）"
+    echo "不会自动安装 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它识别模型"
     ;;
 esac
-if [[ "$PROFILE" != Core ]]; then
-  echo "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS/ASR，实际占用将减少。"
+if [[ "$PROFILE" != 基础 ]]; then
+  echo "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS（语音合成），实际占用将减少。"
 fi
 
 if [[ ! -x "$UV" ]]; then
-  echo "正在安装 uv..."
-  UV_INSTALLER="$TMPDIR/uv-installer.sh"
-  while IFS= read -r installer_url; do
-    if asmr_download "$ROOT" "$installer_url" "$UV_INSTALLER"; then
-      UV_ARCHIVE="https://github.com/astral-sh/uv/releases/download/0.11.30/uv-x86_64-unknown-linux-gnu.tar.gz"
-      while IFS= read -r archive_url; do
-        echo "使用 uv 下载源：$archive_url"
-        if UV_DOWNLOAD_URL="$archive_url" sh "$UV_INSTALLER"; then
-          break 2
+  echo "正在从 ModelScope 优先源安装 uv..."
+  UV_ARCHIVE="$BOOTSTRAP/uv-x86_64-unknown-linux-gnu.tar.gz"
+  UV_SHA256="04bc7d180d6138bf6dc08387acf507a823f397a98fea55da36b0ccc7fbce3b68"
+  UV_READY=0
+  while IFS= read -r archive_url; do
+    [[ -n "$archive_url" ]] || continue
+    if asmr_download "$ROOT" "$archive_url" "$UV_ARCHIVE" "$UV_SHA256"; then
+      UV_STAGING="$BOOTSTRAP/uv-extract"
+      rm -rf "$UV_STAGING"
+      mkdir -p "$UV_STAGING" "$UV_DIR"
+      tar -xzf "$UV_ARCHIVE" -C "$UV_STAGING"
+      UV_DOWNLOADED="$(find "$UV_STAGING" -type f -name uv -perm -u+x | head -n 1)"
+      if [[ -n "$UV_DOWNLOADED" ]]; then
+        cp -f "$UV_DOWNLOADED" "$UV"
+        chmod 755 "$UV"
+        UVX_DOWNLOADED="$(find "$UV_STAGING" -type f -name uvx -perm -u+x | head -n 1)"
+        if [[ -n "$UVX_DOWNLOADED" ]]; then
+          cp -f "$UVX_DOWNLOADED" "$UV_DIR/uvx"
+          chmod 755 "$UV_DIR/uvx"
         fi
-        echo "当前 uv 下载源失败，自动切换。" >&2
-      done < <(asmr_download_candidates "$ROOT" "$UV_ARCHIVE")
+        UV_READY=1
+      fi
+      rm -rf "$UV_STAGING"
+      [[ "$UV_READY" == 1 ]] && break
     fi
-  done < <(asmr_mirror_list "$ROOT" uv_installers_linux)
+  done < <(asmr_mirror_list "$ROOT" uv_archives_linux)
 fi
 if [[ ! -x "$UV" ]]; then
   echo "错误：uv 安装失败：$UV" >&2
@@ -81,20 +111,12 @@ if [[ ! -x "$UV" ]]; then
 fi
 
 echo "正在准备 Python 3.12..."
-PYTHON_READY=0
-while IFS= read -r python_mirror; do
-  echo "使用 Python 下载源：$python_mirror"
-  if UV_PYTHON_INSTALL_MIRROR="$python_mirror" \
-    "$UV" python install 3.12 --managed-python --no-bin; then
-    PYTHON_READY=1
-    break
-  fi
-  echo "当前 Python 下载源失败，自动切换。" >&2
-done < <(asmr_mirror_list "$ROOT" python_install_mirrors)
-if [[ "$PYTHON_READY" != 1 ]]; then
-  echo "错误：所有 Python 下载源均失败。" >&2
-  exit 1
-fi
+asmr_install_python_runtime \
+  "$ROOT" \
+  "3.12.13" \
+  "20260718" \
+  "5854aa6ec71cad00334d5065633c210b2e7feb40956767a59a91791cadcf0b79" \
+  "python312_linux_archives"
 if [[ ! -x "$VENV/bin/python" ]]; then
   "$UV" venv --python 3.12 --managed-python "$VENV"
 fi
@@ -104,15 +126,14 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   HAS_NVIDIA=1
 fi
 EXTRA=".[ui]"
-INSTALL_DEFAULT_MODELS=0
 INSTALL_ADVANCED_MODELS=0
 INSTALL_RECOMMENDED_TTS=0
 INSTALL_PARAKEET=0
 case "$PROFILE" in
-  Core)
+  基础)
     EXTRA=".[ui]"
     ;;
-  Recommended)
+  推荐)
     INSTALL_PARAKEET=1
     if [[ "$HAS_NVIDIA" == 1 ]]; then
       if [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
@@ -120,27 +141,13 @@ case "$PROFILE" in
       fi
     fi
     ;;
-  Advanced)
+  进阶)
     INSTALL_PARAKEET=1
     INSTALL_ADVANCED_MODELS=1
-    EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper]"
+    EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
     if [[ "$HAS_NVIDIA" == 1 ]] \
       && [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
       INSTALL_RECOMMENDED_TTS=1
-    fi
-    ;;
-  Full)
-    INSTALL_PARAKEET=1
-    INSTALL_ADVANCED_MODELS=1
-    if [[ "$HAS_NVIDIA" == 1 ]]; then
-      EXTRA=".[ui,local-default,asr-faster-whisper,asr-kotoba-whisper,asr-openai-whisper,asr-funasr]"
-      INSTALL_DEFAULT_MODELS=1
-      if [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
-        INSTALL_RECOMMENDED_TTS=1
-      fi
-    else
-      echo "提示：未检测到 NVIDIA GPU；跳过 CUDA 专用 Qwen3-ASR/VoxCPM2。" >&2
-      EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-openai-whisper,asr-funasr]"
     fi
     ;;
 esac
@@ -157,29 +164,46 @@ install_from_pypi() {
   done < <(asmr_mirror_list "$ROOT" pypi_indexes)
   return 1
 }
-install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
-# PyTorch 2.11 constrains setuptools below 82. Keep the newest compatible
-# release so older package-discovery vulnerabilities are not retained by an
-# in-place upgrade.
-install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
+if asmr_prepare_wheelhouse \
+  "$ROOT" \
+  "ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz" \
+  "linux_application_wheelhouse_archives" \
+  "linux_application_wheelhouse_checksums"; then
+  echo "使用 ModelScope 应用依赖 wheelhouse：$ASMR_WHEELHOUSE_RESULT"
+  "$UV" pip install --python "$VENV/bin/python" --editable "$EXTRA" \
+    "setuptools>=78.1.1,<82" --offline --find-links "$ASMR_WHEELHOUSE_RESULT"
+else
+  WHEELHOUSE_STATUS=$?
+  if [[ "$WHEELHOUSE_STATUS" == 2 ]]; then
+    echo "错误：ModelScope wheelhouse 已发布但不完整，拒绝静默切换。" >&2
+    exit 1
+  fi
+  install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
+  # PyTorch 2.11 constrains setuptools below 82. Keep the newest compatible
+  # release so older package-discovery vulnerabilities are not retained by an
+  # in-place upgrade.
+  install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
+fi
 "$VENV/bin/python" -m compileall -q -f "$ROOT/src/asmr_dubber"
 
-if [[ "$PROFILE" != Core ]]; then
+if [[ "$PROFILE" != 基础 ]]; then
   echo "正在检测并导入当前档位的本地模型包..."
   PACK_ARGUMENTS=(import-model-packs --all)
   case "$PROFILE" in
-    Recommended)
+    推荐)
       PACK_ARGUMENTS+=(
         --pack-id parakeet-ja-linux
         --pack-id indextts2-checkpoints
       )
       ;;
-    Advanced)
+    进阶)
       PACK_ARGUMENTS+=(
         --pack-id parakeet-ja-linux
         --pack-id indextts2-checkpoints
         --pack-id kotoba-whisper-v2.2
         --pack-id faster-whisper-large-v2
+        --pack-id qwen3-forced-aligner
+        --pack-id whisper-vad-asmr-onnx
       )
       ;;
   esac
@@ -214,22 +238,17 @@ link_av_library libswresample.so.6 'libswresample-*.so.6.*'
 link_av_library libswscale.so.9 'libswscale-*.so.9.*'
 
 if [[ "$INSTALL_ADVANCED_MODELS" == 1 ]]; then
-  echo "正在准备 Advanced ASR 模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
-  bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend advanced-asr
-fi
-
-if [[ "$INSTALL_DEFAULT_MODELS" == 1 ]]; then
-  echo "正在下载并校验默认模型（已有缓存会复用）..."
-  bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend all
+  echo "正在准备 ASR（语音识别）：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
+  bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend 进阶语音识别
 fi
 
 if [[ "$INSTALL_PARAKEET" == 1 ]]; then
-  echo "正在安装推荐 ASR：Parakeet 日语..."
+  echo "正在安装推荐 ASR（语音识别）：Parakeet 日语..."
   bash "$ROOT/scripts/linux/install-parakeet.sh"
 fi
 
 if [[ "$INSTALL_RECOMMENDED_TTS" == 1 ]]; then
-  echo "正在安装推荐 TTS：IndexTTS2（约需 20 GB）..."
+  echo "正在安装推荐 TTS（语音合成）：IndexTTS2（约需 20 GB）..."
   bash "$ROOT/scripts/linux/install-indextts2.sh"
 fi
 

@@ -8,105 +8,14 @@ import pytest
 import soundfile as sf
 
 from asmr_dubber import asr
-from asmr_dubber.asr import _clock, _qwen_chunk_ranges
+from asmr_dubber.asr import _clock
 from asmr_dubber.errors import AsmrDubberError
 from asmr_dubber.models import ProjectSettings
-
-
-def test_qwen_chunk_ranges_cover_audio_without_gaps_or_overlap() -> None:
-    sample_rate = 10
-    waveform = np.ones(2_050, dtype=np.float32)
-    # The first boundary target is 900 samples. Put a quiet region slightly
-    # before it and verify that the splitter chooses that region.
-    waveform[870:880] = 0.0
-
-    ranges = _qwen_chunk_ranges(
-        waveform,
-        sample_rate,
-        chunk_seconds=90.0,
-        search_seconds=5.0,
-        window_seconds=1.0,
-    )
-
-    assert ranges[0][1] == 875
-    assert ranges[0][0] == 0
-    assert ranges[-1][1] == waveform.size
-    assert all(left[1] == right[0] for left, right in zip(ranges, ranges[1:], strict=False))
-    assert sum(end - start for start, end in ranges) == waveform.size
-
-
-def test_qwen_short_audio_stays_in_one_chunk() -> None:
-    waveform = np.zeros(800, dtype=np.float32)
-
-    assert _qwen_chunk_ranges(waveform, 10, chunk_seconds=90.0) == [(0, 800)]
 
 
 def test_clock_formats_long_audio_positions() -> None:
     assert _clock(89.9) == "1:29"
     assert _clock(3_661.2) == "1:01:01"
-
-
-def test_qwen_transcription_reports_each_chunk_and_offsets_timestamps(
-    tmp_path, monkeypatch
-) -> None:
-    audio_path = tmp_path / "long.wav"
-    sf.write(audio_path, np.zeros(2_000, dtype=np.float32), 10)
-    calls: list[int] = []
-
-    class FakeModel:
-        @classmethod
-        def from_pretrained(cls, *_args, **_kwargs):
-            return cls()
-
-        def transcribe(self, *, audio, **_kwargs):
-            waveform, _sample_rate = audio
-            calls.append(len(waveform))
-            stamp = SimpleNamespace(text="声", start_time=0.5, end_time=1.0)
-            return [
-                SimpleNamespace(
-                    text="声",
-                    language="Japanese",
-                    time_stamps=[stamp],
-                )
-            ]
-
-    fake_torch = SimpleNamespace(
-        float32="float32",
-        bfloat16="bfloat16",
-        cuda=SimpleNamespace(
-            is_available=lambda: False,
-            empty_cache=lambda: None,
-            synchronize=lambda: None,
-        ),
-        set_float32_matmul_precision=lambda _value: None,
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.setitem(
-        sys.modules,
-        "qwen_asr",
-        SimpleNamespace(Qwen3ASRModel=FakeModel),
-    )
-    monkeypatch.setattr(
-        asr,
-        "resolve_transformers_model_source",
-        lambda model_id: (model_id, None),
-    )
-    updates: list[tuple[str, int, int]] = []
-
-    sentences, language = asr._transcribe_qwen3(
-        audio_path,
-        ProjectSettings(asr_device="cpu"),
-        lambda message, current, total: updates.append((message, current, total)),
-    )
-
-    assert len(calls) == 3
-    assert len(sentences) == 3
-    assert sentences[0].start_seconds == 0.5
-    assert 80.0 < sentences[1].start_seconds < 91.0
-    assert sentences[2].start_seconds > 160.0
-    assert language == "Japanese"
-    assert updates[-1][1:] == (3, 3)
-    assert any("第 2/3 段" in message for message, _, _ in updates)
 
 
 def test_faster_whisper_uses_explicit_batched_pipeline_without_enabling_vad(
@@ -225,7 +134,7 @@ def test_kotoba_transformers_refuses_incomplete_model_without_downloading(
 
     with pytest.raises(
         AsmrDubberError,
-        match="模型尚未完整下载.*不会在后台自动下载",
+        match=r"模型尚未完整下载.*不会在后台自动下载",
     ):
         asr._transcribe_kotoba_whisper(
             audio_path,
@@ -482,7 +391,7 @@ def test_parakeet_long_audio_is_split_before_both_backends(
 
     sentences, _ = asr._transcribe_parakeet(
         audio,
-        ProjectSettings(asr_model=model_id, asr_chunk_seconds=0),
+        ProjectSettings(asr_model=model_id, asr_chunk_seconds=30),
         None,
     )
 

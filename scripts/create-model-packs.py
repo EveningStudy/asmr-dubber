@@ -12,6 +12,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from asmr_dubber import __version__  # noqa: E402
 from asmr_dubber.constants import (  # noqa: E402
+    ASMR_VAD_MODEL,
+    DEFAULT_ALIGNER_MODEL,
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
     OPTIONAL_ASR_MODEL_REVISIONS,
@@ -51,6 +53,18 @@ PACKS = {
     "faster-whisper-large-v2": PackDefinition(
         pack_id="faster-whisper-large-v2",
         display_name="Faster-Whisper large-v2",
+        platforms=("windows", "linux"),
+        architectures=("any",),
+    ),
+    "qwen3-forced-aligner": PackDefinition(
+        pack_id="qwen3-forced-aligner",
+        display_name="Qwen3 ForcedAligner 0.6B（独立时间戳对齐）",
+        platforms=("windows", "linux"),
+        architectures=("any",),
+    ),
+    "whisper-vad-asmr-onnx": PackDefinition(
+        pack_id="whisper-vad-asmr-onnx",
+        display_name="日语 ASMR 专用 Whisper VAD ONNX",
         platforms=("windows", "linux"),
         architectures=("any",),
     ),
@@ -106,6 +120,10 @@ def _sources(pack_id: str) -> list[ModelPackSource]:
         return _hf_sources("kotoba-tech/kotoba-whisper-v2.2")
     if pack_id == "faster-whisper-large-v2":
         return _hf_sources("Systran/faster-whisper-large-v2")
+    if pack_id == "qwen3-forced-aligner":
+        return _hf_sources(DEFAULT_ALIGNER_MODEL)
+    if pack_id == "whisper-vad-asmr-onnx":
+        return _hf_sources(ASMR_VAD_MODEL)
     if pack_id == "indextts2-checkpoints":
         checkpoints = home / "runtimes" / "index-tts" / "checkpoints"
         relative_root = "runtimes/index-tts/checkpoints"
@@ -137,7 +155,7 @@ def main() -> int:
         "packs",
         nargs="*",
         choices=tuple(PACKS),
-        help="留空时创建全部四个模型包。",
+        help="留空时创建全部模型包。",
     )
     parser.add_argument(
         "--output-dir",

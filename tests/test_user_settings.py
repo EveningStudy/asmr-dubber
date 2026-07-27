@@ -45,7 +45,7 @@ def test_settings_and_provider_keys_are_private_and_separate(
         assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
         assert stat.S_IMODE(secrets_path.stat().st_mode) == 0o600
         assert stat.S_IMODE(secrets_path.parent.stat().st_mode) == 0o700
-    assert "已在本地配置中保存" in api_key_status("openai")
+    assert "便携式明文保存在程序目录" in api_key_status("openai")
 
     clear_api_key("openai")
     assert saved_api_key("openai") == ""
@@ -99,7 +99,6 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
     assert project.translation_model == "claude-sonnet-5"
     assert project.tts_index_speaker_source == "sentence_reference"
     assert project.tts_index_emotion_source == "text"
-    assert project.tts_index_use_emo_text is True
 
 
 def test_default_relative_chinese_loudness_is_minus_four_db() -> None:
@@ -128,15 +127,25 @@ def test_model_backends_and_external_reference_are_copied_to_project(
     settings = UserSettings(
         asr_backend="faster_whisper",
         asr_model="large-v3",
-        tts_backend="qwen3_tts",
-        tts_model="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        tts_backend="gpt_sovits",
+        tts_model="GPT-SoVITS-v4",
         tts_reference_source="external",
         tts_external_reference_audio=str(stored_reference),
         tts_external_reference_text="参考テキストです。",
     )
     project = settings.to_project_settings()
     assert project.asr_backend == "faster_whisper"
-    assert project.tts_backend == "qwen3_tts"
+    assert project.tts_backend == "gpt_sovits"
     assert project.tts_reference_source == "external"
     assert Path(project.tts_external_reference_audio).is_file()
     assert stored_reference.parent == tmp_path / "config" / "references"
+
+
+def test_applying_global_defaults_preserves_project_reference_sentence() -> None:
+    from asmr_dubber.models import ProjectSettings
+
+    current = ProjectSettings(tts_reference_sentence_id="s000042")
+    updated = UserSettings(global_overlap_seconds=2.5).to_project_settings(current)
+
+    assert updated.tts_reference_sentence_id == "s000042"
+    assert updated.global_overlap_seconds == 2.5

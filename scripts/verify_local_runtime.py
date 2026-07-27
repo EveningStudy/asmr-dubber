@@ -22,14 +22,14 @@ def main() -> int:
         "imports": {},
     }
     failed = False
-    for name in ("torch", "torchaudio", "torchcodec", "qwen_asr", "voxcpm"):
+    for name in ("torch", "torchaudio", "transformers", "faster_whisper"):
         try:
             module = importlib.import_module(name)
             result["imports"][name] = {
                 "ok": True,
                 "version": getattr(module, "__version__", None),
             }
-        except Exception as exc:  # noqa: BLE001 - diagnostic script must report loader errors
+        except Exception as exc:
             failed = True
             result["imports"][name] = {
                 "ok": False,
@@ -43,7 +43,7 @@ def main() -> int:
             "runtime": torch.version.cuda,
             "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         }
-    except Exception:  # noqa: BLE001 - already captured above
+    except Exception:
         pass
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if failed else 0

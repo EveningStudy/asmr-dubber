@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
@@ -18,19 +18,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .constants import (
+    ASMR_VAD_MODEL,
     DEFAULT_ALIGNER_MODEL,
-    DEFAULT_ASR_MODEL,
-    DEFAULT_TTS_MODEL,
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
-    MODEL_REQUIRED_FILES,
-    MODEL_REVISIONS,
     OPTIONAL_ASR_MODEL_REVISIONS,
     PROJECT_ROOT,
 )
 from .environment import cached_model_path, cuda_summary
 from .errors import AsmrDubberError, EnvironmentError, InstallPausedError
-from .mirrors import mirror_candidates, snapshot_download_with_fallback
+from .mirrors import (
+    download_candidates,
+    external_downloads_allowed,
+    snapshot_download_with_fallback,
+)
 from .model_pack_download import (
     ModelPackDownloadError,
     ModelPackDownloadPaused,
@@ -39,6 +40,7 @@ from .model_pack_download import (
 from .model_packs import ModelPackError, import_discovered_model_packs
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS, ModelBackend
 from .platforms import current_platform, portable_home, runtime_executable_candidates
+from .storage import exclusive_file_lock
 
 
 @dataclass(frozen=True)
@@ -183,25 +185,13 @@ def _run_streaming_process(
 
 
 _IMPORTS: dict[str, tuple[str, ...]] = {
-    "qwen3_asr": ("qwen_asr",),
     "faster_whisper": ("faster_whisper",),
-    "openai_whisper": ("whisper",),
-    "whisperx": ("whisperx",),
-    "funasr": ("funasr",),
     "kotoba_whisper": ("transformers",),
-    "voxcpm2": ("voxcpm",),
-    "qwen3_tts": ("qwen_tts",),
-    "xtts_v2": ("TTS",),
 }
 
 _BACKEND_MODEL_REPOS: dict[str, tuple[str, ...]] = {
-    "qwen3_asr": (DEFAULT_ASR_MODEL, DEFAULT_ALIGNER_MODEL),
     "kotoba_whisper": ("kotoba-tech/kotoba-whisper-v2.2",),
-    "faster_whisper": (
-        "Systran/faster-whisper-large-v2",
-        "kotoba-tech/kotoba-whisper-v2.0-faster",
-    ),
-    "voxcpm2": (DEFAULT_TTS_MODEL,),
+    "faster_whisper": ("Systran/faster-whisper-large-v2",),
 }
 
 _PARAKEET_MODEL_FILES = {
@@ -247,8 +237,6 @@ ASR_REVIEW_MODEL_OPTIONS = (
         "faster_whisper",
         "kotoba-tech/kotoba-whisper-v2.0-faster",
     ),
-    ("Qwen3-ASR 1.7B", "qwen3_asr", "Qwen/Qwen3-ASR-1.7B"),
-    ("Qwen3-ASR 0.6B", "qwen3_asr", "Qwen/Qwen3-ASR-0.6B"),
     ("Faster-Whisper large-v2", "faster_whisper", "large-v2"),
     ("Faster-Whisper large-v3", "faster_whisper", "large-v3"),
 )
@@ -375,7 +363,8 @@ def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
         title = "质量优先（推荐）"
         detail = (
             "日语识别首选 Parakeet CTC 1.1B GAL；疑难音频可启用"
-            " Parakeet + Kotoba + Qwen 多模型校对。翻译用 DeepSeek，配音首选 IndexTTS2。"
+            " Parakeet + Kotoba + Faster-Whisper 多模型校对。翻译用 DeepSeek，"
+            "配音首选 IndexTTS2。"
         )
     elif profile.cuda_available and vram >= 8:
         title = "显存均衡"
@@ -392,8 +381,8 @@ def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
     else:
         title = "CPU / 无 NVIDIA"
         detail = (
-            "Parakeet CTC 1.1B GAL（CPU F16）、Faster-Whisper（cpu + int8）或云端 ASR / "
-            "DeepSeek / 外部 HTTP TTS。"
+            "Parakeet CTC 1.1B GAL（CPU F16）或 Faster-Whisper（cpu + int8）/ "
+            "DeepSeek / 外部 TTS（语音合成）API。"
             "质量优先的本地克隆模型通常需要 NVIDIA GPU。"
         )
     return f"### 本机建议：{title}\n{detail}"
@@ -402,18 +391,6 @@ def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
 def _imports_available(backend_id: str) -> bool:
     modules = _IMPORTS.get(backend_id, ())
     return bool(modules) and all(importlib.util.find_spec(module) is not None for module in modules)
-
-
-def _builtin_models_complete(backend_id: str) -> bool:
-    if backend_id == "qwen3_asr":
-        model_ids: Iterable[str] = tuple(MODEL_REVISIONS)[:2]
-    elif backend_id == "voxcpm2":
-        model_ids = tuple(MODEL_REVISIONS)[2:]
-    else:
-        return True
-    return all(
-        model_id in MODEL_REQUIRED_FILES and cached_model_path(model_id) for model_id in model_ids
-    )
 
 
 def backend_status(
@@ -499,8 +476,6 @@ def backend_status(
                 "运行库可用，推荐模型待下载",
                 "点击安装/修复：" + "、".join(missing_models),
             )
-    if backend.runtime == "builtin" and not _builtin_models_complete(backend.id):
-        return BackendStatus("broken", "模型未下载完整")
     return BackendStatus("ready", "可用")
 
 
@@ -509,12 +484,16 @@ def _local_huggingface_snapshot(model_id: str) -> Path | None:
     pinned = cached_model_path(model_id)
     if pinned is not None:
         return pinned
+    revision = OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+    if revision is None:
+        return None
     try:
         from huggingface_hub import snapshot_download
 
         snapshot = Path(
             snapshot_download(
                 repo_id=model_id,
+                revision=revision,
                 local_files_only=True,
             )
         ).resolve()
@@ -531,11 +510,6 @@ def _local_huggingface_snapshot(model_id: str) -> Path | None:
     if not any(next(snapshot.glob(pattern), None) for pattern in weight_patterns):
         return None
     return snapshot
-
-
-def _openai_whisper_model_file(model_id: str) -> Path:
-    cache_root = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")).expanduser()
-    return cache_root / "whisper" / f"{model_id}.pt"
 
 
 def backend_model_status(
@@ -569,9 +543,9 @@ def backend_model_status(
         return overall
 
     repository: str | None = None
-    if backend.id in {"faster_whisper", "whisperx"}:
+    if backend.id == "faster_whisper":
         repository = _FASTER_WHISPER_REPOS.get(model_id, model_id if "/" in model_id else None)
-    elif backend.id in {"kotoba_whisper", "qwen3_asr", "voxcpm2", "qwen3_tts"}:
+    elif backend.id == "kotoba_whisper":
         repository = model_id if "/" in model_id else None
     if repository is not None:
         path = _local_huggingface_snapshot(repository)
@@ -579,14 +553,6 @@ def backend_model_status(
             BackendStatus("ready", "可用", str(path))
             if path is not None
             else BackendStatus("missing", "模型未下载")
-        )
-
-    if backend.id == "openai_whisper":
-        path = _openai_whisper_model_file(model_id)
-        return (
-            BackendStatus("ready", "可用", str(path))
-            if path.is_file()
-            else BackendStatus("missing", "模型未下载", str(path))
         )
 
     if overall.state == "ready":
@@ -599,7 +565,7 @@ def available_backend_models_markdown(
     settings: Any | None = None,
 ) -> str:
     registry = ASR_BACKENDS if kind == "asr" else TTS_BACKENDS
-    title = "ASR" if kind == "asr" else "TTS"
+    title = "ASR（语音识别）" if kind == "asr" else "TTS（语音合成）"
     lines = [f"**本机 {title} 可用状态（只读检测）**"]
     for backend in registry.values():
         statuses = [
@@ -640,6 +606,46 @@ def available_asr_review_choices(settings: Any | None = None) -> list[tuple[str,
     return choices
 
 
+def asmr_vad_status() -> BackendStatus:
+    """Report whether the standalone ASMR VAD can run entirely offline."""
+
+    if cached_model_path(ASMR_VAD_MODEL) is None:
+        return BackendStatus("missing", "模型未下载")
+    missing = [
+        module
+        for module in ("onnxruntime", "transformers")
+        if importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        return BackendStatus("broken", "运行依赖未安装", "、".join(missing))
+    return BackendStatus("ready", "可用", ASMR_VAD_MODEL)
+
+
+def forced_aligner_status() -> BackendStatus:
+    """Report whether the pinned standalone Qwen timestamp aligner is usable."""
+
+    if cached_model_path(DEFAULT_ALIGNER_MODEL) is None:
+        return BackendStatus("missing", "模型未下载")
+    if importlib.util.find_spec("qwen_asr") is None:
+        return BackendStatus("broken", "运行依赖未安装", "qwen-asr")
+    return BackendStatus("ready", "可用", DEFAULT_ALIGNER_MODEL)
+
+
+def available_timestamp_review_choices(settings: Any | None = None) -> list[tuple[str, str]]:
+    """Return locally usable time-boundary sources, including the standalone aligner."""
+
+    choices = available_asr_review_choices(settings)
+    if forced_aligner_status().state == "ready":
+        choices.insert(
+            0,
+            (
+                "Qwen3 ForcedAligner 0.6B（阿里 · 独立时间戳对齐）",
+                f"qwen_forced_aligner|{DEFAULT_ALIGNER_MODEL}",
+            ),
+        )
+    return choices
+
+
 def compatibility_note(backend: ModelBackend, profile: HardwareProfile) -> str:
     if profile.platform_id not in backend.platforms:
         return "不兼容"
@@ -667,11 +673,11 @@ def backend_catalog_rows(
     profile = detect_hardware()
     rows: list[list[str]] = []
     registries = (
-        (("ASR", ASR_BACKENDS),)
+        (("ASR（语音识别）", ASR_BACKENDS),)
         if kind == "asr"
-        else (("TTS", TTS_BACKENDS),)
+        else (("TTS（语音合成）", TTS_BACKENDS),)
         if kind == "tts"
-        else (("ASR", ASR_BACKENDS), ("TTS", TTS_BACKENDS))
+        else (("ASR（语音识别）", ASR_BACKENDS), ("TTS（语音合成）", TTS_BACKENDS))
     )
     for kind_label, registry in registries:
         for backend in registry.values():
@@ -804,7 +810,10 @@ def import_backend_model_packs(
             raise InstallPausedError(str(exc)) from exc
         except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
             if log_callback is not None:
-                log_callback(f"远程模型包不可用，将继续使用原始下载源：{exc}")
+                if external_downloads_allowed():
+                    log_callback(f"ModelScope 模型包不可用；已允许海外源，将尝试备用源：{exc}")
+                else:
+                    log_callback(f"ModelScope 模型包不可用；断点已保留且不会切换海外源：{exc}")
     try:
         results = import_discovered_model_packs(
             pack_ids=pack_ids,
@@ -915,6 +924,12 @@ def download_backend_models(
     model_ids = _BACKEND_MODEL_REPOS.get(backend_id, ())
     if not model_ids:
         return "该后端在首次使用时由其官方运行库管理模型，无需预下载。"
+    if any(cached_model_path(model_id) is None for model_id in model_ids):
+        import_backend_model_packs(
+            backend_id,
+            log_callback=log_callback,
+            cancel_event=cancel_event,
+        )
     try:
         from .user_settings import load_user_settings
 
@@ -931,7 +946,7 @@ def download_backend_models(
     for index, model_id in enumerate(model_ids, start=1):
         if cancel_event is not None and cancel_event.is_set():
             raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-        revision = MODEL_REVISIONS.get(model_id) or OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
+        revision = OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
         if revision is None:
             raise EnvironmentError(f"模型 {model_id} 没有经过验证的固定版本。")
         path = cached_model_path(model_id)
@@ -951,7 +966,7 @@ def download_backend_models(
                     preferred_endpoint=endpoint,
                     max_workers=4,
                 )
-            except Exception as exc:  # noqa: BLE001 - normalize provider/network failures
+            except Exception as exc:
                 mirror = f"（当前端点：{endpoint}）" if endpoint else ""
                 raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}") from exc
             path = cached_model_path(model_id)
@@ -1000,7 +1015,7 @@ def _download_backend_models_subprocess(
     return completed.stdout.strip()
 
 
-def install_backend(
+def _install_backend_unlocked(
     backend_id: str,
     *,
     progress: Any | None = None,
@@ -1097,12 +1112,8 @@ def install_backend(
                 cancel_event=cancel_event,
             )
         elif current_platform().is_windows and backend_id in {
-            "qwen3_asr",
             "faster_whisper",
             "kotoba_whisper",
-            "openai_whisper",
-            "funasr",
-            "voxcpm2",
         }:
             completed = _install_windows_backend(
                 backend_id,
@@ -1113,7 +1124,7 @@ def install_backend(
             )
         else:
             attempts: list[str] = []
-            for index_url in mirror_candidates("pypi_indexes", preferred=pypi_index):
+            for index_url in download_candidates("pypi_indexes", preferred=pypi_index):
                 if log_callback is not None:
                     log_callback(f"使用 Python 软件源：{index_url}")
                 command = [
@@ -1182,3 +1193,26 @@ def install_backend(
     if log_callback is not None:
         log_callback(f"{spec.label} 安装完成。")
     return result
+
+
+def install_backend(
+    backend_id: str,
+    *,
+    progress: Any | None = None,
+    timeout_seconds: float = 3600,
+    log_callback: InstallLogCallback | None = None,
+    force: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    """Install one backend while excluding every inference/install process."""
+
+    lock_path = portable_home() / ".runtime-install.lock"
+    with exclusive_file_lock(lock_path, timeout_seconds=30.0):
+        return _install_backend_unlocked(
+            backend_id,
+            progress=progress,
+            timeout_seconds=timeout_seconds,
+            log_callback=log_callback,
+            force=force,
+            cancel_event=cancel_event,
+        )

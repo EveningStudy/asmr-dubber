@@ -51,3 +51,21 @@ def test_evidence_time_uses_median_across_models() -> None:
 
     assert start == 10.0
     assert end == 12.0
+
+
+def test_evidence_time_honors_timestamp_priority_source() -> None:
+    primary = [_sentence("p1", 10.0, 12.0, "こんにちは")]
+    alternative = [_sentence("a1", 10.4, 11.7, "こんにちは")]
+    window = _build_windows(
+        [("primary", primary), ("time-priority", alternative)],
+        max_drift_seconds=1.0,
+    )[0]
+
+    start, end = _evidence_range(
+        window,
+        [window.evidence[0].id],
+        "time-priority",
+    )
+
+    assert start == 10.4
+    assert end == 11.7

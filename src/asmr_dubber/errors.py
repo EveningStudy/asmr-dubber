@@ -14,6 +14,10 @@ class ProjectError(AsmrDubberError):
     """A project manifest is missing or inconsistent."""
 
 
+class ProjectConflictError(ProjectError):
+    """Another process saved the same project after it was loaded."""
+
+
 class TranslationError(AsmrDubberError):
     """The selected translation service did not return usable translations."""
 

@@ -5,15 +5,14 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .audio import extract_reference, sha256_file
+from .audio import extract_reference
 from .errors import SynthesisError
 from .filtering import is_japanese_filler_only
+from .hashing import cached_sha256_file
 from .models import DubProject, Sentence
 
 STABLE_CLONE_MODES = {
-    "stable_hifi",
     "stable_reference",
-    "stable_voice_sentence_style",
 }
 
 
@@ -72,7 +71,7 @@ def reference_plan_hash(project: DubProject) -> str:
             raise SynthesisError(f"找不到设置中的外部参考音频：{path}")
         payload = {
             "source": "external",
-            "sha256": sha256_file(path),
+            "sha256": cached_sha256_file(path),
             "text": project.settings.tts_external_reference_text,
         }
     else:
@@ -148,7 +147,7 @@ def _index_external_reference(path_text: str, *, role: str) -> VoiceReference:
     path = Path(path_text).expanduser().resolve()
     if not path.is_file():
         raise SynthesisError(f"找不到 IndexTTS2 外部{role}参考音频：{path}")
-    identity = sha256_file(path)
+    identity = cached_sha256_file(path)
     return VoiceReference(
         path=path,
         text="",

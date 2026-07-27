@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parents[1]
 
@@ -10,14 +16,49 @@ def _between(text: str, start: str, end: str) -> str:
     return text.split(start, 1)[1].split(end, 1)[0]
 
 
-def test_windows_setup_exposes_four_monotonic_profiles() -> None:
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell behavior")
+def test_windows_downloader_reuses_verified_destination_without_network(tmp_path: Path) -> None:
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    assert powershell is not None
+    destination = tmp_path / "complete.zip"
+    partial = Path(f"{destination}.partial")
+    destination.write_bytes(b"already complete")
+    partial.write_bytes(b"stale partial")
+    expected = hashlib.sha256(destination.read_bytes()).hexdigest()
+
+    def quote(value: Path) -> str:
+        return str(value).replace("'", "''")
+
+    script = f"""
+$ErrorActionPreference = "Stop"
+. '{quote(ROOT / "scripts/mirrors.ps1")}'
+function Get-ASMRDubberGitHubUrls {{ throw "network candidate resolution was reached" }}
+$result = Invoke-ASMRDubberDownload `
+    -Configuration ([pscustomobject]@{{}}) `
+    -Url "https://invalid.example.test/complete.zip" `
+    -Destination '{quote(destination)}' `
+    -Sha256 "{expected}" `
+    -Resume
+if (-not $result.StartsWith("existing:")) {{ throw "existing file was not reused" }}
+"""
+    subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        check=True,
+        capture_output=True,
+    )
+
+    assert destination.read_bytes() == b"already complete"
+    assert not partial.exists()
+
+
+def test_windows_setup_exposes_three_chinese_monotonic_profiles() -> None:
     setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
 
-    assert '[ValidateSet("Core", "Recommended", "Advanced", "Full")]' in setup
+    assert '"基础", "推荐", "进阶", "Core", "Recommended", "Advanced"' in setup
+    assert '"Full"' not in setup
     profile_switch = setup.split("$Extra = switch ($Profile)", 1)[1]
-    recommended = _between(profile_switch, '"Recommended" {', '"Advanced" {')
-    advanced = _between(profile_switch, '"Advanced" {', '"Full" {')
-    full = _between(profile_switch, '"Full" {', "\n}\n\nif ($InstallDefaultModels")
+    recommended = _between(profile_switch, '"推荐" {', '"进阶" {')
+    advanced = _between(profile_switch, '"进阶" {', "\n}\n\n$RecommendedDependenciesReady")
 
     assert "$InstallParakeet = $true" in recommended
     assert "$InstallRecommendedTTS = -not $SkipRecommendedTTS" in recommended
@@ -28,12 +69,8 @@ def test_windows_setup_exposes_four_monotonic_profiles() -> None:
     assert "$InstallRecommendedTTS = -not $SkipRecommendedTTS" in advanced
     assert "asr-faster-whisper" in advanced
     assert "asr-kotoba-whisper" in advanced
-
-    assert "$InstallAdvancedModels = $true" in full
-    assert "$InstallDefaultModels = $true" in full
-    assert "local-default" in full
-    assert "asr-openai-whisper" in full
-    assert "asr-funasr" in full
+    assert "asr-forced-aligner" in advanced
+    assert "asr-asmr-vad" in advanced
 
     cuda_block = setup.split("if ($InstallAdvancedModels -and $NvidiaSmi)", 1)[1]
     cuda_block = cuda_block.split('Write-Host "正在安装应用依赖', 1)[0]
@@ -41,14 +78,14 @@ def test_windows_setup_exposes_four_monotonic_profiles() -> None:
     assert '"torchaudio==2.11.0+cu130"' in cuda_block
 
 
-def test_linux_setup_exposes_same_four_profiles() -> None:
+def test_linux_setup_exposes_same_three_chinese_profiles() -> None:
     setup = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
 
-    assert "Core|Recommended|Advanced|Full" in setup
+    assert "基础|推荐|进阶" in setup
+    assert "Full)" not in setup
     profile_switch = setup.split("INSTALL_PARAKEET=0", 1)[1]
-    recommended = _between(profile_switch, "  Recommended)\n", "  Advanced)\n")
-    advanced = _between(profile_switch, "  Advanced)\n", "  Full)\n")
-    full = _between(profile_switch, "  Full)\n", "esac")
+    recommended = _between(profile_switch, "  推荐)\n", "  进阶)\n")
+    advanced = _between(profile_switch, "  进阶)\n", "esac")
 
     assert "INSTALL_PARAKEET=1" in recommended
     assert "INSTALL_RECOMMENDED_TTS=1" in recommended
@@ -59,12 +96,8 @@ def test_linux_setup_exposes_same_four_profiles() -> None:
     assert "INSTALL_RECOMMENDED_TTS=1" in advanced
     assert "asr-faster-whisper" in advanced
     assert "asr-kotoba-whisper" in advanced
-
-    assert "INSTALL_ADVANCED_MODELS=1" in full
-    assert "INSTALL_DEFAULT_MODELS=1" in full
-    assert "local-default" in full
-    assert "asr-openai-whisper" in full
-    assert "asr-funasr" in full
+    assert "asr-forced-aligner" in advanced
+    assert "asr-asmr-vad" in advanced
 
 
 def test_model_packs_are_imported_before_profile_downloads() -> None:
@@ -72,8 +105,8 @@ def test_model_packs_are_imported_before_profile_downloads() -> None:
     linux = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
 
     for setup, advanced_download in (
-        (windows, 'download-models", "--backend", "advanced-asr"'),
-        (linux, "download-models --backend advanced-asr"),
+        (windows, 'download-models", "--backend", "进阶语音识别"'),
+        (linux, "download-models --backend 进阶语音识别"),
     ):
         import_position = setup.index("import-model-packs")
         advanced_position = setup.index(advanced_download)
@@ -87,10 +120,10 @@ def test_setup_imports_only_model_packs_belonging_to_the_selected_tier() -> None
     windows_packs = windows.split("$LocalPackIds = switch ($Profile)", 1)[1]
     windows_recommended = _between(
         windows_packs,
-        '"Recommended" {',
-        '"Advanced" {',
+        '"推荐" {',
+        '"进阶" {',
     )
-    windows_advanced = _between(windows_packs, '"Advanced" {', '"Full" {')
+    windows_advanced = _between(windows_packs, '"进阶" {', "\n    }\n}")
     assert "parakeet-ja-windows" in windows_recommended
     assert "indextts2-checkpoints" in windows_recommended
     assert "kotoba-whisper-v2.2" not in windows_recommended
@@ -98,10 +131,12 @@ def test_setup_imports_only_model_packs_belonging_to_the_selected_tier() -> None
     assert "indextts2-checkpoints" in windows_advanced
     assert "kotoba-whisper-v2.2" in windows_advanced
     assert "faster-whisper-large-v2" in windows_advanced
+    assert "qwen3-forced-aligner" in windows_advanced
+    assert "whisper-vad-asmr-onnx" in windows_advanced
 
     linux_packs = linux.split("PACK_ARGUMENTS=(import-model-packs --all)", 1)[1]
-    linux_recommended = _between(linux_packs, "    Recommended)\n", "    Advanced)\n")
-    linux_advanced = _between(linux_packs, "    Advanced)\n", "  esac")
+    linux_recommended = _between(linux_packs, "    推荐)\n", "    进阶)\n")
+    linux_advanced = _between(linux_packs, "    进阶)\n", "  esac")
     assert "--pack-id parakeet-ja-linux" in linux_recommended
     assert "--pack-id indextts2-checkpoints" in linux_recommended
     assert "--pack-id kotoba-whisper-v2.2" not in linux_recommended
@@ -109,6 +144,8 @@ def test_setup_imports_only_model_packs_belonging_to_the_selected_tier() -> None
     assert "--pack-id indextts2-checkpoints" in linux_advanced
     assert "--pack-id kotoba-whisper-v2.2" in linux_advanced
     assert "--pack-id faster-whisper-large-v2" in linux_advanced
+    assert "--pack-id qwen3-forced-aligner" in linux_advanced
+    assert "--pack-id whisper-vad-asmr-onnx" in linux_advanced
 
 
 def test_indextts_installers_reuse_complete_checkpoints_before_download() -> None:
@@ -187,9 +224,7 @@ def test_windows_recommended_dependency_pack_builder_has_expected_components() -
 
 
 def test_windows_recommended_portable_builder_uses_verified_complete_payloads() -> None:
-    builder = (ROOT / "scripts/windows/create-recommended-portable.ps1").read_text(
-        encoding="utf-8"
-    )
+    builder = (ROOT / "scripts/windows/create-recommended-portable.ps1").read_text(encoding="utf-8")
     for component in (
         "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip",
         "ASMR-Dubber-ModelPack-parakeet-ja-windows-v0.2.1.zip",
@@ -204,25 +239,63 @@ def test_windows_recommended_portable_builder_uses_verified_complete_payloads() 
 def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
     source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
 
-    assert 'if (input == "1") return "Core";' in source
-    assert 'if (input == "" || input == "2") return "Recommended";' in source
-    assert 'if (input == "3") return "Advanced";' in source
-    assert 'if (input == "4") return "Full";' in source
-    for estimate in ("约 2 GB", "约 24–28 GB", "约 30–35 GB", "约 42–48 GB"):
+    assert 'if (input == "1") return "基础";' in source
+    assert 'if (input == "" || input == "2") return "推荐";' in source
+    assert 'if (input == "3") return "进阶";' in source
+    assert 'input == "4"' not in source
+    for estimate in ("约 2 GB", "约 24–28 GB", "约 33–39 GB"):
         assert estimate in source
+    for model in (
+        "Parakeet CTC 1.1B JA GAL",
+        "Parakeet TDT/CTC 0.6B JA",
+        "Kotoba-Whisper v2.2",
+        "Faster-Whisper large-v2",
+        "日语 ASMR 专用 Whisper VAD ONNX",
+        "Qwen3 ForcedAligner 0.6B",
+        "IndexTTS2 checkpoints",
+    ):
+        assert model in source
 
 
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.3.4.0")' in source
-        assert 'AssemblyFileVersion("0.3.4.0")' in source
+        assert 'AssemblyVersion("0.4.0.0")' in source
+        assert 'AssemblyFileVersion("0.4.0.0")' in source
+
+
+def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:
+    source = (ROOT / "launcher/windows/ASMRDubberLauncher.cs").read_text(encoding="utf-8")
+
+    assert "ProjectPathHash(root)" in source
+    assert "FindAvailablePort(7860, 100)" in source
+    assert 'ProductMarker = "asmr-dubber-product-marker"' in source
+    assert "body.IndexOf(ProductMarker" in source
+
+
+def test_advanced_dependency_pack_and_analysis_model_packs_are_reused() -> None:
+    mirrors = json.loads((ROOT / "mirrors.json").read_text(encoding="utf-8"))
+
+    assert mirrors["modelscope_artifacts"]["windows_advanced_dependency_archives"] == [
+        "https://modelscope.cn/models/EveningStudyW/"
+        "ASMR-Dubber-Windows-Advanced/resolve/master/"
+        "ASMR-Dubber-Windows-Advanced-Dependencies-v1.0.0.zip"
+    ]
+    assert "qwen3-forced-aligner" in mirrors["model_pack_sources"]
+    assert "whisper-vad-asmr-onnx" in mirrors["model_pack_sources"]
+
+    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
+    dependencies = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "Import-ASMRDubberAdvancedDependencies" in setup
+    assert "qwen_asr" in dependencies
+    assert "onnxruntime" in dependencies
+    assert "bafd2268de9a83bbf391ba8918d1798d24f703b023af70e8f623b2dbffc9a178" in (dependencies)
 
 
 def test_windows_powershell_scripts_are_compatible_with_legacy_utf8_detection() -> None:
-    scripts = sorted((ROOT / "scripts").rglob("*.ps1")) + sorted(
-        (ROOT / "launcher").rglob("*.ps1")
-    )
+    scripts = sorted((ROOT / "scripts").rglob("*.ps1")) + sorted((ROOT / "launcher").rglob("*.ps1"))
     assert scripts
     for script in scripts:
         assert script.read_bytes().startswith(b"\xef\xbb\xbf"), script

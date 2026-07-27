@@ -23,7 +23,7 @@ MODEL_PACK_SCHEMA_VERSION = 1
 MODEL_PACK_MANIFEST = "model-pack.json"
 MODEL_PACK_PAYLOAD_PREFIX = "payload/"
 MODEL_PACK_DIRECTORY_NAME = "model-packs"
-WINDOWS_DEPENDENCY_PACK_PREFIX = "asmr-dubber-windows-recommended-dependencies-v"
+WINDOWS_DEPENDENCY_PACK_PREFIXES = ("asmr-dubber-windows-recommended-dependencies-v",)
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_FILE_COUNT = 100_000
 MAX_UNCOMPRESSED_BYTES = 100 * 1024**3
@@ -232,7 +232,10 @@ def _manifest_from_mapping(value: Any) -> ModelPackManifest:
     for item in files:
         if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
             raise ModelPackError("每个 files 项必须且只能包含 path、size、sha256。")
-        path = str(_safe_relative_path(item.get("path")))
+        raw_path = item.get("path")
+        if not isinstance(raw_path, str):
+            raise ModelPackError("模型包文件路径必须是字符串。")
+        path = str(_safe_relative_path(raw_path))
         folded = path.casefold()
         if folded in seen_paths:
             raise ModelPackError(f"模型包包含重复文件路径：{path}")
@@ -352,7 +355,7 @@ def discover_model_packs(directory: Path | None = None) -> list[ModelPackInspect
         # This archive shares the user-facing inbox so Setup can install it
         # without another download, but it has a separate manifest and importer.
         # Do not misreport it as a corrupt offline model pack.
-        and not archive.name.casefold().startswith(WINDOWS_DEPENDENCY_PACK_PREFIX)
+        and not archive.name.casefold().startswith(WINDOWS_DEPENDENCY_PACK_PREFIXES)
     ]
 
 
@@ -386,6 +389,13 @@ def _hash_file(path: Path) -> str:
         while block := handle.read(8 * 1024 * 1024):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _temporary_model_path(destination: Path) -> Path:
+    """Use a short, deterministic leaf name to stay below legacy Win32 limits."""
+
+    token = hashlib.sha256(str(destination).encode("utf-8")).hexdigest()[:12]
+    return destination.parent / f".mp-{os.getpid()}-{token}.tmp"
 
 
 def _target_path(home: Path, relative: str) -> Path:
@@ -549,7 +559,7 @@ def import_model_pack(
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
             _target_path(target_home, file.path)
-            temporary = destination.with_name(f".{destination.name}.model-pack-{os.getpid()}.tmp")
+            temporary = _temporary_model_path(destination)
             temporary.unlink(missing_ok=True)
             try:
                 info = members[MODEL_PACK_PAYLOAD_PREFIX + file.path]

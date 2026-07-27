@@ -4,12 +4,13 @@ import base64
 import gc
 import json
 import queue
-import shutil
 import subprocess
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +45,11 @@ def _selected_sentences(project: DubProject, sentence_ids: Iterable[str] | None)
 
 def _validate_output(path: Path) -> tuple[int, int]:
     if not path.is_file():
-        raise SynthesisError(f"TTS 没有生成输出文件：{path}")
+        raise SynthesisError(f"TTS（语音合成）没有生成输出文件：{path}")
     try:
         info = sf.info(path)
         if info.frames <= 0 or info.samplerate <= 0:
-            raise SynthesisError("TTS 输出为空或采样率无效。")
+            raise SynthesisError("TTS（语音合成）输出为空或采样率无效。")
         if info.channels == 1 and info.format in {"WAV", "RF64"} and info.subtype == "FLOAT":
             # Most local backends already emit the mixer's canonical format.
             # Validate it in bounded blocks without reading and rewriting the
@@ -59,16 +60,16 @@ def _validate_output(path: Path) -> tuple[int, int]:
                     if block.size == 0:
                         break
                     if not np.isfinite(block).all():
-                        raise SynthesisError("TTS 输出包含无效采样。")
+                        raise SynthesisError("TTS（语音合成）输出包含无效采样。")
             return int(info.frames), int(info.samplerate)
         waveform, sample_rate = sf.read(path, dtype="float32", always_2d=True)
     except Exception as exc:
         if isinstance(exc, SynthesisError):
             raise
-        raise SynthesisError(f"TTS 输出不是可读取的音频：{path}: {exc}") from exc
+        raise SynthesisError(f"TTS（语音合成）输出不是可读取的音频：{path}: {exc}") from exc
     if waveform.size == 0 or sample_rate <= 0 or not np.isfinite(waveform).all():
-        raise SynthesisError("TTS 输出为空或包含无效采样。")
-    mono = np.mean(waveform, axis=1, dtype=np.float32)
+        raise SynthesisError("TTS（语音合成）输出为空或包含无效采样。")
+    mono = np.asarray(np.mean(waveform, axis=1, dtype=np.float32), dtype=np.float32)
     # Generated audio is canonicalized for the mixer; no loudness normalization is applied here.
     sf.write(path, mono, sample_rate, format="WAV", subtype="FLOAT")
     return int(mono.size), int(sample_rate)
@@ -77,75 +78,10 @@ def _validate_output(path: Path) -> tuple[int, int]:
 def _require_reference_text(project: DubProject, reference: VoiceReference) -> None:
     spec = TTS_BACKENDS[project.settings.tts_backend]
     if spec.reference_text == "required" and not reference.text.strip():
-        if project.settings.tts_backend == "qwen3_tts" and project.settings.tts_qwen_x_vector_only:
-            return
         raise SynthesisError(
             f"{spec.label} 的高质量克隆需要参考音频对应文本。"
-            "请在设置 → TTS → 外部参考文本中填写，或改用项目内参考句。"
+            "请在设置 → TTS（语音合成）→ 外部参考文本中填写，或改用项目内参考句。"
         )
-
-
-def _load_qwen3(project: DubProject) -> tuple[Any, Callable[[], None]]:
-    try:
-        import torch
-        from qwen_tts import Qwen3TTSModel
-    except ImportError as exc:
-        raise SynthesisError("Qwen3-TTS 未安装；建议按设置页说明使用独立环境安装。") from exc
-    dtype = torch.bfloat16 if project.settings.tts_device.startswith("cuda") else torch.float32
-    model = Qwen3TTSModel.from_pretrained(
-        project.settings.tts_model,
-        device_map="cuda:0" if project.settings.tts_device.startswith("cuda") else "cpu",
-        dtype=dtype,
-    )
-    clone_prompts: dict[tuple[str, str, bool], Any] = {}
-
-    def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
-        reference_key = (
-            str(reference.path.resolve()),
-            reference.text,
-            project.settings.tts_qwen_x_vector_only,
-        )
-        kwargs: dict[str, Any] = {
-            "text": sentence.zh_text,
-            "language": "Chinese",
-            "temperature": project.settings.tts_temperature,
-            "top_p": project.settings.tts_top_p,
-        }
-        create_prompt = getattr(model, "create_voice_clone_prompt", None)
-        if callable(create_prompt):
-            # The official API documents this object as reusable across
-            # generations.  Stable-reference projects now encode the voice
-            # prompt once instead of repeating the same work for every line.
-            if reference_key not in clone_prompts:
-                clone_prompts[reference_key] = create_prompt(
-                    ref_audio=str(reference.path),
-                    ref_text=reference.text or None,
-                    x_vector_only_mode=project.settings.tts_qwen_x_vector_only,
-                )
-            kwargs["voice_clone_prompt"] = clone_prompts[reference_key]
-        else:
-            # Compatibility fallback for older qwen-tts releases.
-            kwargs.update(
-                ref_audio=str(reference.path),
-                ref_text=reference.text or None,
-                x_vector_only_mode=project.settings.tts_qwen_x_vector_only,
-            )
-        instruction = project.settings.tts_control_instruction.strip()
-        if instruction:
-            kwargs["instruct"] = instruction
-        wavs, sample_rate = model.generate_voice_clone(**kwargs)
-        waveform = np.asarray(wavs[0], dtype=np.float32).squeeze()
-        sf.write(output, waveform, int(sample_rate), format="WAV", subtype="FLOAT")
-
-    def cleanup() -> None:
-        nonlocal model
-        clone_prompts.clear()
-        del model
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    return run, cleanup
 
 
 def _load_indextts(project: DubProject) -> tuple[Any, Callable[[], None]]:
@@ -396,30 +332,6 @@ def _synthesize_indextts_cli_batch(
     return failures
 
 
-def _load_xtts(project: DubProject) -> tuple[Any, Callable[[], None]]:
-    try:
-        from TTS.api import TTS
-    except ImportError as exc:
-        raise SynthesisError("Coqui TTS/XTTS-v2 未安装；请使用其兼容独立环境。") from exc
-    model = TTS(project.settings.tts_model).to(project.settings.tts_device)
-
-    def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
-        model.tts_to_file(
-            text=sentence.zh_text,
-            speaker_wav=str(reference.path),
-            language="zh-cn",
-            file_path=str(output),
-            speed=project.settings.tts_speed,
-        )
-
-    def cleanup() -> None:
-        nonlocal model
-        del model
-        gc.collect()
-
-    return run, cleanup
-
-
 def _gpt_sovits_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
@@ -480,50 +392,6 @@ def _cosyvoice_runner(
     return run, client.close
 
 
-def _f5_runner(project: DubProject) -> Callable[[Sentence, VoiceReference, Path], None]:
-    executable = project.settings.tts_executable.strip()
-    resolved = shutil.which(executable) if "/" not in executable else executable
-    if not resolved or not Path(resolved).is_file():
-        raise SynthesisError(f"找不到 F5-TTS CLI：{executable}")
-
-    def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
-        command = [
-            str(resolved),
-            "--model",
-            project.settings.tts_model,
-            "--ref_audio",
-            str(reference.path),
-            "--ref_text",
-            reference.text,
-            "--gen_text",
-            sentence.zh_text,
-            "--output_dir",
-            str(output.parent),
-            "--output_file",
-            output.name,
-            "--nfe_step",
-            str(project.settings.tts_f5_nfe_steps),
-            "--cfg_strength",
-            str(project.settings.tts_f5_cfg_strength),
-            "--speed",
-            str(project.settings.tts_speed),
-            "--device",
-            project.settings.tts_device,
-        ]
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=project.settings.tts_timeout_seconds,
-            check=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout)[-1500:]
-            raise SynthesisError(f"F5-TTS CLI 失败（{completed.returncode}）：{detail}")
-
-    return run
-
-
 def _fish_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
@@ -535,13 +403,15 @@ def _fish_runner(
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     client = httpx.Client(headers=headers, timeout=project.settings.tts_timeout_seconds)
     reference_payloads: dict[tuple[str, str], str] = {}
+    payload_lock = threading.Lock()
 
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         reference_key = (str(reference.path.resolve()), reference.text)
-        encoded_reference = reference_payloads.get(reference_key)
-        if encoded_reference is None:
-            encoded_reference = base64.b64encode(reference.path.read_bytes()).decode("ascii")
-            reference_payloads[reference_key] = encoded_reference
+        with payload_lock:
+            encoded_reference = reference_payloads.get(reference_key)
+            if encoded_reference is None:
+                encoded_reference = base64.b64encode(reference.path.read_bytes()).decode("ascii")
+                reference_payloads[reference_key] = encoded_reference
         payload = {
             "text": sentence.zh_text,
             "format": "wav",
@@ -567,21 +437,15 @@ def _fish_runner(
 
 def _runner(project: DubProject) -> tuple[Any, Callable[[], None]]:
     backend = project.settings.tts_backend
-    if backend == "qwen3_tts":
-        return _load_qwen3(project)
     if backend == "indextts2":
         return _load_indextts(project)
-    if backend == "xtts_v2":
-        return _load_xtts(project)
     if backend == "gpt_sovits":
         return _gpt_sovits_runner(project)
     if backend == "cosyvoice":
         return _cosyvoice_runner(project)
-    if backend == "f5_tts":
-        return _f5_runner(project), lambda: None
     if backend == "fish_speech":
         return _fish_runner(project)
-    raise SynthesisError(f"未知 TTS 模型后端：{backend}")
+    raise SynthesisError(f"未知 TTS（语音合成）模型后端：{backend}")
 
 
 def synthesize_with_selected_backend(
@@ -595,11 +459,11 @@ def synthesize_with_selected_backend(
 ) -> list[str]:
     spec = TTS_BACKENDS.get(project.settings.tts_backend)
     if spec is None:
-        raise SynthesisError(f"未知 TTS 模型后端：{project.settings.tts_backend}")
+        raise SynthesisError(f"未知 TTS（语音合成）模型后端：{project.settings.tts_backend}")
     if project.settings.tts_clone_mode not in spec.clone_modes:
         raise SynthesisError(
             f"{spec.label} 不支持参考策略 {project.settings.tts_clone_mode}；"
-            "请在设置 → TTS 中选择该后端提供的模式。"
+            "请在设置 → TTS（语音合成）中选择该后端提供的模式。"
         )
     selected = _selected_sentences(project, sentence_ids)
     if not selected:
@@ -635,6 +499,73 @@ def synthesize_with_selected_backend(
         progress(f"加载 {spec.label}", 0, len(pending))
     run, cleanup = _runner(project)
     failures: list[str] = []
+    if spec.runtime == "http":
+        prepared: list[tuple[Sentence, VoiceReference, Path]] = []
+        completed_count = 0
+        for sentence in pending:
+            try:
+                reference = prepare_voice_reference(project, project_dir, source, sentence)
+                _require_reference_text(project, reference)
+                prepared.append((sentence, reference, tts_dir / f"{sentence.id}.wav"))
+            except Exception as exc:
+                sentence.status = "error"
+                sentence.error = str(exc)
+                failures.append(f"{sentence.id}: {exc}")
+                completed_count += 1
+                if on_sentence:
+                    on_sentence()
+
+        def generate_one(
+            sentence: Sentence,
+            reference: VoiceReference,
+            output: Path,
+        ) -> tuple[int, int]:
+            temporary = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.tmp.wav")
+            try:
+                run(sentence, reference, temporary)
+                frame_count, sample_rate = _validate_output(temporary)
+                temporary.replace(output)
+                return frame_count, sample_rate
+            finally:
+                temporary.unlink(missing_ok=True)
+
+        try:
+            workers = min(project.settings.tts_request_concurrency, len(prepared))
+            with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+                futures: dict[Future[tuple[int, int]], tuple[Sentence, VoiceReference, Path]] = {
+                    executor.submit(generate_one, sentence, reference, output): (
+                        sentence,
+                        reference,
+                        output,
+                    )
+                    for sentence, reference, output in prepared
+                }
+                for future in as_completed(futures):
+                    sentence, reference, output = futures[future]
+                    try:
+                        frame_count, sample_rate = future.result()
+                        sentence.reference_file = str(reference.path)
+                        sentence.tts_file = str(output.relative_to(project_dir))
+                        sentence.tts_duration_seconds = frame_count / sample_rate
+                        sentence.tts_cache_key = tts_cache_key(project, sentence)
+                        sentence.status = "synthesized"
+                        sentence.error = None
+                    except Exception as exc:
+                        sentence.status = "error"
+                        sentence.error = str(exc)
+                        failures.append(f"{sentence.id}: {exc}")
+                    completed_count += 1
+                    if on_sentence:
+                        on_sentence()
+                    if progress:
+                        progress(
+                            f"外部 TTS（语音合成）已处理 {completed_count}/{len(pending)} 句",
+                            completed_count,
+                            len(pending),
+                        )
+        finally:
+            cleanup()
+        return failures
     try:
         for index, sentence in enumerate(pending, start=1):
             output = tts_dir / f"{sentence.id}.wav"
@@ -671,7 +602,7 @@ def synthesize_with_selected_backend(
                         index - 1,
                         len(pending),
                     )
-                temporary = output.with_name(f".{output.stem}.tmp.wav")
+                temporary = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.tmp.wav")
                 try:
                     run(sentence, reference, temporary)
                     frame_count, sample_rate = _validate_output(temporary)

@@ -16,16 +16,22 @@ from .audio import (
     copy_source_verbatim,
     make_analysis_copy,
     mix_original_and_stem,
+    mux_mixed_video,
     project_file_exists,
+    render_subtitled_video,
+    resolve_project_path,
     sentence_events,
     verify_source,
 )
 from .constants import DEFAULT_PROJECTS_DIR
 from .errors import ProjectError, SynthesisError
 from .filtering import implausible_asr_reason, is_japanese_filler_only
+from .forced_alignment import align_sentences_with_qwen
 from .models import DubProject, ProjectSettings, Sentence, load_project, save_project
 from .performance import measure_stage
-from .platforms import require_supported_platform
+from .platforms import portable_home, require_supported_platform
+from .storage import exclusive_file_lock
+from .subtitles import SubtitleLanguage, write_subtitle_files
 from .translation import translate_sentences
 from .tts import synthesize_sentences, tts_cache_key
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
@@ -66,6 +72,21 @@ def output_filename(project: DubProject, project_dir: Path) -> str:
     )
     tts_label = _safe_name(f"{project.settings.tts_backend}-{model_label}-{reference_label}")
     return f"{_safe_name(source_label)}__ja-zh__{tts_label}.wav"
+
+
+def output_video_filename(project: DubProject, project_dir: Path) -> str:
+    return str(Path(output_filename(project, project_dir)).with_suffix(".mp4"))
+
+
+def subtitle_video_filename(
+    project_dir: Path,
+    language: SubtitleLanguage,
+    *,
+    mixed: bool,
+) -> str:
+    source_label = _PROJECT_STAMP.sub("", project_dir.name) or "media"
+    audio_label = "mixed" if mixed else "original"
+    return f"{_safe_name(source_label)}__subtitles-{language}__{audio_label}.mp4"
 
 
 def default_projects_dir() -> Path:
@@ -124,7 +145,7 @@ def _analyze_project_impl(
         for value in project.settings.asr_review_models:
             backend, separator, model = str(value).partition("|")
             if not separator or not backend.strip() or not model.strip():
-                raise ProjectError(f"多 ASR 模型配置无效：{value}")
+                raise ProjectError(f"多 ASR（语音识别）模型配置无效：{value}")
             pair = (backend.strip(), model.strip())
             if pair not in selected:
                 selected.append(pair)
@@ -134,17 +155,17 @@ def _analyze_project_impl(
         for model_index, (backend, model) in enumerate(comparison, start=2):
             if progress:
                 progress(
-                    f"多 ASR 候选 {model_index}/{total_models}：{backend} · {model}",
+                    f"多 ASR（语音识别）候选 {model_index}/{total_models}：{backend} · {model}",
                     model_index - 1,
                     total_models,
                 )
-            candidate_settings = project.settings.model_copy(
-                update={
-                    "asr_backend": backend,
-                    "asr_model": model,
-                    "asr_review_enabled": False,
-                }
+            candidate_payload = project.settings.model_dump()
+            candidate_payload.update(
+                asr_backend=backend,
+                asr_model=model,
+                asr_review_enabled=False,
             )
+            candidate_settings = ProjectSettings.model_validate(candidate_payload)
             candidate_sentences, _ = transcribe_japanese(
                 analysis,
                 candidate_settings,
@@ -173,9 +194,36 @@ def _analyze_project_impl(
             transcriptions,
             project.settings,
             project_dir / "analysis" / "asr_review.json",
+            analysis_audio=analysis,
             progress=progress,
         )
         language = "Japanese (multi-ASR reviewed)"
+    already_qwen_aligned = (
+        project.settings.asr_review_enabled
+        and project.settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|")
+    )
+    if project.settings.asr_forced_alignment_enabled and not already_qwen_aligned:
+        alignment_report = align_sentences_with_qwen(
+            analysis,
+            sentences,
+            project.settings,
+            progress=progress,
+        )
+        alignment_path = project_dir / "analysis" / "asr_forced_alignment.json"
+        alignment_path.parent.mkdir(parents=True, exist_ok=True)
+        alignment_path.write_text(
+            json.dumps(
+                {
+                    "model": project.settings.aligner_model,
+                    "source": f"{project.settings.asr_backend}|{project.settings.asr_model}",
+                    "sentences": alignment_report,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        language = f"{language} (Qwen3 ForcedAligner)"
     # Encoded containers and the decoded analysis WAV can differ by a few samples
     # because of codec padding. Keep every reference boundary inside the real source.
     bounded_sentences = []
@@ -199,15 +247,25 @@ def _analyze_project_impl(
             bounded_sentences.append(sentence)
     if not bounded_sentences:
         raise ProjectError("识别时间戳全部落在源音频范围之外。")
+    bounded_sentences.sort(
+        key=lambda sentence: (sentence.start_seconds, sentence.end_seconds, sentence.id)
+    )
+    for index, sentence in enumerate(bounded_sentences, start=1):
+        sentence.id = f"s{index:06d}"
     project.sentences = bounded_sentences
     project.asr_language = language
+    project.asr_settings_dirty = False
     project.chinese_stem_file = None
     project.output_file = None
+    project.output_video_file = None
+    project.subtitle_srt_file = None
+    project.subtitle_lrc_file = None
+    project.subtitle_video_file = None
     save_project(project, project_dir)
     export_transcript(project, project_dir)
 
 
-def analyze_project(
+def _analyze_project_unlocked(
     project: DubProject,
     project_dir: Path,
     force: bool = False,
@@ -225,6 +283,21 @@ def analyze_project(
         _analyze_project_impl(project, project_dir, force=force, progress=progress)
         metrics["cache_hit"] = cached
         metrics["sentences"] = len(project.sentences)
+
+
+def analyze_project(
+    project: DubProject,
+    project_dir: Path,
+    force: bool = False,
+    progress: Progress | None = None,
+) -> None:
+    with exclusive_file_lock(portable_home() / ".runtime-install.lock", timeout_seconds=30.0):
+        _analyze_project_unlocked(
+            project,
+            project_dir,
+            force=force,
+            progress=progress,
+        )
 
 
 def _translate_project_impl(
@@ -251,6 +324,10 @@ def _translate_project_impl(
     if will_translate:
         project.chinese_stem_file = None
         project.output_file = None
+        project.output_video_file = None
+        project.subtitle_srt_file = None
+        project.subtitle_lrc_file = None
+        project.subtitle_video_file = None
     provider = project.settings.translation_provider
     preset = PROVIDER_PRESETS.get(provider)
     if preset is None:
@@ -274,6 +351,9 @@ def _translate_project_impl(
         max_output_tokens=project.settings.translation_max_output_tokens,
         deepl_formality=project.settings.translation_deepl_formality,
         microsoft_region=project.settings.translation_microsoft_region,
+        send_context=project.settings.translation_send_context,
+        context_sentences=project.settings.translation_context_sentences,
+        memory_sentences=project.settings.translation_memory_sentences,
         job_id=f"asmr_{project.source.sha256[:24]}",
         progress=progress,
         on_batch=checkpoint,
@@ -336,6 +416,8 @@ def _synthesize_project_impl(
     if needs_generation:
         project.chinese_stem_file = None
         project.output_file = None
+        project.output_video_file = None
+        project.subtitle_video_file = None
 
     def checkpoint() -> None:
         save_project(project, project_dir)
@@ -361,7 +443,7 @@ def _synthesize_project_impl(
         )
 
 
-def synthesize_project(
+def _synthesize_project_unlocked(
     project: DubProject,
     project_dir: Path,
     force: bool = False,
@@ -404,6 +486,23 @@ def synthesize_project(
         )
         metrics["cached_before"] = before
         metrics["available_after"] = after
+
+
+def synthesize_project(
+    project: DubProject,
+    project_dir: Path,
+    force: bool = False,
+    sentence_ids: list[str] | None = None,
+    progress: Progress | None = None,
+) -> None:
+    with exclusive_file_lock(portable_home() / ".runtime-install.lock", timeout_seconds=30.0):
+        _synthesize_project_unlocked(
+            project,
+            project_dir,
+            force=force,
+            sentence_ids=sentence_ids,
+            progress=progress,
+        )
 
 
 def _mix_project_impl(
@@ -455,11 +554,20 @@ def _mix_project_impl(
         line_peak_dbfs=project.settings.chinese_line_peak_dbfs,
         stem_peak_dbfs=project.settings.chinese_stem_peak_dbfs,
         fade_ms=project.settings.chinese_fade_ms,
+        channel_routing=project.settings.chinese_channel_routing,
         progress=progress,
     )
     if progress:
-        progress("原轨 + 已校准中文轨直接相加（原轨不做任何处理）", 0, 1)
-    mix_original_and_stem(source, stem, output, project.source, output_codec="pcm_s24le")
+        progress("正在混合原轨与中文轨，并执行最终峰值保护", 0, 1)
+    mix_original_and_stem(
+        source,
+        stem,
+        output,
+        project.source,
+        output_codec="pcm_s24le",
+        peak_protection=project.settings.mix_peak_protection,
+        peak_limit_dbfs=project.settings.mix_peak_limit_dbfs,
+    )
     if project.settings.retain_chinese_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
     else:
@@ -473,6 +581,18 @@ def _mix_project_impl(
             if progress:
                 progress("最终音频已完成；中文中间轨暂时被占用，未能自动删除", 1, 1)
     project.output_file = str(output.relative_to(project_dir))
+    project.output_video_file = None
+    project.subtitle_video_file = None
+    save_project(project, project_dir)
+    if project.source.media_type == "video":
+        if progress:
+            progress("保留原画面并封装中文混合音轨", 0, 1)
+        video_output = mux_mixed_video(
+            source,
+            output,
+            project_dir / "output" / output_video_filename(project, project_dir),
+        )
+        project.output_video_file = video_output.relative_to(project_dir).as_posix()
     save_project(project, project_dir)
     export_transcript(project, project_dir)
     if progress:
@@ -495,39 +615,95 @@ def mix_project(
     ) as metrics:
         output = _mix_project_impl(project, project_dir, progress=progress)
         metrics["output_bytes"] = output.stat().st_size
+        if project.output_video_file:
+            video_output = resolve_project_path(
+                project_dir,
+                project.output_video_file,
+                "混音视频",
+            )
+            if video_output.is_file():
+                metrics["video_output_bytes"] = video_output.stat().st_size
         return output
 
 
-def _srt_timestamp(seconds: float) -> str:
-    milliseconds = max(0, int(round(seconds * 1000)))
-    hours, remainder = divmod(milliseconds, 3_600_000)
-    minutes, remainder = divmod(remainder, 60_000)
-    secs, millis = divmod(remainder, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+def generate_subtitles(
+    project: DubProject,
+    project_dir: Path,
+    language: SubtitleLanguage = "bilingual",
+    progress: Progress | None = None,
+) -> tuple[Path, Path, Path | None]:
+    """Create external subtitles and, for video projects, a subtitled video."""
+    require_supported_platform()
+    source = verify_source(project_dir, project.source)
+    project.subtitle_language = language
+    project.subtitle_srt_file = None
+    project.subtitle_lrc_file = None
+    project.subtitle_video_file = None
+    save_project(project, project_dir)
+
+    if progress:
+        progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
+    srt, lrc = write_subtitle_files(
+        project.sentences,
+        project_dir / "subtitles",
+        language,
+        timeline=project.settings.subtitle_timeline,
+        maximum_chars=project.settings.subtitle_max_chars_per_line,
+        minimum_duration=project.settings.subtitle_min_duration_seconds,
+        maximum_cps=project.settings.subtitle_max_cps,
+        global_overlap_seconds=project.settings.global_overlap_seconds,
+        global_overlap_percentage=project.settings.global_overlap_percentage,
+    )
+    project.subtitle_srt_file = srt.relative_to(project_dir).as_posix()
+    project.subtitle_lrc_file = lrc.relative_to(project_dir).as_posix()
+    save_project(project, project_dir)
+
+    video_output: Path | None = None
+    if project.source.media_type == "video":
+        mixed_audio: Path | None = None
+        if project.output_file:
+            candidate = resolve_project_path(project_dir, project.output_file, "完成音频")
+            if candidate.is_file():
+                mixed_audio = candidate
+        if progress:
+            progress("生成带字幕视频", 1, 2)
+        video_output = render_subtitled_video(
+            source,
+            srt,
+            project_dir
+            / "output"
+            / subtitle_video_filename(project_dir, language, mixed=mixed_audio is not None),
+            replacement_audio=mixed_audio,
+            subtitle_language=language,
+        )
+        project.subtitle_video_file = video_output.relative_to(project_dir).as_posix()
+        save_project(project, project_dir)
+    if progress:
+        progress("字幕生成完成", 1, 1)
+    return srt, lrc, video_output
 
 
 def export_transcript(project: DubProject, project_dir: Path) -> None:
     exports = project_dir / "exports"
     exports.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for sentence in project.sentences:
-        rows.append(
-            {
-                "id": sentence.id,
-                "enabled": sentence.enabled,
-                "ja_start_seconds": sentence.start_seconds,
-                "ja_end_seconds": sentence.end_seconds,
-                "zh_start_seconds": sentence.chinese_start_seconds(
-                    project.settings.global_overlap_seconds,
-                    project.settings.global_overlap_percentage,
-                ),
-                "overlap_seconds": sentence.overlap_seconds,
-                "ja": sentence.ja_text,
-                "zh": sentence.zh_text,
-                "status": sentence.status,
-                "error": sentence.error,
-            }
-        )
+    rows = [
+        {
+            "id": sentence.id,
+            "enabled": sentence.enabled,
+            "ja_start_seconds": sentence.start_seconds,
+            "ja_end_seconds": sentence.end_seconds,
+            "zh_start_seconds": sentence.chinese_start_seconds(
+                project.settings.global_overlap_seconds,
+                project.settings.global_overlap_percentage,
+            ),
+            "overlap_seconds": sentence.overlap_seconds,
+            "ja": sentence.ja_text,
+            "zh": sentence.zh_text,
+            "status": sentence.status,
+            "error": sentence.error,
+        }
+        for sentence in project.sentences
+    ]
     (exports / "transcript.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -536,19 +712,6 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["id"])
         writer.writeheader()
         writer.writerows(rows)
-    srt_blocks = []
-    for index, sentence in enumerate(project.sentences, start=1):
-        lines = [sentence.ja_text]
-        if sentence.zh_text:
-            lines.append(sentence.zh_text)
-        srt_blocks.append(
-            f"{index}\n{_srt_timestamp(sentence.start_seconds)} --> "
-            f"{_srt_timestamp(sentence.end_seconds)}\n" + "\n".join(lines)
-        )
-    (exports / "bilingual.srt").write_text(
-        "\n\n".join(srt_blocks) + ("\n" if srt_blocks else ""),
-        encoding="utf-8",
-    )
 
 
 def reload_project(path: str | Path) -> tuple[DubProject, Path]:

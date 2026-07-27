@@ -11,12 +11,8 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
 . (Join-Path $Root "scripts\mirrors.ps1")
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
-$HuggingFaceEndpoints = @(Get-ASMRDubberMirrorList `
-    -Configuration $MirrorConfiguration -Name "huggingface_endpoints")
-$env:ASMR_DUBBER_HF_ENDPOINTS = $HuggingFaceEndpoints -join ";"
-if (-not $env:HF_ENDPOINT) {
-    $env:HF_ENDPOINT = $HuggingFaceEndpoints[0]
-}
+$HuggingFaceEndpoints = @(Set-ASMRDubberHuggingFaceEnvironment `
+    -Configuration $MirrorConfiguration)
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $Python = $Paths.Python
