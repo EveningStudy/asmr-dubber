@@ -8,7 +8,6 @@ import soundfile as sf
 import asmr_dubber.ui as ui_module
 from asmr_dubber.audio import sha256_file
 from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
-from asmr_dubber.errors import ProjectError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.runtime_manager import BackendStatus
 from asmr_dubber.ui import (
@@ -103,7 +102,7 @@ def test_sentence_table_sorts_rows_and_parses_false_string(tmp_path: Path) -> No
     assert project.sentences[1].enabled is False
 
 
-def test_sentence_table_accepts_chinese_only_rows_but_not_empty_rows(tmp_path: Path) -> None:
+def test_sentence_table_accepts_chinese_only_rows_and_deletes_empty_rows(tmp_path: Path) -> None:
     project, _ = _project(tmp_path)
     chinese_only = [
         ["s000001", True, 1.0, 2.0, "", "直接配音。", None],
@@ -114,9 +113,12 @@ def test_sentence_table_accepts_chinese_only_rows_but_not_empty_rows(tmp_path: P
     assert [item.ja_text for item in project.sentences] == ["", ""]
     assert [item.zh_text for item in project.sentences] == ["直接配音。", "这是第二句。"]
 
+    project.settings.tts_reference_sentence_id = "s000001"
     chinese_only[0][5] = ""
-    with pytest.raises(ProjectError, match="日文和中文不能同时为空"):
-        apply_table(project, chinese_only)
+    assert apply_table(project, chinese_only) is True
+    assert [item.id for item in project.sentences] == ["s000002"]
+    assert project.sentences[0].zh_text == "这是第二句。"
+    assert project.settings.tts_reference_sentence_id is None
 
 
 def test_ui_staging_is_deterministic_and_below_one_allowlist(tmp_path: Path, monkeypatch) -> None:

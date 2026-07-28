@@ -119,6 +119,13 @@ def apply_table(project: DubProject, table: Any) -> bool:
         if len(row) != len(TABLE_HEADERS):
             raise ProjectError(f"第 {index} 行列数错误，应为 {len(TABLE_HEADERS)} 列。")
         sentence_id = _text(row[0], f"第 {index} 行句子 ID", required=True)
+        ja_text = _text(row[4], f"{sentence_id} 日文")
+        zh_text = _text(row[5], f"{sentence_id} 中文")
+        if not ja_text and not zh_text:
+            # Clearing the only available text is how a user removes a sentence
+            # from Gradio's fixed-column table.  Leave it out of the persisted
+            # list so subtitles, TTS and mixing all observe the deletion.
+            continue
         if sentence_id in seen:
             raise ProjectError(f"句子 ID 重复：{sentence_id}")
         seen.add(sentence_id)
@@ -128,10 +135,6 @@ def apply_table(project: DubProject, table: Any) -> bool:
             raise ProjectError(f"{sentence_id} 的时间范围无效。")
         overlap = None if row[6] in {None, ""} else _number(row[6], f"{sentence_id} 提前量")
         old = previous.get(sentence_id)
-        ja_text = _text(row[4], f"{sentence_id} 日文")
-        zh_text = _text(row[5], f"{sentence_id} 中文")
-        if not ja_text and not zh_text:
-            raise ProjectError(f"{sentence_id} 的日文和中文不能同时为空。")
         payload = {
             "id": sentence_id,
             "enabled": _boolean(row[1], f"{sentence_id} 启用状态"),
@@ -159,9 +162,17 @@ def apply_table(project: DubProject, table: Any) -> bool:
             updated.error = None
         parsed.append(updated)
     parsed.sort(key=lambda item: (item.start_seconds, item.end_seconds, item.id))
-    changed = [item.model_dump() for item in parsed] != [
+    sentence_changed = [item.model_dump() for item in parsed] != [
         item.model_dump() for item in project.sentences
     ]
+    remaining_ids = {item.id for item in parsed}
+    reference_removed = bool(
+        project.settings.tts_reference_sentence_id
+        and project.settings.tts_reference_sentence_id not in remaining_ids
+    )
+    if reference_removed:
+        project.settings.tts_reference_sentence_id = None
+    changed = sentence_changed or reference_removed
     project.sentences = parsed
     if changed:
         project.chinese_stem_file = None

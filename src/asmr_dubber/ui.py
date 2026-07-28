@@ -787,7 +787,8 @@ def build_app() -> Any:
                     elem_classes=["sentence-table"],
                 )
                 gr.Markdown(
-                    "可编辑启用状态、时间、日文、中文和提前量；状态与错误不会混入业务数据。"
+                    "可编辑启用状态、时间、日文、中文和提前量；清空一行的日文和中文即可删除"
+                    "该句。状态与错误不会混入业务数据。"
                 )
 
                 with gr.Accordion("统一音色参考", open=False):
