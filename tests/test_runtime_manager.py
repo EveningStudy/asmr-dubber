@@ -73,13 +73,34 @@ def test_hardware_markdown_is_user_facing() -> None:
         vram_gb=12,
         driver="999.1",
         cuda_available=True,
+        compute_capability="8.6",
     )
     text = hardware_markdown(profile)
     assert "Windows" in text
     assert "Test GPU" in text
     assert "12.0 GB" in text
+    assert "计算能力 8.6" in text
     assert "`cuda`" in text
     assert "质量优先" in recommended_stack_markdown(profile)
+
+
+def test_legacy_nvidia_architecture_is_not_recommended_for_full_cuda_stack() -> None:
+    profile = HardwareProfile(
+        platform_id="windows",
+        platform_label="Windows",
+        architecture="AMD64",
+        cpu="Test CPU",
+        memory_gb=32,
+        gpu="Legacy GPU",
+        vram_gb=24,
+        driver="999.1",
+        cuda_available=True,
+        compute_capability="6.1",
+    )
+
+    assert profile.full_cuda_stack_supported is False
+    assert "Turing" in hardware_markdown(profile)
+    assert "旧架构 NVIDIA" in recommended_stack_markdown(profile)
 
 
 def test_compatibility_reports_insufficient_vram() -> None:
@@ -266,6 +287,41 @@ def test_windows_kotoba_uses_runtime_installer(monkeypatch, tmp_path: Path) -> N
 
     assert calls == ["kotoba_whisper"]
     assert "CUDA runtime ready" in result
+
+
+def test_windows_advanced_backend_installs_dependencies_before_model_pack(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    uv = tmp_path / "uv.exe"
+    uv.touch()
+    order: list[str] = []
+
+    monkeypatch.setattr("asmr_dubber.runtime_manager._uv_executable", lambda: uv)
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Windows", "AMD64", True, False, False),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager._install_windows_backend",
+        lambda backend_id, **_kwargs: (
+            order.append(f"dependencies:{backend_id}")
+            or CompletedProcess(["pwsh"], 0, stdout="advanced ready", stderr="")
+        ),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.import_backend_model_packs",
+        lambda backend_id, **_kwargs: order.append(f"model:{backend_id}") or 1,
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.download_backend_models",
+        lambda *_args, **_kwargs: "models ready",
+    )
+
+    result = install_backend("kotoba_whisper", force=True)
+
+    assert order == ["dependencies:kotoba_whisper", "model:kotoba_whisper"]
+    assert "安装完成" in result
 
 
 def test_install_backend_imports_matching_pack_before_network(monkeypatch) -> None:

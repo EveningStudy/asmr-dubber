@@ -15,8 +15,14 @@ import soundfile as sf
 import soxr
 
 from .environment import ffmpeg_executable
-from .errors import AsmrDubberError, ProjectError
+from .errors import AsmrDubberError, OperationCancelledError, ProjectError
 from .models import AudioInfo, Sentence
+from .task_control import (
+    check_cancelled,
+    register_process,
+    terminate_process_tree,
+    unregister_process,
+)
 
 Progress = Callable[[str, int, int], None]
 _SOURCE_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
@@ -218,9 +224,39 @@ def verify_source(project_dir: Path, info: AudioInfo) -> Path:
 
 def _run_ffmpeg(arguments: list[str], *, cwd: Path | None = None) -> None:
     command = [ffmpeg_executable(), "-hide_banner", "-loglevel", "error", *arguments]
-    completed = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or "unknown ffmpeg error"
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+    )
+    signal = register_process(process)
+    try:
+        while True:
+            check_cancelled(signal)
+            try:
+                stdout, stderr = process.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except OperationCancelledError:
+        if process.poll() is None:
+            terminate_process_tree(process)
+        # Drain and close redirected pipes before callers remove FFmpeg's
+        # temporary output. Windows can otherwise briefly retain the file
+        # handle and replace cancellation with a misleading WinError 32.
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            terminate_process_tree(process)
+            process.communicate()
+        raise
+    finally:
+        unregister_process(process, signal)
+    check_cancelled(signal)
+    if process.returncode != 0:
+        detail = stderr.strip() or stdout.strip() or "unknown ffmpeg error"
         raise AsmrDubberError(f"ffmpeg 失败：{detail}")
 
 
@@ -487,6 +523,7 @@ def build_chinese_stem(
                 range(0, total_frames, block_frames),
                 start=1,
             ):
+                check_cancelled()
                 output.write(zeros[: min(block_frames, total_frames - offset)])
                 if progress:
                     progress("初始化中文中间轨", block_index, total_work)
@@ -496,6 +533,7 @@ def build_chinese_stem(
 
         with sf.SoundFile(temporary, mode="r+") as stem:
             for index, (event, start_frame) in enumerate(prepared, start=1):
+                check_cancelled()
                 # Only one synthesized line is resident at a time, so multi-hour
                 # projects do not accumulate every Chinese waveform in RAM.
                 clip = _read_resampled_mono(event.audio_path, rate)
@@ -706,6 +744,8 @@ def mux_mixed_video(
             )
             temporary.replace(output)
             return output
+        except OperationCancelledError:
+            raise
         except AsmrDubberError as exc:
             failures.append(str(exc))
         finally:
@@ -780,6 +820,8 @@ def render_subtitled_video(
                     )
                     temporary.replace(output)
                     return output
+                except OperationCancelledError:
+                    raise
                 except AsmrDubberError as exc:
                     failures.append(str(exc))
                 finally:
@@ -842,6 +884,8 @@ def render_subtitled_video(
                     )
                     temporary.replace(output)
                     return output
+                except OperationCancelledError:
+                    raise
                 except AsmrDubberError as exc:
                     failures.append(str(exc))
                 finally:

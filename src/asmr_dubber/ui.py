@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import ipaddress
+import logging
 import os
 import queue
 import secrets
@@ -10,18 +11,20 @@ import time
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 from pydantic import ValidationError
 
+from .app_logging import application_log_path, configure_logging, recent_log_text
 from .constants import (
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
     DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY,
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
 )
-from .errors import InstallPausedError
+from .errors import InstallPausedError, OperationCancelledError
 from .model_packs import discover_model_packs, import_discovered_model_packs, model_pack_directory
 from .model_registry import ASR_BACKENDS, CLONE_MODE_LABELS, TTS_BACKENDS
 from .platforms import portable_home, require_supported_platform, runtime_executable_candidates
@@ -37,6 +40,7 @@ from .runtime_manager import (
     recommended_stack_markdown,
     refresh_hardware,
 )
+from .task_control import CancellationToken, cancellation_scope
 from .ui_services import (
     TABLE_HEADERS,
     TABLE_TYPES,
@@ -44,11 +48,14 @@ from .ui_services import (
     analyze,
     apply_global_settings,
     create_project,
+    import_transcript_data,
     load_view,
+    preview_reference,
     recent_projects,
     reference_picker,
     save_table,
     select_reference,
+    stage_for_ui,
     subtitles,
     synthesize_and_mix,
     translate,
@@ -145,6 +152,7 @@ _NATIVE_VAD_LABELS = {
     "parakeet_nemo": "使用 Parakeet/CrispASR 自带 Silero VAD",
     "faster_whisper": "使用 Faster-Whisper 自带 Silero VAD",
 }
+logger = logging.getLogger(__name__)
 
 
 def asr_vad_choices(backend_id: str) -> list[tuple[str, str]]:
@@ -221,6 +229,33 @@ class DownloadController:
         return f"正在暂停 {label}；已完成的文件会保留，下次安装将继续。"
 
 
+class ProjectTaskController:
+    """Coordinate the one active project operation and its child processes."""
+
+    def __init__(self) -> None:
+        self.cancel_event = CancellationToken()
+        self._lock = threading.Lock()
+        self._active: str | None = None
+
+    def begin(self, label: str) -> None:
+        with self._lock:
+            self.cancel_event.clear()
+            self._active = label
+
+    def finish(self, label: str) -> None:
+        with self._lock:
+            if self._active == label:
+                self._active = None
+
+    def cancel(self) -> str:
+        with self._lock:
+            if self._active is None:
+                return "当前没有正在执行的项目任务。"
+            label = self._active
+        self.cancel_event.set()
+        return f"正在取消“{label}”… 已经完成并保存的内容会保留。"
+
+
 def _install_backend_log_events(
     backend_id: str,
     *,
@@ -237,7 +272,10 @@ def _install_backend_log_events(
 
     def append(message: str) -> None:
         rendered = str(message or "").replace("\r", "\n")
-        lines.extend(line.strip() for line in rendered.splitlines() if line.strip())
+        additions = [line.strip() for line in rendered.splitlines() if line.strip()]
+        lines.extend(additions)
+        for line in additions:
+            logger.info("安装任务 %s：%s", backend_id, line)
         if len(lines) > 240:
             lines[:] = ["…较早的日志已省略…", *lines[-239:]]
 
@@ -390,12 +428,33 @@ def _gr_update(**kwargs: Any) -> Any:
     return gr.update(**kwargs)
 
 
-def _run_project_action(action: Callable[..., ProjectView], *args: Any) -> tuple[Any, ...]:
+def _run_project_action(
+    action: Callable[..., ProjectView],
+    *args: Any,
+    cancel_event: CancellationToken | None = None,
+) -> tuple[Any, ...]:
+    action_name = getattr(action, "__name__", action.__class__.__name__)
     try:
-        return _view_values(action(*args))
+        logger.info("项目任务开始：%s", action_name)
+        with cancellation_scope(cancel_event):
+            if cancel_event is None:
+                result = action(*args)
+            else:
+                result = action(*args, cancel_event=cancel_event)
+        logger.info("项目任务完成：%s", action_name)
+        return _view_values(result)
+    except OperationCancelledError as exc:
+        logger.info("项目任务已取消：%s", action_name)
+        if args:
+            with suppress(Exception):
+                current = load_view(str(args[0]))
+                return _view_values(replace(current, status=str(exc)))
+        return _empty_project_updates(str(exc))
     except Exception as exc:
+        logger.exception("项目任务失败：%s", action_name)
         return _empty_project_updates(
             f"操作失败：{_safe_error(exc)}\n当前项目、表格和已有输出均已保留。"
+            f"\n详细信息已写入日志：{application_log_path()}"
         )
 
 
@@ -596,6 +655,7 @@ def build_app() -> Any:
 
     stored = load_user_settings()
     controller = DownloadController()
+    task_controller = ProjectTaskController()
     asr_spec = ASR_BACKENDS[stored.asr_backend]
     tts_spec = TTS_BACKENDS[stored.tts_backend]
     provider = PROVIDER_PRESETS.get(stored.translation_provider, PROVIDER_PRESETS["deepseek"])
@@ -657,12 +717,43 @@ def build_app() -> Any:
                     interactive=False,
                 )
 
+                with gr.Accordion("已有台本或字幕（可跳过 ASR）", open=False):
+                    gr.Markdown(
+                        "有时间戳的 SRT、VTT、ASS/SSA、LRC 会直接建立句子时间轴。"
+                        "TXT 或粘贴文字按每个非空行作为一句，可按台词长度估算，"
+                        "也可用进阶组件 Qwen3 ForcedAligner 自动对齐。导入会替换当前句子表，"
+                        "但不会修改原音频。"
+                    )
+                    transcript_file = gr.File(
+                        label="台本或字幕文件",
+                        file_types=[".srt", ".vtt", ".ass", ".ssa", ".lrc", ".txt"],
+                        type="filepath",
+                    )
+                    transcript_text = gr.Textbox(
+                        label="也可以直接粘贴纯台本",
+                        placeholder="每个非空行作为一句；选择文件时，粘贴内容优先。",
+                        lines=6,
+                    )
+                    plain_timing = gr.Radio(
+                        label="纯文本台本如何生成时间轴",
+                        choices=[
+                            ("按台词长度估算（无需模型，之后手动校对）", "estimate"),
+                            ("Qwen3 ForcedAligner 自动对齐（需要进阶组件）", "qwen"),
+                        ],
+                        value="estimate",
+                    )
+                    import_transcript_button = gr.Button(
+                        "导入并建立句子时间轴",
+                        variant="primary",
+                    )
+
                 gr.Markdown("## 处理步骤")
                 with gr.Row(equal_height=True):
                     asr_button = gr.Button("1 · 运行 ASR（语音识别）", variant="primary")
                     translate_button = gr.Button("2 · 翻译日文")
                     save_table_button = gr.Button("3 · 保存校对表格")
                     synthesize_button = gr.Button("4 · TTS（语音合成）并混音", variant="primary")
+                cancel_task_button = gr.Button("取消当前执行", variant="stop")
 
                 sentence_table = gr.Dataframe(
                     headers=TABLE_HEADERS,
@@ -879,9 +970,10 @@ def build_app() -> Any:
                                 label="单句最长秒数", value=stored.max_sentence_seconds
                             )
                             settings_components["asr_timeout_seconds"] = gr.Number(
-                                label="Parakeet 单次超时秒数",
+                                label="Parakeet 连续无响应超时（秒）",
                                 value=stored.asr_timeout_seconds,
                                 visible=stored.asr_backend == "parakeet_nemo",
+                                info="持续收到识别进度时不会因总耗时超过该值而停止。",
                             )
                         with gr.Accordion("VAD 与当前后端参数", open=False):
                             settings_components["asr_vad_mode"] = gr.Radio(
@@ -1401,6 +1493,24 @@ def build_app() -> Any:
                         "保存并应用到当前项目", variant="primary"
                     )
 
+            with gr.Tab("日志与诊断", id="logs"):
+                gr.Markdown(
+                    "程序运行日志保存在程序目录的 `.asmr-dubber/logs`。日志会自动轮转，"
+                    "API 密钥和令牌会在写入前隐藏。遇到问题时可下载后随 Issue 一并提交。"
+                )
+                refresh_log_button = gr.Button("刷新日志")
+                log_text = gr.Textbox(
+                    label="最近日志",
+                    value=recent_log_text(),
+                    lines=22,
+                    interactive=False,
+                )
+                log_file = gr.File(
+                    label="下载完整日志",
+                    value=stage_for_ui(application_log_path(), category="logs"),
+                    interactive=False,
+                )
+
         common_outputs = [
             project_path,
             sentence_table,
@@ -1419,8 +1529,28 @@ def build_app() -> Any:
             "show_progress": "full",
         }
 
+        def run_project_task(
+            label: str,
+            action: Callable[..., ProjectView],
+            *args: Any,
+        ) -> tuple[Any, ...]:
+            task_controller.begin(label)
+            try:
+                return _run_project_action(
+                    action,
+                    *args,
+                    cancel_event=task_controller.cancel_event,
+                )
+            finally:
+                task_controller.finish(label)
+
         def create_callback(source: Any, progress: gr.Progress = gr.Progress()) -> tuple[Any, ...]:
-            return _run_project_action(create_project, source)
+            return run_project_task(
+                "新建项目",
+                create_project,
+                source,
+                _StageProgress(progress),
+            )
 
         def open_callback(path: Any) -> tuple[Any, ...]:
             if not str(path or "").strip():
@@ -1432,14 +1562,43 @@ def build_app() -> Any:
             table: Any,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
-            return _run_project_action(analyze, manifest, table, _StageProgress(progress))
+            return run_project_task(
+                "ASR（语音识别）",
+                analyze,
+                manifest,
+                table,
+                _StageProgress(progress),
+            )
+
+        def import_transcript_callback(
+            manifest: str,
+            transcript: Any,
+            text: str,
+            timing: str,
+            progress: gr.Progress = gr.Progress(),
+        ) -> tuple[Any, ...]:
+            return run_project_task(
+                "导入台本/字幕",
+                import_transcript_data,
+                manifest,
+                transcript,
+                text,
+                timing,
+                _StageProgress(progress),
+            )
 
         def translate_callback(
             manifest: str,
             table: Any,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
-            return _run_project_action(translate, manifest, table, _StageProgress(progress))
+            return run_project_task(
+                "翻译",
+                translate,
+                manifest,
+                table,
+                _StageProgress(progress),
+            )
 
         def save_table_callback(manifest: str, table: Any) -> tuple[Any, ...]:
             return _run_project_action(save_table, manifest, table)
@@ -1449,8 +1608,12 @@ def build_app() -> Any:
             table: Any,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
-            return _run_project_action(
-                synthesize_and_mix, manifest, table, _StageProgress(progress)
+            return run_project_task(
+                "TTS（语音合成）与混音",
+                synthesize_and_mix,
+                manifest,
+                table,
+                _StageProgress(progress),
             )
 
         def subtitle_callback(
@@ -1459,8 +1622,26 @@ def build_app() -> Any:
             language: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
-            return _run_project_action(
-                subtitles, manifest, table, language, _StageProgress(progress)
+            return run_project_task(
+                "生成字幕",
+                subtitles,
+                manifest,
+                table,
+                language,
+                _StageProgress(progress),
+            )
+
+        def preview_reference_callback(manifest: str, sentence_id: str) -> Any:
+            try:
+                return preview_reference(manifest, sentence_id)
+            except Exception:
+                logger.exception("参考音频试听更新失败")
+                return gr.update()
+
+        def refresh_log_callback() -> tuple[str, str | None]:
+            return (
+                recent_log_text(),
+                stage_for_ui(application_log_path(), category="logs"),
             )
 
         def refresh_projects_callback() -> Any:
@@ -1501,6 +1682,13 @@ def build_app() -> Any:
             api_name="run_asr",
             **runtime_options,
         )
+        import_transcript_button.click(
+            import_transcript_callback,
+            inputs=[project_path, transcript_file, transcript_text, plain_timing],
+            outputs=common_outputs,
+            api_name="import_transcript",
+            **runtime_options,
+        )
         translate_button.click(
             translate_callback,
             inputs=[project_path, sentence_table],
@@ -1529,12 +1717,31 @@ def build_app() -> Any:
             api_name="generate_subtitles",
             **runtime_options,
         )
+        cancel_task_button.click(
+            task_controller.cancel,
+            outputs=[status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        reference_sentence.change(
+            preview_reference_callback,
+            inputs=[project_path, reference_sentence],
+            outputs=[reference_audio],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         save_reference_button.click(
             pick_reference_callback,
             inputs=[project_path, reference_sentence],
             outputs=[status, reference_audio],
             api_name=_PRIVATE_API,
             **runtime_options,
+        )
+        refresh_log_button.click(
+            refresh_log_callback,
+            outputs=[log_text, log_file],
+            api_name=_PRIVATE_API,
+            queue=False,
         )
 
         settings_components["asr_backend"].change(
@@ -2039,6 +2246,8 @@ def build_app() -> Any:
 
 
 def launch(host: str = "127.0.0.1", port: int = 7860) -> None:
+    configure_logging()
+    logger.info("启动 WebUI：host=%s port=%s", host, port)
     require_supported_platform()
     warnings.filterwarnings(
         "ignore",

@@ -263,9 +263,9 @@ class ProjectSettings(BaseModel):
                 value["asr_vad_mode"] = "backend" if value.get("asr_vad_filter") else "off"
             if value.get("asr_vad_mode") not in {"off", "backend", "asmr"}:
                 value["asr_vad_mode"] = "off"
-            # Older releases used 0 to mean automatic Parakeet chunking.  The
-            # current implementation has an explicit, validated 120-second
-            # default, so migrate the legacy sentinel before field validation.
+            # Older releases used 0 to mean automatic Parakeet chunking. The
+            # current runner creates bounded inputs for one model process and
+            # needs an explicit, validated 120-second default.
             try:
                 legacy_chunk_seconds = float(value.get("asr_chunk_seconds", 120.0))
             except (TypeError, ValueError):
@@ -290,7 +290,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.4.0"
+    app_version: str = "0.5.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -430,7 +430,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.4.0"
+        payload["app_version"] = "0.5.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

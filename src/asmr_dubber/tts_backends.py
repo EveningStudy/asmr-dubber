@@ -18,10 +18,19 @@ import numpy as np
 import soundfile as sf
 
 from .audio import project_file_exists
-from .errors import SynthesisError
+from .errors import OperationCancelledError, SynthesisError
 from .model_registry import TTS_BACKENDS
 from .models import DubProject, Sentence
 from .platforms import isolated_runtime_environment
+from .task_control import (
+    CancellationSignal,
+    check_cancelled,
+    register_cancel_callback,
+    register_process,
+    terminate_process_tree,
+    unregister_cancel_callback,
+    unregister_process,
+)
 from .tts import tts_cache_key
 from .user_settings import saved_service_key
 from .voice_reference import (
@@ -170,6 +179,7 @@ def _synthesize_indextts_cli_batch(
     pending: list[Sentence],
     progress: Progress | None,
     on_sentence: Callable[[], None] | None,
+    cancel_event: CancellationSignal | None,
 ) -> list[str]:
     project_dir = project_dir.resolve()
     source = source.resolve()
@@ -187,6 +197,7 @@ def _synthesize_indextts_cli_batch(
     tasks: list[tuple[Sentence, VoiceReference, Path]] = []
     lines: list[str] = []
     for sentence in pending:
+        check_cancelled(cancel_event)
         reference = prepare_index_speaker_reference(project, project_dir, source, sentence)
         emotion = prepare_index_emotion_reference(
             project,
@@ -229,6 +240,8 @@ def _synthesize_indextts_cli_batch(
         progress(f"IndexTTS2 独立环境批量生成 {len(tasks)} 句", 0, len(tasks))
     output_tail: deque[str] = deque(maxlen=200)
     return_code = -1
+    process: subprocess.Popen[str] | None = None
+    cancelled: OperationCancelledError | None = None
     try:
         process = subprocess.Popen(
             command,
@@ -240,6 +253,7 @@ def _synthesize_indextts_cli_batch(
             bufsize=1,
             env=isolated_runtime_environment("index-tts"),
         )
+        register_process(process, cancel_event)
         messages: queue.Queue[str | None] = queue.Queue()
 
         def read_output() -> None:
@@ -258,9 +272,9 @@ def _synthesize_indextts_cli_batch(
         started_at = time.monotonic()
         last_heartbeat = started_at
         while not stream_closed:
+            check_cancelled(cancel_event)
             if time.monotonic() >= deadline:
-                process.kill()
-                process.wait()
+                terminate_process_tree(process)
                 raise SynthesisError(
                     f"IndexTTS2 批量生成超过 {project.settings.tts_timeout_seconds:g} 秒/句，"
                     "已停止独立进程。"
@@ -295,15 +309,27 @@ def _synthesize_indextts_cli_batch(
                     )
         return_code = process.wait()
         reader.join(timeout=1)
+        # Cancellation can terminate the child between the queue check and
+        # process.wait(). Re-check here so a killed process is reported as a
+        # user cancellation rather than a misleading synthesis failure.
+        check_cancelled(cancel_event)
+    except OperationCancelledError as exc:
+        cancelled = exc
     except OSError as exc:
         raise SynthesisError(f"无法启动 IndexTTS2 独立环境：{exc}") from exc
     finally:
+        if process is not None:
+            unregister_process(process, cancel_event)
+            if process.poll() is None:
+                terminate_process_tree(process)
         manifest.unlink(missing_ok=True)
 
     detail = "".join(output_tail)[-3000:]
     failures: list[str] = []
     for index, (sentence, reference, temporary) in enumerate(tasks, start=1):
         output = tts_dir / f"{sentence.id}.wav"
+        if cancelled is not None and not temporary.is_file():
+            continue
         try:
             if not temporary.is_file():
                 raise SynthesisError(
@@ -327,6 +353,8 @@ def _synthesize_indextts_cli_batch(
             on_sentence()
         if progress:
             progress(f"已处理 {index}/{len(tasks)} 句 IndexTTS2 配音", index, len(tasks))
+    if cancelled is not None:
+        raise cancelled
     if return_code != 0 and not failures:
         raise SynthesisError(f"IndexTTS2 批处理失败（{return_code}）：{detail}")
     return failures
@@ -456,7 +484,9 @@ def synthesize_with_selected_backend(
     sentence_ids: Iterable[str] | None = None,
     progress: Progress | None = None,
     on_sentence: Callable[[], None] | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[str]:
+    check_cancelled(cancel_event)
     spec = TTS_BACKENDS.get(project.settings.tts_backend)
     if spec is None:
         raise SynthesisError(f"未知 TTS（语音合成）模型后端：{project.settings.tts_backend}")
@@ -494,19 +524,37 @@ def synthesize_with_selected_backend(
             pending,
             progress,
             on_sentence,
+            cancel_event,
         )
     if progress:
         progress(f"加载 {spec.label}", 0, len(pending))
     run, cleanup = _runner(project)
+    cleanup_lock = threading.Lock()
+    cleanup_done = False
+
+    def cleanup_once() -> None:
+        nonlocal cleanup_done
+        with cleanup_lock:
+            if cleanup_done:
+                return
+            cleanup_done = True
+        cleanup()
+
+    callback_signal = (
+        register_cancel_callback(cleanup_once, cancel_event) if spec.runtime == "http" else None
+    )
     failures: list[str] = []
     if spec.runtime == "http":
         prepared: list[tuple[Sentence, VoiceReference, Path]] = []
         completed_count = 0
         for sentence in pending:
+            check_cancelled(cancel_event)
             try:
                 reference = prepare_voice_reference(project, project_dir, source, sentence)
                 _require_reference_text(project, reference)
                 prepared.append((sentence, reference, tts_dir / f"{sentence.id}.wav"))
+            except OperationCancelledError:
+                raise
             except Exception as exc:
                 sentence.status = "error"
                 sentence.error = str(exc)
@@ -520,9 +568,11 @@ def synthesize_with_selected_backend(
             reference: VoiceReference,
             output: Path,
         ) -> tuple[int, int]:
+            check_cancelled(cancel_event)
             temporary = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.tmp.wav")
             try:
                 run(sentence, reference, temporary)
+                check_cancelled(cancel_event)
                 frame_count, sample_rate = _validate_output(temporary)
                 temporary.replace(output)
                 return frame_count, sample_rate
@@ -541,6 +591,7 @@ def synthesize_with_selected_backend(
                     for sentence, reference, output in prepared
                 }
                 for future in as_completed(futures):
+                    check_cancelled(cancel_event)
                     sentence, reference, output = futures[future]
                     try:
                         frame_count, sample_rate = future.result()
@@ -550,6 +601,8 @@ def synthesize_with_selected_backend(
                         sentence.tts_cache_key = tts_cache_key(project, sentence)
                         sentence.status = "synthesized"
                         sentence.error = None
+                    except OperationCancelledError:
+                        raise
                     except Exception as exc:
                         sentence.status = "error"
                         sentence.error = str(exc)
@@ -564,10 +617,12 @@ def synthesize_with_selected_backend(
                             len(pending),
                         )
         finally:
-            cleanup()
+            unregister_cancel_callback(cleanup_once, callback_signal)
+            cleanup_once()
         return failures
     try:
         for index, sentence in enumerate(pending, start=1):
+            check_cancelled(cancel_event)
             output = tts_dir / f"{sentence.id}.wav"
             try:
                 if project.settings.tts_backend == "indextts2":
@@ -615,6 +670,8 @@ def synthesize_with_selected_backend(
                 sentence.tts_cache_key = tts_cache_key(project, sentence)
                 sentence.status = "synthesized"
                 sentence.error = None
+            except OperationCancelledError:
+                raise
             except Exception as exc:
                 sentence.status = "error"
                 sentence.error = str(exc)
@@ -624,5 +681,7 @@ def synthesize_with_selected_backend(
             if progress:
                 progress(f"已处理 {index}/{len(pending)} 句中文配音", index, len(pending))
     finally:
-        cleanup()
+        if callback_signal is not None:
+            unregister_cancel_callback(cleanup_once, callback_signal)
+        cleanup_once()
     return failures

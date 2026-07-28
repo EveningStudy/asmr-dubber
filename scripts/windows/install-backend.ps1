@@ -11,7 +11,7 @@ Set-StrictMode -Version 2.0
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
 
-$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $Root
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
@@ -19,6 +19,7 @@ $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $MirrorConfiguration = Get-ASMRDubberMirrorConfiguration -Root $Root
 . (Join-Path $Root "scripts\windows-runtime.ps1")
 . (Join-Path $Root "scripts\windows\wheelhouse.ps1")
+. (Join-Path $Root "scripts\windows\recommended-dependencies.ps1")
 $DataRoot = $Paths.Home
 $Uv = $Paths.Uv
 $Python = $Paths.Python
@@ -50,6 +51,33 @@ function Invoke-Checked {
 }
 
 Write-Host "正在安装后端：$Backend" -ForegroundColor Cyan
+Write-Host (
+    "下载策略与 Setup 相同：优先使用 ModelScope 依赖包、断点续传与 SHA-256 校验。"
+) -ForegroundColor Cyan
+
+# Setup already publishes one complete, pinned advanced dependency pack. Reuse
+# that same artifact in WebUI instead of asking users to reach PyPI/PyTorch or
+# relying on optional wheelhouse files that may not have been published.
+$ManagedPython = Get-ChildItem `
+    (Join-Path $Paths.Runtimes "python\cpython-3.12.*-windows-x86_64-none\python.exe") `
+    -File -ErrorAction SilentlyContinue |
+    Sort-Object FullName -Descending |
+    Select-Object -First 1
+if ($ManagedPython) {
+    $AdvancedDependenciesReady = Import-ASMRDubberAdvancedDependencies `
+        -Root $Root -PortableRoot $DataRoot -Python $ManagedPython.FullName `
+        -MirrorConfiguration $MirrorConfiguration -MergeExisting
+    if ($AdvancedDependenciesReady) {
+        $Python = $Paths.Python
+        Invoke-Checked -FilePath $Python `
+            -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
+            -FailureMessage "应用字节码刷新失败"
+        Write-Host "后端运行环境已由 Windows 进阶依赖包提供。请重启 ASMR Dubber 后使用。" `
+            -ForegroundColor Green
+        exit 0
+    }
+}
+
 $NvidiaSmi = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
 if (-not $NvidiaSmi) {
     $SystemNvidiaSmi = Join-Path $env:SystemRoot "System32\nvidia-smi.exe"
@@ -97,5 +125,9 @@ if ($ApplicationWheelhouse) {
         -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
         -Arguments $ApplicationArguments
 }
+
+Invoke-Checked -FilePath $Python `
+    -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
+    -FailureMessage "应用字节码刷新失败"
 
 Write-Host "后端运行环境安装完成。请重启 ASMR Dubber 后使用。" -ForegroundColor Green

@@ -213,21 +213,18 @@ $file.Length
 ## Windows 免安装完整包
 
 仓库：
-[EveningStudyW/ASMR-Dubber-Windows-Portable](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Portable)
+[EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0)
 
-这个仓库面向不想运行 Setup 的用户。每个 ZIP 都必须是独立完整包，不能要求用户再下载核心包、
-依赖包或模型包：
+这个仓库面向不想运行 Setup 的用户，本版本只发布一个完整的推荐版免安装包：
 
 | 文件 | 固定内容 |
 |---|---|
-| `ASMR-Dubber-Windows-Core-Portable-v0.4.0.zip` | 程序、便携 Python、FFmpeg、主环境、网页和外部 API 客户端；无本地 ASR/TTS 模型 |
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.4.0.zip` | 核心 + 两个 Parakeet 日语模型 + IndexTTS2 完整隔离环境和 checkpoints |
-| `ASMR-Dubber-Windows-Advanced-Portable-v0.4.0.zip` | 推荐 + Kotoba-Whisper v2.2 + Faster-Whisper large-v2 + ASMR Whisper VAD ONNX + Qwen3 ForcedAligner 0.6B |
+| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境 + 两个 Parakeet 日语模型 + IndexTTS2 完整隔离环境和 checkpoints |
 
-在已经备齐并校验原始制品的发布机上生成三个包：
+在已经备齐并校验原始制品的发布机上生成推荐版：
 
 ```powershell
-.\scripts\windows\create-portable-profiles.ps1
+.\scripts\windows\create-portable-profiles.ps1 -Profiles Recommended -Version 0.5.0
 ```
 
 默认输出目录是项目同级的 `ASMR-Dubber-Windows-Portable-ModelScope`。脚本只读取本地固定制品，
@@ -236,8 +233,7 @@ $file.Length
 实际解压启动一次。仓库 README 中记录的字节数和 SHA-256 必须取自最终 ZIP，不能使用内部模型
 包的哈希代替。
 
-IndexTTS2 随推荐和进阶完整包一同提供，但只支持 NVIDIA GPU。仓库 README 和用户文档都必须
-明确这一点。
+IndexTTS2 随推荐版提供，但只支持 NVIDIA GPU。第一次生成语音时可能需要较长时间。
 
 ## 发布流程
 

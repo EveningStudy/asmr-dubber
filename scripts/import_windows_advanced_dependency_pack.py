@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
 import os
 import shutil
@@ -149,7 +150,42 @@ def _validate_staging(staging: Path) -> None:
             raise DependencyPackError(f"dependency pack is missing {relative}")
 
 
-def import_pack(archive: Path, portable: Path, sha256: str) -> None:
+def _merge_file(source: Path, destination: Path) -> None:
+    io_source = _windows_io_path(source)
+    io_destination = _windows_io_path(destination)
+    io_destination.parent.mkdir(parents=True, exist_ok=True)
+    if io_destination.is_file() and filecmp.cmp(io_source, io_destination, shallow=False):
+        return
+    temporary = io_destination.with_name(f".{io_destination.name}.advanced-dependency-pack-new")
+    temporary.unlink(missing_ok=True)
+    try:
+        shutil.copyfile(io_source, temporary)
+        os.replace(temporary, io_destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _merge_venv(source: Path, destination: Path) -> None:
+    """Overlay a prepared venv without renaming the running WebUI environment."""
+
+    for current, directories, filenames in os.walk(_windows_io_path(source)):
+        current_path = Path(current)
+        relative = current_path.relative_to(_windows_io_path(source))
+        target_directory = _windows_io_path(destination / relative)
+        target_directory.mkdir(parents=True, exist_ok=True)
+        for directory in directories:
+            (target_directory / directory).mkdir(parents=True, exist_ok=True)
+        for filename in filenames:
+            _merge_file(current_path / filename, destination / relative / filename)
+
+
+def import_pack(
+    archive: Path,
+    portable: Path,
+    sha256: str,
+    *,
+    merge_existing: bool = False,
+) -> None:
     if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
         raise DependencyPackError("dependency pack SHA-256 is invalid")
     staging_parent = portable / "t"
@@ -162,15 +198,18 @@ def import_pack(archive: Path, portable: Path, sha256: str) -> None:
             manifest = _validate(handle)
             _extract(handle, staging)
         _validate_staging(staging)
-        _remove_tree(backup, ignore_errors=True)
-        if destination.exists():
-            os.replace(destination, backup)
-        try:
-            os.replace(staging / "venv", destination)
-        except Exception:
-            if backup.exists() and not destination.exists():
-                os.replace(backup, destination)
-            raise
+        if merge_existing and destination.exists():
+            _merge_venv(staging / "venv", destination)
+        else:
+            _remove_tree(backup, ignore_errors=True)
+            if destination.exists():
+                os.replace(destination, backup)
+            try:
+                os.replace(staging / "venv", destination)
+            except Exception:
+                if backup.exists() and not destination.exists():
+                    os.replace(backup, destination)
+                raise
         marker = portable / "runtimes/windows-advanced-dependencies.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(
@@ -197,8 +236,14 @@ def main() -> None:
     parser.add_argument("archive", type=Path)
     parser.add_argument("portable", type=Path)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--merge-existing", action="store_true")
     args = parser.parse_args()
-    import_pack(args.archive.resolve(), args.portable.resolve(), args.sha256.lower())
+    import_pack(
+        args.archive.resolve(),
+        args.portable.resolve(),
+        args.sha256.lower(),
+        merge_existing=args.merge_existing,
+    )
 
 
 if __name__ == "__main__":

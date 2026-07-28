@@ -16,6 +16,7 @@ from .errors import ProjectError
 from .models import DubProject, ProjectSettings, Sentence, save_project
 from .platforms import portable_home
 from .subtitles import SubtitleLanguage
+from .task_control import CancellationSignal
 from .user_settings import UserSettings, load_user_settings, resolve_api_key
 from .voice_reference import shared_reference_sentence
 
@@ -264,7 +265,11 @@ def load_view(project_path: str, status: str = "项目已加载。") -> ProjectV
     return view(project, directory, status)
 
 
-def create_project(source_media: Any) -> ProjectView:
+def create_project(
+    source_media: Any,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
     source = Path(str(source_media or "")).expanduser().resolve()
     if not source.is_file():
         raise ProjectError("请先选择日语音频或视频。")
@@ -273,6 +278,8 @@ def create_project(source_media: Any) -> ProjectView:
         source,
         projects_root=defaults.projects_root or None,
         settings=defaults.to_project_settings(),
+        progress=progress,
+        cancel_event=cancel_event,
     )
     return view(project, directory, "项目已建立。下一步运行 ASR（语音识别）。")
 
@@ -286,19 +293,77 @@ def save_table(project_path: str, table: Any) -> ProjectView:
     return view(project, directory, message)
 
 
-def analyze(project_path: str, table: Any, progress: Any | None = None) -> ProjectView:
+def import_transcript_data(
+    project_path: str,
+    transcript_file: Any,
+    pasted_text: str,
+    plain_timing: str,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    project, directory = pipeline.reload_project(project_path)
+    result = pipeline.import_project_transcript(
+        project,
+        directory,
+        transcript_path=str(transcript_file) if transcript_file else None,
+        pasted_text=str(pasted_text or ""),
+        plain_timing=str(plain_timing or "estimate"),
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    if result["timed"]:
+        message = (
+            f"已从 {result['format']} 导入 {result['sentences']} 句及原时间轴；"
+            "已跳过 ASR（语音识别）和自动切分。"
+        )
+    elif plain_timing == "qwen":
+        message = (
+            f"已导入 {result['sentences']} 句纯台本；Qwen3 ForcedAligner 成功对齐 "
+            f"{result['qwen_aligned_sentences']} 句。请抽查时间轴后再翻译。"
+        )
+    else:
+        message = (
+            f"已导入 {result['sentences']} 句纯台本并按台词长度生成初始时间轴。"
+            "该时间轴只是估算，请在表格中校对后再继续。"
+        )
+    return view(project, directory, message)
+
+
+def analyze(
+    project_path: str,
+    table: Any,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     if project.sentences:
         apply_table(project, table)
-    pipeline.analyze_project(project, directory, force=bool(project.sentences), progress=progress)
+    pipeline.analyze_project(
+        project,
+        directory,
+        force=bool(project.sentences),
+        progress=progress,
+        cancel_event=cancel_event,
+    )
     return view(project, directory, f"ASR（语音识别）完成，共 {len(project.sentences)} 句。")
 
 
-def translate(project_path: str, table: Any, progress: Any | None = None) -> ProjectView:
+def translate(
+    project_path: str,
+    table: Any,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
     key = resolve_api_key(project.settings.translation_provider)
-    pipeline.translate_project(project, directory, api_key=key, progress=progress)
+    pipeline.translate_project(
+        project,
+        directory,
+        api_key=key,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
     return view(project, directory, "翻译完成。请检查中文后保存表格。")
 
 
@@ -306,11 +371,17 @@ def synthesize_and_mix(
     project_path: str,
     table: Any,
     progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
-    pipeline.synthesize_project(project, directory, progress=progress)
-    pipeline.mix_project(project, directory, progress=progress)
+    pipeline.synthesize_project(
+        project,
+        directory,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    pipeline.mix_project(project, directory, progress=progress, cancel_event=cancel_event)
     return view(project, directory, "TTS（语音合成）与混音完成。")
 
 
@@ -319,6 +390,7 @@ def subtitles(
     table: Any,
     language: str,
     progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
@@ -329,6 +401,7 @@ def subtitles(
         directory,
         language=cast(SubtitleLanguage, language),
         progress=progress,
+        cancel_event=cancel_event,
     )
     return view(project, directory, "字幕生成完成。")
 
@@ -453,6 +526,11 @@ def reference_preview(
         finally:
             temporary.unlink(missing_ok=True)
     return str(destination.resolve())
+
+
+def preview_reference(project_path: str, sentence_id: str | None) -> str | None:
+    project, directory = pipeline.reload_project(project_path)
+    return reference_preview(project, directory, sentence_id)
 
 
 def select_reference(project_path: str, sentence_id: str) -> tuple[str, str | None]:

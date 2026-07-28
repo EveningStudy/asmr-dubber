@@ -13,6 +13,7 @@ import soundfile as sf
 from .constants import ASMR_VAD_MODEL, OPTIONAL_ASR_MODEL_REVISIONS
 from .environment import cached_model_path
 from .errors import AsmrDubberError
+from .task_control import CancellationSignal, check_cancelled
 
 _SAMPLE_RATE = 16_000
 _CHUNK_SECONDS = 30
@@ -151,9 +152,11 @@ def detect_asmr_speech(
     min_silence_ms: int,
     speech_pad_ms: int,
     progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[VadSegment]:
     """Detect quiet/whispered speech with the pinned ASMR-specialized ONNX VAD."""
 
+    check_cancelled(cancel_event)
     model_root = cached_model_path(ASMR_VAD_MODEL)
     if model_root is None:
         raise AsmrDubberError(
@@ -206,6 +209,7 @@ def detect_asmr_speech(
         total_samples = len(audio)
         total_chunks = max(1, math.ceil(total_samples / chunk_samples))
         for chunk_index in range(total_chunks):
+            check_cancelled(cancel_event)
             if progress:
                 progress(
                     f"ASMR VAD 分析 {chunk_index + 1}/{total_chunks}",
@@ -228,6 +232,7 @@ def detect_asmr_speech(
             )
             logits = np.clip(logits[:valid_frames], -30.0, 30.0)
             probabilities.append(1.0 / (1.0 + np.exp(-logits)))
+            check_cancelled(cancel_event)
 
     combined = np.concatenate(probabilities) if probabilities else np.empty(0, dtype=np.float32)
     segments = _speech_segments_from_probabilities(
@@ -250,6 +255,7 @@ def build_condensed_analysis_audio(
     segments: list[VadSegment],
     *,
     separator_seconds: float,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[TimelinePiece]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     separator_samples = max(0, round(separator_seconds * _SAMPLE_RATE))
@@ -267,6 +273,7 @@ def build_condensed_analysis_audio(
         ) as output,
     ):
         for index, segment in enumerate(segments):
+            check_cancelled(cancel_event)
             source.seek(segment.start_sample)
             waveform = source.read(
                 segment.end_sample - segment.start_sample,

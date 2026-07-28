@@ -186,6 +186,29 @@ def test_advanced_dependency_pack_imports_supported_runtime(tmp_path: Path) -> N
     }
 
 
+def test_advanced_dependency_pack_can_merge_into_running_webui_venv(tmp_path: Path) -> None:
+    archive = tmp_path / "advanced.zip"
+    _write_advanced_pack(archive)
+    portable = tmp_path / "portable"
+    current_python = portable / "venv/Scripts/python.exe"
+    current_python.parent.mkdir(parents=True)
+    current_python.write_bytes(b"advanced-python")
+    retained = portable / "venv/keep-recommended.txt"
+    retained.write_text("keep", encoding="utf-8")
+
+    ADVANCED_MODULE.import_pack(
+        archive,
+        portable,
+        "e" * 64,
+        merge_existing=True,
+    )
+
+    assert current_python.read_bytes() == b"advanced-python"
+    assert retained.read_text(encoding="utf-8") == "keep"
+    assert (portable / "venv/Lib/site-packages/faster_whisper").is_dir()
+    assert (portable / "runtimes/windows-advanced-dependencies.json").is_file()
+
+
 def test_advanced_dependency_pack_rejects_path_traversal(tmp_path: Path) -> None:
     archive = tmp_path / "unsafe-advanced.zip"
     _write_advanced_pack(archive, unsafe=True)

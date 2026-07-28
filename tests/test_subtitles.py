@@ -7,7 +7,7 @@ import soundfile as sf
 
 from asmr_dubber.audio import probe_audio, sha256_file
 from asmr_dubber.environment import ffmpeg_executable
-from asmr_dubber.errors import ProjectError
+from asmr_dubber.errors import OperationCancelledError, ProjectError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.pipeline import generate_subtitles
 from asmr_dubber.subtitles import write_subtitle_files
@@ -137,3 +137,53 @@ def test_video_project_generates_subtitled_video_with_existing_mixed_audio(
     assert probe_audio(video).media_type == "video"
     assert loaded.subtitle_video_file is not None
     assert "__mixed" in loaded.subtitle_video_file
+
+
+def test_cancelled_video_subtitles_preserve_previous_project_outputs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    old_srt = tmp_path / "subtitles" / "old.srt"
+    old_lrc = tmp_path / "subtitles" / "old.lrc"
+    old_video = tmp_path / "output" / "old.mp4"
+    old_srt.parent.mkdir()
+    old_video.parent.mkdir()
+    old_srt.write_text("old srt", encoding="utf-8")
+    old_lrc.write_text("old lrc", encoding="utf-8")
+    old_video.write_bytes(b"old video")
+    project = DubProject(
+        source=AudioInfo(
+            path="source.mp4",
+            sha256=sha256_file(source),
+            duration_seconds=5,
+            sample_rate=16_000,
+            channels=2,
+            media_type="video",
+        ),
+        sentences=_sentences(),
+        subtitle_language="bilingual",
+        subtitle_srt_file="subtitles/old.srt",
+        subtitle_lrc_file="subtitles/old.lrc",
+        subtitle_video_file="output/old.mp4",
+    )
+    save_project(project, tmp_path)
+
+    def cancel_render(*_args, **_kwargs):
+        raise OperationCancelledError("cancelled")
+
+    monkeypatch.setattr(
+        "asmr_dubber.pipeline.render_subtitled_video",
+        cancel_render,
+    )
+
+    with pytest.raises(OperationCancelledError):
+        generate_subtitles(project, tmp_path, language="ja")
+
+    loaded, _ = load_project(tmp_path)
+    assert loaded.subtitle_language == "bilingual"
+    assert loaded.subtitle_srt_file == "subtitles/old.srt"
+    assert loaded.subtitle_lrc_file == "subtitles/old.lrc"
+    assert loaded.subtitle_video_file == "output/old.mp4"
+    assert old_video.read_bytes() == b"old video"

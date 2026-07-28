@@ -260,8 +260,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.4.0.0")' in source
-        assert 'AssemblyFileVersion("0.4.0.0")' in source
+        assert 'AssemblyVersion("0.5.0.0")' in source
+        assert 'AssemblyFileVersion("0.5.0.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:
@@ -291,6 +291,11 @@ def test_advanced_dependency_pack_and_analysis_model_packs_are_reused() -> None:
     assert "Import-ASMRDubberAdvancedDependencies" in setup
     assert "qwen_asr" in dependencies
     assert "onnxruntime" in dependencies
+    advanced_function = dependencies.split("function Import-ASMRDubberAdvancedDependencies", 1)[1]
+    assert (
+        "[switch]$MergeExisting"
+        in advanced_function.split("if (Test-ASMRDubberAdvancedDependencies", 1)[0]
+    )
     assert "bafd2268de9a83bbf391ba8918d1798d24f703b023af70e8f623b2dbffc9a178" in (dependencies)
 
 
@@ -316,3 +321,16 @@ def test_windows_native_process_arguments_use_shared_quoting() -> None:
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "ProcessStartInfo]::new" not in source
+
+
+def test_webui_backend_installer_resolves_project_root_and_reuses_setup_downloads() -> None:
+    source = (ROOT / "scripts/windows/install-backend.ps1").read_text(encoding="utf-8-sig")
+
+    assert 'Resolve-Path (Join-Path $PSScriptRoot "..\\..")' in source
+    assert "Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)" not in source
+    assert "Get-ASMRDubberWheelhouse" in source
+    assert "Invoke-ASMRDubberUvOfflineWheelhouse" in source
+    assert 'ArchiveMirrorName "windows_application_wheelhouse_archives"' in source
+    assert 'ArchiveMirrorName "windows_cuda_wheelhouse_archives"' in source
+    assert "Import-ASMRDubberAdvancedDependencies" in source
+    assert "-MergeExisting" in source

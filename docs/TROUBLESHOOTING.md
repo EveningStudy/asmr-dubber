@@ -29,6 +29,9 @@ Get-ChildItem .\.asmr-dubber\logs\setup-*.log |
     Select-Object -First 1
 ```
 
+程序运行日志位于 `.asmr-dubber/logs/asmr-dubber.log`，也可以在网页“日志与诊断”中查看和
+下载。它会隐藏 API Key 和常见令牌，但仍可能包含本机路径；公开前请检查。
+
 提交问题前删掉 API Key、用户名、私人路径、作品名和媒体内容。不要上传整个
 `.asmr-dubber`、`secrets.json` 或私人项目。
 
@@ -151,6 +154,9 @@ Setup 最后会运行 `doctor --no-network`。核心网页能启动而当前后�
 安装或导入后点击“重新检测硬件与后端”，Windows 下安装新的本地运行时后建议重启
 ASMR Dubber。
 
+网页“设备与模型”的安装使用与 Setup 相同的 ModelScope 模型包、依赖 wheelhouse、断点续传
+和哈希校验。暂停后再次点击“安装/修复”会继续，不需要删除已下载文件。
+
 ## 浏览器没有打开
 
 Windows 启动器从 7860 到 7959 选择空闲端口，并验证返回页面确实属于 ASMR Dubber。查看
@@ -235,9 +241,11 @@ bash scripts/linux/install-parakeet.sh
 
 ## ASR 速度很慢或显存不足
 
+- Parakeet 长音频会先切成显存有界片段，再由一个 CrispASR 进程完成，片段之间不会重新加载模型；
+- “连续无响应超时”不是整段音频总时限，只要后端持续报告进度就会继续；
 - 批大小改为 1；
 - 关闭多模型交叉校对，只验证一个模型；
-- Faster-Whisper CPU 使用 `int8`；
+- Faster-Whisper CPU 使用 `int8`；从 CUDA 配置切换到 CPU 时，程序会自动调整不兼容的 FP16；
 - GPU 显存紧张时用 `int8_float16` 或更小的同系列模型；
 - 缩小 Kotoba 分块或保持 Parakeet 默认分块；
 - 关闭其它 GPU 程序；

@@ -56,8 +56,11 @@ Parakeet 通过固定的 CrispASR F16 运行时执行，不在主 Python 环境�
 | `grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | `parakeet-ctc-1.1b-ja-f16.gguf` | 默认，质量优先 |
 | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `parakeet-tdt-0.6b-ja.gguf` | 更省资源，可选 TDT/CTC 解码头 |
 
-长音频默认按 120 秒分块，范围是 15–600 秒。1.1B 输出的 token 时间戳会再按标点、停顿和
-单句最长时间整理成句子。CrispASR 子进程有明确超时，任务结束后清理临时目录。
+长音频默认由主程序先按安静边界切成 120 秒左右的临时片段，范围是 15–600 秒，再一次性交给
+同一个 CrispASR 模型进程处理；不会为每个片段重新加载模型。1.1B 输出的 token 时间戳会再按
+标点、停顿和单句最长时间整理成句子。
+“连续无响应超时”只在进程长期没有任何输出时停止任务，持续收到进度的长音频不会因为总耗时
+超过该值而中断。任务结束或用户取消后会清理子进程和临时目录。
 
 独立安装或修复：
 

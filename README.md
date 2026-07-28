@@ -11,6 +11,7 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 
 - 从音频或视频创建独立项目，并保留输入文件的原始副本；
 - 使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper 做 ASR（语音识别）；
+- 可导入 SRT、VTT、ASS/SSA、LRC 或纯文本台本，直接建立句子表并跳过 ASR；
 - 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
 - 使用多个已安装的识别模型交叉校对日文；
 - 通过 DeepSeek、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
@@ -19,6 +20,7 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 - 逐句调整日文、中文、起止时间、是否配音和中文提前量；
 - 输出混音后的 WAV、视频，以及双语/中文/日文 SRT 和 LRC 字幕；
 - 中断后继续工作，只重做缺失或设置已经失效的部分。
+- 长任务可在网页中取消；程序日志可直接查看和下载。
 
 目前的识别流程按日语设计，目标翻译和配音语言为简体中文。目前不提供其它语种的完整工作流。
 
@@ -42,20 +44,21 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 ![Windows“启用长路径”开关位置](assets/windows-enable-long-paths.png)
 
 如果不想运行 Setup，可以从
-[ModelScope 免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Portable/files)
-下载已经装好运行环境和对应模型的 ZIP。下载后完整解压，直接双击 `ASMR-Dubber.exe` 即可。
+[ModelScope 推荐版免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0/files)
+下载已经装好运行环境和推荐模型的 ZIP。下载后完整解压，直接双击 `ASMR-Dubber.exe` 即可。
+本版本只提供推荐版免安装包；其它模型仍可在网页的“设备与模型”中按需安装。
 
 | 压缩包 | 已包含内容 | 适合谁 |
 |---|---|---|
-| `ASMR-Dubber-Windows-Core-Portable-v0.4.0.zip` | 程序、网页、便携 Python、FFmpeg、翻译和外部 TTS（语音合成）API 客户端；不含本地识别和本地 TTS 模型 | 只用外部服务，或想以后自己加模型 |
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.4.0.zip` | 核心包 + 两个 Parakeet 日语模型 + IndexTTS2 完整环境和 checkpoints | 想直接使用本地日语识别和本地配音 |
-| `ASMR-Dubber-Windows-Advanced-Portable-v0.4.0.zip` | 推荐包 + Kotoba-Whisper v2.2、Faster-Whisper large-v2、日语 ASMR 专用 VAD（语音活动检测）、Qwen3 ForcedAligner 0.6B | 需要切换识别器、多模型交叉校对、专用 VAD 或独立时间戳对齐 |
+| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境、两个 Parakeet 日语模型、IndexTTS2 环境和 checkpoints | 想直接使用本地日语识别和本地配音 |
 
-IndexTTS2 只支持 NVIDIA GPU。没有 NVIDIA GPU 时，推荐包和进阶包里的 Parakeet、Kotoba、
-Faster-Whisper、VAD 和时间戳对齐仍可使用 CPU，TTS 可改用外部 API。三个包都是 64 位
-Windows 10/11 版本，彼此独立，不需要先下载核心包，也不需要先运行
-`ASMR-Dubber-Setup.exe`。文件较大，上传完成前请以仓库文件列表为准；下载后可用同名
-`.sha256` 文件核对完整性。
+IndexTTS2 只支持 NVIDIA GPU。第一次生成语音时需要加载模型并初始化 CUDA，可能需要等待一段
+时间，后续通常会快很多。没有 NVIDIA GPU 时，包内 Parakeet 仍可使用 CPU，TTS 可改用外部
+API。免安装包适用于 64 位 Windows 10/11，不需要先运行 `ASMR-Dubber-Setup.exe`。文件较大，
+上传完成前请以仓库文件列表为准；下载后可用同名 `.sha256` 文件核对完整性。
+
+Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新架构。主环境使用 CUDA 13，
+不支持 Maxwell、Pascal 和 Volta；这些旧卡即使显存较大，也不属于完整本地 GPU 支持范围。
 
 
 ## 快速开始
@@ -118,7 +121,8 @@ bash scripts/linux/run-ui.sh
 2. 在“设置 → 翻译”选择服务并保存 API Key；本地翻译接口可按服务实际情况留空密钥。
 3. 如已打开项目，点击“保存并应用到当前项目”。“仅保存为以后新项目默认值”不会改动当前项目。
 4. 回到“项目工作台”，选择日语音频或视频并点击“新建项目”。
-5. 点击“运行 ASR（语音识别）”，检查句子表里的文字和时间。
+5. 点击“运行 ASR（语音识别）”，检查句子表里的文字和时间。已有台本或字幕时，也可以展开
+   “已有台本或字幕”直接导入；带时间戳的文件会跳过识别和切分。
 6. 点击“翻译日文”，编辑中文后点击“保存校对表格”。
 7. 在“统一音色参考”中选择一条清晰的 5–15 秒日文句子。
 8. 点击“TTS（语音合成）并混音”。成品会显示在页面中，也会保存在项目的 `output` 目录。
@@ -152,7 +156,7 @@ bash scripts/linux/run-ui.sh
 │   ├── cache/           # 下载与计算缓存
 │   ├── config/          # 设置、密钥和外部参考音频
 │   ├── projects/        # 项目
-│   ├── logs/            # 安装日志
+│   ├── logs/            # Setup 与程序运行日志
 │   └── temp/            # 可清理的临时文件
 ├── model-packs/         # 可选的离线模型包入口
 ├── ASMR-Dubber.exe

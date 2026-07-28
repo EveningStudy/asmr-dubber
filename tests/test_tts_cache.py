@@ -3,15 +3,24 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
+import httpx
 import numpy as np
+import pytest
 import soundfile as sf
 
+from asmr_dubber.errors import OperationCancelledError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence
+from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.tts import shared_reference_sentence, tts_cache_key
 from asmr_dubber.tts_backends import (
+    _cosyvoice_runner,
+    _fish_runner,
+    _gpt_sovits_runner,
     _indextts_command,
     _load_indextts,
+    _synthesize_indextts_cli_batch,
     synthesize_with_selected_backend,
 )
 from asmr_dubber.voice_reference import (
@@ -239,3 +248,224 @@ def test_external_tts_respects_bounded_request_concurrency(tmp_path: Path, monke
     assert failures == []
     assert maximum == 3
     assert all(sentence.status == "synthesized" for sentence in project.sentences)
+
+
+def test_external_tts_cancel_closes_active_client_without_waiting_for_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _project()
+    project.sentences = [project.sentences[0]]
+    project.settings.tts_backend = "gpt_sovits"
+    project.settings.tts_model = "GPT-SoVITS-v4"
+    source = tmp_path / "source.wav"
+    source.touch()
+    reference_path = tmp_path / "reference.wav"
+    sf.write(reference_path, np.zeros(800, dtype=np.float32), 8_000, subtype="FLOAT")
+    reference = VoiceReference(reference_path, "参考です。", "shared")
+    started = threading.Event()
+    client_closed = threading.Event()
+    signal = CancellationToken()
+
+    def run(_sentence, _reference, _output):
+        started.set()
+        assert client_closed.wait(timeout=2)
+        raise RuntimeError("client closed")
+
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends._runner",
+        lambda _project: (run, client_closed.set),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends.prepare_voice_reference",
+        lambda *_args: reference,
+    )
+
+    canceller = threading.Thread(
+        target=lambda: (started.wait(timeout=2), signal.set()),
+        daemon=True,
+    )
+    canceller.start()
+    started_at = time.monotonic()
+    with pytest.raises(OperationCancelledError):
+        synthesize_with_selected_backend(
+            project,
+            tmp_path,
+            source,
+            cancel_event=signal,
+        )
+    canceller.join(timeout=2)
+
+    assert time.monotonic() - started_at < 2
+    assert client_closed.is_set()
+    assert not list((tmp_path / "chinese").glob("*.tmp.wav"))
+
+
+class _Response:
+    is_error = False
+    status_code = 200
+    text = ""
+    content = b"mock-wave"
+
+
+class _RecordingClient:
+    instances: ClassVar[list["_RecordingClient"]] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.calls: list[dict[str, object]] = []
+        self.closed = False
+        self.__class__.instances.append(self)
+
+    def post(self, url, **kwargs):
+        files = kwargs.get("files")
+        uploaded = None
+        if files:
+            uploaded = files["prompt_wav"][1].read()
+        self.calls.append({"url": url, **kwargs, "uploaded": uploaded})
+        return _Response()
+
+    def close(self):
+        self.closed = True
+
+
+def test_gpt_sovits_http_contract(tmp_path: Path, monkeypatch) -> None:
+    _RecordingClient.instances.clear()
+    monkeypatch.setattr(httpx, "Client", _RecordingClient)
+    project = _project()
+    project.settings.tts_api_base_url = "http://127.0.0.1:9880"
+    reference_path = tmp_path / "reference.wav"
+    reference_path.write_bytes(b"reference")
+    reference = VoiceReference(reference_path, "参考です。", "shared")
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _gpt_sovits_runner(project)
+    run(project.sentences[0], reference, output)
+    cleanup()
+
+    client = _RecordingClient.instances[0]
+    call = client.calls[0]
+    assert call["url"] == "http://127.0.0.1:9880/tts"
+    assert call["json"]["text_lang"] == "zh"
+    assert call["json"]["prompt_lang"] == "ja"
+    assert call["json"]["ref_audio_path"] == str(reference_path)
+    assert output.read_bytes() == b"mock-wave"
+    assert client.closed is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "endpoint", "has_prompt_text"),
+    [
+        ("zero_shot", "inference_zero_shot", True),
+        ("cross_lingual", "inference_cross_lingual", False),
+    ],
+)
+def test_cosyvoice_http_contract(
+    tmp_path: Path,
+    monkeypatch,
+    mode: str,
+    endpoint: str,
+    has_prompt_text: bool,
+) -> None:
+    _RecordingClient.instances.clear()
+    monkeypatch.setattr(httpx, "Client", _RecordingClient)
+    project = _project()
+    project.settings.tts_api_base_url = "http://127.0.0.1:50000"
+    project.settings.tts_cosyvoice_mode = mode
+    reference_path = tmp_path / "reference.wav"
+    reference_path.write_bytes(b"reference-audio")
+    reference = VoiceReference(reference_path, "参考です。", "shared")
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _cosyvoice_runner(project)
+    run(project.sentences[0], reference, output)
+    cleanup()
+
+    client = _RecordingClient.instances[0]
+    call = client.calls[0]
+    assert call["url"] == f"http://127.0.0.1:50000/{endpoint}"
+    assert ("prompt_text" in call["data"]) is has_prompt_text
+    assert call["uploaded"] == b"reference-audio"
+    assert output.read_bytes() == b"mock-wave"
+
+
+def test_fish_speech_http_contract_and_authorization(tmp_path: Path, monkeypatch) -> None:
+    _RecordingClient.instances.clear()
+    monkeypatch.setattr(httpx, "Client", _RecordingClient)
+    monkeypatch.setattr("asmr_dubber.tts_backends.saved_service_key", lambda _name: "secret")
+    project = _project()
+    project.settings.tts_backend = "fish_speech"
+    project.settings.tts_api_base_url = "https://fish.example/api"
+    reference_path = tmp_path / "reference.wav"
+    reference_path.write_bytes(b"reference-audio")
+    reference = VoiceReference(reference_path, "参考です。", "shared")
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _fish_runner(project)
+    run(project.sentences[0], reference, output)
+    cleanup()
+
+    client = _RecordingClient.instances[0]
+    call = client.calls[0]
+    assert client.kwargs["headers"] == {"Authorization": "Bearer secret"}
+    assert call["url"] == "https://fish.example/api/v1/tts"
+    assert call["json"]["references"][0]["text"] == "参考です。"
+    assert output.read_bytes() == b"mock-wave"
+    assert client.closed is True
+
+
+def test_indextts_cancel_after_child_exit_is_not_reported_as_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _project()
+    project.sentences = [project.sentences[0]]
+    project.settings.tts_model_path = str(tmp_path / "checkpoints")
+    model_dir = Path(project.settings.tts_model_path)
+    model_dir.mkdir()
+    (model_dir / "config.yaml").touch()
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(16_000 * 2, dtype=np.float32), 16_000)
+    reference_path = tmp_path / "reference.wav"
+    sf.write(reference_path, np.zeros(16_000, dtype=np.float32), 16_000)
+    reference = VoiceReference(reference_path, "参考です。", "shared")
+    (tmp_path / "chinese").mkdir()
+    signal = threading.Event()
+
+    class FakeProcess:
+        def __init__(self, *_args, **_kwargs):
+            self.stdout = iter(())
+            self.returncode = None
+
+        def wait(self):
+            signal.set()
+            self.returncode = 1
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr("asmr_dubber.tts_backends._indextts_command", lambda _project: ["python"])
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends.prepare_index_speaker_reference",
+        lambda *_args: reference,
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends.prepare_index_emotion_reference",
+        lambda *_args: reference,
+    )
+    monkeypatch.setattr("asmr_dubber.tts_backends.subprocess.Popen", FakeProcess)
+
+    with pytest.raises(OperationCancelledError):
+        _synthesize_indextts_cli_batch(
+            project,
+            tmp_path,
+            source,
+            project.sentences,
+            None,
+            None,
+            signal,
+        )

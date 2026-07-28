@@ -1,11 +1,14 @@
 import json
 import re
+import threading
 
 import httpx
 import pytest
 
-from asmr_dubber.errors import TranslationError
+from asmr_dubber import translation as translation_module
+from asmr_dubber.errors import OperationCancelledError, TranslationError
 from asmr_dubber.models import Sentence
+from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.translation import translate_sentences, validate_translation
 
 
@@ -65,6 +68,57 @@ def test_empty_llm_translation_disables_chinese_dubbing() -> None:
     assert sentence.zh_text == ""
     assert sentence.enabled is False
     assert sentence.status == "skipped_filler"
+
+
+def test_translation_cancel_closes_active_http_client(monkeypatch) -> None:
+    sentence = Sentence(
+        id="s000001",
+        start_seconds=0.0,
+        end_seconds=1.0,
+        ja_text="始めましょう。",
+    )
+    started = threading.Event()
+    closed = threading.Event()
+    signal = CancellationToken()
+
+    class BlockingTranslator:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+        def close(self):
+            closed.set()
+
+        def translate_chunk(self, *_args):
+            started.set()
+            assert closed.wait(timeout=2)
+            raise TranslationError("client closed")
+
+    translator = BlockingTranslator()
+    monkeypatch.setattr(
+        translation_module,
+        "DeepSeekTranslator",
+        lambda **_kwargs: translator,
+    )
+    canceller = threading.Thread(
+        target=lambda: (started.wait(timeout=2), signal.set()),
+        daemon=True,
+    )
+    canceller.start()
+
+    with pytest.raises(OperationCancelledError):
+        translate_sentences(
+            [sentence],
+            api_key="secret-test-key",
+            model="deepseek-chat",
+            cancel_event=signal,
+        )
+    canceller.join(timeout=2)
+
+    assert closed.is_set()
+    assert sentence.zh_text == ""
 
 
 def _target_ids(request: httpx.Request) -> list[str]:

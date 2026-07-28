@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
 from .models import Sentence
+from .task_control import (
+    CancellationSignal,
+    check_cancelled,
+    register_cancel_callback,
+    unregister_cancel_callback,
+)
 
 Progress = Callable[[str, int, int], None]
 
@@ -677,7 +683,9 @@ def translate_sentences(
     progress: Progress | None = None,
     on_batch: Callable[[], None] | None = None,
     client: httpx.Client | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
+    check_cancelled(cancel_event)
     pending = [sentence for sentence in sentences if sentence.enabled and not sentence.zh_text]
     if not pending:
         if progress:
@@ -720,62 +728,72 @@ def translate_sentences(
     else:
         raise TranslationError(f"未知翻译服务：{provider}")
 
-    with translator:
-        index = 0
-        while index < len(batches):
-            chunk = batches[index]
-            if progress:
-                progress(
-                    f"{provider} · {model} 翻译第 {index + 1}/{len(batches)} 批",
-                    index,
-                    len(batches),
-                )
-            try:
-                translations = translator.translate_chunk(
-                    chunk,
-                    (
-                        _context_for_chunk(sentences, chunk, context_sentences)
-                        if send_context
-                        else "[]"
-                    ),
-                    (
-                        _bounded_translation_memory(sentences, chunk, memory_sentences)
-                        if send_context
-                        else "[]"
-                    ),
-                    job_id,
-                )
-            except _OutputLengthTranslationError as exc:
-                if len(chunk.sentences) == 1:
-                    raise TranslationError(
-                        f"句子 {chunk.sentences[0].id} 即使提高输出预算仍超出长度上限。"
-                    ) from exc
-                midpoint = len(chunk.sentences) // 2
-                batches[index : index + 1] = [
-                    TranslationChunk(chunk.sentences[:midpoint]),
-                    TranslationChunk(chunk.sentences[midpoint:]),
-                ]
+    cancel_translation = translator.close
+    callback_signal = register_cancel_callback(cancel_translation, cancel_event)
+    try:
+        with translator:
+            index = 0
+            while index < len(batches):
+                check_cancelled(cancel_event)
+                chunk = batches[index]
                 if progress:
                     progress(
-                        f"第 {index + 1} 批输出过长，已自动拆成两个小批次",
+                        f"{provider} · {model} 翻译第 {index + 1}/{len(batches)} 批",
                         index,
                         len(batches),
                     )
-                continue
-            for sentence in chunk.sentences:
-                translation = translations[sentence.id].strip()
-                sentence.zh_text = translation
-                if translation:
-                    sentence.status = "translated"
-                else:
-                    sentence.enabled = False
-                    sentence.tts_file = None
-                    sentence.tts_cache_key = None
-                    sentence.tts_duration_seconds = None
-                    sentence.status = "skipped_filler"
-                sentence.error = None
-            if on_batch:
-                on_batch()
-            index += 1
-            if progress:
-                progress(f"已翻译 {index}/{len(batches)} 批", index, len(batches))
+                try:
+                    translations = translator.translate_chunk(
+                        chunk,
+                        (
+                            _context_for_chunk(sentences, chunk, context_sentences)
+                            if send_context
+                            else "[]"
+                        ),
+                        (
+                            _bounded_translation_memory(sentences, chunk, memory_sentences)
+                            if send_context
+                            else "[]"
+                        ),
+                        job_id,
+                    )
+                except _OutputLengthTranslationError as exc:
+                    if len(chunk.sentences) == 1:
+                        raise TranslationError(
+                            f"句子 {chunk.sentences[0].id} 即使提高输出预算仍超出长度上限。"
+                        ) from exc
+                    midpoint = len(chunk.sentences) // 2
+                    batches[index : index + 1] = [
+                        TranslationChunk(chunk.sentences[:midpoint]),
+                        TranslationChunk(chunk.sentences[midpoint:]),
+                    ]
+                    if progress:
+                        progress(
+                            f"第 {index + 1} 批输出过长，已自动拆成两个小批次",
+                            index,
+                            len(batches),
+                        )
+                    continue
+                except TranslationError:
+                    check_cancelled(cancel_event)
+                    raise
+                for sentence in chunk.sentences:
+                    translation = translations[sentence.id].strip()
+                    sentence.zh_text = translation
+                    if translation:
+                        sentence.status = "translated"
+                    else:
+                        sentence.enabled = False
+                        sentence.tts_file = None
+                        sentence.tts_cache_key = None
+                        sentence.tts_duration_seconds = None
+                        sentence.status = "skipped_filler"
+                    sentence.error = None
+                if on_batch:
+                    on_batch()
+                check_cancelled(cancel_event)
+                index += 1
+                if progress:
+                    progress(f"已翻译 {index}/{len(batches)} 批", index, len(batches))
+    finally:
+        unregister_cancel_callback(cancel_translation, callback_signal)

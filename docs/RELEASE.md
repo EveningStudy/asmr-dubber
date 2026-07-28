@@ -1,6 +1,6 @@
 # 发行包说明
 
-ASMR Dubber 0.4.0 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语音频或视频，提供
+ASMR Dubber 0.5.0 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语音频或视频，提供
 可校对的日语识别、中文翻译、音色克隆、混音和字幕工作流。
 
 ## 下载包包含什么
@@ -16,17 +16,15 @@ ASMR Dubber 0.4.0 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语
 
 ## Windows 免安装包
 
-[ModelScope 免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Portable/files)
-另行提供三个可以直接解压使用的完整包：
+[ModelScope 推荐版免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0/files)
+另行提供一个可以直接解压使用的完整包：
 
 | 文件 | 内容 |
 |---|---|
-| `ASMR-Dubber-Windows-Core-Portable-v0.4.0.zip` | 程序和完整基础运行环境，不含本地 ASR/TTS 模型 |
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.4.0.zip` | 核心包 + 两个 Parakeet 日语模型 + IndexTTS2 环境和 checkpoints |
-| `ASMR-Dubber-Windows-Advanced-Portable-v0.4.0.zip` | 推荐包 + Kotoba-Whisper v2.2 + Faster-Whisper large-v2 + ASMR Whisper VAD ONNX + Qwen3 ForcedAligner 0.6B |
+| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境 + 两个 Parakeet 日语模型 + IndexTTS2 环境和 checkpoints |
 
-三个文件彼此独立。完整解压后直接运行 `ASMR-Dubber.exe`，不需要先运行 Setup。IndexTTS2
-只支持 NVIDIA GPU；没有 NVIDIA GPU 时可以使用其它本地分析模型和外部 TTS API。
+完整解压后直接运行 `ASMR-Dubber.exe`，不需要先运行 Setup。IndexTTS2 只支持 NVIDIA GPU；
+第一次生成语音时可能需要较长时间。其它模型可在网页中按需安装。
 
 ## 安装方案
 

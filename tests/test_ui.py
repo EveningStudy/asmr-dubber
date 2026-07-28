@@ -208,9 +208,17 @@ def test_changed_asr_settings_are_used_by_the_next_run(
 
     received: dict[str, object] = {}
 
-    def fake_analyze_project(current, _directory, *, force=False, progress=None):
+    def fake_analyze_project(
+        current,
+        _directory,
+        *,
+        force=False,
+        progress=None,
+        cancel_event=None,
+    ):
         received["review_enabled"] = current.settings.asr_review_enabled
         received["force"] = force
+        received["cancel_event"] = cancel_event
 
     monkeypatch.setattr(
         "asmr_dubber.ui_services.pipeline.analyze_project",
@@ -219,7 +227,11 @@ def test_changed_asr_settings_are_used_by_the_next_run(
 
     analyze(str(manifest), applied.rows)
 
-    assert received == {"review_enabled": False, "force": True}
+    assert received == {
+        "review_enabled": False,
+        "force": True,
+        "cancel_event": None,
+    }
 
 
 def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkeypatch) -> None:

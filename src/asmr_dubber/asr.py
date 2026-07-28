@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import json
+import logging
 import math
 import os
 import queue
@@ -28,6 +29,13 @@ from .errors import AsmrDubberError
 from .models import ProjectSettings, Sentence
 from .platforms import current_platform, isolated_runtime_environment, portable_home
 from .segmentation import TimedToken, restore_punctuation, split_timed_tokens
+from .task_control import (
+    CancellationSignal,
+    check_cancelled,
+    register_process,
+    terminate_process_tree,
+    unregister_process,
+)
 from .vad import (
     build_condensed_analysis_audio,
     detect_asmr_speech,
@@ -40,6 +48,7 @@ _PARAKEET_AUTO_CHUNK_SECONDS = 120.0
 _PARAKEET_BOUNDARY_SEARCH_SECONDS = 5.0
 _PARAKEET_BOUNDARY_WINDOW_SECONDS = 0.1
 _TRANSFORMERS_ASR_PIPELINE_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _run_transformers_asr_pipeline(pipe: Any, inputs: Any, **kwargs: Any) -> Any:
@@ -158,7 +167,9 @@ def _transcribe_faster_whisper(
     analysis_audio: Path,
     settings: ProjectSettings,
     progress: Progress | None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], str]:
+    check_cancelled(cancel_event)
     try:
         from faster_whisper import BatchedInferencePipeline, WhisperModel
     except ImportError as exc:
@@ -174,10 +185,26 @@ def _transcribe_faster_whisper(
         if model_source == "large-v2":
             model_source = "Systran/faster-whisper-large-v2"
         model_source = resolve_model_source(model_source)
+        compute_type = settings.asr_compute_type
+        if not settings.asr_device.startswith("cuda") and compute_type in {
+            "float16",
+            "int8_float16",
+        }:
+            # CTranslate2 cannot execute FP16 kernels on most desktop CPUs.
+            # Keep projects portable when a user switches an existing CUDA
+            # configuration to CPU instead of failing during model loading.
+            compute_type = "int8"
+            logger.info(
+                "Faster-Whisper CPU 自动调整计算精度：%s -> %s",
+                settings.asr_compute_type,
+                compute_type,
+            )
+            if progress:
+                progress("Faster-Whisper CPU 自动使用 int8 计算精度", 0, 1)
         model = WhisperModel(
             model_source,
             device=settings.asr_device,
-            compute_type=settings.asr_compute_type,
+            compute_type=compute_type,
         )
         transcribe_kwargs = {
             "language": "ja",
@@ -213,7 +240,10 @@ def _transcribe_faster_whisper(
                 str(analysis_audio),
                 **transcribe_kwargs,
             )
-        values = list(segments)
+        values = []
+        for segment in segments:
+            check_cancelled(cancel_event)
+            values.append(segment)
         tokens: list[TimedToken] = []
         for segment in values:
             words = list(getattr(segment, "words", None) or [])
@@ -237,7 +267,9 @@ def _transcribe_kotoba_whisper(
     analysis_audio: Path,
     settings: ProjectSettings,
     progress: Progress | None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], str]:
+    check_cancelled(cancel_event)
     configured_model = Path(settings.asr_model).expanduser()
     if not configured_model.is_dir() and cached_model_path(settings.asr_model) is None:
         raise AsmrDubberError(
@@ -291,6 +323,7 @@ def _transcribe_kotoba_whisper(
         full_text: list[str] = []
         with sf.SoundFile(analysis_audio) as audio:
             for index, (start_sample, end_sample) in enumerate(chunk_ranges, start=1):
+                check_cancelled(cancel_event)
                 audio.seek(start_sample)
                 waveform = audio.read(
                     end_sample - start_sample,
@@ -315,6 +348,7 @@ def _transcribe_kotoba_whisper(
                         "condition_on_prev_tokens": settings.asr_condition_on_previous_text,
                     },
                 )
+                check_cancelled(cancel_event)
                 if not isinstance(result, Mapping):
                     raise AsmrDubberError("Kotoba-Whisper 返回的结果格式无效。")
                 offset = start_sample / sample_rate
@@ -443,7 +477,9 @@ def _transcribe_parakeet(
     analysis_audio: Path,
     settings: ProjectSettings,
     progress: Progress | None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], str]:
+    check_cancelled(cancel_event)
     executable = _crispasr_executable()
     model_path = _parakeet_model_path(settings.asr_model)
     if not executable.is_file() or not model_path.is_file():
@@ -488,20 +524,67 @@ def _transcribe_parakeet(
         base_command.append("--no-gpu")
     environment = isolated_runtime_environment("crispasr")
     environment["CRISPASR_CACHE_DIR"] = str(portable_home() / "cache" / "crispasr")
-    # CrispASR currently starts once per application-managed chunk. A larger,
-    # explicit default drastically reduces model reloads on long recordings,
-    # while the validated 15–600 second range still bounds peak memory.
-    chunk_seconds = settings.asr_chunk_seconds or _PARAKEET_AUTO_CHUNK_SECONDS
-    sample_rate, chunk_ranges = _audio_file_chunk_ranges(native_input, chunk_seconds)
-    if not chunk_ranges or chunk_ranges[-1][1] <= 0:
+    # FastConformer attention still grows with the input duration in CrispASR
+    # 0.8.x. Supplying a multi-hour file directly can therefore request tens of
+    # GiB even when --chunk-seconds is present. CrispASR accepts several input
+    # files in one invocation, so create bounded files and pass all of them to
+    # one process: peak memory stays bounded while the model is loaded once.
+    configured_chunk_seconds = settings.asr_chunk_seconds or _PARAKEET_AUTO_CHUNK_SECONDS
+    duration_seconds = float(sf.info(native_input).duration)
+    if duration_seconds <= 0:
         raise AsmrDubberError("Parakeet 输入音频为空。")
-    if progress:
-        progress(f"Parakeet 将音频分为 {len(chunk_ranges)} 段", 0, len(chunk_ranges))
-    deadline = time.monotonic() + settings.asr_timeout_seconds
-    active_process: subprocess.Popen[str] | None = None
 
-    def run_chunk(command: list[str], result_file: Path, index: int) -> Mapping[str, Any]:
-        nonlocal active_process
+    def prepare_chunks(
+        chunk_seconds: float,
+        attempt: int,
+    ) -> tuple[int, list[tuple[Path, int, int]]]:
+        sample_rate, ranges = _audio_file_chunk_ranges(native_input, chunk_seconds)
+        chunk_directory = run_directory / f"chunks-{attempt:02d}"
+        chunk_directory.mkdir(parents=True, exist_ok=False)
+        chunks: list[tuple[Path, int, int]] = []
+        with sf.SoundFile(native_input) as source_audio:
+            for index, (start_sample, end_sample) in enumerate(ranges, start=1):
+                check_cancelled(cancel_event)
+                chunk_file = chunk_directory / f"chunk-{index:06d}.wav"
+                source_audio.seek(start_sample)
+                waveform = source_audio.read(
+                    end_sample - start_sample,
+                    dtype="float32",
+                    always_2d=False,
+                )
+                sf.write(chunk_file, waveform, sample_rate, subtype="PCM_16")
+                chunks.append((chunk_file, start_sample, end_sample))
+        return sample_rate, chunks
+
+    def command_batches(chunk_files: list[Path]) -> list[list[Path]]:
+        # CreateProcess has a 32,767-character command-line ceiling on Windows.
+        # Keep margin for quoting and environment wrappers. Typical recordings
+        # still fit in one batch; only extremely long ones reload per batch.
+        limit = 28_000 if current_platform().is_windows else 120_000
+        base_length = sum(len(argument) + 3 for argument in base_command)
+        batches: list[list[Path]] = []
+        current: list[Path] = []
+        current_length = base_length
+        for chunk_file in chunk_files:
+            argument_length = len(str(chunk_file)) + 3
+            if current and current_length + argument_length > limit:
+                batches.append(current)
+                current = []
+                current_length = base_length
+            current.append(chunk_file)
+            current_length += argument_length
+        if current:
+            batches.append(current)
+        return batches
+
+    def run_batch(
+        command: list[str],
+        *,
+        batch_index: int,
+        batch_count: int,
+        completed_before: int,
+        total_chunks: int,
+    ) -> tuple[int, list[str], int]:
         output_lines: list[str] = []
         process = subprocess.Popen(
             command,
@@ -513,7 +596,7 @@ def _transcribe_parakeet(
             encoding="utf-8",
             errors="replace",
         )
-        active_process = process
+        register_process(process, cancel_event)
         stdout = process.stdout
         assert stdout is not None
         output_queue: queue.Queue[str | None] = queue.Queue()
@@ -531,106 +614,182 @@ def _transcribe_parakeet(
             daemon=True,
         )
         reader.start()
-        last_heartbeat = 0.0
+        started_at = time.monotonic()
+        last_activity = started_at
+        last_heartbeat = started_at
         output_closed = False
-        while not output_closed:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                process.kill()
-                process.wait()
-                raise AsmrDubberError(
-                    f"Parakeet 识别超过 {settings.asr_timeout_seconds:g} 秒，已安全停止。"
-                    "可在设置中增加 ASR（语音识别）超时，或缩短输入音频。"
-                )
-            try:
-                line = output_queue.get(timeout=min(0.25, remaining))
-            except queue.Empty:
-                now = time.monotonic()
-                if progress and now - last_heartbeat >= 2:
-                    elapsed = settings.asr_timeout_seconds - remaining
-                    progress(
-                        f"Parakeet 正在识别第 {index}/{len(chunk_ranges)} 段"
-                        f"（已运行 {elapsed:.0f} 秒）",
-                        index - 1,
-                        len(chunk_ranges),
-                    )
-                    last_heartbeat = now
-                if process.poll() is not None and not reader.is_alive():
-                    break
-                continue
-            if line is None:
-                output_closed = True
-                continue
-            value = line.strip()
-            if not value:
-                continue
-            output_lines.append(value)
-            if progress and ("progress" in value.lower() or "%" in value):
-                progress(
-                    f"Parakeet 第 {index}/{len(chunk_ranges)} 段：{value[-140:]}",
-                    index - 1,
-                    len(chunk_ranges),
-                )
-        reader.join(timeout=1)
-        return_code = process.wait()
-        active_process = None
-        if return_code != 0:
-            if len(output_lines) > 42:
-                diagnostic_lines = [*output_lines[:12], "…", *output_lines[-30:]]
-            else:
-                diagnostic_lines = output_lines
-            detail = "\n".join(diagnostic_lines).strip()
-            raise AsmrDubberError(
-                f"Parakeet 第 {index}/{len(chunk_ranges)} 段识别失败"
-                f"（退出码 {return_code}）：{detail[:4000]}"
-            )
-        if not result_file.is_file():
-            # CrispASR returns success without creating JSON when a chunk is
-            # entirely silent or contains no decodable speech. This is normal
-            # for quiet ASMR gaps; skip it and continue with adjacent chunks.
-            return {"crispasr": {"language": "ja"}, "transcription": []}
+        completed_in_batch = 0
         try:
-            payload = json.loads(result_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise AsmrDubberError(
-                f"Parakeet 第 {index}/{len(chunk_ranges)} 段没有生成有效结果：{exc}"
-            ) from exc
-        if not isinstance(payload, Mapping):
-            raise AsmrDubberError("Parakeet JSON 顶层格式无效。")
-        return payload
-
-    all_tokens: list[TimedToken] = []
-    full_text_parts: list[str] = []
-    language = "Japanese"
-    try:
-        with sf.SoundFile(native_input) as source_audio:
-            for index, (start_sample, end_sample) in enumerate(chunk_ranges, start=1):
-                if len(chunk_ranges) == 1:
-                    chunk_file = native_input
-                else:
-                    chunk_file = run_directory / f"chunk-{index:04d}.wav"
-                    source_audio.seek(start_sample)
-                    waveform = source_audio.read(
-                        end_sample - start_sample,
-                        dtype="float32",
-                        always_2d=False,
+            while not output_closed:
+                check_cancelled(cancel_event)
+                now = time.monotonic()
+                idle_seconds = now - last_activity
+                if idle_seconds >= settings.asr_timeout_seconds:
+                    terminate_process_tree(process)
+                    raise AsmrDubberError(
+                        f"Parakeet 连续 {settings.asr_timeout_seconds:g} 秒没有任何响应，"
+                        "已安全停止。可在设置中增加“连续无响应超时”。"
                     )
-                    sf.write(chunk_file, waveform, sample_rate, subtype="PCM_16")
-                result_base = run_directory / f"result-{index:04d}"
-                command = [
-                    *base_command,
-                    "-f",
-                    str(chunk_file),
-                    "-of",
-                    str(result_base),
-                ]
-                if progress:
+                try:
+                    line = output_queue.get(timeout=0.25)
+                except queue.Empty:
+                    if progress and now - last_heartbeat >= 2:
+                        elapsed = now - started_at
+                        progress(
+                            f"Parakeet 正在处理有界分块 {completed_before + completed_in_batch}/"
+                            f"{total_chunks}（批次 {batch_index}/{batch_count}，"
+                            f"已运行 {elapsed:.0f} 秒）",
+                            completed_before + completed_in_batch,
+                            total_chunks,
+                        )
+                        last_heartbeat = now
+                    if process.poll() is not None and not reader.is_alive():
+                        break
+                    continue
+                if line is None:
+                    output_closed = True
+                    continue
+                last_activity = time.monotonic()
+                value = line.strip()
+                if not value:
+                    continue
+                output_lines.append(value)
+                if "transcribed " in value.casefold() and " audio in " in value.casefold():
+                    completed_in_batch += 1
+                    if progress:
+                        progress(
+                            f"Parakeet 已完成 {completed_before + completed_in_batch}/"
+                            f"{total_chunks} 个分块",
+                            completed_before + completed_in_batch,
+                            total_chunks,
+                        )
+                if progress and ("progress" in value.lower() or "%" in value):
                     progress(
-                        f"Parakeet 正在识别第 {index}/{len(chunk_ranges)} 段",
-                        index - 1,
-                        len(chunk_ranges),
+                        f"Parakeet：{value[-180:]}",
+                        completed_before + completed_in_batch,
+                        total_chunks,
                     )
-                payload = run_chunk(command, result_base.with_suffix(".json"), index)
+            reader.join(timeout=1)
+            return_code = process.wait()
+        finally:
+            unregister_process(process, cancel_event)
+            if process.poll() is None:
+                terminate_process_tree(process)
+        check_cancelled(cancel_event)
+        logger.info(
+            "Parakeet 批次结束：batch=%s/%s return_code=%s elapsed=%.1fs",
+            batch_index,
+            batch_count,
+            return_code,
+            time.monotonic() - started_at,
+        )
+        return return_code, output_lines, completed_in_batch
+
+    def diagnostic_text(lines: list[str]) -> str:
+        selected = [*lines[:12], "…", *lines[-30:]] if len(lines) > 42 else lines
+        return "\n".join(selected).strip()
+
+    def is_memory_failure(return_code: int, detail: str) -> bool:
+        lowered = detail.casefold()
+        return return_code in {3221225477, -1073741819} or any(
+            marker in lowered
+            for marker in (
+                "out of memory",
+                "cudaerroroutofmemory",
+                "cudamalloc failed",
+                "failed to allocate cuda",
+                "failed to allocate cuda0",
+            )
+        )
+
+    try:
+        chunk_seconds = float(configured_chunk_seconds)
+        attempt = 0
+        while True:
+            attempt += 1
+            sample_rate, chunks = prepare_chunks(chunk_seconds, attempt)
+            batches = command_batches([chunk[0] for chunk in chunks])
+            logger.info(
+                "Parakeet 开始：model=%s duration=%.1fs chunk=%.1fs chunks=%s batches=%s device=%s",
+                settings.asr_model,
+                duration_seconds,
+                chunk_seconds,
+                len(chunks),
+                len(batches),
+                settings.asr_device,
+            )
+            if progress:
+                progress(
+                    f"Parakeet 识别 {_clock(duration_seconds)} 音频："
+                    f"{len(chunks)} 个显存有界分块，模型每批只加载一次",
+                    0,
+                    len(chunks),
+                )
+
+            completed = 0
+            failed: tuple[int, str] | None = None
+            for batch_index, batch in enumerate(batches, start=1):
+                check_cancelled(cancel_event)
+                command = [*base_command, *(str(path) for path in batch)]
+                return_code, output_lines, reported_completed = run_batch(
+                    command,
+                    batch_index=batch_index,
+                    batch_count=len(batches),
+                    completed_before=completed,
+                    total_chunks=len(chunks),
+                )
+                if return_code != 0:
+                    failed = (return_code, diagnostic_text(output_lines))
+                    break
+                completed += max(reported_completed, len(batch))
+
+            if failed is not None:
+                return_code, detail = failed
+                minimum_chunk_seconds = 15.0
+                if is_memory_failure(return_code, detail) and chunk_seconds > minimum_chunk_seconds:
+                    next_chunk_seconds = max(minimum_chunk_seconds, chunk_seconds / 2)
+                    logger.warning(
+                        "Parakeet 显存不足，自动缩小分块：%.1fs -> %.1fs",
+                        chunk_seconds,
+                        next_chunk_seconds,
+                    )
+                    if progress:
+                        progress(
+                            f"当前分块需要的显存超过设备容量；自动从 {chunk_seconds:g} 秒"
+                            f"缩小到 {next_chunk_seconds:g} 秒后重试",
+                            0,
+                            1,
+                        )
+                    chunk_seconds = next_chunk_seconds
+                    continue
+                suffix = (
+                    "；已自动尝试最小 15 秒分块，模型本身仍超出当前可用显存。"
+                    "可关闭其它占用显存的程序，或选择较小的 Parakeet 0.6B 模型。"
+                    if is_memory_failure(return_code, detail)
+                    else ""
+                )
+                raise AsmrDubberError(
+                    f"Parakeet 识别失败（退出码 {return_code}）：{detail[:4000]}{suffix}"
+                )
+
+            all_tokens: list[TimedToken] = []
+            full_text_parts: list[str] = []
+            language = "ja"
+            for chunk_file, start_sample, _end_sample in chunks:
+                check_cancelled(cancel_event)
+                result_file = chunk_file.with_suffix(".json")
+                if not result_file.is_file():
+                    # CrispASR may return success without JSON for a fully silent
+                    # input. Treat it as an empty chunk rather than a failure.
+                    continue
+                try:
+                    payload = json.loads(result_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise AsmrDubberError(
+                        f"Parakeet 分块没有生成有效结果：{result_file.name}：{exc}"
+                    ) from exc
+                if not isinstance(payload, Mapping):
+                    raise AsmrDubberError(f"Parakeet JSON 顶层格式无效：{result_file.name}")
                 tokens, full_text, chunk_language = _crispasr_payload_tokens(payload)
                 offset_seconds = start_sample / sample_rate
                 all_tokens.extend(
@@ -644,18 +803,8 @@ def _transcribe_parakeet(
                 full_text_parts.append(full_text)
                 if chunk_language:
                     language = chunk_language
-                if chunk_file != native_input:
-                    chunk_file.unlink(missing_ok=True)
-                if progress:
-                    progress(
-                        f"Parakeet 已完成第 {index}/{len(chunk_ranges)} 段",
-                        index,
-                        len(chunk_ranges),
-                    )
-        return _finish_tokens(all_tokens, "".join(full_text_parts), language, settings)
+            return _finish_tokens(all_tokens, "".join(full_text_parts), language, settings)
     finally:
-        if active_process is not None and active_process.poll() is None:
-            active_process.kill()
         shutil.rmtree(run_directory, ignore_errors=True)
         _cleanup_cuda()
 
@@ -664,6 +813,7 @@ def transcribe_japanese(
     analysis_audio: Path,
     settings: ProjectSettings,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], str]:
     """Run one of the three deliberately supported recognition families."""
 
@@ -680,6 +830,7 @@ def transcribe_japanese(
             "请选择 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
         ) from exc
     if settings.asr_vad_mode == "asmr":
+        cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
         segments = detect_asmr_speech(
             analysis_audio,
             threshold=settings.asr_asmr_vad_threshold,
@@ -687,6 +838,7 @@ def transcribe_japanese(
             min_silence_ms=settings.asr_asmr_vad_min_silence_ms,
             speech_pad_ms=settings.asr_asmr_vad_speech_pad_ms,
             progress=progress,
+            **cancel_kwargs,
         )
         if not segments:
             raise AsmrDubberError(
@@ -701,11 +853,16 @@ def transcribe_japanese(
                 condensed,
                 segments,
                 separator_seconds=max(0.65, settings.pause_split_seconds + 0.1),
+                **cancel_kwargs,
             )
             inner_settings = settings.model_copy(
                 update={"asr_vad_mode": "off", "asr_vad_filter": False}
             )
-            sentences, language = runner(condensed, inner_settings, progress)
+            check_cancelled(cancel_event)
+            if cancel_event is None:
+                sentences, language = runner(condensed, inner_settings, progress)
+            else:
+                sentences, language = runner(condensed, inner_settings, progress, cancel_event)
             remapped: list[Sentence] = []
             for sentence in sentences:
                 start = map_analysis_time(sentence.start_seconds, timeline, end=False)
@@ -727,7 +884,10 @@ def transcribe_japanese(
         finally:
             shutil.rmtree(run_directory, ignore_errors=True)
     else:
-        result = runner(analysis_audio, settings, progress)
+        if cancel_event is None:
+            result = runner(analysis_audio, settings, progress)
+        else:
+            result = runner(analysis_audio, settings, progress, cancel_event)
     if progress:
         progress(f"语音识别完成：{len(result[0])} 句", 1, 1)
     return result

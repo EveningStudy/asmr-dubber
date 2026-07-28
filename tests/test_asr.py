@@ -75,6 +75,44 @@ def test_faster_whisper_uses_explicit_batched_pipeline_without_enabling_vad(
     assert calls[0]["without_timestamps"] is False
 
 
+def test_faster_whisper_cpu_replaces_unsupported_float16(tmp_path, monkeypatch) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
+    model_arguments: dict[str, object] = {}
+
+    class FakeWhisperModel:
+        def __init__(self, _model, **kwargs):
+            model_arguments.update(kwargs)
+
+        def transcribe(self, _audio, **_kwargs):
+            word = SimpleNamespace(word="声", start=0.1, end=0.4)
+            segment = SimpleNamespace(text="声", words=[word], start=0.1, end=0.4)
+            return [segment], SimpleNamespace(language="ja")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(
+            WhisperModel=FakeWhisperModel,
+            BatchedInferencePipeline=object,
+        ),
+    )
+    monkeypatch.setattr(asr, "resolve_model_source", lambda model_id: model_id)
+
+    asr._transcribe_faster_whisper(
+        audio_path,
+        ProjectSettings(
+            asr_backend="faster_whisper",
+            asr_device="cpu",
+            asr_compute_type="float16",
+            asr_batch_size=1,
+        ),
+        None,
+    )
+
+    assert model_arguments == {"device": "cpu", "compute_type": "int8"}
+
+
 def test_kotoba_faster_avoids_invalid_teacher_alignment_heads(tmp_path, monkeypatch) -> None:
     audio_path = tmp_path / "audio.wav"
     audio_path.touch()
@@ -258,7 +296,6 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
     class FakeProcess:
         def __init__(self, command, **_kwargs):
             calls.append(command)
-            output_base = command[command.index("-of") + 1]
             payload = {
                 "crispasr": {"language": "ja"},
                 "transcription": [
@@ -268,10 +305,13 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
                     }
                 ],
             }
-            Path(output_base).with_suffix(".json").write_text(
-                json.dumps(payload),
-                encoding="utf-8",
-            )
+            for argument in command:
+                chunk = Path(argument)
+                if chunk.suffix == ".wav" and chunk.parent.name.startswith("chunks-"):
+                    chunk.with_suffix(".json").write_text(
+                        json.dumps(payload),
+                        encoding="utf-8",
+                    )
             self.stdout = iter(())
             self.returncode = None
 
@@ -306,7 +346,9 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
     assert command[command.index("--backend") + 1] == "parakeet"
     assert command[command.index("--cache-dir") + 1] == str(portable / "cache" / "crispasr")
     assert command[command.index("-vm") + 1] == "silero"
-    assert "--chunk-seconds" not in command
+    assert "-f" not in command
+    assert "-of" not in command
+    assert len([argument for argument in command if argument.endswith(".wav")]) == 1
     assert "whisper-vad" not in command
     assert sentences[0].ja_text == "声。"
     assert not list((portable / "temp" / "asr").glob("parakeet-*"))
@@ -325,7 +367,7 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
         ),
     ],
 )
-def test_parakeet_long_audio_is_split_before_both_backends(
+def test_parakeet_long_audio_uses_one_process_and_bounded_multifile_chunks(
     tmp_path,
     monkeypatch,
     model_id,
@@ -345,29 +387,30 @@ def test_parakeet_long_audio_is_split_before_both_backends(
     class FakeProcess:
         def __init__(self, command, **_kwargs):
             calls.append(command)
-            output_base = command[command.index("-of") + 1]
-            if model_id == "nvidia/parakeet-tdt_ctc-0.6b-ja" and len(calls) == 2:
-                self.stdout = iter(())
-                self.returncode = None
-                return
-            payload = {
-                "crispasr": {"language": "ja"},
-                "transcription": [
-                    {
-                        "text": "声。",
-                        "words": [
-                            {
-                                "text": "声",
-                                "offsets": {"from": 100, "to": 500},
-                            }
-                        ],
-                    }
-                ],
-            }
-            Path(output_base).with_suffix(".json").write_text(
-                json.dumps(payload),
-                encoding="utf-8",
-            )
+            chunks = [
+                Path(argument)
+                for argument in command
+                if argument.endswith(".wav") and Path(argument).parent.name.startswith("chunks-")
+            ]
+            for index, chunk in enumerate(chunks, start=1):
+                payload = {
+                    "crispasr": {"language": "ja"},
+                    "transcription": [
+                        {
+                            "text": f"第{index}段。",
+                            "words": [
+                                {
+                                    "text": f"第{index}段。",
+                                    "offsets": {"from": 100, "to": 500},
+                                }
+                            ],
+                        }
+                    ],
+                }
+                chunk.with_suffix(".json").write_text(
+                    json.dumps(payload),
+                    encoding="utf-8",
+                )
             self.stdout = iter(())
             self.returncode = None
 
@@ -395,14 +438,88 @@ def test_parakeet_long_audio_is_split_before_both_backends(
         None,
     )
 
-    assert len(calls) == 3
-    assert all("--chunk-seconds" not in command for command in calls)
-    assert all(
-        Path(command[command.index("-f") + 1]).name.startswith("chunk-") for command in calls
+    assert len(calls) == 1
+    chunks = [Path(argument) for argument in calls[0] if argument.endswith(".wav")]
+    assert len(chunks) == 3
+    assert all(chunk.parent.name == "chunks-01" for chunk in chunks)
+    assert len(sentences) == 3
+    assert sentences[1].start_seconds > 20
+    assert not list((portable / "temp" / "asr").glob("parakeet-*"))
+
+
+def test_parakeet_retries_with_smaller_chunks_after_cuda_oom(tmp_path, monkeypatch) -> None:
+    portable = tmp_path / "portable"
+    executable = portable / "runtimes" / "crispasr" / "bin" / "crispasr"
+    model = portable / "models" / "parakeet" / "parakeet-ctc-1.1b-ja-f16.gguf"
+    executable.parent.mkdir(parents=True)
+    model.parent.mkdir(parents=True)
+    executable.touch()
+    model.touch()
+    audio = tmp_path / "long.wav"
+    sf.write(audio, np.zeros(66_000, dtype=np.float32), 1_000)
+    calls: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self, command, **_kwargs):
+            calls.append(command)
+            self.returncode = None
+            if len(calls) == 1:
+                self.stdout = iter(["cudaMalloc failed: out of memory\n"])
+                self._exit_code = 3221225477
+                return
+            chunks = [
+                Path(argument)
+                for argument in command
+                if argument.endswith(".wav") and Path(argument).parent.name.startswith("chunks-")
+            ]
+            for chunk in chunks:
+                chunk.with_suffix(".json").write_text(
+                    json.dumps(
+                        {
+                            "crispasr": {"language": "ja"},
+                            "transcription": [
+                                {
+                                    "text": "声。",
+                                    "offsets": {"from": 100, "to": 500},
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            self.stdout = iter(())
+            self._exit_code = 0
+
+        def wait(self):
+            self.returncode = self._exit_code
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(asr, "portable_home", lambda: portable)
+    monkeypatch.setattr(
+        asr,
+        "current_platform",
+        lambda: SimpleNamespace(is_windows=False),
     )
-    expected_sentences = 2 if model_id == "nvidia/parakeet-tdt_ctc-0.6b-ja" else 3
-    assert len(sentences) == expected_sentences
-    assert sentences[1].start_seconds > (45 if expected_sentences == 2 else 20)
+    monkeypatch.setattr(asr.subprocess, "Popen", FakeProcess)
+
+    sentences, _ = asr._transcribe_parakeet(
+        audio,
+        ProjectSettings(asr_chunk_seconds=30),
+        None,
+    )
+
+    assert len(calls) == 2
+    first_chunks = [argument for argument in calls[0] if argument.endswith(".wav")]
+    retry_chunks = [argument for argument in calls[1] if argument.endswith(".wav")]
+    assert len(retry_chunks) > len(first_chunks)
+    assert all("chunks-02" in argument for argument in retry_chunks)
+    assert sentences
     assert not list((portable / "temp" / "asr").glob("parakeet-*"))
 
 

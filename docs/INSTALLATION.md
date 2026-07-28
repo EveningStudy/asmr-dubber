@@ -65,25 +65,28 @@ Linux 环境运行，但桌面浏览器、显卡直通和跨文件系统性能�
 6 GB 显存的电脑建议一次只运行一个模型、保持批大小为 1，并关闭其它 GPU 程序。AMD/Intel
 显卡不会用于这些 CUDA 后端，可改用 CPU 识别和外部 TTS（语音合成）API。
 
+Windows 完整本地 GPU 环境以 NVIDIA Turing 或更新架构为支持范围。当前主 PyTorch 环境使用
+CUDA 13；NVIDIA 已从 CUDA 13 移除 Maxwell、Pascal 和 Volta 的离线编译及库支持。旧卡即使
+显存够大，也不能按“显存够就一定兼容”判断，可改用 CPU 识别/对齐和外部 TTS。详见
+[CUDA 13 发布说明](https://docs.nvidia.com/cuda/archive/13.0.1/cuda-toolkit-release-notes/index.html#deprecated-architectures)。
+
 ## Windows 免安装包
 
 不想等待 Setup 下载时，可以直接使用已经装好运行环境和模型的完整压缩包：
 
-[在 ModelScope 下载 Windows 免安装包](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Portable/files)
+[在 ModelScope 下载 Windows 推荐版免安装包](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0/files)
 
 | 压缩包 | 已包含内容 |
 |---|---|
-| `ASMR-Dubber-Windows-Core-Portable-v0.4.0.zip` | 主程序、网页、便携 Python、FFmpeg、翻译和外部 TTS API 客户端；不含本地 ASR（语音识别）模型和 IndexTTS2 checkpoints |
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.4.0.zip` | 核心包的全部内容；Parakeet CTC 1.1B JA GAL；Parakeet TDT/CTC 0.6B JA；IndexTTS2 完整隔离环境和 checkpoints |
-| `ASMR-Dubber-Windows-Advanced-Portable-v0.4.0.zip` | 推荐包的全部内容；Kotoba-Whisper v2.2；Faster-Whisper large-v2；`TransWithAI/Whisper-Vad-EncDec-ASMR-onnx`；`Qwen/Qwen3-ForcedAligner-0.6B`；这些模型需要的固定 Windows 运行依赖 |
+| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 主程序和完整运行环境；Parakeet CTC 1.1B JA GAL；Parakeet TDT/CTC 0.6B JA；IndexTTS2 完整隔离环境和 checkpoints |
 
-三个 ZIP 都是完整包，互相不依赖。选择其中一个下载，完整解压到最终使用位置，然后双击
-`ASMR-Dubber.exe`；首次使用也不需要运行 `ASMR-Dubber-Setup.exe`。同名 `.sha256` 文件
-用于检查下载是否完整。
+本版本只提供推荐版免安装包。完整解压到最终使用位置后双击 `ASMR-Dubber.exe`，不需要运行
+`ASMR-Dubber-Setup.exe`。Kotoba-Whisper、Faster-Whisper、ASMR VAD 和 Qwen 对齐模型可在
+网页的“设备与模型”中按需安装。同名 `.sha256` 文件用于检查下载是否完整。
 
-IndexTTS2 只支持 NVIDIA GPU。把推荐包或进阶包解压到没有 NVIDIA GPU 的电脑不会妨碍其它
-功能；本地配音请改用外部 TTS API。免安装包已经包含大量小文件，首次解压和杀毒软件扫描可能
-需要较长时间。不要直接在压缩软件里启动程序。
+IndexTTS2 只支持 NVIDIA GPU。第一次生成语音时需要加载模型并初始化 CUDA，可能需要等待一段
+时间；本地配音不可用时请改用外部 TTS API。免安装包已经包含大量小文件，首次解压和杀毒软件
+扫描也可能需要较长时间。不要直接在压缩软件里启动程序。
 
 ## 三种安装方案
 

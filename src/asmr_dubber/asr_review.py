@@ -16,6 +16,7 @@ import httpx
 from .errors import AsmrDubberError
 from .forced_alignment import align_sentences_with_qwen
 from .models import ProjectSettings, Sentence
+from .task_control import CancellationSignal, check_cancelled
 from .translation import LLMTranslator
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
 
@@ -354,8 +355,10 @@ def review_transcriptions(
     report_path: Path,
     analysis_audio: Path | None = None,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[Sentence]:
     """Resolve several timed ASR hypotheses while keeping timestamps evidence-bound."""
+    check_cancelled(cancel_event)
     ordered = list(transcriptions)
     timestamp_priority = settings.asr_review_timestamp_priority_model
     for index, (label, _sentences) in enumerate(ordered):
@@ -369,6 +372,7 @@ def review_transcriptions(
     chunk_size = 24
     total = math.ceil(len(windows) / chunk_size)
     for chunk_index, start in enumerate(range(0, len(windows), chunk_size), start=1):
+        check_cancelled(cancel_event)
         targets = windows[start : start + chunk_size]
         context = windows[max(0, start - 2) : min(len(windows), start + chunk_size + 2)]
         if progress:
@@ -381,6 +385,7 @@ def review_transcriptions(
                 f"asr-review-{chunk_index}-{int(time.time())}",
             )
         )
+        check_cancelled(cancel_event)
 
     sentences: list[Sentence] = []
     sentence_by_window: dict[str, Sentence] = {}
@@ -426,11 +431,13 @@ def review_transcriptions(
     if settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|"):
         if analysis_audio is None:
             raise AsmrDubberError("Qwen3 ForcedAligner 需要 ASR（语音识别）分析音频。")
+        cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
         alignment_report = align_sentences_with_qwen(
             analysis_audio,
             sentences,
             settings,
             progress=progress,
+            **cancel_kwargs,
         )
     for item in report_results:
         sentence = sentence_by_window.get(str(item["window_id"]))

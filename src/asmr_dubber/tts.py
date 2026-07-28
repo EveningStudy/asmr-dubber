@@ -8,6 +8,7 @@ from pathlib import Path
 from .errors import SynthesisError
 from .hashing import cached_sha256_file
 from .models import DubProject, Sentence
+from .task_control import CancellationSignal
 from .voice_reference import (
     STABLE_CLONE_MODES,
     reference_plan_hash,
@@ -128,6 +129,7 @@ def synthesize_sentences(
     sentence_ids: Iterable[str] | None = None,
     progress: Progress | None = None,
     on_sentence: Callable[[], None] | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[str]:
     from .tts_backends import synthesize_with_selected_backend
 
@@ -139,4 +141,5 @@ def synthesize_sentences(
         sentence_ids=sentence_ids,
         progress=progress,
         on_sentence=on_sentence,
+        cancel_event=cancel_event,
     )

@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
+from .app_logging import configure_logging
 from .asr import transcribe_japanese
 from .audio import make_analysis_copy
 from .constants import ASMR_VAD_MODEL, DEFAULT_ALIGNER_MODEL
@@ -48,7 +49,21 @@ from .runtime_manager import (
 from .subtitles import SubtitleLanguage
 from .user_settings import PROVIDER_PRESETS, load_user_settings, resolve_api_key
 
+
+def _make_windows_stdio_loss_tolerant() -> None:
+    """Do not crash when a legacy Windows code page cannot encode a path."""
+
+    if not current_platform().is_windows:
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="backslashreplace")
+
+
+_make_windows_stdio_loss_tolerant()
 load_dotenv()
+configure_logging()
 app = typer.Typer(
     name="asmr-dubber",
     no_args_is_help=True,
@@ -534,6 +549,13 @@ def verify_asr_command(
     device: Annotated[str, typer.Option("--device")] = "cuda",
     compute_type: Annotated[str, typer.Option("--compute-type")] = "float16",
     decoder: Annotated[str, typer.Option("--decoder")] = "tdt",
+    vad_mode: Annotated[str, typer.Option("--vad-mode")] = "off",
+    chunk_seconds: Annotated[float, typer.Option("--chunk-seconds")] = 120.0,
+    kotoba_chunk_seconds: Annotated[
+        float,
+        typer.Option("--kotoba-chunk-seconds"),
+    ] = 30.0,
+    batch_size: Annotated[int, typer.Option("--batch-size")] = 1,
 ) -> None:
     """用短音频真实加载一个 ASR（语音识别）后端，不翻译或写入项目。"""
     token = uuid.uuid4().hex
@@ -547,7 +569,10 @@ def verify_asr_command(
                 "asr_device": device,
                 "asr_compute_type": compute_type,
                 "asr_parakeet_decoder": decoder,
-                "asr_batch_size": 1,
+                "asr_vad_mode": vad_mode,
+                "asr_chunk_seconds": chunk_seconds,
+                "asr_kotoba_chunk_seconds": kotoba_chunk_seconds,
+                "asr_batch_size": batch_size,
             }
         )
         sentences, language = transcribe_japanese(analysis, settings)

@@ -54,10 +54,22 @@ class HardwareProfile:
     vram_gb: float | None
     driver: str | None
     cuda_available: bool
+    compute_capability: str | None = None
 
     @property
     def recommended_device(self) -> str:
         return "cuda" if self.cuda_available else "cpu"
+
+    @property
+    def full_cuda_stack_supported(self) -> bool:
+        if not self.cuda_available:
+            return False
+        if self.compute_capability is None:
+            return True
+        try:
+            return float(self.compute_capability) >= 7.5
+        except ValueError:
+            return True
 
 
 @dataclass(frozen=True)
@@ -280,18 +292,19 @@ def _linux_memory_gb() -> float | None:
     return None
 
 
-def _nvidia_gpu() -> tuple[str | None, float | None, str | None]:
+def _nvidia_gpu() -> tuple[str | None, float | None, str | None, str | None]:
     executable = shutil.which("nvidia-smi")
     if not executable and os.name == "nt":
         candidate = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32/nvidia-smi.exe"
         executable = str(candidate) if candidate.is_file() else None
     if not executable:
-        return None, None, None
-    try:
+        return None, None, None, None
+
+    def query(fields: str) -> list[str]:
         completed = subprocess.run(
             [
                 executable,
-                "--query-gpu=name,memory.total,driver_version",
+                f"--query-gpu={fields}",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -299,11 +312,21 @@ def _nvidia_gpu() -> tuple[str | None, float | None, str | None]:
             timeout=10,
             check=False,
         )
-        first = completed.stdout.strip().splitlines()[0]
-        name, memory_mib, driver = (part.strip() for part in first.split(",", 2))
-        return name, float(memory_mib) / 1024, driver
+        if completed.returncode != 0:
+            raise ValueError(completed.stderr.strip() or "nvidia-smi 查询失败")
+        return [part.strip() for part in completed.stdout.strip().splitlines()[0].split(",")]
+
+    try:
+        name, memory_mib, driver, capability = query("name,memory.total,driver_version,compute_cap")
+        return name, float(memory_mib) / 1024, driver, capability
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-        return None, None, None
+        # Older nvidia-smi versions may not expose compute_cap. Keep hardware
+        # detection useful and simply omit the architecture warning.
+        try:
+            name, memory_mib, driver = query("name,memory.total,driver_version")
+            return name, float(memory_mib) / 1024, driver, None
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            return None, None, None, None
 
 
 @lru_cache(maxsize=1)
@@ -315,7 +338,7 @@ def detect_hardware() -> HardwareProfile:
     use ``refresh_hardware`` below.
     """
     info = current_platform()
-    gpu, vram, driver = _nvidia_gpu()
+    gpu, vram, driver, capability = _nvidia_gpu()
     memory = _windows_memory_gb() if info.is_windows else _linux_memory_gb()
     cpu = os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
     if not cpu:
@@ -332,6 +355,7 @@ def detect_hardware() -> HardwareProfile:
         vram_gb=vram,
         driver=driver,
         cuda_available=gpu is not None,
+        compute_capability=capability,
     )
 
 
@@ -345,21 +369,35 @@ def hardware_markdown(profile: HardwareProfile | None = None) -> str:
     memory = f"{profile.memory_gb:.1f} GB" if profile.memory_gb is not None else "未检测"
     if profile.gpu:
         vram = f"{profile.vram_gb:.1f} GB" if profile.vram_gb is not None else "未知显存"
-        gpu = f"{profile.gpu} · {vram} · 驱动 {profile.driver or '未知'}"
+        capability = (
+            f" · 计算能力 {profile.compute_capability}" if profile.compute_capability else ""
+        )
+        gpu = f"{profile.gpu} · {vram} · 驱动 {profile.driver or '未知'}{capability}"
     else:
         gpu = "未检测到 NVIDIA GPU；可选择 CPU、云端或 HTTP 后端"
+    warning = (
+        "  \n**兼容提醒：** 当前 Windows 完整 GPU 环境需要 Turing（计算能力 7.5）或更新架构。"
+        if profile.cuda_available and not profile.full_cuda_stack_supported
+        else ""
+    )
     return (
         f"**系统：** {profile.platform_label} {profile.architecture}  \n"
         f"**内存：** {memory}  \n"
         f"**GPU：** {gpu}  \n"
-        f"**推荐设备：** `{profile.recommended_device}`"
+        f"**推荐设备：** `{profile.recommended_device}`{warning}"
     )
 
 
 def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
     profile = profile or detect_hardware()
     vram = profile.vram_gb or 0.0
-    if profile.cuda_available and vram >= 11.5:
+    if profile.cuda_available and not profile.full_cuda_stack_supported:
+        title = "旧架构 NVIDIA（部分组件改用 CPU）"
+        detail = (
+            "当前完整 GPU 依赖要求 Turing 或更新架构。Parakeet/Faster-Whisper 可按实际状态选择，"
+            "Kotoba 和 Qwen 对齐建议改用 CPU，TTS 可使用外部 API。"
+        )
+    elif profile.cuda_available and vram >= 11.5:
         title = "质量优先（推荐）"
         detail = (
             "日语识别首选 Parakeet CTC 1.1B GAL；疑难音频可启用"
@@ -748,7 +786,7 @@ def _install_windows_backend(
     powershell = _powershell_executable()
     script = PROJECT_ROOT / "scripts" / "windows" / "install-backend.ps1"
     if powershell is None:
-        raise EnvironmentError("找不到 PowerShell；请安装 PowerShell 7 后重试。")
+        raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
     if not script.is_file():
         raise EnvironmentError("Windows 后端安装脚本缺失；请重新下载完整项目。")
     return _run_streaming_process(
@@ -843,7 +881,7 @@ def _install_indextts_runtime(
         executable = _powershell_executable()
         script = PROJECT_ROOT / "scripts" / "windows" / "install-indextts2.ps1"
         if executable is None:
-            raise EnvironmentError("找不到 PowerShell；请安装 PowerShell 7 后重试。")
+            raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
         command = [
             str(executable),
             "-NoLogo",
@@ -883,7 +921,7 @@ def _install_parakeet_runtime(
         executable = _powershell_executable()
         script = PROJECT_ROOT / "scripts" / "windows" / "install-parakeet.ps1"
         if executable is None:
-            raise EnvironmentError("找不到 PowerShell；请安装 PowerShell 7 后重试。")
+            raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
         command = [
             str(executable),
             "-NoLogo",
@@ -1057,11 +1095,17 @@ def _install_backend_unlocked(
             return result
     if cancel_event is not None and cancel_event.is_set():
         raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-    imported_packs = import_backend_model_packs(
-        backend_id,
-        log_callback=log_callback,
-        cancel_event=cancel_event,
-    )
+    defer_model_pack = current_platform().is_windows and backend_id in {
+        "faster_whisper",
+        "kotoba_whisper",
+    }
+    imported_packs = 0
+    if not defer_model_pack:
+        imported_packs = import_backend_model_packs(
+            backend_id,
+            log_callback=log_callback,
+            cancel_event=cancel_event,
+        )
     if cancel_event is not None and cancel_event.is_set():
         raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
     if not force and imported_packs:
@@ -1158,6 +1202,14 @@ def _install_backend_unlocked(
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout)[-4000:]
         raise EnvironmentError(f"安装 {spec.label} 失败：\n{detail}")
+    if defer_model_pack:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
+        imported_packs = import_backend_model_packs(
+            backend_id,
+            log_callback=log_callback,
+            cancel_event=cancel_event,
+        )
     if spec.installer == "isolated":
         if progress:
             progress(1, desc="IndexTTS2 独立环境与模型安装完成")

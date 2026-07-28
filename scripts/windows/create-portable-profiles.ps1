@@ -1,9 +1,9 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateSet("核心", "推荐", "进阶", "Core", "Recommended", "Advanced")]
-    [string[]]$Profiles = @("核心", "推荐", "进阶"),
+    [string[]]$Profiles = @("推荐"),
     [string]$OutputDirectory = "",
-    [string]$Version = "0.4.0",
+    [string]$Version = "0.5.0",
     [switch]$KeepStaging
 )
 
@@ -299,7 +299,7 @@ $Contents
 ASMR-Dubber-Setup.exe 仅保留用于以后主动修复或改装其它档位，不是首次运行的前置步骤。
 "@
     [System.IO.File]::WriteAllText(
-        (Join-Path $PackageRoot "便携包说明.txt"),
+        (Join-Path $PackageRoot "README-PORTABLE.txt"),
         $Text,
         (New-Object System.Text.UTF8Encoding($true))
     )
@@ -415,6 +415,8 @@ if ($Requested.recommended -or $Requested.advanced) {
 - Parakeet CTC 1.1B JA GAL；
 - Parakeet TDT/CTC 0.6B JA；
 - IndexTTS2 本地 TTS（语音合成）环境和 checkpoints（需要 NVIDIA GPU）。
+
+首次用 IndexTTS2 生成语音时需要加载模型并初始化 CUDA，可能需要等待一段时间。
 "@
     Test-PackageProfile -Profile "recommended"
     if ($Requested.recommended) {
@@ -442,4 +444,4 @@ if (-not $KeepStaging) {
 $env:TEMP = $OriginalTemp
 $env:TMP = $OriginalTmp
 $env:TMPDIR = $OriginalTmpDir
-Write-Host "三个 Windows 免安装包已经准备完成：$OutputRoot" -ForegroundColor Green
+Write-Host "Windows 免安装包已经准备完成：$OutputRoot" -ForegroundColor Green

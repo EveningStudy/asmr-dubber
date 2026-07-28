@@ -176,7 +176,8 @@ function Import-ASMRDubberAdvancedDependencies {
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$PortableRoot,
         [Parameter(Mandatory = $true)][string]$Python,
-        [Parameter(Mandatory = $true)][object]$MirrorConfiguration
+        [Parameter(Mandatory = $true)][object]$MirrorConfiguration,
+        [switch]$MergeExisting
     )
 
     if (Test-ASMRDubberAdvancedDependencies -PortableRoot $PortableRoot) {
@@ -231,14 +232,18 @@ function Import-ASMRDubberAdvancedDependencies {
         throw "Windows 进阶依赖包 SHA-256 校验失败：$ActualHash"
     }
     Write-Host "正在导入 Windows 进阶依赖包..." -ForegroundColor Cyan
+    $ImportArguments = @(
+        (Join-Path $Root "scripts\import_windows_advanced_dependency_pack.py"),
+        $Archive,
+        $PortableRoot,
+        "--sha256",
+        $script:AdvancedDependencyPackSha256
+    )
+    if ($MergeExisting) {
+        $ImportArguments += "--merge-existing"
+    }
     $ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
-        -ArgumentList @(
-            (Join-Path $Root "scripts\import_windows_advanced_dependency_pack.py"),
-            $Archive,
-            $PortableRoot,
-            "--sha256",
-            $script:AdvancedDependencyPackSha256
-        ) -WorkingDirectory $Root
+        -ArgumentList $ImportArguments -WorkingDirectory $Root
     if ($ExitCode -ne 0) {
         throw "Windows 进阶依赖包导入进程退出码 $ExitCode"
     }

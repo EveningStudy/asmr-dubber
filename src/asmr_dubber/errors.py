@@ -10,6 +10,10 @@ class InstallPausedError(EnvironmentError):
     """A resumable dependency or model download was paused by the user."""
 
 
+class OperationCancelledError(AsmrDubberError):
+    """The user cancelled an in-progress project operation."""
+
+
 class ProjectError(AsmrDubberError):
     """A project manifest is missing or inconsistent."""
 

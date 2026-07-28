@@ -26,12 +26,14 @@ from .audio import (
 from .constants import DEFAULT_PROJECTS_DIR
 from .errors import ProjectError, SynthesisError
 from .filtering import implausible_asr_reason, is_japanese_filler_only
-from .forced_alignment import align_sentences_with_qwen
+from .forced_alignment import align_script_sentences_with_qwen, align_sentences_with_qwen
 from .models import DubProject, ProjectSettings, Sentence, load_project, save_project
 from .performance import measure_stage
 from .platforms import portable_home, require_supported_platform
-from .storage import exclusive_file_lock
+from .storage import atomic_write_text, exclusive_file_lock
 from .subtitles import SubtitleLanguage, write_subtitle_files
+from .task_control import CancellationSignal, check_cancelled
+from .transcript_import import parse_transcript
 from .translation import translate_sentences
 from .tts import synthesize_sentences, tts_cache_key
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
@@ -100,7 +102,9 @@ def create_project(
     settings: ProjectSettings | None = None,
     project_name: str | None = None,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[DubProject, Path]:
+    check_cancelled(cancel_event)
     require_supported_platform()
     source = Path(source_audio).expanduser().resolve()
     root = Path(projects_root or default_projects_dir()).expanduser().resolve()
@@ -114,10 +118,88 @@ def create_project(
     project_dir.mkdir(parents=True)
     with measure_stage(project_dir, "project_init", source_bytes=source.stat().st_size):
         _, info = copy_source_verbatim(source, project_dir, progress=progress)
+        check_cancelled(cancel_event)
         project = DubProject(source=info, settings=settings or ProjectSettings())
         save_project(project, project_dir)
         export_transcript(project, project_dir)
     return project, project_dir
+
+
+def import_project_transcript(
+    project: DubProject,
+    project_dir: Path,
+    *,
+    transcript_path: str | Path | None = None,
+    pasted_text: str = "",
+    plain_timing: str = "estimate",
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> dict[str, object]:
+    """Replace ASR output with a user-provided script or timed subtitle file."""
+
+    require_supported_platform()
+    check_cancelled(cancel_event)
+    if plain_timing not in {"estimate", "qwen"}:
+        raise ProjectError("纯台本时间轴方式必须是按长度估算或 Qwen3 自动对齐。")
+    source = verify_source(project_dir, project.source)
+    parsed = parse_transcript(
+        duration_seconds=project.source.duration_seconds,
+        path=transcript_path,
+        pasted_text=pasted_text,
+    )
+    sentences = [sentence.model_copy(deep=True) for sentence in parsed.sentences]
+    alignment_report: list[dict[str, object]] = []
+    if not parsed.timed and plain_timing == "qwen":
+        analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
+        cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
+        alignment_report = align_script_sentences_with_qwen(
+            analysis,
+            sentences,
+            project.settings,
+            progress=progress,
+            **cancel_kwargs,
+        )
+    check_cancelled(cancel_event)
+
+    import_dir = project_dir / "imports"
+    import_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(import_dir / "latest-transcript.txt", parsed.source_text)
+    aligned_count = sum(not bool(item.get("fallback", True)) for item in alignment_report)
+    atomic_write_text(
+        import_dir / "latest-transcript.json",
+        json.dumps(
+            {
+                "format": parsed.source_format,
+                "timed": parsed.timed,
+                "plain_timing": None if parsed.timed else plain_timing,
+                "sentences": len(sentences),
+                "qwen_aligned_sentences": aligned_count,
+                "alignment": alignment_report,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    )
+
+    project.sentences = sentences
+    project.asr_language = f"Japanese (imported {parsed.source_format})"
+    project.asr_settings_dirty = False
+    project.settings.tts_reference_sentence_id = None
+    project.chinese_stem_file = None
+    project.output_file = None
+    project.output_video_file = None
+    project.subtitle_srt_file = None
+    project.subtitle_lrc_file = None
+    project.subtitle_video_file = None
+    save_project(project, project_dir)
+    export_transcript(project, project_dir)
+    return {
+        "format": parsed.source_format,
+        "timed": parsed.timed,
+        "sentences": len(sentences),
+        "qwen_aligned_sentences": aligned_count,
+    }
 
 
 def _analyze_project_impl(
@@ -125,7 +207,9 @@ def _analyze_project_impl(
     project_dir: Path,
     force: bool = False,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
+    check_cancelled(cancel_event)
     require_supported_platform()
     if project.sentences and not force:
         if progress:
@@ -133,7 +217,13 @@ def _analyze_project_impl(
         return
     source = verify_source(project_dir, project.source)
     analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
-    sentences, language = transcribe_japanese(analysis, project.settings, progress=progress)
+    cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
+    sentences, language = transcribe_japanese(
+        analysis,
+        project.settings,
+        progress=progress,
+        **cancel_kwargs,
+    )
     if project.settings.asr_review_enabled:
         transcriptions: list[tuple[str, list[Sentence]]] = [
             (
@@ -153,6 +243,7 @@ def _analyze_project_impl(
         comparison = [pair for pair in selected if pair != primary_pair]
         total_models = len(comparison) + 1
         for model_index, (backend, model) in enumerate(comparison, start=2):
+            check_cancelled(cancel_event)
             if progress:
                 progress(
                     f"多 ASR（语音识别）候选 {model_index}/{total_models}：{backend} · {model}",
@@ -170,6 +261,7 @@ def _analyze_project_impl(
                 analysis,
                 candidate_settings,
                 progress=progress,
+                **cancel_kwargs,
             )
             transcriptions.append((f"{backend}|{model}", candidate_sentences))
         candidates_path = project_dir / "analysis" / "asr_candidates.json"
@@ -190,13 +282,16 @@ def _analyze_project_impl(
             ),
             encoding="utf-8",
         )
+        review_cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
         sentences = review_transcriptions(
             transcriptions,
             project.settings,
             project_dir / "analysis" / "asr_review.json",
             analysis_audio=analysis,
             progress=progress,
+            **review_cancel_kwargs,
         )
+        check_cancelled(cancel_event)
         language = "Japanese (multi-ASR reviewed)"
     already_qwen_aligned = (
         project.settings.asr_review_enabled
@@ -208,6 +303,7 @@ def _analyze_project_impl(
             sentences,
             project.settings,
             progress=progress,
+            **cancel_kwargs,
         )
         alignment_path = project_dir / "analysis" / "asr_forced_alignment.json"
         alignment_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +366,7 @@ def _analyze_project_unlocked(
     project_dir: Path,
     force: bool = False,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
     with measure_stage(
         project_dir,
@@ -280,7 +377,13 @@ def _analyze_project_unlocked(
         requested_batch=project.settings.asr_batch_size,
     ) as metrics:
         cached = bool(project.sentences and not force)
-        _analyze_project_impl(project, project_dir, force=force, progress=progress)
+        _analyze_project_impl(
+            project,
+            project_dir,
+            force=force,
+            progress=progress,
+            cancel_event=cancel_event,
+        )
         metrics["cache_hit"] = cached
         metrics["sentences"] = len(project.sentences)
 
@@ -290,6 +393,7 @@ def analyze_project(
     project_dir: Path,
     force: bool = False,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
     with exclusive_file_lock(portable_home() / ".runtime-install.lock", timeout_seconds=30.0):
         _analyze_project_unlocked(
@@ -297,6 +401,7 @@ def analyze_project(
             project_dir,
             force=force,
             progress=progress,
+            cancel_event=cancel_event,
         )
 
 
@@ -306,7 +411,9 @@ def _translate_project_impl(
     api_key: str | None = None,
     force: bool = False,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
+    check_cancelled(cancel_event)
     require_supported_platform()
     if not project.sentences:
         raise ProjectError("项目还没有句子；请先运行识别。")
@@ -339,6 +446,7 @@ def _translate_project_impl(
         save_project(project, project_dir)
         export_transcript(project, project_dir)
 
+    cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     translate_sentences(
         project.sentences,
         api_key=key,
@@ -357,6 +465,7 @@ def _translate_project_impl(
         job_id=f"asmr_{project.source.sha256[:24]}",
         progress=progress,
         on_batch=checkpoint,
+        **cancel_kwargs,
     )
     checkpoint()
 
@@ -367,6 +476,7 @@ def translate_project(
     api_key: str | None = None,
     force: bool = False,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
     with measure_stage(
         project_dir,
@@ -382,6 +492,7 @@ def translate_project(
             api_key=api_key,
             force=force,
             progress=progress,
+            cancel_event=cancel_event,
         )
         metrics["translated_before"] = before
         metrics["translated_after"] = sum(bool(sentence.zh_text) for sentence in project.sentences)
@@ -393,7 +504,9 @@ def _synthesize_project_impl(
     force: bool = False,
     sentence_ids: list[str] | None = None,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
+    check_cancelled(cancel_event)
     require_supported_platform()
     source = verify_source(project_dir, project.source)
     requested = set(sentence_ids) if sentence_ids is not None else None
@@ -423,6 +536,7 @@ def _synthesize_project_impl(
         save_project(project, project_dir)
         export_transcript(project, project_dir)
 
+    cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     failures = synthesize_sentences(
         project,
         project_dir,
@@ -431,6 +545,7 @@ def _synthesize_project_impl(
         sentence_ids=sentence_ids,
         progress=progress,
         on_sentence=checkpoint,
+        **cancel_kwargs,
     )
     checkpoint()
     if failures:
@@ -449,6 +564,7 @@ def _synthesize_project_unlocked(
     force: bool = False,
     sentence_ids: list[str] | None = None,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
     with measure_stage(
         project_dir,
@@ -475,6 +591,7 @@ def _synthesize_project_unlocked(
             force=force,
             sentence_ids=sentence_ids,
             progress=progress,
+            cancel_event=cancel_event,
         )
         after = sum(
             project_file_exists(
@@ -494,6 +611,7 @@ def synthesize_project(
     force: bool = False,
     sentence_ids: list[str] | None = None,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> None:
     with exclusive_file_lock(portable_home() / ".runtime-install.lock", timeout_seconds=30.0):
         _synthesize_project_unlocked(
@@ -502,6 +620,7 @@ def synthesize_project(
             force=force,
             sentence_ids=sentence_ids,
             progress=progress,
+            cancel_event=cancel_event,
         )
 
 
@@ -509,7 +628,9 @@ def _mix_project_impl(
     project: DubProject,
     project_dir: Path,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> Path:
+    check_cancelled(cancel_event)
     require_supported_platform()
     source = verify_source(project_dir, project.source)
     missing = [
@@ -557,6 +678,7 @@ def _mix_project_impl(
         channel_routing=project.settings.chinese_channel_routing,
         progress=progress,
     )
+    check_cancelled(cancel_event)
     if progress:
         progress("正在混合原轨与中文轨，并执行最终峰值保护", 0, 1)
     mix_original_and_stem(
@@ -568,6 +690,7 @@ def _mix_project_impl(
         peak_protection=project.settings.mix_peak_protection,
         peak_limit_dbfs=project.settings.mix_peak_limit_dbfs,
     )
+    check_cancelled(cancel_event)
     if project.settings.retain_chinese_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
     else:
@@ -604,6 +727,7 @@ def mix_project(
     project: DubProject,
     project_dir: Path,
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> Path:
     with measure_stage(
         project_dir,
@@ -613,7 +737,12 @@ def mix_project(
         channels=project.source.channels,
         retained_stem=project.settings.retain_chinese_stem,
     ) as metrics:
-        output = _mix_project_impl(project, project_dir, progress=progress)
+        output = _mix_project_impl(
+            project,
+            project_dir,
+            progress=progress,
+            cancel_event=cancel_event,
+        )
         metrics["output_bytes"] = output.stat().st_size
         if project.output_video_file:
             video_output = resolve_project_path(
@@ -631,15 +760,12 @@ def generate_subtitles(
     project_dir: Path,
     language: SubtitleLanguage = "bilingual",
     progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[Path, Path, Path | None]:
     """Create external subtitles and, for video projects, a subtitled video."""
     require_supported_platform()
+    check_cancelled(cancel_event)
     source = verify_source(project_dir, project.source)
-    project.subtitle_language = language
-    project.subtitle_srt_file = None
-    project.subtitle_lrc_file = None
-    project.subtitle_video_file = None
-    save_project(project, project_dir)
 
     if progress:
         progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
@@ -654,9 +780,7 @@ def generate_subtitles(
         global_overlap_seconds=project.settings.global_overlap_seconds,
         global_overlap_percentage=project.settings.global_overlap_percentage,
     )
-    project.subtitle_srt_file = srt.relative_to(project_dir).as_posix()
-    project.subtitle_lrc_file = lrc.relative_to(project_dir).as_posix()
-    save_project(project, project_dir)
+    check_cancelled(cancel_event)
 
     video_output: Path | None = None
     if project.source.media_type == "video":
@@ -676,8 +800,16 @@ def generate_subtitles(
             replacement_audio=mixed_audio,
             subtitle_language=language,
         )
-        project.subtitle_video_file = video_output.relative_to(project_dir).as_posix()
-        save_project(project, project_dir)
+        check_cancelled(cancel_event)
+    # Commit metadata only after every requested artifact succeeds. Cancellation
+    # or FFmpeg failure must leave the previous downloadable outputs visible.
+    project.subtitle_language = language
+    project.subtitle_srt_file = srt.relative_to(project_dir).as_posix()
+    project.subtitle_lrc_file = lrc.relative_to(project_dir).as_posix()
+    project.subtitle_video_file = (
+        video_output.relative_to(project_dir).as_posix() if video_output is not None else None
+    )
+    save_project(project, project_dir)
     if progress:
         progress("字幕生成完成", 1, 1)
     return srt, lrc, video_output
