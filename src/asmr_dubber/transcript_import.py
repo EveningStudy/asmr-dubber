@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
+from typing import Literal
 
 from .errors import ProjectError
 from .models import Sentence
@@ -16,6 +17,8 @@ _LRC_TAG = re.compile(r"\[(?P<time>(?:\d{1,3}:)?\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]
 _ASS_OVERRIDE = re.compile(r"\{[^{}]*\}")
 _HTML_TAG = re.compile(r"<[^>]*>")
 
+TranscriptLanguage = Literal["ja", "zh"]
+
 
 @dataclass(frozen=True)
 class TranscriptImport:
@@ -23,6 +26,7 @@ class TranscriptImport:
     source_format: str
     timed: bool
     source_text: str
+    language: TranscriptLanguage
 
 
 def _decode_script(path: Path) -> str:
@@ -170,7 +174,36 @@ def _plain_lines(text: str) -> list[str]:
     return lines
 
 
-def _estimated_sentences(lines: list[str], duration_seconds: float) -> list[Sentence]:
+def _sentence(
+    *,
+    sentence_id: str,
+    start_seconds: float,
+    end_seconds: float,
+    text: str,
+    language: TranscriptLanguage,
+) -> Sentence:
+    if language == "zh":
+        return Sentence(
+            id=sentence_id,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            ja_text="",
+            zh_text=text,
+            status="translated",
+        )
+    return Sentence(
+        id=sentence_id,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        ja_text=text,
+    )
+
+
+def _estimated_sentences(
+    lines: list[str],
+    duration_seconds: float,
+    language: TranscriptLanguage,
+) -> list[Sentence]:
     weights = [max(1, sum(not character.isspace() for character in line)) for line in lines]
     total = sum(weights)
     elapsed_weight = 0
@@ -182,11 +215,12 @@ def _estimated_sentences(lines: list[str], duration_seconds: float) -> list[Sent
         if index == len(lines):
             end = duration_seconds
         sentences.append(
-            Sentence(
-                id=f"s{index:06d}",
+            _sentence(
+                sentence_id=f"s{index:06d}",
                 start_seconds=start,
                 end_seconds=max(start + 0.001, end),
-                ja_text=line,
+                text=line,
+                language=language,
             )
         )
     return sentences
@@ -195,6 +229,7 @@ def _estimated_sentences(lines: list[str], duration_seconds: float) -> list[Sent
 def _timed_sentences(
     cues: list[tuple[float, float, str]],
     duration_seconds: float,
+    language: TranscriptLanguage,
 ) -> list[Sentence]:
     sentences: list[Sentence] = []
     for start, end, content in sorted(cues, key=lambda item: (item[0], item[1])):
@@ -203,11 +238,12 @@ def _timed_sentences(
         if end <= start or not content:
             continue
         sentences.append(
-            Sentence(
-                id=f"s{len(sentences) + 1:06d}",
+            _sentence(
+                sentence_id=f"s{len(sentences) + 1:06d}",
                 start_seconds=start,
                 end_seconds=end,
-                ja_text=content,
+                text=content,
+                language=language,
             )
         )
     if not sentences:
@@ -222,7 +258,10 @@ def parse_transcript(
     duration_seconds: float,
     path: str | Path | None = None,
     pasted_text: str = "",
+    language: TranscriptLanguage = "ja",
 ) -> TranscriptImport:
+    if language not in {"ja", "zh"}:
+        raise ProjectError("台本语言必须是日语或中文。")
     source_path = Path(path).expanduser().resolve() if path else None
     file_text = _decode_script(source_path) if source_path is not None else ""
     text = pasted_text.strip() or file_text
@@ -245,17 +284,19 @@ def parse_transcript(
 
     if cues:
         return TranscriptImport(
-            sentences=_timed_sentences(cues, duration_seconds),
+            sentences=_timed_sentences(cues, duration_seconds, language),
             source_format=source_format,
             timed=True,
             source_text=text,
+            language=language,
         )
     if source_format != "纯文本":
         raise ProjectError(f"没有从 {source_format} 文件中解析到有效时间轴。")
     lines = _plain_lines(text)
     return TranscriptImport(
-        sentences=_estimated_sentences(lines, duration_seconds),
+        sentences=_estimated_sentences(lines, duration_seconds, language),
         source_format=source_format,
         timed=False,
         source_text=text,
+        language=language,
     )

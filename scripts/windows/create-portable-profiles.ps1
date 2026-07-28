@@ -3,7 +3,7 @@ param(
     [ValidateSet("核心", "推荐", "进阶", "Core", "Recommended", "Advanced")]
     [string[]]$Profiles = @("推荐"),
     [string]$OutputDirectory = "",
-    [string]$Version = "0.5.0",
+    [string]$Version = "0.5.1",
     [switch]$KeepStaging
 )
 

@@ -8,6 +8,7 @@ import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from .asr import transcribe_japanese
 from .asr_review import review_transcriptions
@@ -33,7 +34,7 @@ from .platforms import portable_home, require_supported_platform
 from .storage import atomic_write_text, exclusive_file_lock
 from .subtitles import SubtitleLanguage, write_subtitle_files
 from .task_control import CancellationSignal, check_cancelled
-from .transcript_import import parse_transcript
+from .transcript_import import TranscriptLanguage, parse_transcript
 from .translation import translate_sentences
 from .tts import synthesize_sentences, tts_cache_key
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
@@ -132,6 +133,7 @@ def import_project_transcript(
     transcript_path: str | Path | None = None,
     pasted_text: str = "",
     plain_timing: str = "estimate",
+    script_language: str = "ja",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> dict[str, object]:
@@ -141,11 +143,16 @@ def import_project_transcript(
     check_cancelled(cancel_event)
     if plain_timing not in {"estimate", "qwen"}:
         raise ProjectError("纯台本时间轴方式必须是按长度估算或 Qwen3 自动对齐。")
+    if script_language not in {"ja", "zh"}:
+        raise ProjectError("台本语言必须是日语或中文。")
+    if script_language == "zh" and plain_timing == "qwen":
+        raise ProjectError("中文纯台本不能使用 Qwen3 自动对齐，请选择按台词长度估算。")
     source = verify_source(project_dir, project.source)
     parsed = parse_transcript(
         duration_seconds=project.source.duration_seconds,
         path=transcript_path,
         pasted_text=pasted_text,
+        language=cast(TranscriptLanguage, script_language),
     )
     sentences = [sentence.model_copy(deep=True) for sentence in parsed.sentences]
     alignment_report: list[dict[str, object]] = []
@@ -170,6 +177,7 @@ def import_project_transcript(
         json.dumps(
             {
                 "format": parsed.source_format,
+                "language": parsed.language,
                 "timed": parsed.timed,
                 "plain_timing": None if parsed.timed else plain_timing,
                 "sentences": len(sentences),
@@ -183,7 +191,8 @@ def import_project_transcript(
     )
 
     project.sentences = sentences
-    project.asr_language = f"Japanese (imported {parsed.source_format})"
+    language_name = "Japanese" if parsed.language == "ja" else "Chinese"
+    project.asr_language = f"{language_name} (imported {parsed.source_format})"
     project.asr_settings_dirty = False
     project.settings.tts_reference_sentence_id = None
     project.chinese_stem_file = None
@@ -196,6 +205,7 @@ def import_project_transcript(
     export_transcript(project, project_dir)
     return {
         "format": parsed.source_format,
+        "language": parsed.language,
         "timed": parsed.timed,
         "sentences": len(sentences),
         "qwen_aligned_sentences": aligned_count,

@@ -128,13 +128,17 @@ def apply_table(project: DubProject, table: Any) -> bool:
             raise ProjectError(f"{sentence_id} 的时间范围无效。")
         overlap = None if row[6] in {None, ""} else _number(row[6], f"{sentence_id} 提前量")
         old = previous.get(sentence_id)
+        ja_text = _text(row[4], f"{sentence_id} 日文")
+        zh_text = _text(row[5], f"{sentence_id} 中文")
+        if not ja_text and not zh_text:
+            raise ProjectError(f"{sentence_id} 的日文和中文不能同时为空。")
         payload = {
             "id": sentence_id,
             "enabled": _boolean(row[1], f"{sentence_id} 启用状态"),
             "start_seconds": start,
             "end_seconds": end,
-            "ja_text": _text(row[4], f"{sentence_id} 日文", required=True),
-            "zh_text": _text(row[5], f"{sentence_id} 中文"),
+            "ja_text": ja_text,
+            "zh_text": zh_text,
             "overlap_seconds": overlap,
         }
         if old is None:
@@ -298,6 +302,7 @@ def import_transcript_data(
     transcript_file: Any,
     pasted_text: str,
     plain_timing: str,
+    script_language: str = "ja",
     progress: Any | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> ProjectView:
@@ -308,18 +313,30 @@ def import_transcript_data(
         transcript_path=str(transcript_file) if transcript_file else None,
         pasted_text=str(pasted_text or ""),
         plain_timing=str(plain_timing or "estimate"),
+        script_language=str(script_language or "ja"),
         progress=progress,
         cancel_event=cancel_event,
     )
-    if result["timed"]:
+    chinese_script = result["language"] == "zh"
+    if result["timed"] and chinese_script:
+        message = (
+            f"已从 {result['format']} 导入 {result['sentences']} 句中文配音文本及原时间轴；"
+            "已跳过 ASR（语音识别）和翻译，校对后可直接运行 TTS（语音合成）。"
+        )
+    elif result["timed"]:
         message = (
             f"已从 {result['format']} 导入 {result['sentences']} 句及原时间轴；"
-            "已跳过 ASR（语音识别）和自动切分。"
+            "已跳过 ASR（语音识别）和自动切分，下一步翻译日文。"
         )
     elif plain_timing == "qwen":
         message = (
             f"已导入 {result['sentences']} 句纯台本；Qwen3 ForcedAligner 成功对齐 "
             f"{result['qwen_aligned_sentences']} 句。请抽查时间轴后再翻译。"
+        )
+    elif chinese_script:
+        message = (
+            f"已导入 {result['sentences']} 句中文配音文本并按台词长度生成初始时间轴。"
+            "请校对时间轴，之后可跳过 ASR（语音识别）和翻译，直接运行 TTS（语音合成）。"
         )
     else:
         message = (
@@ -481,7 +498,7 @@ def reference_picker(project_path: str) -> tuple[list[tuple[str, str]], str | No
         duration = sentence.end_seconds - sentence.start_seconds
         prefix = "★ 推荐 · " if sentence.id == recommended_id else ""
         warning = "⚠ 过短 · " if duration < 1.5 else ""
-        excerpt = " ".join(sentence.ja_text.split())[:42] or "（无文本）"
+        excerpt = " ".join((sentence.ja_text or sentence.zh_text).split())[:42] or "（无文本）"
         choices.append(
             (
                 f"{prefix}{warning}{sentence.id} · {duration:.1f}s · {excerpt}",

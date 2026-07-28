@@ -8,6 +8,7 @@ import soundfile as sf
 import asmr_dubber.ui as ui_module
 from asmr_dubber.audio import sha256_file
 from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
+from asmr_dubber.errors import ProjectError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.runtime_manager import BackendStatus
 from asmr_dubber.ui import (
@@ -16,6 +17,7 @@ from asmr_dubber.ui import (
     _install_backend_log_events,
     _provider_update,
     _remote_auth,
+    _transcript_language_update,
     asr_vad_choices,
     indextts_installation_status,
     offline_model_pack_markdown,
@@ -101,6 +103,22 @@ def test_sentence_table_sorts_rows_and_parses_false_string(tmp_path: Path) -> No
     assert project.sentences[1].enabled is False
 
 
+def test_sentence_table_accepts_chinese_only_rows_but_not_empty_rows(tmp_path: Path) -> None:
+    project, _ = _project(tmp_path)
+    chinese_only = [
+        ["s000001", True, 1.0, 2.0, "", "直接配音。", None],
+        ["s000002", True, 2.0, 7.0, "", "这是第二句。", None],
+    ]
+
+    assert apply_table(project, chinese_only) is True
+    assert [item.ja_text for item in project.sentences] == ["", ""]
+    assert [item.zh_text for item in project.sentences] == ["直接配音。", "这是第二句。"]
+
+    chinese_only[0][5] = ""
+    with pytest.raises(ProjectError, match="日文和中文不能同时为空"):
+        apply_table(project, chinese_only)
+
+
 def test_ui_staging_is_deterministic_and_below_one_allowlist(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "portable"
     monkeypatch.setattr("asmr_dubber.ui_services.portable_home", lambda: home)
@@ -144,6 +162,28 @@ def test_reference_picker_previews_and_persists_selection(
     assert "s000001" in message
 
 
+def test_reference_picker_uses_chinese_text_for_chinese_only_script(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "portable"
+    monkeypatch.setattr("asmr_dubber.ui_services.portable_home", lambda: home)
+    project, manifest = _project(tmp_path / "project")
+    for sentence in project.sentences:
+        sentence.ja_text = ""
+    save_project(project, manifest.parent)
+
+    def fake_extract(_source, destination, *_args, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        sf.write(destination, np.zeros(800, dtype=np.float32), 8_000, subtype="FLOAT")
+
+    monkeypatch.setattr("asmr_dubber.ui_services.extract_reference", fake_extract)
+    choices, selected, _preview = reference_picker(str(manifest))
+
+    assert selected == "s000002"
+    assert "这是一句足够长而清晰的参考句" in choices[1][0]
+
+
 def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) -> None:
     components = list(app.blocks.values())
     labels = {getattr(component, "label", None) for component in components}
@@ -152,6 +192,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "日语音频或视频" in labels
     assert "ASR（语音识别）后端" in labels
     assert "TTS（语音合成）后端" in labels
+    assert "台本语言" in labels
     assert "束搜索宽度（Beam Size）" in labels
     assert "随机度（Temperature）" in labels
     assert "核采样概率（Top P）" in labels
@@ -160,6 +201,26 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "4 · TTS（语音合成）并混音" in values
     assert "仅保存为以后新项目默认值" in values
     assert "保存并应用到当前项目" in values
+
+    import_callback = next(
+        function for function in app.fns.values() if function.name == "import_transcript_callback"
+    )
+    assert [component.label for component in import_callback.inputs] == [
+        "当前项目文件",
+        "台本或字幕文件",
+        "也可以直接粘贴纯台本",
+        "纯文本台本如何生成时间轴",
+        "台本语言",
+    ]
+
+
+def test_chinese_transcript_mode_removes_qwen_timing_choice() -> None:
+    chinese = _transcript_language_update("zh")
+    japanese = _transcript_language_update("ja")
+
+    assert chinese["value"] == "estimate"
+    assert [value for _label, value in chinese["choices"]] == ["estimate"]
+    assert [value for _label, value in japanese["choices"]] == ["estimate", "qwen"]
 
     source = Path(ui_module.__file__).read_text(encoding="utf-8").casefold()
     for removed in (

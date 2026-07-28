@@ -30,6 +30,10 @@ def _content_length(text: str) -> int:
     return sum(char.isalnum() or "\u3040" <= char <= "\u30ff" for char in text)
 
 
+def _available_text(sentence: Sentence) -> str:
+    return sentence.ja_text or sentence.zh_text
+
+
 def shared_reference_sentence(project: DubProject) -> Sentence:
     """Resolve the frozen project-level voice anchor, or select one deterministically."""
     configured = project.settings.tts_reference_sentence_id
@@ -41,16 +45,16 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
     candidates = [
         sentence
         for sentence in project.sentences
-        if _content_length(sentence.ja_text) >= 4
-        and not is_japanese_filler_only(sentence.ja_text)
+        if _content_length(_available_text(sentence)) >= 4
+        and not is_japanese_filler_only(_available_text(sentence))
         and sentence.end_seconds - sentence.start_seconds >= 1.5
     ]
     if not candidates:
-        raise SynthesisError("找不到至少 1.5 秒且包含实义日文的片段作为统一声纹参考。")
+        raise SynthesisError("找不到至少 1.5 秒且包含有效台词的片段作为统一声纹参考。")
 
     def score(sentence: Sentence) -> tuple[float, ...]:
         duration = sentence.end_seconds - sentence.start_seconds
-        content = _content_length(sentence.ja_text)
+        content = _content_length(_available_text(sentence))
         density = content / duration
         preferred_duration = 1.0 if 5.0 <= duration <= 15.0 else 0.0
         return (

@@ -92,6 +92,14 @@ def test_shared_reference_is_deterministic_and_affects_every_tts_key() -> None:
     assert tts_cache_key(project, target) != original
 
 
+def test_shared_reference_can_be_selected_for_chinese_only_script() -> None:
+    project = _project()
+    for sentence in project.sentences:
+        sentence.ja_text = ""
+
+    assert shared_reference_sentence(project).id == "s000002"
+
+
 def test_index_default_uses_shared_speaker_and_current_sentence_emotion(
     tmp_path: Path,
 ) -> None:

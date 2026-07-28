@@ -496,6 +496,21 @@ def _provider_update(provider: Any) -> tuple[Any, ...]:
     )
 
 
+_TRANSCRIPT_TIMING_CHOICES = [
+    ("按台词长度估算（无需模型，之后手动校对）", "estimate"),
+    ("Qwen3 ForcedAligner 自动对齐（仅日语台本，需要进阶组件）", "qwen"),
+]
+
+
+def _transcript_language_update(language: Any) -> Any:
+    if str(language or "ja") == "zh":
+        return _gr_update(
+            choices=[_TRANSCRIPT_TIMING_CHOICES[0]],
+            value="estimate",
+        )
+    return _gr_update(choices=_TRANSCRIPT_TIMING_CHOICES, value="estimate")
+
+
 def _asr_backend_update(backend: Any, current_vad_mode: Any = "off") -> tuple[Any, ...]:
     backend_id = str(backend or "")
     spec = ASR_BACKENDS.get(backend_id, ASR_BACKENDS["parakeet_nemo"])
@@ -721,8 +736,17 @@ def build_app() -> Any:
                     gr.Markdown(
                         "有时间戳的 SRT、VTT、ASS/SSA、LRC 会直接建立句子时间轴。"
                         "TXT 或粘贴文字按每个非空行作为一句，可按台词长度估算，"
-                        "也可用进阶组件 Qwen3 ForcedAligner 自动对齐。导入会替换当前句子表，"
-                        "但不会修改原音频。"
+                        "日语纯台本也可用进阶组件 Qwen3 ForcedAligner 自动对齐。"
+                        "中文台本会直接写入中文配音列，跳过 ASR（语音识别）和翻译。"
+                        "导入会替换当前句子表，但不会修改原音频。"
+                    )
+                    transcript_language = gr.Radio(
+                        label="台本语言",
+                        choices=[
+                            ("日语台本（跳过 ASR，之后翻译）", "ja"),
+                            ("中文配音文本（跳过 ASR 和翻译）", "zh"),
+                        ],
+                        value="ja",
                     )
                     transcript_file = gr.File(
                         label="台本或字幕文件",
@@ -736,10 +760,7 @@ def build_app() -> Any:
                     )
                     plain_timing = gr.Radio(
                         label="纯文本台本如何生成时间轴",
-                        choices=[
-                            ("按台词长度估算（无需模型，之后手动校对）", "estimate"),
-                            ("Qwen3 ForcedAligner 自动对齐（需要进阶组件）", "qwen"),
-                        ],
+                        choices=_TRANSCRIPT_TIMING_CHOICES,
                         value="estimate",
                     )
                     import_transcript_button = gr.Button(
@@ -771,7 +792,7 @@ def build_app() -> Any:
 
                 with gr.Accordion("统一音色参考", open=False):
                     gr.Markdown(
-                        "推荐选择 5–15 秒、清晰且包含实义日文的一句。只影响项目内统一音色模式。"
+                        "推荐选择 5–15 秒、清晰且包含完整台词的一句。只影响项目内统一音色模式。"
                     )
                     with gr.Row():
                         reference_sentence = gr.Dropdown(
@@ -1575,6 +1596,7 @@ def build_app() -> Any:
             transcript: Any,
             text: str,
             timing: str,
+            language: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
             return run_project_task(
@@ -1584,6 +1606,7 @@ def build_app() -> Any:
                 transcript,
                 text,
                 timing,
+                language,
                 _StageProgress(progress),
             )
 
@@ -1684,10 +1707,23 @@ def build_app() -> Any:
         )
         import_transcript_button.click(
             import_transcript_callback,
-            inputs=[project_path, transcript_file, transcript_text, plain_timing],
+            inputs=[
+                project_path,
+                transcript_file,
+                transcript_text,
+                plain_timing,
+                transcript_language,
+            ],
             outputs=common_outputs,
             api_name="import_transcript",
             **runtime_options,
+        )
+        transcript_language.change(
+            _transcript_language_update,
+            inputs=[transcript_language],
+            outputs=[plain_timing],
+            api_name=_PRIVATE_API,
+            queue=False,
         )
         translate_button.click(
             translate_callback,
