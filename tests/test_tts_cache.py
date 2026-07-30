@@ -100,6 +100,36 @@ def test_shared_reference_can_be_selected_for_chinese_only_script() -> None:
     assert shared_reference_sentence(project).id == "s000002"
 
 
+def test_shared_reference_uses_longest_japanese_clip() -> None:
+    project = _project()
+    project.sentences.append(
+        Sentence(
+            id="s000003",
+            start_seconds=9.0,
+            end_seconds=19.0,
+            ja_text="これは別の参考です。",
+            zh_text="这是另一段参考。",
+        )
+    )
+
+    assert shared_reference_sentence(project).id == "s000003"
+
+
+def test_shared_reference_prefers_japanese_before_chinese_fallback() -> None:
+    project = _project()
+    project.sentences.append(
+        Sentence(
+            id="s000003",
+            start_seconds=9.0,
+            end_seconds=16.0,
+            ja_text="",
+            zh_text="这段中文音频更长。",
+        )
+    )
+
+    assert shared_reference_sentence(project).id == "s000002"
+
+
 def test_index_default_uses_shared_speaker_and_current_sentence_emotion(
     tmp_path: Path,
 ) -> None:

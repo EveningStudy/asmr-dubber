@@ -7,7 +7,6 @@ from pathlib import Path
 
 from .audio import extract_reference
 from .errors import SynthesisError
-from .filtering import is_japanese_filler_only
 from .hashing import cached_sha256_file
 from .models import DubProject, Sentence
 
@@ -26,14 +25,6 @@ class VoiceReference:
     emotion_identity: str | None = None
 
 
-def _content_length(text: str) -> int:
-    return sum(char.isalnum() or "\u3040" <= char <= "\u30ff" for char in text)
-
-
-def _available_text(sentence: Sentence) -> str:
-    return sentence.ja_text or sentence.zh_text
-
-
 def shared_reference_sentence(project: DubProject) -> Sentence:
     """Resolve the frozen project-level voice anchor, or select one deterministically."""
     configured = project.settings.tts_reference_sentence_id
@@ -42,30 +33,19 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
             if sentence.id == configured:
                 return sentence
 
-    candidates = [
-        sentence
-        for sentence in project.sentences
-        if _content_length(_available_text(sentence)) >= 4
-        and not is_japanese_filler_only(_available_text(sentence))
-        and sentence.end_seconds - sentence.start_seconds >= 1.5
-    ]
+    candidates = [sentence for sentence in project.sentences if sentence.ja_text]
     if not candidates:
-        raise SynthesisError("找不到至少 1.5 秒且包含有效台词的片段作为统一声纹参考。")
+        candidates = [sentence for sentence in project.sentences if sentence.zh_text]
+    if not candidates:
+        raise SynthesisError("找不到包含日文或中文台词的片段作为统一声纹参考。")
 
-    def score(sentence: Sentence) -> tuple[float, ...]:
-        duration = sentence.end_seconds - sentence.start_seconds
-        content = _content_length(_available_text(sentence))
-        density = content / duration
-        preferred_duration = 1.0 if 5.0 <= duration <= 15.0 else 0.0
-        return (
-            preferred_duration,
-            -abs(duration - 7.0),
-            -abs(density - 5.0),
-            min(float(content), 40.0),
+    return max(
+        candidates,
+        key=lambda sentence: (
+            sentence.end_seconds - sentence.start_seconds,
             -sentence.start_seconds,
-        )
-
-    return max(candidates, key=score)
+        ),
+    )
 
 
 def reference_plan_hash(project: DubProject) -> str:
