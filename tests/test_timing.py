@@ -64,6 +64,18 @@ def test_conflict_stops_at_maximum_speed_and_preserves_remaining_overlap() -> No
     assert planned[0].remaining_overlap_seconds == pytest.approx(0.5)
 
 
+def test_conflict_can_use_more_than_two_times_speed() -> None:
+    planned = plan_dubbing_timing(
+        [_sentence("s1", 1.0, 6.0), _sentence("s2", 3.0, 1.0)],
+        max_auto_speed=3.0,
+    )
+
+    assert planned[0].speed_factor == pytest.approx(3.0)
+    assert planned[0].effective_duration_seconds == pytest.approx(2.0)
+    with pytest.raises(ValueError, match=r"between 1\.0 and 4\.0"):
+        plan_dubbing_timing([_sentence("s1", 1.0, 1.0)], max_auto_speed=4.1)
+
+
 def test_rows_without_available_chinese_tts_do_not_create_a_boundary() -> None:
     planned = plan_dubbing_timing(
         [

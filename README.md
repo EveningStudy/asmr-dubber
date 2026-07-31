@@ -25,15 +25,21 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 
 ## 演示
 
-| 素材 1 | 素材 2 |
-|---|---|
-| [![素材 1 波形预览](assets/demos/demo-1-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-1.wav) | [![素材 2 波形预览](assets/demos/demo-2-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-2.wav) |
-| [▶ 点击播放素材 1](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-1.wav) | [▶ 点击播放素材 2](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-2.wav) |
+### 素材 1
 
-| 素材 3 | 素材 4（18+） |
-|---|---|
-| [![素材 3 波形预览](assets/demos/demo-3-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-3.wav) | [![素材 4 波形预览（18+）](assets/demos/demo-4-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-4.wav) |
-| [▶ 点击播放素材 3](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-3.wav) | [▶ 点击播放素材 4（18+）](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-4.wav) |
+https://github.com/user-attachments/assets/70d1af0d-a165-410e-a28d-2a5dbaa203dd
+
+### 素材 2
+
+https://github.com/user-attachments/assets/ca7884c7-9272-4b07-a527-5e7c0351758b
+
+### 素材 3
+
+https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
+
+### 素材 4（18+）
+
+https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
 
 [![B 站演示视频封面](assets/demos/bilibili-preview.jpg)](https://www.bilibili.com/video/BV1f43G6YEov/)
 
@@ -125,9 +131,9 @@ bash scripts/linux/run-ui.sh
 7. 在“统一音色参考”中选择一条清晰的 5–15 秒台词。
 8. 点击“TTS（语音合成）并混音”。成品会显示在页面中，也会保存在项目的 `output` 目录。
 
-每句中文默认从原字幕开始。需要整体提前或延后时，在“混音与字幕”中填写毫秒偏移；中文音频
-挤到下一句时，程序会在设定上限内自动加速，仍放不下则保留上限并允许重叠。这个过程只影响
-混音，不会修改逐句 TTS 缓存。
+每句中文默认从原字幕开始时间向后偏移 500 ms。需要调整时，可在“混音与字幕”中填写其它
+毫秒偏移；中文音频挤到下一句时，程序会在默认 1.8×、最高可选 4× 的上限内自动加速，仍放
+不下则保留上限并允许重叠。这个过程只影响混音，不会修改逐句 TTS 缓存。
 
 字幕不依赖完整配音流程。识别完成后即可选择字幕内容并点击“生成字幕”。详细操作和常见参数
 取舍见[使用指南](docs/USER_GUIDE.md)。

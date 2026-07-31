@@ -94,12 +94,39 @@ def test_safe_default_asr_batch_size() -> None:
     assert settings.match_source_loudness is True
     assert settings.chinese_min_active_rms_dbfs == -42.0
     assert settings.chinese_target_active_rms_dbfs == -30.0
-    assert settings.chinese_relative_loudness_db == -4.0
-    assert settings.chinese_dubbing_offset_ms == 0
-    assert settings.chinese_max_auto_speed == 1.2
+    assert settings.chinese_relative_loudness_db == -8.0
+    assert settings.chinese_dubbing_offset_ms == 500
+    assert settings.chinese_max_auto_speed == 1.8
     assert settings.tts_index_speaker_source == "project_reference"
     assert settings.tts_index_emotion_source == "sentence_reference"
+    assert settings.tts_index_emo_alpha == 0.5
     assert settings.mix_peak_protection is True
+    assert settings.retain_chinese_stem is True
+
+
+def test_auto_speed_accepts_up_to_four_times() -> None:
+    assert ProjectSettings(chinese_max_auto_speed=4.0).chinese_max_auto_speed == 4.0
+    with pytest.raises(ValueError):
+        ProjectSettings(chinese_max_auto_speed=4.1)
+
+
+def test_uniform_loudness_target_does_not_use_source_matching_floor() -> None:
+    settings = ProjectSettings(
+        normalize_chinese_loudness=True,
+        match_source_loudness=False,
+        chinese_min_active_rms_dbfs=-42.0,
+        chinese_target_active_rms_dbfs=-48.0,
+    )
+
+    assert settings.chinese_target_active_rms_dbfs == -48.0
+
+    raw_settings = ProjectSettings(
+        normalize_chinese_loudness=False,
+        match_source_loudness=True,
+        chinese_min_active_rms_dbfs=-42.0,
+        chinese_target_active_rms_dbfs=-48.0,
+    )
+    assert raw_settings.normalize_chinese_loudness is False
 
 
 def test_output_filename_identifies_tts_configuration(tmp_path: Path) -> None:
@@ -155,12 +182,11 @@ def test_new_asr_defaults_use_only_supported_review_models_and_translation_conte
 
     assert settings.asr_vad_mode == "off"
     assert settings.asr_review_text_priority_model.startswith("parakeet_nemo|")
-    assert settings.asr_review_timestamp_priority_model.startswith("parakeet_nemo|")
-    assert {item.partition("|")[0] for item in settings.asr_review_models} <= {
+    assert settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|")
+    assert [item.partition("|")[0] for item in settings.asr_review_models] == [
         "parakeet_nemo",
         "kotoba_whisper",
-        "faster_whisper",
-    }
+    ]
     assert settings.asr_forced_alignment_enabled is False
     assert settings.translation_send_context is True
 
@@ -192,6 +218,6 @@ def test_legacy_timing_fields_are_ignored_when_loading_current_models() -> None:
         }
     )
 
-    assert settings.chinese_dubbing_offset_ms == 0
-    assert settings.chinese_max_auto_speed == 1.2
+    assert settings.chinese_dubbing_offset_ms == 500
+    assert settings.chinese_max_auto_speed == 1.8
     assert "overlap_seconds" not in sentence.model_dump()

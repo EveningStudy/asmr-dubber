@@ -45,7 +45,7 @@ bash scripts/linux/run-cli.sh --help
 ```text
 --projects-root PATH   把项目放到指定目录
 --offset-ms INTEGER    设置中文配音整体偏移（毫秒）
---max-speed FLOAT      设置冲突时最大自动加速倍速（1.0–2.0）
+--max-speed FLOAT      设置冲突时最大自动加速倍速（1.0–4.0）
 ```
 
 命令输出新项目的 `project.json` 路径。项目会复制输入媒体，之后可以移动或删除原输入文件。
@@ -124,13 +124,13 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 ## 修改中文配音排程
 
 ```powershell
-.\scripts\windows\run-cli.ps1 set-timing '<project>' --offset-ms -200 --max-speed 1.2
+.\scripts\windows\run-cli.ps1 set-timing '<project>' --offset-ms 500 --max-speed 1.8
 ```
 
 至少提供一个参数：
 
 - `--offset-ms`：相对原字幕开始时间的整体偏移，负数提前、正数延后；
-- `--max-speed`：与下一句冲突时的最大自动加速倍速，范围 1.0–2.0。
+- `--max-speed`：与下一句冲突时的最大自动加速倍速，范围 1.0–4.0。
 
 命令会使现有混音和字幕视频失效，但保留逐句 TTS 缓存。没有冲突的句子保持原速；达到速度
 上限后仍放不下的部分允许与下一句重叠。

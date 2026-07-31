@@ -319,8 +319,10 @@ def test_chinese_loudness_follows_japanese_with_audible_floor(tmp_path: Path) ->
     assert second == pytest.approx(-42.0, abs=0.5)
 
 
+@pytest.mark.parametrize("speed_factor", [1.25, 3.0])
 def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
     tmp_path: Path,
+    speed_factor: float,
 ) -> None:
     rate = 16_000
     source = tmp_path / "source.wav"
@@ -338,7 +340,7 @@ def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
     stem = tmp_path / "sped-up.wav"
     build_chinese_stem(
         stem,
-        [StemEvent("s000001", 0.0, chinese, speed_factor=1.25)],
+        [StemEvent("s000001", 0.0, chinese, speed_factor=speed_factor)],
         probe_audio(source),
         0.0,
         normalize_loudness=False,
@@ -347,8 +349,9 @@ def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
 
     data, _ = sf.read(stem, dtype="float32")
     active = np.flatnonzero(np.abs(data) > 1e-4)
-    assert active[-1] / rate == pytest.approx(1.6, abs=0.08)
-    analysis = data[int(0.15 * rate) : int(1.45 * rate)]
+    expected_duration = 2.0 / speed_factor
+    assert active[-1] / rate == pytest.approx(expected_duration, abs=0.08)
+    analysis = data[int(0.08 * rate) : int((expected_duration - 0.08) * rate)]
     spectrum = np.abs(np.fft.rfft(analysis * np.hanning(len(analysis))))
     frequencies = np.fft.rfftfreq(len(analysis), 1.0 / rate)
     dominant = frequencies[int(np.argmax(spectrum))]

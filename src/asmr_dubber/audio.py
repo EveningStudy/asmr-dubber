@@ -14,6 +14,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 
+from .constants import MAX_CHINESE_AUTO_SPEED
 from .environment import ffmpeg_executable
 from .errors import AsmrDubberError, OperationCancelledError, ProjectError
 from .models import AudioInfo, Sentence
@@ -389,10 +390,13 @@ def sentence_events(
 
 
 def _tempo_adjusted_audio(source: Path, destination: Path, speed_factor: float) -> Path:
-    if not math.isfinite(speed_factor) or not 1.0 <= speed_factor <= 2.0:
-        raise ProjectError("中文配音自动加速倍速必须在 1.0 到 2.0 之间。")
+    if not math.isfinite(speed_factor) or not 1.0 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
+        raise ProjectError(f"中文配音自动加速倍速必须在 1.0 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
     if speed_factor <= 1.0 + 1e-9:
         return source
+    stages = max(1, math.ceil(math.log2(speed_factor)))
+    stage_factor = speed_factor ** (1.0 / stages)
+    tempo_filter = ",".join(f"atempo={stage_factor:.8f}" for _ in range(stages))
     _run_ffmpeg(
         [
             "-y",
@@ -402,7 +406,7 @@ def _tempo_adjusted_audio(source: Path, destination: Path, speed_factor: float) 
             "0:a:0",
             "-vn",
             "-filter:a",
-            f"atempo={speed_factor:.8f}",
+            tempo_filter,
             "-c:a",
             "pcm_f32le",
             str(destination),

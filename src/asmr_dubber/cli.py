@@ -221,7 +221,7 @@ def set_timing_command(
         float | None,
         typer.Option(
             "--max-speed",
-            help="与下一句冲突时允许的最大自动加速倍速（1.0–2.0）",
+            help="与下一句冲突时允许的最大自动加速倍速（1.0–4.0）",
         ),
     ] = None,
 ) -> None:

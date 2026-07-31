@@ -101,11 +101,11 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
     assert project.tts_index_emotion_source == "text"
 
 
-def test_default_relative_chinese_loudness_is_minus_four_db() -> None:
+def test_default_relative_chinese_loudness_matches_saved_project_default() -> None:
     settings = UserSettings()
 
-    assert settings.chinese_relative_loudness_db == -4.0
-    assert settings.to_project_settings().chinese_relative_loudness_db == -4.0
+    assert settings.chinese_relative_loudness_db == -8.0
+    assert settings.to_project_settings().chinese_relative_loudness_db == -8.0
 
 
 def test_legacy_user_setting_migrates_index_text_emotion() -> None:

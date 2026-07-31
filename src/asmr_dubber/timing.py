@@ -4,6 +4,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from .constants import MAX_CHINESE_AUTO_SPEED
 from .models import Sentence
 
 
@@ -38,8 +39,8 @@ def plan_dubbing_timing(
     row never shortens the preceding clip's available window.
     """
 
-    if not math.isfinite(max_auto_speed) or not 1.0 <= max_auto_speed <= 2.0:
-        raise ValueError("max_auto_speed must be between 1.0 and 2.0")
+    if not math.isfinite(max_auto_speed) or not 1.0 <= max_auto_speed <= MAX_CHINESE_AUTO_SPEED:
+        raise ValueError(f"max_auto_speed must be between 1.0 and {MAX_CHINESE_AUTO_SPEED}")
 
     candidates: list[tuple[Sentence, float]] = []
     for sentence in sentences:

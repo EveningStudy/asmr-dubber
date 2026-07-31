@@ -10,12 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .constants import (
     DEFAULT_ALIGNER_MODEL,
+    DEFAULT_ASR_REVIEW_MODELS,
     DEFAULT_ASR_REVIEW_PROMPT,
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
     DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY,
+    DEFAULT_CHINESE_DUBBING_OFFSET_MS,
+    DEFAULT_CHINESE_MAX_AUTO_SPEED,
+    DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB,
     DEFAULT_INDEXTTS_CONFIG,
+    DEFAULT_INDEXTTS_EMOTION_WEIGHT,
     DEFAULT_INDEXTTS_MODEL_DIR,
     DEFAULT_TRANSLATION_MODEL,
+    MAX_CHINESE_AUTO_SPEED,
     PROJECT_SCHEMA_VERSION,
     RECOMMENDED_ASR_BACKEND,
     RECOMMENDED_ASR_MODEL,
@@ -95,10 +101,7 @@ class ProjectSettings(BaseModel):
     asr_kotoba_chunk_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
     asr_review_enabled: bool = False
     asr_review_models: list[str] = Field(
-        default_factory=lambda: [
-            ("parakeet_nemo|grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"),
-            "faster_whisper|large-v2",
-        ],
+        default_factory=lambda: list(DEFAULT_ASR_REVIEW_MODELS),
         max_length=6,
     )
     asr_review_text_priority_model: str = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
@@ -138,7 +141,11 @@ class ProjectSettings(BaseModel):
     tts_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     tts_top_p: float = Field(default=0.9, gt=0.0, le=1.0)
     tts_index_use_fp16: bool = True
-    tts_index_emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    tts_index_emo_alpha: float = Field(
+        default=DEFAULT_INDEXTTS_EMOTION_WEIGHT,
+        ge=0.0,
+        le=1.0,
+    )
     tts_index_speaker_source: Literal[
         "project_reference",
         "sentence_reference",
@@ -160,12 +167,24 @@ class ProjectSettings(BaseModel):
     tts_clone_mode: Literal["stable_reference", "reference_only"] = "stable_reference"
     tts_reference_sentence_id: str | None = None
 
-    chinese_dubbing_offset_ms: int = Field(default=0, ge=-30_000, le=30_000)
-    chinese_max_auto_speed: float = Field(default=1.2, ge=1.0, le=2.0)
+    chinese_dubbing_offset_ms: int = Field(
+        default=DEFAULT_CHINESE_DUBBING_OFFSET_MS,
+        ge=-30_000,
+        le=30_000,
+    )
+    chinese_max_auto_speed: float = Field(
+        default=DEFAULT_CHINESE_MAX_AUTO_SPEED,
+        ge=1.0,
+        le=MAX_CHINESE_AUTO_SPEED,
+    )
     chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
     normalize_chinese_loudness: bool = True
     match_source_loudness: bool = True
-    chinese_relative_loudness_db: float = Field(default=-4.0, ge=-24.0, le=24.0)
+    chinese_relative_loudness_db: float = Field(
+        default=DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB,
+        ge=-24.0,
+        le=24.0,
+    )
     chinese_min_active_rms_dbfs: float = Field(default=-42.0, ge=-60.0, le=-20.0)
     chinese_target_active_rms_dbfs: float = Field(default=-30.0, ge=-50.0, le=-16.0)
     chinese_max_loudness_boost_db: float = Field(default=12.0, ge=0.0, le=30.0)
@@ -175,7 +194,7 @@ class ProjectSettings(BaseModel):
     chinese_channel_routing: Literal["auto", "all"] = "auto"
     mix_peak_protection: bool = True
     mix_peak_limit_dbfs: float = Field(default=-1.0, ge=-6.0, le=-0.1)
-    retain_chinese_stem: bool = False
+    retain_chinese_stem: bool = True
     skip_japanese_fillers: bool = True
     reference_padding_seconds: float = Field(default=0.0, ge=0.0, le=2.0)
     random_seed: int = Field(default=20260722, ge=0)
@@ -243,7 +262,11 @@ class ProjectSettings(BaseModel):
     @model_validator(mode="after")
     def valid_loudness_range(self) -> ProjectSettings:
         self.asr_vad_filter = self.asr_vad_mode == "backend"
-        if self.chinese_min_active_rms_dbfs > self.chinese_target_active_rms_dbfs:
+        if (
+            self.normalize_chinese_loudness
+            and self.match_source_loudness
+            and self.chinese_min_active_rms_dbfs > self.chinese_target_active_rms_dbfs
+        ):
             raise ValueError("Chinese loudness floor must not exceed its ceiling")
         if self.asr_review_enabled and not self.asr_review_models:
             raise ValueError("ASR review requires at least one comparison model")
@@ -254,7 +277,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.6.0"
+    app_version: str = "0.6.1"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -394,7 +417,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.6.0"
+        payload["app_version"] = "0.6.1"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

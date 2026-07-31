@@ -10,13 +10,18 @@ from asmr_dubber.audio import sha256_file
 from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.runtime_manager import BackendStatus
+from asmr_dubber.translation import SYSTEM_PROMPT
 from asmr_dubber.ui import (
     APP_CSS,
     DownloadController,
     _install_backend_log_events,
+    _loudness_mode,
+    _loudness_mode_update,
     _provider_update,
     _remote_auth,
+    _settings_from_form,
     _transcript_language_update,
+    _translation_prompt_for_display,
     asr_vad_choices,
     indextts_installation_status,
     offline_model_pack_markdown,
@@ -201,6 +206,10 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "使用半精度计算（FP16）" in labels
     assert "中文配音整体偏移（毫秒）" in labels
     assert "冲突时最大自动加速倍速" in labels
+    assert "音量处理方式" in labels
+    assert "中文相对原声音量（dB）" in labels
+    assert "规范化中文响度" not in labels
+    assert "匹配对应日语片段响度" not in labels
     assert "中文最多提前秒数" not in labels
     assert "提前量最多占日语句长百分比" not in labels
     assert "1 · 运行 ASR（语音识别）" in values
@@ -218,6 +227,90 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
         "纯文本台本如何生成时间轴",
         "台本语言",
     ]
+
+    explained_advanced_labels = {
+        "自动匹配的最安静目标（RMS dBFS）",
+        "自动匹配的最响目标（RMS dBFS）",
+        "每句最大自动提升（dB）",
+        "单句峰值上限（dBFS）",
+        "句首句尾淡入淡出（毫秒）",
+        "自动处理后的整体微调（dB）",
+        "中文轨叠加峰值上限（dBFS）",
+    }
+    components_by_label = {getattr(component, "label", None): component for component in components}
+    for label in explained_advanced_labels:
+        assert getattr(components_by_label[label], "info", "")
+
+
+def test_loudness_modes_map_to_existing_project_fields(monkeypatch) -> None:
+    monkeypatch.setattr(ui_module, "load_user_settings", UserSettings)
+    fields = [
+        "loudness_mode",
+        "loudness_source_ceiling_dbfs",
+        "loudness_uniform_target_dbfs",
+        "loudness_raw_gain_db",
+    ]
+
+    source = _settings_from_form(fields, ["source", -31.0, -28.0, 3.0], None, None)
+    uniform = _settings_from_form(fields, ["uniform", -31.0, -28.0, 3.0], None, None)
+    raw = _settings_from_form(fields, ["raw", -31.0, -28.0, 3.0], None, None)
+
+    assert _loudness_mode(True, True) == "source"
+    assert _loudness_mode(True, False) == "uniform"
+    assert _loudness_mode(False, True) == "raw"
+    assert source.normalize_chinese_loudness is True
+    assert source.match_source_loudness is True
+    assert source.chinese_target_active_rms_dbfs == -31.0
+    assert uniform.normalize_chinese_loudness is True
+    assert uniform.match_source_loudness is False
+    assert uniform.chinese_target_active_rms_dbfs == -28.0
+    assert raw.normalize_chinese_loudness is False
+    assert raw.match_source_loudness is False
+    assert raw.chinese_gain_db == 3.0
+
+    source_updates = _loudness_mode_update("source")
+    uniform_updates = _loudness_mode_update("uniform")
+    raw_updates = _loudness_mode_update("raw")
+    assert [item["visible"] for item in source_updates[:6]] == [
+        True,
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
+    assert [item["visible"] for item in uniform_updates[:6]] == [
+        False,
+        True,
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert [item["visible"] for item in raw_updates[:6]] == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_builtin_translation_prompt_is_visible_but_not_frozen_in_settings(monkeypatch) -> None:
+    monkeypatch.setattr(ui_module, "load_user_settings", UserSettings)
+
+    assert _translation_prompt_for_display("") == SYSTEM_PROMPT
+    built_in = _settings_from_form(["translation_prompt"], [SYSTEM_PROMPT], None, None)
+    custom = _settings_from_form(
+        ["translation_prompt"],
+        [SYSTEM_PROMPT + "\n请使用更口语的表达。"],
+        None,
+        None,
+    )
+
+    assert built_in.translation_prompt == ""
+    assert custom.translation_prompt.endswith("请使用更口语的表达。")
 
 
 def test_chinese_transcript_mode_removes_qwen_timing_choice() -> None:

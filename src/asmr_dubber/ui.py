@@ -21,8 +21,10 @@ from .app_logging import application_log_path, configure_logging, recent_log_tex
 from .constants import (
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
     DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY,
+    DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB,
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
+    MAX_CHINESE_AUTO_SPEED,
 )
 from .errors import InstallPausedError, OperationCancelledError
 from .model_packs import discover_model_packs, import_discovered_model_packs, model_pack_directory
@@ -41,6 +43,7 @@ from .runtime_manager import (
     refresh_hardware,
 )
 from .task_control import CancellationToken, cancellation_scope
+from .translation import SYSTEM_PROMPT
 from .ui_services import (
     TABLE_HEADERS,
     TABLE_TYPES,
@@ -148,6 +151,16 @@ _PRIVATE_API: Any = False
 _LLM_TRANSLATION_PROVIDERS = frozenset(
     {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
 )
+_LOUDNESS_MODE_CHOICES = [
+    ("跟随对应原声（推荐）", "source"),
+    ("所有中文保持统一音量", "uniform"),
+    ("保留 TTS 原始音量", "raw"),
+]
+_LOUDNESS_MODE_DESCRIPTIONS = {
+    "source": "自动测量每句对应的原声音量，再按下面的相对值调整中文，适合保留场景强弱变化。",
+    "uniform": "不跟随原片段强弱，把所有中文句子调整到同一个目标响度。",
+    "raw": "不做逐句响度规范化，保留 TTS 输出音量；只应用手动微调和混音峰值保护。",
+}
 _NATIVE_VAD_LABELS = {
     "parakeet_nemo": "使用 Parakeet/CrispASR 自带 Silero VAD",
     "faster_whisper": "使用 Faster-Whisper 自带 Silero VAD",
@@ -465,7 +478,30 @@ def _settings_from_form(
     emotion_upload: Any,
 ) -> UserSettings:
     current = load_user_settings().model_dump()
-    current.update(dict(zip(field_names, values, strict=True)))
+    form = dict(zip(field_names, values, strict=True))
+    loudness_mode = form.pop("loudness_mode", None)
+    source_ceiling = form.pop("loudness_source_ceiling_dbfs", None)
+    uniform_target = form.pop("loudness_uniform_target_dbfs", None)
+    raw_gain = form.pop("loudness_raw_gain_db", None)
+    current.update(form)
+    if loudness_mode is not None:
+        mode = str(loudness_mode)
+        if mode not in {"source", "uniform", "raw"}:
+            raise ValueError(f"未知中文响度处理方式：{mode}")
+        current["normalize_chinese_loudness"] = mode != "raw"
+        current["match_source_loudness"] = mode == "source"
+        if mode == "source" and source_ceiling is not None:
+            current["chinese_target_active_rms_dbfs"] = source_ceiling
+        elif mode == "uniform" and uniform_target is not None:
+            current["chinese_target_active_rms_dbfs"] = uniform_target
+        elif mode == "raw" and raw_gain is not None:
+            current["chinese_gain_db"] = raw_gain
+    displayed_prompt = str(current.get("translation_prompt", "")).replace("\r\n", "\n").strip()
+    if displayed_prompt == SYSTEM_PROMPT.replace("\r\n", "\n"):
+        # Show the built-in prompt in the form without freezing a duplicate in
+        # settings.json. Future built-in improvements still take effect when
+        # the displayed text has not been edited.
+        current["translation_prompt"] = ""
     primary_asr = f"{current.get('asr_backend', '')}|{current.get('asr_model', '')}"
     if not current.get("asr_review_text_priority_model"):
         current["asr_review_text_priority_model"] = primary_asr or DEFAULT_ASR_REVIEW_TEXT_PRIORITY
@@ -493,6 +529,32 @@ def _provider_update(provider: Any) -> tuple[Any, ...]:
         _gr_update(visible=provider_id in _LLM_TRANSLATION_PROVIDERS),
         _gr_update(visible=provider_id == "deepl"),
         _gr_update(visible=provider_id == "microsoft_translate"),
+    )
+
+
+def _translation_prompt_for_display(value: Any) -> str:
+    return str(value or "").strip() or SYSTEM_PROMPT
+
+
+def _loudness_mode(normalize: bool, match_source: bool) -> str:
+    if not normalize:
+        return "raw"
+    return "source" if match_source else "uniform"
+
+
+def _loudness_mode_update(mode: Any) -> tuple[Any, ...]:
+    selected = str(mode or "source")
+    if selected not in _LOUDNESS_MODE_DESCRIPTIONS:
+        selected = "source"
+    normalized = selected in {"source", "uniform"}
+    return (
+        _gr_update(visible=selected == "source"),
+        _gr_update(visible=selected == "uniform"),
+        _gr_update(visible=selected == "raw"),
+        _gr_update(visible=selected == "source"),
+        _gr_update(visible=normalized),
+        _gr_update(visible=normalized),
+        _LOUDNESS_MODE_DESCRIPTIONS[selected],
     )
 
 
@@ -674,6 +736,10 @@ def build_app() -> Any:
     asr_spec = ASR_BACKENDS[stored.asr_backend]
     tts_spec = TTS_BACKENDS[stored.tts_backend]
     provider = PROVIDER_PRESETS.get(stored.translation_provider, PROVIDER_PRESETS["deepseek"])
+    initial_loudness_mode = _loudness_mode(
+        stored.normalize_chinese_loudness,
+        stored.match_source_loudness,
+    )
     initial_vad_choices = asr_vad_choices(stored.asr_backend)
     initial_vad_values = {value for _, value in initial_vad_choices}
     initial_vad_mode = stored.asr_vad_mode
@@ -1182,8 +1248,12 @@ def build_app() -> Any:
                                 )
                             settings_components["translation_prompt"] = gr.Textbox(
                                 label="自定义翻译 Prompt（留空使用内置）",
-                                value=stored.translation_prompt,
-                                lines=8,
+                                value=_translation_prompt_for_display(stored.translation_prompt),
+                                lines=12,
+                                info=(
+                                    "当前直接显示实际使用的 Prompt。保持原样保存时仍跟随内置版本；"
+                                    "修改后保存为自定义 Prompt。"
+                                ),
                             )
                         with gr.Group(
                             visible=stored.translation_provider == "deepl"
@@ -1425,46 +1495,130 @@ def build_app() -> Any:
                             settings_components["chinese_max_auto_speed"] = gr.Slider(
                                 label="冲突时最大自动加速倍速",
                                 minimum=1.0,
-                                maximum=2.0,
+                                maximum=MAX_CHINESE_AUTO_SPEED,
                                 step=0.05,
                                 value=stored.chinese_max_auto_speed,
-                                info="配音超过下一句开始时间时自动加速；达到上限后仍冲突则允许重叠。",
+                                info=(
+                                    "配音超过下一句开始时间时自动加速；最高可选 4×，"
+                                    "达到上限后仍冲突则允许重叠。"
+                                ),
                             )
-                            settings_components["chinese_gain_db"] = gr.Number(
-                                label="中文额外增益（dB）", value=stored.chinese_gain_db
-                            )
-                        settings_components["normalize_chinese_loudness"] = gr.Checkbox(
-                            label="规范化中文响度", value=stored.normalize_chinese_loudness
+                        gr.Markdown("### 中文配音音量")
+                        settings_components["loudness_mode"] = gr.Radio(
+                            label="音量处理方式",
+                            choices=_LOUDNESS_MODE_CHOICES,
+                            value=initial_loudness_mode,
+                            info="只选择一种处理方式，避免多个开关互相依赖。",
                         )
-                        settings_components["match_source_loudness"] = gr.Checkbox(
-                            label="匹配对应日语片段响度", value=stored.match_source_loudness
+                        loudness_mode_help = gr.Markdown(
+                            _LOUDNESS_MODE_DESCRIPTIONS[initial_loudness_mode]
                         )
-                        with gr.Row():
-                            settings_components["chinese_relative_loudness_db"] = gr.Number(
-                                label="中文相对原声响度（dB）",
+                        with gr.Group(
+                            visible=initial_loudness_mode == "source"
+                        ) as source_loudness_group:
+                            settings_components["chinese_relative_loudness_db"] = gr.Slider(
+                                label="中文相对原声音量（dB）",
+                                minimum=-24.0,
+                                maximum=12.0,
+                                step=0.5,
                                 value=stored.chinese_relative_loudness_db,
+                                info=(
+                                    "负数让中文更轻，0 接近原片段音量，正数让中文更突出；"
+                                    "默认 -8 dB。"
+                                ),
                             )
-                            settings_components["chinese_min_active_rms_dbfs"] = gr.Number(
-                                label="中文最低有效响度（RMS dBFS）",
-                                value=stored.chinese_min_active_rms_dbfs,
-                            )
-                            settings_components["chinese_target_active_rms_dbfs"] = gr.Number(
-                                label="中文目标有效响度（RMS dBFS）",
+                        with gr.Group(
+                            visible=initial_loudness_mode == "uniform"
+                        ) as uniform_loudness_group:
+                            settings_components["loudness_uniform_target_dbfs"] = gr.Slider(
+                                label="统一中文目标响度（RMS dBFS）",
+                                minimum=-50.0,
+                                maximum=-16.0,
+                                step=1.0,
                                 value=stored.chinese_target_active_rms_dbfs,
+                                info="数值越接近 0 越响；默认 -30 dBFS。",
                             )
-                            settings_components["chinese_max_loudness_boost_db"] = gr.Number(
-                                label="最大响度提升（dB）",
-                                value=stored.chinese_max_loudness_boost_db,
+                        with gr.Group(visible=initial_loudness_mode == "raw") as raw_loudness_group:
+                            settings_components["loudness_raw_gain_db"] = gr.Slider(
+                                label="TTS 原始音量微调（dB）",
+                                minimum=-20.0,
+                                maximum=12.0,
+                                step=0.5,
+                                value=stored.chinese_gain_db,
+                                info="0 不改变原始音量；负数降低，正数提高。",
                             )
-                        with gr.Row():
-                            settings_components["chinese_line_peak_dbfs"] = gr.Number(
-                                label="单句峰值（dBFS）", value=stored.chinese_line_peak_dbfs
+                        with gr.Accordion("高级响度参数", open=False):
+                            gr.Markdown(
+                                "默认值适合大多数项目。dBFS 数值越接近 0 越响；"
+                                "峰值参数越低，保留的安全余量越多。"
                             )
+                            with (
+                                gr.Group(
+                                    visible=initial_loudness_mode == "source"
+                                ) as source_loudness_advanced_group,
+                                gr.Row(),
+                            ):
+                                settings_components["chinese_min_active_rms_dbfs"] = gr.Number(
+                                    label="自动匹配的最安静目标（RMS dBFS）",
+                                    value=stored.chinese_min_active_rms_dbfs,
+                                    info=(
+                                        "原片段非常安静时，中文目标不会低于这个值，"
+                                        "避免配音几乎听不见；默认 -42。"
+                                    ),
+                                )
+                                settings_components["loudness_source_ceiling_dbfs"] = gr.Number(
+                                    label="自动匹配的最响目标（RMS dBFS）",
+                                    value=stored.chinese_target_active_rms_dbfs,
+                                    info=(
+                                        "原片段很响时，中文目标不会高于这个值，"
+                                        "避免跟随结果过响；默认 -30。"
+                                    ),
+                                )
+                            with (
+                                gr.Group(
+                                    visible=initial_loudness_mode in {"source", "uniform"}
+                                ) as normalized_loudness_advanced_group,
+                                gr.Row(),
+                            ):
+                                settings_components["chinese_max_loudness_boost_db"] = gr.Number(
+                                    label="每句最大自动提升（dB）",
+                                    value=stored.chinese_max_loudness_boost_db,
+                                    info=(
+                                        "一句中文太轻时最多自动提高多少；"
+                                        "限制提升可避免底噪被过度放大，默认 12。"
+                                    ),
+                                )
+                                settings_components["chinese_line_peak_dbfs"] = gr.Number(
+                                    label="单句峰值上限（dBFS）",
+                                    value=stored.chinese_line_peak_dbfs,
+                                    info=("规范化后限制每句的瞬时峰值，防止单句削波；默认 -9。"),
+                                )
+                                settings_components["chinese_fade_ms"] = gr.Number(
+                                    label="句首句尾淡入淡出（毫秒）",
+                                    value=stored.chinese_fade_ms,
+                                    info=(
+                                        "在每句边缘加入极短渐变以减少爆音和咔哒声；"
+                                        "过大可能吃掉短音节，默认 8 ms。"
+                                    ),
+                                )
+                            with gr.Group(
+                                visible=initial_loudness_mode in {"source", "uniform"}
+                            ) as adjusted_loudness_gain_group:
+                                settings_components["chinese_gain_db"] = gr.Number(
+                                    label="自动处理后的整体微调（dB）",
+                                    value=stored.chinese_gain_db,
+                                    info=(
+                                        "在自动匹配或统一响度之后，再整体提高或降低中文；"
+                                        "通常保持 0，优先调整上面的主要音量参数。"
+                                    ),
+                                )
                             settings_components["chinese_stem_peak_dbfs"] = gr.Number(
-                                label="中文轨峰值（dBFS）", value=stored.chinese_stem_peak_dbfs
+                                label="中文轨叠加峰值上限（dBFS）",
+                                value=stored.chinese_stem_peak_dbfs,
+                                info=("多句中文重叠时限制合计峰值，避免中文中间轨削波；默认 -3。"),
                             )
-                            settings_components["chinese_fade_ms"] = gr.Number(
-                                label="淡入淡出毫秒", value=stored.chinese_fade_ms
+                            reset_loudness_button = gr.Button(
+                                "恢复响度参数默认值（不切换处理方式）"
                             )
                         settings_components["chinese_channel_routing"] = gr.Radio(
                             label="多声道路由",
@@ -1941,6 +2095,49 @@ def build_app() -> Any:
             indextts_installation_status,
             inputs=[settings_components["tts_model_path"]],
             outputs=[index_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["loudness_mode"].change(
+            _loudness_mode_update,
+            inputs=[settings_components["loudness_mode"]],
+            outputs=[
+                source_loudness_group,
+                uniform_loudness_group,
+                raw_loudness_group,
+                source_loudness_advanced_group,
+                normalized_loudness_advanced_group,
+                adjusted_loudness_gain_group,
+                loudness_mode_help,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        reset_loudness_button.click(
+            lambda: (
+                DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB,
+                -30.0,
+                0.0,
+                -42.0,
+                -30.0,
+                12.0,
+                -9.0,
+                8.0,
+                0.0,
+                -3.0,
+            ),
+            outputs=[
+                settings_components["chinese_relative_loudness_db"],
+                settings_components["loudness_uniform_target_dbfs"],
+                settings_components["loudness_raw_gain_db"],
+                settings_components["chinese_min_active_rms_dbfs"],
+                settings_components["loudness_source_ceiling_dbfs"],
+                settings_components["chinese_max_loudness_boost_db"],
+                settings_components["chinese_line_peak_dbfs"],
+                settings_components["chinese_fade_ms"],
+                settings_components["chinese_gain_db"],
+                settings_components["chinese_stem_peak_dbfs"],
+            ],
             api_name=_PRIVATE_API,
             queue=False,
         )
