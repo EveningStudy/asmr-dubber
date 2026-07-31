@@ -233,3 +233,9 @@ bash scripts/linux/run-cli.sh --help
 项目代码采用 [MIT License](LICENSE)。模型、运行时和云服务适用各自的许可证或服务条款，
 其中 IndexTTS2 使用独立的 bilibili Model Use License。请确认你有权处理输入作品和参考声音，
 并按适用规则标记合成内容。详见[第三方软件与模型说明](docs/THIRD_PARTY_NOTICES.md)。
+
+## 配套工具
+
+[ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 面向 DLsite 音声
+作品，可以按顺序快速合并分轨音频，并衔接 ASMR Dubber 的处理流程，方便整理成双语音声或
+视频后发布到 bilibili。
