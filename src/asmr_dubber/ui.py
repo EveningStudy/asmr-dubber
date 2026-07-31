@@ -787,7 +787,7 @@ def build_app() -> Any:
                     elem_classes=["sentence-table"],
                 )
                 gr.Markdown(
-                    "可编辑启用状态、时间、日文、中文和提前量；清空一行的日文和中文即可删除"
+                    "可编辑启用状态、时间、日文和中文；清空一行的日文和中文即可删除"
                     "该句。状态与错误不会混入业务数据。"
                 )
 
@@ -1416,16 +1416,19 @@ def build_app() -> Any:
 
                     with gr.Tab("混音与字幕", id="mix-subtitles"):
                         with gr.Row():
-                            settings_components["global_overlap_seconds"] = gr.Number(
-                                label="中文最多提前秒数",
-                                value=stored.global_overlap_seconds,
+                            settings_components["chinese_dubbing_offset_ms"] = gr.Number(
+                                label="中文配音整体偏移（毫秒）",
+                                value=stored.chinese_dubbing_offset_ms,
+                                precision=0,
+                                info="0 表示从原字幕开始；负数提前，正数延后。",
                             )
-                            settings_components["global_overlap_percentage"] = gr.Slider(
-                                label="提前量最多占日语句长百分比",
-                                minimum=0,
-                                maximum=100,
-                                step=1,
-                                value=stored.global_overlap_percentage,
+                            settings_components["chinese_max_auto_speed"] = gr.Slider(
+                                label="冲突时最大自动加速倍速",
+                                minimum=1.0,
+                                maximum=2.0,
+                                step=0.05,
+                                value=stored.chinese_max_auto_speed,
+                                info="配音超过下一句开始时间时自动加速；达到上限后仍冲突则允许重叠。",
                             )
                             settings_components["chinese_gain_db"] = gr.Number(
                                 label="中文额外增益（dB）", value=stored.chinese_gain_db

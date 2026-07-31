@@ -75,8 +75,8 @@ def test_portable_paths_are_saved_relative_to_application_home(
 
 def test_user_settings_copy_all_material_options_to_project() -> None:
     settings = UserSettings(
-        global_overlap_seconds=0.4,
-        global_overlap_percentage=35.0,
+        chinese_dubbing_offset_ms=-400,
+        chinese_max_auto_speed=1.35,
         chinese_gain_db=-2.0,
         match_source_loudness=True,
         chinese_relative_loudness_db=-1.5,
@@ -90,8 +90,8 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
         tts_index_emo_text="轻柔",
     )
     project = settings.to_project_settings()
-    assert project.global_overlap_seconds == 0.4
-    assert project.global_overlap_percentage == 35.0
+    assert project.chinese_dubbing_offset_ms == -400
+    assert project.chinese_max_auto_speed == 1.35
     assert project.chinese_relative_loudness_db == -1.5
     assert project.chinese_min_active_rms_dbfs == -44.0
     assert project.chinese_target_active_rms_dbfs == -31.0
@@ -145,7 +145,7 @@ def test_applying_global_defaults_preserves_project_reference_sentence() -> None
     from asmr_dubber.models import ProjectSettings
 
     current = ProjectSettings(tts_reference_sentence_id="s000042")
-    updated = UserSettings(global_overlap_seconds=2.5).to_project_settings(current)
+    updated = UserSettings(chinese_dubbing_offset_ms=250).to_project_settings(current)
 
     assert updated.tts_reference_sentence_id == "s000042"
-    assert updated.global_overlap_seconds == 2.5
+    assert updated.chinese_dubbing_offset_ms == 250

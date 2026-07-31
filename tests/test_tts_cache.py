@@ -63,7 +63,8 @@ def test_tts_cache_tracks_synthesis_inputs_but_not_mix_only_settings() -> None:
     sentence = project.sentences[0]
     original = tts_cache_key(project, sentence)
 
-    project.settings.global_overlap_seconds = 2.0
+    project.settings.chinese_dubbing_offset_ms = -200
+    project.settings.chinese_max_auto_speed = 1.35
     project.settings.chinese_gain_db = -3.0
     project.settings.chinese_target_active_rms_dbfs = -34.0
     assert tts_cache_key(project, sentence) == original

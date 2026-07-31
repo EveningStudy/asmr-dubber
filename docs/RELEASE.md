@@ -1,17 +1,14 @@
-# 发行包说明
+# ASMR Dubber 0.6.0
 
-ASMR Dubber 0.5.3 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语音频或视频，提供
-可校对的日语识别、中文翻译、音色克隆、混音和字幕工作流。
+ASMR Dubber 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语音频或视频，提供可校对的
+日语识别、中文翻译、音色克隆、混音和字幕工作流，也支持导入中文台本后直接配音。
 
-本版本只调整统一参考音频的自动选择：优先从有日文的片段中选择时长最长的一段；项目没有日文
-时，改从有中文的片段中选择时长最长的一段。用户手动保存的参考片段不受影响。
+中文配音默认从原字幕开始，可以统一按毫秒提前或延后。当前句超过下一条有效中文配音的开始
+时间时，混音阶段会在用户设置的上限内做保持音调的自动加速；达到上限仍放不下时允许重叠。
+逐句 TTS 缓存不会因此被改写。
 
-0.5.2 修复纯中文台本无法删除句子的问题。把某一行的日文和中文都清空后，该句会正常从项目、
-字幕和后续配音中移除，不再阻止保存或执行。
-
-0.5.1 增加中文台本导入。导入时可以选择日语台本或中文配音文本；中文 SRT 等字幕会保留原
-时间轴，中文纯文本会按台词长度建立初始时间轴。中文内容直接进入配音列，不需要再运行 ASR
-或翻译。
+DeepSeek Flash 翻译使用随包提供的结构约束 Prompt，并在返回格式校验失败时按相同 ID 和顺序
+重试。Prompt 位于 `src/asmr_dubber/prompts`，可以直接查看。
 
 ## 下载包包含什么
 
@@ -24,17 +21,8 @@ ASMR Dubber 0.5.3 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语
 下载包不包含大型模型、用户项目、API Key 或已经建立的运行环境。首次安装会按用户选择准备
 便携 Python、依赖和固定模型，所有内容默认放在程序目录的 `.asmr-dubber`。
 
-## Windows 免安装包
-
-[ModelScope 推荐版免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0/files)
-另行提供一个可以直接解压使用的完整包：
-
-| 文件 | 内容 |
-|---|---|
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境 + 两个 Parakeet 日语模型 + IndexTTS2 环境和 checkpoints |
-
-完整解压后直接运行 `ASMR-Dubber.exe`，不需要先运行 Setup。IndexTTS2 只支持 NVIDIA GPU；
-第一次生成语音时可能需要较长时间。其它模型可在网页中按需安装。
+Windows 用户从 [GitHub Releases](https://github.com/EveningStudy/ASMR-Dubber/releases/latest)
+下载 `ASMR-Dubber-windows-portable.zip`，完整解压后运行 `ASMR-Dubber-Setup.exe`。
 
 ## 安装方案
 

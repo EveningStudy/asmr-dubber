@@ -93,8 +93,8 @@ def test_indextts_status_checks_runtime_and_all_resources(tmp_path: Path) -> Non
 def test_sentence_table_sorts_rows_and_parses_false_string(tmp_path: Path) -> None:
     project, _ = _project(tmp_path)
     rows = [
-        ["s000002", "false", 5.0, 6.0, "後です。", "在后面。", None],
-        ["s000001", True, 1.0, 2.0, "先です。", "在前面。", None],
+        ["s000002", "false", 5.0, 6.0, "後です。", "在后面。"],
+        ["s000001", True, 1.0, 2.0, "先です。", "在前面。"],
     ]
 
     assert apply_table(project, rows) is True
@@ -105,8 +105,8 @@ def test_sentence_table_sorts_rows_and_parses_false_string(tmp_path: Path) -> No
 def test_sentence_table_accepts_chinese_only_rows_and_deletes_empty_rows(tmp_path: Path) -> None:
     project, _ = _project(tmp_path)
     chinese_only = [
-        ["s000001", True, 1.0, 2.0, "", "直接配音。", None],
-        ["s000002", True, 2.0, 7.0, "", "这是第二句。", None],
+        ["s000001", True, 1.0, 2.0, "", "直接配音。"],
+        ["s000002", True, 2.0, 7.0, "", "这是第二句。"],
     ]
 
     assert apply_table(project, chinese_only) is True
@@ -199,6 +199,10 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "随机度（Temperature）" in labels
     assert "核采样概率（Top P）" in labels
     assert "使用半精度计算（FP16）" in labels
+    assert "中文配音整体偏移（毫秒）" in labels
+    assert "冲突时最大自动加速倍速" in labels
+    assert "中文最多提前秒数" not in labels
+    assert "提前量最多占日语句长百分比" not in labels
     assert "1 · 运行 ASR（语音识别）" in values
     assert "4 · TTS（语音合成）并混音" in values
     assert "仅保存为以后新项目默认值" in values

@@ -65,6 +65,7 @@ UI 不直接加载模型。`ui_services.py` 负责把网页输入转换成领域
 | `tts.py` | 逐句缓存键、参考解析和合成调度 |
 | `tts_backends.py` | IndexTTS2 子进程及外部 HTTP API 适配 |
 | `voice_reference.py` | 项目统一参考和逐句参考选择 |
+| `timing.py` | 中文落点、冲突检测、自动加速倍速和剩余重叠计算 |
 | `subtitles.py` | SRT/LRC 文本、时间轴和可读性限制 |
 | `filtering.py` | 日语语气词和非实义文本判断 |
 

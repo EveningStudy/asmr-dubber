@@ -34,6 +34,7 @@ from .platforms import portable_home, require_supported_platform
 from .storage import atomic_write_text, exclusive_file_lock
 from .subtitles import SubtitleLanguage, write_subtitle_files
 from .task_control import CancellationSignal, check_cancelled
+from .timing import dubbing_start_seconds, plan_dubbing_timing
 from .transcript_import import TranscriptLanguage, parse_transcript
 from .translation import translate_sentences
 from .tts import synthesize_sentences, tts_cache_key
@@ -656,8 +657,8 @@ def _mix_project_impl(
     events = sentence_events(
         project_dir,
         project.sentences,
-        project.settings.global_overlap_seconds,
-        project.settings.global_overlap_percentage,
+        project.settings.chinese_dubbing_offset_ms,
+        project.settings.chinese_max_auto_speed,
     )
     if not events:
         raise ProjectError("没有可混入的中文配音。")
@@ -786,8 +787,8 @@ def generate_subtitles(
         maximum_chars=project.settings.subtitle_max_chars_per_line,
         minimum_duration=project.settings.subtitle_min_duration_seconds,
         maximum_cps=project.settings.subtitle_max_cps,
-        global_overlap_seconds=project.settings.global_overlap_seconds,
-        global_overlap_percentage=project.settings.global_overlap_percentage,
+        chinese_dubbing_offset_ms=project.settings.chinese_dubbing_offset_ms,
+        chinese_max_auto_speed=project.settings.chinese_max_auto_speed,
     )
     check_cancelled(cancel_event)
 
@@ -827,17 +828,42 @@ def generate_subtitles(
 def export_transcript(project: DubProject, project_dir: Path) -> None:
     exports = project_dir / "exports"
     exports.mkdir(parents=True, exist_ok=True)
+    timing_by_id = {
+        timing.sentence_id: timing
+        for timing in plan_dubbing_timing(
+            project.sentences,
+            offset_ms=project.settings.chinese_dubbing_offset_ms,
+            max_auto_speed=project.settings.chinese_max_auto_speed,
+        )
+    }
     rows = [
         {
             "id": sentence.id,
             "enabled": sentence.enabled,
             "ja_start_seconds": sentence.start_seconds,
             "ja_end_seconds": sentence.end_seconds,
-            "zh_start_seconds": sentence.chinese_start_seconds(
-                project.settings.global_overlap_seconds,
-                project.settings.global_overlap_percentage,
+            "zh_start_seconds": (
+                timing_by_id[sentence.id].start_seconds
+                if sentence.id in timing_by_id
+                else dubbing_start_seconds(
+                    sentence,
+                    project.settings.chinese_dubbing_offset_ms,
+                )
             ),
-            "overlap_seconds": sentence.overlap_seconds,
+            "tts_duration_seconds": sentence.tts_duration_seconds,
+            "auto_speed_factor": (
+                timing_by_id[sentence.id].speed_factor if sentence.id in timing_by_id else 1.0
+            ),
+            "zh_effective_duration_seconds": (
+                timing_by_id[sentence.id].effective_duration_seconds
+                if sentence.id in timing_by_id
+                else sentence.tts_duration_seconds
+            ),
+            "remaining_overlap_seconds": (
+                timing_by_id[sentence.id].remaining_overlap_seconds
+                if sentence.id in timing_by_id
+                else 0.0
+            ),
             "ja": sentence.ja_text,
             "zh": sentence.zh_text,
             "status": sentence.status,

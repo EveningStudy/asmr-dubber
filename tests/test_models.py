@@ -27,45 +27,17 @@ def audio_info() -> AudioInfo:
     )
 
 
-def test_timing_uses_global_and_per_sentence_override() -> None:
-    sentence = Sentence(id="s000001", start_seconds=2.0, end_seconds=5.0, ja_text="始めましょう。")
-    assert sentence.effective_overlap_seconds(1.0, 20.0) == pytest.approx(0.6)
-    assert sentence.chinese_start_seconds(1.0, 20.0) == pytest.approx(4.4)
-    sentence.overlap_seconds = 0.25
-    assert sentence.chinese_start_seconds(1.0, 20.0) == pytest.approx(4.75)
-    sentence.overlap_seconds = -0.5
-    assert sentence.chinese_start_seconds(1.0, 20.0) == 5.5
-
-
-def test_short_sentence_chinese_never_starts_before_its_japanese() -> None:
-    sentence = Sentence(id="s000001", start_seconds=10.0, end_seconds=10.2, ja_text="はい。")
-    assert sentence.effective_overlap_seconds(1.0, 20.0) == pytest.approx(0.04)
-    assert sentence.chinese_start_seconds(1.0, 20.0) == pytest.approx(10.16)
-    assert sentence.chinese_start_seconds(1.0, 20.0) > sentence.start_seconds
-
-
-def test_long_sentence_uses_configured_maximum_overlap() -> None:
-    sentence = Sentence(id="s000001", start_seconds=2.0, end_seconds=12.0, ja_text="長い文章。")
-    assert sentence.effective_overlap_seconds(1.0, 20.0) == 1.0
-    assert sentence.chinese_start_seconds(1.0, 20.0) == 11.0
-
-
-def test_overlap_percentage_is_configurable() -> None:
-    sentence = Sentence(id="s000001", start_seconds=2.0, end_seconds=5.0, ja_text="始めましょう。")
-    assert sentence.effective_overlap_seconds(2.0, 50.0) == pytest.approx(1.5)
-    assert sentence.chinese_start_seconds(2.0, 50.0) == pytest.approx(3.5)
-
-
 def test_project_round_trip(tmp_path: Path) -> None:
     project = DubProject(
         source=audio_info(),
-        settings=ProjectSettings(global_overlap_seconds=1.25),
+        settings=ProjectSettings(chinese_dubbing_offset_ms=-250, chinese_max_auto_speed=1.3),
         sentences=[Sentence(id="s000001", start_seconds=1.0, end_seconds=2.0, ja_text="はい。")],
     )
     manifest = save_project(project, tmp_path)
     loaded, directory = load_project(manifest)
     assert directory == tmp_path.resolve()
-    assert loaded.settings.global_overlap_seconds == 1.25
+    assert loaded.settings.chinese_dubbing_offset_ms == -250
+    assert loaded.settings.chinese_max_auto_speed == 1.3
     assert loaded.sentences[0].ja_text == "はい。"
 
 
@@ -74,9 +46,9 @@ def test_concurrent_project_save_detects_stale_revision(tmp_path: Path) -> None:
     first, _ = load_project(manifest)
     stale, _ = load_project(manifest)
 
-    first.settings.global_overlap_seconds = 1.0
+    first.settings.chinese_dubbing_offset_ms = -100
     save_project(first, tmp_path)
-    stale.settings.global_overlap_seconds = 2.0
+    stale.settings.chinese_dubbing_offset_ms = 200
 
     with pytest.raises(ProjectConflictError, match="另一个窗口或命令修改"):
         save_project(stale, tmp_path)
@@ -123,8 +95,8 @@ def test_safe_default_asr_batch_size() -> None:
     assert settings.chinese_min_active_rms_dbfs == -42.0
     assert settings.chinese_target_active_rms_dbfs == -30.0
     assert settings.chinese_relative_loudness_db == -4.0
-    assert settings.global_overlap_seconds == 5.0
-    assert settings.global_overlap_percentage == 50.0
+    assert settings.chinese_dubbing_offset_ms == 0
+    assert settings.chinese_max_auto_speed == 1.2
     assert settings.tts_index_speaker_source == "project_reference"
     assert settings.tts_index_emotion_source == "sentence_reference"
     assert settings.mix_peak_protection is True
@@ -201,3 +173,25 @@ def test_sentence_id_cannot_escape_generated_audio_directory() -> None:
             end_seconds=1,
             ja_text="テスト",
         )
+
+
+def test_legacy_timing_fields_are_ignored_when_loading_current_models() -> None:
+    settings = ProjectSettings.model_validate(
+        {
+            "global_overlap_seconds": 5.0,
+            "global_overlap_percentage": 50.0,
+        }
+    )
+    sentence = Sentence.model_validate(
+        {
+            "id": "s000001",
+            "start_seconds": 1.0,
+            "end_seconds": 2.0,
+            "ja_text": "はい。",
+            "overlap_seconds": 0.5,
+        }
+    )
+
+    assert settings.chinese_dubbing_offset_ms == 0
+    assert settings.chinese_max_auto_speed == 1.2
+    assert "overlap_seconds" not in sentence.model_dump()

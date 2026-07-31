@@ -44,7 +44,8 @@ bash scripts/linux/run-cli.sh --help
 
 ```text
 --projects-root PATH   把项目放到指定目录
---overlap FLOAT        覆盖这个项目的全局中文最多提前秒数
+--offset-ms INTEGER    设置中文配音整体偏移（毫秒）
+--max-speed FLOAT      设置冲突时最大自动加速倍速（1.0–2.0）
 ```
 
 命令输出新项目的 `project.json` 路径。项目会复制输入媒体，之后可以移动或删除原输入文件。
@@ -117,21 +118,22 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 ```
 
 混音要求所有启用且有中文的句子已经具备有效 TTS 文件。命令输出最终 WAV；视频项目还输出
-封装视频。修改中文提前量、响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译
+封装视频。修改中文整体偏移、自动加速上限、响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译
 或合成。
 
-## 修改全局时间
+## 修改中文配音排程
 
 ```powershell
-.\scripts\windows\run-cli.ps1 set-timing '<project>' --overlap 5 --percentage 50
+.\scripts\windows\run-cli.ps1 set-timing '<project>' --offset-ms -200 --max-speed 1.2
 ```
 
 至少提供一个参数：
 
-- `--overlap`：正数在日语结束前提前，`0` 从句末开始，负数在句末后等待；
-- `--percentage`：正数提前量最多占当前日语句长的百分比，范围 0–100。
+- `--offset-ms`：相对原字幕开始时间的整体偏移，负数提前、正数延后；
+- `--max-speed`：与下一句冲突时的最大自动加速倍速，范围 1.0–2.0。
 
-命令会使现有混音和字幕视频失效，但保留逐句 TTS 缓存。
+命令会使现有混音和字幕视频失效，但保留逐句 TTS 缓存。没有冲突的句子保持原速；达到速度
+上限后仍放不下的部分允许与下一句重叠。
 
 ## 字幕
 

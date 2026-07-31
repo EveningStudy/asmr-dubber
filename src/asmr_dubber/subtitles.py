@@ -9,6 +9,7 @@ from typing import Literal
 from .errors import ProjectError
 from .models import Sentence
 from .storage import atomic_write_text
+from .timing import DubbingTiming, plan_dubbing_timing
 
 SubtitleLanguage = Literal["bilingual", "zh", "ja"]
 SubtitleTimeline = Literal["source", "dubbing"]
@@ -66,18 +67,14 @@ def _subtitle_range(
     sentence: Sentence,
     *,
     timeline: SubtitleTimeline,
-    global_overlap_seconds: float,
-    global_overlap_percentage: float,
+    dubbing_timing: DubbingTiming | None,
     text: str,
     minimum_duration: float,
     maximum_cps: float,
 ) -> tuple[float, float]:
-    if timeline == "dubbing" and sentence.tts_duration_seconds:
-        start = sentence.chinese_start_seconds(
-            global_overlap_seconds,
-            global_overlap_percentage,
-        )
-        end = start + sentence.tts_duration_seconds
+    if timeline == "dubbing" and dubbing_timing is not None:
+        start = dubbing_timing.start_seconds
+        end = start + dubbing_timing.effective_duration_seconds
     else:
         start = sentence.start_seconds
         end = sentence.end_seconds
@@ -98,8 +95,8 @@ def write_subtitle_files(
     maximum_chars: int = 22,
     minimum_duration: float = 1.0,
     maximum_cps: float = 18.0,
-    global_overlap_seconds: float = 5.0,
-    global_overlap_percentage: float = 50.0,
+    chinese_dubbing_offset_ms: int = 0,
+    chinese_max_auto_speed: float = 1.2,
 ) -> tuple[Path, Path]:
     """Write readable, atomic UTF-8 SRT and LRC subtitle files."""
 
@@ -110,6 +107,14 @@ def write_subtitle_files(
     included = [sentence for sentence in sentences if sentence.enabled]
     if not included:
         raise ProjectError("没有可生成字幕的已启用句子。")
+    timing_by_id = {
+        timing.sentence_id: timing
+        for timing in plan_dubbing_timing(
+            included,
+            offset_ms=chinese_dubbing_offset_ms,
+            max_auto_speed=chinese_max_auto_speed,
+        )
+    }
 
     output_dir.mkdir(parents=True, exist_ok=True)
     srt_blocks: list[str] = []
@@ -119,8 +124,7 @@ def write_subtitle_files(
         start, end = _subtitle_range(
             sentence,
             timeline=timeline,
-            global_overlap_seconds=global_overlap_seconds,
-            global_overlap_percentage=global_overlap_percentage,
+            dubbing_timing=timing_by_id.get(sentence.id),
             text="".join(lines),
             minimum_duration=minimum_duration,
             maximum_cps=maximum_cps,

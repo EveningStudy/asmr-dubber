@@ -93,14 +93,18 @@ def _fail(exc: Exception) -> NoReturn:
 def create_command(
     input_media: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
     projects_root: Annotated[Path | None, typer.Option("--projects-root")] = None,
-    overlap: Annotated[float | None, typer.Option("--overlap")] = None,
+    offset_ms: Annotated[int | None, typer.Option("--offset-ms")] = None,
+    max_speed: Annotated[float | None, typer.Option("--max-speed")] = None,
 ) -> None:
     """从音频或视频建立项目并保存原始文件副本。"""
     try:
         settings = load_user_settings().to_project_settings()
-        if overlap is not None:
+        if offset_ms is not None or max_speed is not None:
             values = settings.model_dump()
-            values["global_overlap_seconds"] = overlap
+            if offset_ms is not None:
+                values["chinese_dubbing_offset_ms"] = offset_ms
+            if max_speed is not None:
+                values["chinese_max_auto_speed"] = max_speed
             settings = ProjectSettings.model_validate(values)
         _, directory = create_project(
             input_media,
@@ -206,31 +210,31 @@ def subtitles_command(
 @app.command("set-timing")
 def set_timing_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
-    overlap: Annotated[
-        float | None,
+    offset_ms: Annotated[
+        int | None,
         typer.Option(
-            "--overlap",
-            help="最长提前秒数；正数=句末前提前，0=句末，负数=句末后等待",
+            "--offset-ms",
+            help="中文相对原字幕开始时间的整体偏移；负数提前，正数延后",
         ),
     ] = None,
-    percentage: Annotated[
+    max_speed: Annotated[
         float | None,
         typer.Option(
-            "--percentage",
-            help="正数提前量最多占当前日语句时长的百分比（0–100）",
+            "--max-speed",
+            help="与下一句冲突时允许的最大自动加速倍速（1.0–2.0）",
         ),
     ] = None,
 ) -> None:
-    """修改全局中文开始位置；重混即可，无需重做识别/翻译/配音。"""
+    """修改中文配音偏移和冲突加速上限；重混即可。"""
     try:
-        if overlap is None and percentage is None:
-            raise ValueError("请至少提供 --overlap 或 --percentage。")
+        if offset_ms is None and max_speed is None:
+            raise ValueError("请至少提供 --offset-ms 或 --max-speed。")
         project, directory = reload_project(project_path)
         settings = project.settings.model_dump()
-        if overlap is not None:
-            settings["global_overlap_seconds"] = overlap
-        if percentage is not None:
-            settings["global_overlap_percentage"] = percentage
+        if offset_ms is not None:
+            settings["chinese_dubbing_offset_ms"] = offset_ms
+        if max_speed is not None:
+            settings["chinese_max_auto_speed"] = max_speed
         project.settings = ProjectSettings.model_validate(settings)
         project.chinese_stem_file = None
         project.output_file = None
@@ -241,9 +245,9 @@ def set_timing_command(
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
     console.print(
-        "中文提前设置已更新："
-        f"{project.settings.global_overlap_seconds:.3f} 秒，"
-        f"句长的 {project.settings.global_overlap_percentage:g}%。"
+        "中文配音排程已更新："
+        f"整体偏移 {project.settings.chinese_dubbing_offset_ms:+d} ms，"
+        f"最大自动加速 {project.settings.chinese_max_auto_speed:g}×。"
     )
 
 

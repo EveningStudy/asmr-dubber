@@ -27,9 +27,8 @@ TABLE_HEADERS = [
     "结束（秒）",
     "日文原文",
     "中文译文",
-    "提前开始（秒）",
 ]
-TABLE_TYPES = ["str", "bool", "number", "number", "str", "str", "number"]
+TABLE_TYPES = ["str", "bool", "number", "number", "str", "str"]
 
 _ASR_AFFECTING_SETTINGS = frozenset(
     name
@@ -102,7 +101,6 @@ def project_rows(project: DubProject) -> list[list[Any]]:
             sentence.end_seconds,
             sentence.ja_text,
             sentence.zh_text,
-            sentence.overlap_seconds,
         ]
         for sentence in project.sentences
     ]
@@ -133,7 +131,6 @@ def apply_table(project: DubProject, table: Any) -> bool:
         end = _number(row[3], f"{sentence_id} 结束时间")
         if start < 0 or end <= start or end > project.source.duration_seconds + 0.25:
             raise ProjectError(f"{sentence_id} 的时间范围无效。")
-        overlap = None if row[6] in {None, ""} else _number(row[6], f"{sentence_id} 提前量")
         old = previous.get(sentence_id)
         payload = {
             "id": sentence_id,
@@ -142,7 +139,6 @@ def apply_table(project: DubProject, table: Any) -> bool:
             "end_seconds": end,
             "ja_text": ja_text,
             "zh_text": zh_text,
-            "overlap_seconds": overlap,
         }
         if old is None:
             parsed.append(Sentence(**payload))

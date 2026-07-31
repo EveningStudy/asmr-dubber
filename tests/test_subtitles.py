@@ -58,6 +58,44 @@ def test_chinese_subtitles_require_translation(tmp_path: Path) -> None:
         write_subtitle_files([sentence], tmp_path, "zh")
 
 
+def test_dubbing_timeline_uses_offset_and_effective_accelerated_duration(
+    tmp_path: Path,
+) -> None:
+    sentences = [
+        Sentence(
+            id="s000001",
+            start_seconds=1.0,
+            end_seconds=2.0,
+            ja_text="一。",
+            zh_text="一。",
+            tts_duration_seconds=3.0,
+        ),
+        Sentence(
+            id="s000002",
+            start_seconds=3.0,
+            end_seconds=4.0,
+            ja_text="二。",
+            zh_text="二。",
+            tts_duration_seconds=1.0,
+        ),
+    ]
+
+    srt, _lrc = write_subtitle_files(
+        sentences,
+        tmp_path,
+        "zh",
+        timeline="dubbing",
+        minimum_duration=0.2,
+        maximum_cps=40.0,
+        chinese_dubbing_offset_ms=500,
+        chinese_max_auto_speed=1.5,
+    )
+
+    content = srt.read_text(encoding="utf-8")
+    assert "00:00:01,500 --> 00:00:03,500" in content
+    assert "00:00:03,500 --> 00:00:04,500" in content
+
+
 def test_audio_project_generates_external_subtitles_without_touching_audio(
     tmp_path: Path,
 ) -> None:

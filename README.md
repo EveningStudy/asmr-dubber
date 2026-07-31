@@ -16,7 +16,7 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 - 通过 DeepSeek、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
 - 使用本地 IndexTTS2，或连接 GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做
   TTS（语音合成）；
-- 逐句调整日文、中文、起止时间、是否配音和中文提前量；
+- 逐句调整日文、中文、起止时间和是否配音；
 - 输出混音后的 WAV、视频，以及双语/中文/日文 SRT 和 LRC 字幕；
 - 中断后继续工作，只重做缺失或设置已经失效的部分。
 - 长任务可在网页中取消；程序日志可直接查看和下载。
@@ -25,15 +25,26 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 
 ## 演示
 
-- [素材 1](assets/demos/demo-1.wav)
-- [素材 2](assets/demos/demo-2.wav)
-- [素材 3](assets/demos/demo-3.wav)
-- [素材 4（18+）](assets/demos/demo-4.wav)
-- [B 站演示视频](https://www.bilibili.com/video/BV1f43G6YEov/)
+| 素材 1 | 素材 2 |
+|---|---|
+| [![素材 1 波形预览](assets/demos/demo-1-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-1.wav) | [![素材 2 波形预览](assets/demos/demo-2-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-2.wav) |
+| [▶ 点击播放素材 1](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-1.wav) | [▶ 点击播放素材 2](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-2.wav) |
+
+| 素材 3 | 素材 4（18+） |
+|---|---|
+| [![素材 3 波形预览](assets/demos/demo-3-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-3.wav) | [![素材 4 波形预览（18+）](assets/demos/demo-4-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-4.wav) |
+| [▶ 点击播放素材 3](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-3.wav) | [▶ 点击播放素材 4（18+）](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-4.wav) |
+
+[![B 站演示视频封面](assets/demos/bilibili-preview.jpg)](https://www.bilibili.com/video/BV1f43G6YEov/)
+
+[▶ 在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)
 
 以上素材仅用于功能演示，如有侵权请联系删除。
 
-## 直接解压使用（Windows）
+## 下载与安装（Windows）
+
+从 [GitHub Releases](https://github.com/EveningStudy/ASMR-Dubber/releases/latest) 下载
+`ASMR-Dubber-windows-portable.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
 
 > **使用前请开启 Windows 长路径。以避免一些问题** 进入“设置 → 系统 → 高级 → 文件资源管理器”，打开
 > “启用长路径”，然后重新启动 ASMR Dubber。未开启时，IndexTTS2 等第三方运行环境中的深层
@@ -41,20 +52,6 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 > 当前 Windows 没有这个开关，请把程序解压到 `D:\ASMR-Dubber` 这类短路径。
 
 ![Windows“启用长路径”开关位置](assets/windows-enable-long-paths.png)
-
-如果不想运行 Setup，可以从
-[ModelScope 推荐版免安装包仓库](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0/files)
-下载已经装好运行环境和推荐模型的 ZIP。下载后完整解压，直接双击 `ASMR-Dubber.exe` 即可。
-本版本只提供推荐版免安装包；其它模型仍可在网页的“设备与模型”中按需安装。
-
-| 压缩包 | 已包含内容 | 适合谁 |
-|---|---|---|
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境、两个 Parakeet 日语模型、IndexTTS2 环境和 checkpoints | 想直接使用本地日语识别和本地配音 |
-
-IndexTTS2 只支持 NVIDIA GPU。第一次生成语音时需要加载模型并初始化 CUDA，可能需要等待一段
-时间，后续通常会快很多。没有 NVIDIA GPU 时，包内 Parakeet 仍可使用 CPU，TTS 可改用外部
-API。免安装包适用于 64 位 Windows 10/11，不需要先运行 `ASMR-Dubber-Setup.exe`。文件较大，
-上传完成前请以仓库文件列表为准；下载后可用同名 `.sha256` 文件核对完整性。
 
 Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新架构。主环境使用 CUDA 13，
 不支持 Maxwell、Pascal 和 Volta；这些旧卡即使显存较大，也不属于完整本地 GPU 支持范围。
@@ -71,6 +68,8 @@ Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新�
 3. 安装结束后双击 `ASMR-Dubber.exe`。
 4. 浏览器打开后，先到“设置”确认识别、翻译和合成方式，再回到“项目工作台”。
 5. 保留启动终端。要停止程序，按 `Ctrl+C` 或关闭终端。
+
+IndexTTS2 第一次生成语音时需要加载模型并初始化 CUDA，等待时间可能明显长于后续任务。
 
 不需要预装 Python、uv、Git、FFmpeg 或 CUDA Toolkit。启动器优先使用 PowerShell 7；电脑上
 没有 PowerShell 7 时会使用 Windows 自带的 PowerShell 5.1。下载阶段需要系统中的
@@ -125,6 +124,10 @@ bash scripts/linux/run-ui.sh
 6. 日语台本或识别结果需要点击“翻译日文”；中文台本可直接编辑中文并保存校对表格。
 7. 在“统一音色参考”中选择一条清晰的 5–15 秒台词。
 8. 点击“TTS（语音合成）并混音”。成品会显示在页面中，也会保存在项目的 `output` 目录。
+
+每句中文默认从原字幕开始。需要整体提前或延后时，在“混音与字幕”中填写毫秒偏移；中文音频
+挤到下一句时，程序会在设定上限内自动加速，仍放不下则保留上限并允许重叠。这个过程只影响
+混音，不会修改逐句 TTS 缓存。
 
 字幕不依赖完整配音流程。识别完成后即可选择字幕内容并点击“生成字幕”。详细操作和常见参数
 取舍见[使用指南](docs/USER_GUIDE.md)。

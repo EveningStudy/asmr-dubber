@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+from importlib.resources import files
 
 import httpx
 import pytest
@@ -10,6 +11,17 @@ from asmr_dubber.errors import OperationCancelledError, TranslationError
 from asmr_dubber.models import Sentence
 from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.translation import translate_sentences, validate_translation
+
+
+def test_default_translation_prompts_are_packaged_markdown_resources() -> None:
+    prompt_root = files("asmr_dubber.prompts")
+    assert (
+        prompt_root.joinpath("translation.md").read_text(encoding="utf-8").strip()
+    ) == translation_module.SYSTEM_PROMPT
+    structure_prompt = prompt_root.joinpath("translation-structure.md").read_text(encoding="utf-8")
+    assert "{{OUTPUT_SCHEMA}}" in structure_prompt
+    assert "{{TARGET_JSON}}" in structure_prompt
+    assert "顶层对象只能有 `translations` 一个字段" in structure_prompt
 
 
 def test_validates_exact_translation_ids_and_order() -> None:
@@ -123,7 +135,8 @@ def test_translation_cancel_closes_active_http_client(monkeypatch) -> None:
 
 def _target_ids(request: httpx.Request) -> list[str]:
     payload = json.loads(request.content)
-    return re.findall(r'"id":"(s\d+)"', payload["messages"][-1]["content"])
+    target = payload["messages"][-1]["content"].split("目标项：", maxsplit=1)[1].strip()
+    return re.findall(r'"id":"(s\d+)"', target)
 
 
 def _translation_response(ids: list[str]) -> httpx.Response:
@@ -190,6 +203,77 @@ def test_deepseek_request_uses_pro_non_thinking_and_prior_translation_memory() -
     assert "姐姐。" in payload["messages"][2]["content"]
     assert "secret-test-key" not in json.dumps(payload)
     assert sentences[1].zh_text == "开始吧。"
+
+
+def test_deepseek_flash_retries_with_exact_structure_after_validation_failure(
+    monkeypatch,
+) -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if len(payloads) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": (
+                                    '{"translations":['
+                                    '{"id":"s000001","ja":"はい。","zh":"好的。"},'
+                                    '{"id":"s000002","ja":"おやすみ。","zh":"晚安。"}'
+                                    "]}"
+                                )
+                            },
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": (
+                                '{"translations":['
+                                '{"id":"s000001","zh":"好的。"},'
+                                '{"id":"s000002","zh":"晚安。"}'
+                                "]}"
+                            )
+                        },
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(translation_module.time, "sleep", lambda _seconds: None)
+    sentences = [
+        Sentence(id="s000001", start_seconds=0.0, end_seconds=1.0, ja_text="はい。"),
+        Sentence(id="s000002", start_seconds=1.0, end_seconds=2.0, ja_text="おやすみ。"),
+    ]
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        translate_sentences(
+            sentences,
+            api_key="secret-test-key",
+            model="deepseek-v4-flash",
+            system_prompt="译文尽量简洁。",
+            client=client,
+        )
+
+    assert len(payloads) == 2
+    expected_shape = '{"translations":[{"id":"s000001","zh":""},{"id":"s000002","zh":""}]}'
+    assert payloads[0]["messages"][0]["content"] == "译文尽量简洁。"
+    assert expected_shape in payloads[0]["messages"][-1]["content"]
+    assert "{{OUTPUT_SCHEMA}}" not in payloads[0]["messages"][-1]["content"]
+    assert "{{TARGET_JSON}}" not in payloads[0]["messages"][-1]["content"]
+    assert "上一次输出没有通过结构校验" not in payloads[0]["messages"][-1]["content"]
+    assert "上一次输出没有通过结构校验" in payloads[1]["messages"][-1]["content"]
+    assert [sentence.zh_text for sentence in sentences] == ["好的。", "晚安。"]
 
 
 def test_translation_can_omit_full_context_and_translation_memory() -> None:

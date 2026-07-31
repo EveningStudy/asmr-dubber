@@ -23,6 +23,7 @@ from .task_control import (
     terminate_process_tree,
     unregister_process,
 )
+from .timing import plan_dubbing_timing
 
 Progress = Callable[[str, int, int], None]
 _SOURCE_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
@@ -37,6 +38,9 @@ class StemEvent:
     audio_path: Path
     source_start_seconds: float = 0.0
     source_end_seconds: float = 0.0
+    speed_factor: float = 1.0
+    effective_duration_seconds: float | None = None
+    remaining_overlap_seconds: float = 0.0
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -335,12 +339,15 @@ def make_analysis_copy(source: Path, destination: Path) -> Path:
 def sentence_events(
     project_dir: Path,
     sentences: Iterable[Sentence],
-    global_overlap_seconds: float,
-    global_overlap_percentage: float = 50.0,
+    chinese_dubbing_offset_ms: int = 0,
+    chinese_max_auto_speed: float = 1.2,
 ) -> list[StemEvent]:
-    events: list[StemEvent] = []
+    available: list[Sentence] = []
+    audio_paths: dict[str, Path] = {}
+    durations: dict[str, float] = {}
+    sentence_by_id: dict[str, Sentence] = {}
     for sentence in sentences:
-        if not sentence.enabled or not sentence.tts_file:
+        if not sentence.enabled or not sentence.zh_text or not sentence.tts_file:
             continue
         audio_path = resolve_project_path(
             project_dir,
@@ -349,19 +356,59 @@ def sentence_events(
         )
         if not audio_path.is_file():
             raise ProjectError(f"句子 {sentence.id} 的中文音频不存在：{audio_path}")
-        events.append(
-            StemEvent(
-                sentence_id=sentence.id,
-                start_seconds=sentence.chinese_start_seconds(
-                    global_overlap_seconds,
-                    global_overlap_percentage,
-                ),
-                audio_path=audio_path,
-                source_start_seconds=sentence.start_seconds,
-                source_end_seconds=sentence.end_seconds,
-            )
+        try:
+            clip_info = sf.info(audio_path)
+        except (OSError, RuntimeError) as exc:
+            raise ProjectError(f"无法读取句子 {sentence.id} 的中文音频：{audio_path}") from exc
+        if clip_info.samplerate <= 0 or clip_info.frames <= 0:
+            raise ProjectError(f"中文句子 {sentence.id} 的音频参数无效。")
+        available.append(sentence)
+        sentence_by_id[sentence.id] = sentence
+        audio_paths[sentence.id] = audio_path
+        durations[sentence.id] = clip_info.frames / clip_info.samplerate
+
+    timings = plan_dubbing_timing(
+        available,
+        offset_ms=chinese_dubbing_offset_ms,
+        max_auto_speed=chinese_max_auto_speed,
+        durations=durations,
+    )
+    return [
+        StemEvent(
+            sentence_id=timing.sentence_id,
+            start_seconds=timing.start_seconds,
+            audio_path=audio_paths[timing.sentence_id],
+            source_start_seconds=sentence_by_id[timing.sentence_id].start_seconds,
+            source_end_seconds=sentence_by_id[timing.sentence_id].end_seconds,
+            speed_factor=timing.speed_factor,
+            effective_duration_seconds=timing.effective_duration_seconds,
+            remaining_overlap_seconds=timing.remaining_overlap_seconds,
         )
-    return sorted(events, key=lambda event: (event.start_seconds, event.sentence_id))
+        for timing in timings
+    ]
+
+
+def _tempo_adjusted_audio(source: Path, destination: Path, speed_factor: float) -> Path:
+    if not math.isfinite(speed_factor) or not 1.0 <= speed_factor <= 2.0:
+        raise ProjectError("中文配音自动加速倍速必须在 1.0 到 2.0 之间。")
+    if speed_factor <= 1.0 + 1e-9:
+        return source
+    _run_ffmpeg(
+        [
+            "-y",
+            "-i",
+            str(source),
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-filter:a",
+            f"atempo={speed_factor:.8f}",
+            "-c:a",
+            "pcm_f32le",
+            str(destination),
+        ]
+    )
+    return destination
 
 
 def _read_resampled_mono(path: Path, target_rate: int) -> np.ndarray:
@@ -536,7 +583,18 @@ def build_chinese_stem(
                 check_cancelled()
                 # Only one synthesized line is resident at a time, so multi-hour
                 # projects do not accumulate every Chinese waveform in RAM.
-                clip = _read_resampled_mono(event.audio_path, rate)
+                tempo_file = destination.with_name(
+                    f".{destination.stem}.{uuid.uuid4().hex}.tempo.wav"
+                )
+                try:
+                    clip_path = _tempo_adjusted_audio(
+                        event.audio_path,
+                        tempo_file,
+                        event.speed_factor,
+                    )
+                    clip = _read_resampled_mono(clip_path, rate)
+                finally:
+                    tempo_file.unlink(missing_ok=True)
                 if normalize_loudness:
                     target_level = target_active_rms_dbfs
                     if source_reference is not None:
@@ -614,8 +672,13 @@ def build_chinese_stem(
                         )
                     )
                 if progress:
+                    speed_note = (
+                        f"（自动加速 {event.speed_factor:.2f}×）"
+                        if event.speed_factor > 1.0 + 1e-9
+                        else ""
+                    )
                     progress(
-                        f"放置中文句子 {event.sentence_id}",
+                        f"放置中文句子 {event.sentence_id}{speed_note}",
                         initialization_blocks + index,
                         total_work,
                     )

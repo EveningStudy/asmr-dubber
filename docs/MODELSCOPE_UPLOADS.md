@@ -210,31 +210,6 @@ $file.Length
 
 哈希计算期间磁盘会持续读取，但不会产生网络流量。
 
-## Windows 免安装完整包
-
-仓库：
-[EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Recommended-Portable-v0.5.0)
-
-这个仓库面向不想运行 Setup 的用户，本版本只发布一个完整的推荐版免安装包：
-
-| 文件 | 固定内容 |
-|---|---|
-| `ASMR-Dubber-Windows-Recommended-Portable-v0.5.0.zip` | 程序和完整运行环境 + 两个 Parakeet 日语模型 + IndexTTS2 完整隔离环境和 checkpoints |
-
-在已经备齐并校验原始制品的发布机上生成推荐版：
-
-```powershell
-.\scripts\windows\create-portable-profiles.ps1 -Profiles Recommended -Version 0.5.0
-```
-
-默认输出目录是项目同级的 `ASMR-Dubber-Windows-Portable-ModelScope`。脚本只读取本地固定制品，
-不会联网；它同时生成每个 ZIP 的 `.sha256`。上传前还要确认包内没有
-`.asmr-dubber/config/settings.json`、`secrets.json`、用户项目、日志或下载缓存，并从另一个短路径
-实际解压启动一次。仓库 README 中记录的字节数和 SHA-256 必须取自最终 ZIP，不能使用内部模型
-包的哈希代替。
-
-IndexTTS2 随推荐版提供，但只支持 NVIDIA GPU。第一次生成语音时可能需要较长时间。
-
 ## 发布流程
 
 1. 固定上游 revision、依赖锁和许可证；

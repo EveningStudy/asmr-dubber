@@ -180,7 +180,7 @@ def test_sentence_audio_path_cannot_escape_project(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ProjectError, match="超出项目目录"):
-        sentence_events(project_dir, [sentence], 0, 50)
+        sentence_events(project_dir, [sentence])
 
     with pytest.raises(ProjectError, match="超出项目目录"):
         project_file_exists(project_dir, "../outside.wav", "中文音频")
@@ -194,6 +194,39 @@ def test_absolute_manifest_audio_path_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ProjectError, match="必须位于项目目录内"):
         project_file_exists(project_dir, str(external), "中文音频")
+
+
+def test_sentence_events_plan_from_actual_audio_durations(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    chinese_dir = project_dir / "chinese"
+    chinese_dir.mkdir(parents=True)
+    rate = 8_000
+    sf.write(chinese_dir / "s1.wav", np.zeros(round(rate * 2.2)), rate, subtype="FLOAT")
+    sf.write(chinese_dir / "s2.wav", np.zeros(rate), rate, subtype="FLOAT")
+    sentences = [
+        Sentence(
+            id="s1",
+            start_seconds=1.0,
+            end_seconds=2.0,
+            ja_text="一。",
+            zh_text="一。",
+            tts_file="chinese/s1.wav",
+        ),
+        Sentence(
+            id="s2",
+            start_seconds=3.0,
+            end_seconds=4.0,
+            ja_text="二。",
+            zh_text="二。",
+            tts_file="chinese/s2.wav",
+        ),
+    ]
+
+    events = sentence_events(project_dir, sentences, 500, 1.2)
+
+    assert [event.start_seconds for event in events] == [1.5, 3.5]
+    assert events[0].speed_factor == pytest.approx(1.1)
+    assert events[0].effective_duration_seconds == pytest.approx(2.0)
 
 
 def test_chinese_lines_get_consistent_active_level_without_touching_raw_files(
@@ -284,3 +317,41 @@ def test_chinese_loudness_follows_japanese_with_audible_floor(tmp_path: Path) ->
 
     assert first == pytest.approx(-36.0, abs=0.5)
     assert second == pytest.approx(-42.0, abs=0.5)
+
+
+def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
+    tmp_path: Path,
+) -> None:
+    rate = 16_000
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(rate * 3, dtype=np.float32), rate, subtype="FLOAT")
+    time = np.arange(rate * 2, dtype=np.float32) / rate
+    chinese = tmp_path / "line.wav"
+    sf.write(
+        chinese,
+        (0.25 * np.sin(2 * np.pi * 440 * time)).astype(np.float32),
+        rate,
+        subtype="FLOAT",
+    )
+    original_hash = sha256_file(chinese)
+
+    stem = tmp_path / "sped-up.wav"
+    build_chinese_stem(
+        stem,
+        [StemEvent("s000001", 0.0, chinese, speed_factor=1.25)],
+        probe_audio(source),
+        0.0,
+        normalize_loudness=False,
+        stem_peak_dbfs=None,
+    )
+
+    data, _ = sf.read(stem, dtype="float32")
+    active = np.flatnonzero(np.abs(data) > 1e-4)
+    assert active[-1] / rate == pytest.approx(1.6, abs=0.08)
+    analysis = data[int(0.15 * rate) : int(1.45 * rate)]
+    spectrum = np.abs(np.fft.rfft(analysis * np.hanning(len(analysis))))
+    frequencies = np.fft.rfftfreq(len(analysis), 1.0 / rate)
+    dominant = frequencies[int(np.argmax(spectrum))]
+    assert dominant == pytest.approx(440.0, abs=3.0)
+    assert sha256_file(chinese) == original_hash
+    assert not list(tmp_path.glob("*.tempo.wav"))

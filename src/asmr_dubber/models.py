@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,7 +48,6 @@ class Sentence(BaseModel):
     ja_text: str
     zh_text: str = ""
     enabled: bool = True
-    overlap_seconds: float | None = None
     reference_file: str | None = None
     tts_file: str | None = None
     tts_duration_seconds: float | None = None
@@ -62,45 +60,11 @@ class Sentence(BaseModel):
     def strip_text(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("overlap_seconds")
-    @classmethod
-    def finite_overlap(cls, value: float | None) -> float | None:
-        if value is not None and not math.isfinite(value):
-            return None
-        return value
-
     @model_validator(mode="after")
     def valid_range(self) -> Sentence:
         if self.end_seconds <= self.start_seconds:
             raise ValueError("sentence end must be after start")
         return self
-
-    def effective_overlap_seconds(
-        self,
-        global_overlap_seconds: float,
-        global_overlap_percentage: float = 50.0,
-    ) -> float:
-        overlap = (
-            self.overlap_seconds if self.overlap_seconds is not None else global_overlap_seconds
-        )
-        if overlap <= 0.0:
-            # Zero still means sentence end; a negative value remains an
-            # explicit post-sentence delay for manual timing adjustments.
-            return overlap
-        duration = self.end_seconds - self.start_seconds
-        percentage_limit = duration * global_overlap_percentage / 100.0
-        return min(overlap, percentage_limit)
-
-    def chinese_start_seconds(
-        self,
-        global_overlap_seconds: float,
-        global_overlap_percentage: float = 50.0,
-    ) -> float:
-        overlap = self.effective_overlap_seconds(
-            global_overlap_seconds,
-            global_overlap_percentage,
-        )
-        return max(0.0, self.end_seconds - overlap)
 
 
 class ProjectSettings(BaseModel):
@@ -196,8 +160,8 @@ class ProjectSettings(BaseModel):
     tts_clone_mode: Literal["stable_reference", "reference_only"] = "stable_reference"
     tts_reference_sentence_id: str | None = None
 
-    global_overlap_seconds: float = Field(default=5.0, ge=-30.0, le=30.0)
-    global_overlap_percentage: float = Field(default=50.0, ge=0.0, le=100.0)
+    chinese_dubbing_offset_ms: int = Field(default=0, ge=-30_000, le=30_000)
+    chinese_max_auto_speed: float = Field(default=1.2, ge=1.0, le=2.0)
     chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
     normalize_chinese_loudness: bool = True
     match_source_loudness: bool = True
@@ -290,7 +254,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.5.3"
+    app_version: str = "0.6.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -430,7 +394,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.5.3"
+        payload["app_version"] = "0.6.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from importlib.resources import files
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -63,23 +64,38 @@ class TranslationChunk:
     sentences: list[Sentence]
 
 
-SYSTEM_PROMPT = """你是日语音声、广播剧和 ASMR 的简体中文配音翻译。
+def _load_prompt(name: str) -> str:
+    return files("asmr_dubber.prompts").joinpath(name).read_text(encoding="utf-8").strip()
 
-输出用于直接合成中文语音，只保留有明确语义或交际作用的内容。
 
-规则：
-1. 每个输入 id 必须输出一项并保持原顺序，不得合并、拆分、遗漏或改写 id。
-2. 忠实翻译实义台词。中文应自然、简洁、适合朗读，并保持称呼、敬语、语气和专名一致。
-3. 如果整句只有笑声、哭声、喘息、呻吟、亲吻声、呼吸声、拟声效果、舞台提示、无意义重复音
-   或拉长音，zh 必须是空字符串。不得把声音效果翻成“哈哈哈”“啊啊啊”“嗯嗯嗯”等中文配音。
-4. 如果非语言声音与实义台词混在同一句，只翻译实义台词；删除句首、句中、句尾无语义的
-   「あ」「え」「う」「ん」「ふふ」「えーと」等填充音。具有答复、否定、确认、呼唤或惊讶
-   等明确交际作用时才翻译。
-5. 不因内容含耳语、成人表达或口语省略而弱化、解释或删改实义信息。
-6. 不输出注释、括号说明、音效标记、罗马音或日文原文。
-7. 只输出严格 JSON：
-{"translations":[{"id":"s000001","zh":"中文台词；无实义时为空字符串"}]}
-"""
+SYSTEM_PROMPT = _load_prompt("translation.md")
+_DEEPSEEK_STRUCTURE_PROMPT = _load_prompt("translation-structure.md")
+
+
+def _deepseek_translation_request(
+    target: str,
+    expected_ids: list[str],
+    attempt: int,
+) -> str:
+    output_schema = json.dumps(
+        {"translations": [{"id": sentence_id, "zh": ""} for sentence_id in expected_ids]},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    retry_note = (
+        ""
+        if attempt == 1
+        else (
+            f"这是第 {attempt} 次校验重试。上一次输出没有通过结构校验；"
+            "这次必须逐字沿用结构模板中的键名、id 和顺序。"
+        )
+    )
+    return (
+        _DEEPSEEK_STRUCTURE_PROMPT.replace("{{RETRY_NOTE}}", retry_note)
+        .replace("{{OUTPUT_SCHEMA}}", output_schema)
+        .replace("{{TARGET_JSON}}", target)
+        .strip()
+    )
 
 
 def _chunks(
@@ -238,11 +254,6 @@ class DeepSeekTranslator:
         )
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
-            correction = (
-                ""
-                if attempt == 1
-                else f"\n这是第 {attempt} 次校验重试：务必返回全部 id 和原顺序；无实义项用空 zh。"
-            )
             messages = [{"role": "system", "content": self.system_prompt}]
             if full_context != "[]":
                 messages.append(
@@ -264,7 +275,7 @@ class DeepSeekTranslator:
             messages.append(
                 {
                     "role": "user",
-                    "content": "请翻译以下目标项并输出 json：\n" + target + correction,
+                    "content": _deepseek_translation_request(target, expected_ids, attempt),
                 }
             )
             payload = {
