@@ -27,13 +27,13 @@ ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒�
 
 | 素材 1 | 素材 2 |
 |---|---|
-| [![素材 1 波形预览](assets/demos/demo-1-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-1.wav) | [![素材 2 波形预览](assets/demos/demo-2-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-2.wav) |
-| [▶ 点击播放素材 1](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-1.wav) | [▶ 点击播放素材 2](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-2.wav) |
+| [![素材 1 波形预览](assets/demos/demo-1-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-1.wav) | [![素材 2 波形预览](assets/demos/demo-2-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-2.wav) |
+| [▶ 点击播放素材 1](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-1.wav) | [▶ 点击播放素材 2](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-2.wav) |
 
 | 素材 3 | 素材 4（18+） |
 |---|---|
-| [![素材 3 波形预览](assets/demos/demo-3-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-3.wav) | [![素材 4 波形预览（18+）](assets/demos/demo-4-waveform.png)](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-4.wav) |
-| [▶ 点击播放素材 3](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-3.wav) | [▶ 点击播放素材 4（18+）](https://raw.githubusercontent.com/EveningStudy/ASMR-Dubber/main/assets/demos/demo-4.wav) |
+| [![素材 3 波形预览](assets/demos/demo-3-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-3.wav) | [![素材 4 波形预览（18+）](assets/demos/demo-4-waveform.png)](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-4.wav) |
+| [▶ 点击播放素材 3](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-3.wav) | [▶ 点击播放素材 4（18+）](https://cdn.jsdelivr.net/gh/EveningStudy/ASMR-Dubber@main/assets/demos/demo-4.wav) |
 
 [![B 站演示视频封面](assets/demos/bilibili-preview.jpg)](https://www.bilibili.com/video/BV1f43G6YEov/)
 
