@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
 
 ROOT = Path(__file__).parents[1]
 
@@ -163,6 +167,60 @@ def test_indextts_installers_reuse_complete_checkpoints_before_download() -> Non
         check_position = installer.index(check_marker)
         assert definition_position < download_position < check_position
         assert "本地 checkpoints 已完整，无需联网下载" in installer
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 behavior")
+def test_indextts_checkpoint_probe_works_in_windows_powershell_51(tmp_path: Path) -> None:
+    powershell = shutil.which("powershell.exe")
+    assert powershell is not None
+    installer = (ROOT / "scripts/windows/install-indextts2.ps1").read_text(encoding="utf-8")
+    validation_script = _between(installer, "$ValidationScript = @'", "'@")
+    assert "$ValidationResult = $ValidationScript | & $AppPython - $ModelDir" in installer
+    assert "-c $ValidationScript" not in installer
+
+    model_dir = tmp_path / "模型 checkpoints"
+    model_dir.mkdir()
+
+    def quote(value: str | Path) -> str:
+        return str(value).replace("'", "''")
+
+    def probe() -> str:
+        command = f"""
+$ErrorActionPreference = "Stop"
+$ValidationScript = @'
+{validation_script.strip()}
+'@
+$ValidationResult = $ValidationScript | & '{quote(sys.executable)}' - '{quote(model_dir)}'
+if ($LASTEXITCODE -ne 0) {{ throw "checkpoint probe failed" }}
+Write-Output $ValidationResult
+"""
+        encoded_command = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                encoded_command,
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    assert probe() == "missing"
+
+    for relative in INDEXTTS_REQUIRED_FILES:
+        target = model_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+    for relative in INDEXTTS_REQUIRED_DIRS:
+        (model_dir / relative).mkdir(parents=True, exist_ok=True)
+
+    assert probe() == "ready"
 
 
 def test_indextts_source_archive_prefers_modelscope_and_keeps_github_fallback() -> None:

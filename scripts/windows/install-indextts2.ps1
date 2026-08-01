@@ -221,7 +221,10 @@ dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
 print("ready" if files_ready and dirs_ready else "missing")
 '@
     $AppPython = [string]$Paths.Python
-    $ValidationResult = & $AppPython -c $ValidationScript $ModelDir
+    # Windows PowerShell 5.1 strips the embedded double quotes when a multiline
+    # script is passed as a native `python -c` argument. Feed the script over
+    # stdin instead; `-` tells Python to read it while keeping ModelDir as argv[1].
+    $ValidationResult = $ValidationScript | & $AppPython - $ModelDir
     if ($LASTEXITCODE -ne 0) {
         throw "无法读取 IndexTTS2 checkpoints 必需资源定义。"
     }
