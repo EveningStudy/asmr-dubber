@@ -236,6 +236,4 @@ bash scripts/linux/run-cli.sh --help
 
 ## 配套工具
 
-[ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 面向DLsite音声
-作品，可以按顺序快速合并分轨音频，并衔接 ASMR Dubber 的处理流程，方便整理成双语音声或
-视频后发布到某些视频网站。
+[ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 面向DLsite音声作品，可以按顺序快速合并分轨音频，并衔接 ASMR Dubber 的处理流程，方便整理成双语音声或视频后发布到某些视频网站。
