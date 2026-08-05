@@ -44,6 +44,7 @@ bash scripts/linux/run-cli.sh --help
 
 ```text
 --projects-root PATH   把项目放到指定目录
+--source-language ja|en  指定源语言；英语项目使用现有 Faster-Whisper
 --offset-ms INTEGER    设置中文配音整体偏移（毫秒）
 --max-speed FLOAT      设置冲突时最大自动加速倍速（1.0–4.0）
 ```
@@ -68,7 +69,9 @@ bash scripts/linux/run-cli.sh create /data/input.wav --projects-root /data/proje
 .\scripts\windows\run-cli.ps1 analyze '<project>' --force
 ```
 
-VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。CLI 不接受
+VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。英语项目会
+自动使用 Faster-Whisper，并把识别语言固定为英语；Parakeet、Kotoba-Whisper 和日语 ASMR VAD
+只用于日语。CLI 不接受
 一组临时后端参数，以免运行结果与 `project.json` 记录不一致；先在网页应用设置，或通过受
 验证的代码修改项目设置。
 
@@ -117,9 +120,10 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 .\scripts\windows\run-cli.ps1 mix '<project>'
 ```
 
-混音要求所有启用且有中文的句子已经具备有效 TTS 文件。命令输出最终 WAV；视频项目还输出
-封装视频。修改中文整体偏移、自动加速上限、响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译
-或合成。
+混音要求所有启用且有中文的句子已经具备有效 TTS 文件。命令按照项目设置的 `mix_output_mode`
+输出混音成品、中文克隆音轨，或两者。只输出中文轨后再切回包含混音的模式，仍可直接加入原音轨，
+不必重做 TTS。视频项目只有在生成混音成品时才会输出封装视频。修改中文整体偏移、自动加速上限、
+响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译或合成。
 
 ## 修改中文配音排程
 
@@ -145,9 +149,9 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 
 | 值 | 输出内容 |
 |---|---|
-| `bilingual` | 日中双语 |
+| `bilingual` | 源文 + 中文双语 |
 | `zh` | 仅中文 |
-| `ja` | 仅日文 |
+| `source` | 仅源文（`ja` 仍可作为兼容别名） |
 
 命令生成 SRT 和 LRC；视频项目还尝试生成字幕视频。字幕时间轴和可读性参数从项目设置读取。
 
@@ -232,7 +236,8 @@ Parakeet 0.6B 可额外指定 `--decoder tdt` 或 `--decoder ctc`。CPU Faster-W
     --compute-type int8
 ```
 
-先用几秒到几十秒、来源明确的日语测试音频。该命令不会自动把未安装模型下载下来。
+先用几秒到几十秒、来源明确的日语或英语测试音频；英语项目指定
+`--source-language en`。该命令不会自动把未安装模型下载下来。
 
 ## 启动网页
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from .audio import extract_reference
 from .errors import SynthesisError
 from .hashing import cached_sha256_file
+from .languages import SourceLanguage
 from .models import DubProject, Sentence
 
 STABLE_CLONE_MODES = {
@@ -20,6 +21,7 @@ class VoiceReference:
     path: Path
     text: str
     identity: str
+    language: SourceLanguage = "ja"
     sentence: Sentence | None = None
     emotion_path: Path | None = None
     emotion_identity: str | None = None
@@ -33,11 +35,11 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
             if sentence.id == configured:
                 return sentence
 
-    candidates = [sentence for sentence in project.sentences if sentence.ja_text]
+    candidates = [sentence for sentence in project.sentences if sentence.source_text]
     if not candidates:
         candidates = [sentence for sentence in project.sentences if sentence.zh_text]
     if not candidates:
-        raise SynthesisError("找不到包含日文或中文台词的片段作为统一声纹参考。")
+        raise SynthesisError("找不到包含源文或中文台词的片段作为统一声纹参考。")
 
     return max(
         candidates,
@@ -58,6 +60,15 @@ def reference_plan_hash(project: DubProject) -> str:
             "sha256": cached_sha256_file(path),
             "text": project.settings.tts_external_reference_text,
         }
+        if (
+            project.settings.tts_external_reference_language != "auto"
+            or project.source_language != "ja"
+        ):
+            payload["language"] = (
+                project.source_language
+                if project.settings.tts_external_reference_language == "auto"
+                else project.settings.tts_external_reference_language
+            )
     else:
         reference = shared_reference_sentence(project)
         payload = {
@@ -66,7 +77,7 @@ def reference_plan_hash(project: DubProject) -> str:
             "sentence_id": reference.id,
             "start": reference.start_seconds,
             "end": reference.end_seconds,
-            "ja": reference.ja_text,
+            "ja": reference.source_text,
             "padding": project.settings.reference_padding_seconds,
         }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -89,6 +100,11 @@ def prepare_voice_reference(
             path=path,
             text=project.settings.tts_external_reference_text.strip(),
             identity=f"external:{identity}",
+            language=(
+                project.source_language
+                if project.settings.tts_external_reference_language == "auto"
+                else project.settings.tts_external_reference_language
+            ),
         )
 
     stable = project.settings.tts_clone_mode in STABLE_CLONE_MODES
@@ -101,7 +117,7 @@ def prepare_voice_reference(
         prefix = sentence.id
         payload = (
             f"{project.source.sha256}|{sentence.id}|{sentence.start_seconds:.6f}|"
-            f"{sentence.end_seconds:.6f}|{sentence.ja_text}|"
+            f"{sentence.end_seconds:.6f}|{sentence.source_text}|"
             f"{project.settings.reference_padding_seconds:.6f}"
         )
         identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -121,8 +137,9 @@ def prepare_voice_reference(
             temporary.unlink(missing_ok=True)
     return VoiceReference(
         path=destination,
-        text=reference_sentence.ja_text,
+        text=reference_sentence.source_text or reference_sentence.zh_text,
         identity=f"project:{identity}",
+        language=project.source_language if reference_sentence.source_text else "zh",
         sentence=reference_sentence,
     )
 
@@ -136,6 +153,7 @@ def _index_external_reference(path_text: str, *, role: str) -> VoiceReference:
         path=path,
         text="",
         identity=f"index-external-{role}:{identity}",
+        language="zh",
     )
 
 
@@ -151,7 +169,7 @@ def _index_sentence_reference(
     payload = (
         f"{project.source.sha256}|index-{role}|{reference_sentence.id}|"
         f"{reference_sentence.start_seconds:.6f}|{reference_sentence.end_seconds:.6f}|"
-        f"{reference_sentence.ja_text}|{project.settings.reference_padding_seconds:.6f}"
+        f"{reference_sentence.source_text}|{project.settings.reference_padding_seconds:.6f}"
     )
     identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     prefix = f"index_{role}_anchor" if shared else f"index_{role}_{reference_sentence.id}"
@@ -171,8 +189,9 @@ def _index_sentence_reference(
             temporary.unlink(missing_ok=True)
     return VoiceReference(
         path=destination,
-        text=reference_sentence.ja_text,
+        text=reference_sentence.source_text or reference_sentence.zh_text,
         identity=f"index-{role}:{identity}",
+        language=project.source_language if reference_sentence.source_text else "zh",
         sentence=reference_sentence,
     )
 

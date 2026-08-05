@@ -1,27 +1,29 @@
 # ASMR Dubber
 
-ASMR Dubber 是一套日语音视频中文配音工具。它把一段完整媒体拆成可校对的句子，可以依次完成
-日语识别、中文翻译、音色克隆和混音，也可以单独导出日中字幕。程序通过本机网页操作，项目、
-模型、设置和缓存默认都留在程序文件夹中。
+ASMR Dubber 用于制作日语、英语音视频的中文配音和字幕。识别结果会整理成可编辑的句子表，
+之后可以逐步完成翻译、音色克隆和混音，也可以单独导出原文或中文字幕。程序通过本机网页操作，
+项目、模型、设置和缓存默认都留在程序文件夹中。
 
 
 ## 能做什么
 
 - 从音频或视频创建独立项目，并保留输入文件的原始副本；
 - 使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper 做 ASR（语音识别）；
-- 可导入日语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，
+- 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，
   直接进入校对和配音；
 - 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
-- 使用多个已安装的识别模型交叉校对日文；
+- 使用多个已安装的识别模型交叉校对源文；
 - 通过 DeepSeek、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
 - 使用本地 IndexTTS2，或连接 GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做
   TTS（语音合成）；
-- 逐句调整日文、中文、起止时间和是否配音；
-- 输出混音后的 WAV、视频，以及双语/中文/日文 SRT 和 LRC 字幕；
+- 逐句调整源文、中文、起止时间和是否配音；
+- 输出混音后的 WAV、视频，以及双语/中文/源文 SRT 和 LRC 字幕；
+- 可以只导出完整时间轴的中文克隆音轨，之后再把它加入原音轨，不必重新生成 TTS；
 - 中断后继续工作，只重做缺失或设置已经失效的部分。
 - 长任务可在网页中取消；程序日志可直接查看和下载。
 
-目前的识别流程按日语设计，目标翻译和配音语言为简体中文。目前不提供其它语种的完整工作流。
+英语项目使用现有的 Faster-Whisper 模型；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。
+翻译和配音目标语言为简体中文。
 
 ## 演示
 
@@ -124,16 +126,18 @@ bash scripts/linux/run-ui.sh
 1. 在“设置 → 设备与模型”确认所选后端显示为“可用”。
 2. 在“设置 → 翻译”选择服务并保存 API Key；本地翻译接口可按服务实际情况留空密钥。
 3. 如已打开项目，点击“保存并应用到当前项目”。“仅保存为以后新项目默认值”不会改动当前项目。
-4. 回到“项目工作台”，选择日语音频或视频并点击“新建项目”。
+4. 在“设置 → ASR（语音识别）”选择新项目的音频语言并保存，然后回到“项目工作台”新建项目。
 5. 点击“运行 ASR（语音识别）”，检查句子表里的文字和时间。已有台本或字幕时，也可以展开
-   “已有台本或字幕”直接导入。导入前选择台本语言；中文台本会跳过 ASR 和翻译。
-6. 日语台本或识别结果需要点击“翻译日文”；中文台本可直接编辑中文并保存校对表格。
+   “使用已有台本或字幕”。原文台本沿用当前项目语言；中文配音稿会跳过 ASR 和翻译。
+6. 原文台本和识别结果需要点击“翻译为中文”；中文配音稿可直接编辑并保存校对表格。
 7. 在“统一音色参考”中选择一条清晰的 5–15 秒台词。
-8. 点击“TTS（语音合成）并混音”。成品会显示在页面中，也会保存在项目的 `output` 目录。
+8. 在“音频输出方式”中选择“混音成品和中文克隆音轨”“仅混音成品”或“仅中文克隆音轨”，
+   然后点击“TTS（语音合成）并输出”。结果会显示在页面中，也会保存在项目的 `output` 目录。
 
 每句中文默认从原字幕开始时间向后偏移 500 ms。需要调整时，可在“混音与字幕”中填写其它
 毫秒偏移；中文音频挤到下一句时，程序会在默认 1.8×、最高可选 4× 的上限内自动加速，仍放
-不下则保留上限并允许重叠。这个过程只影响混音，不会修改逐句 TTS 缓存。
+不下则保留上限并允许重叠。这个过程只影响输出排程，不会修改逐句 TTS 缓存。只导出中文轨后，
+把输出方式切回包含混音即可重新加入原音轨。
 
 字幕不依赖完整配音流程。识别完成后即可选择字幕内容并点击“生成字幕”。详细操作和常见参数
 取舍见[使用指南](docs/USER_GUIDE.md)。
@@ -142,13 +146,16 @@ bash scripts/linux/run-ui.sh
 
 | 环节 | 可选后端 |
 |---|---|
-| ASR（语音识别） | Parakeet 日语、Kotoba-Whisper、Faster-Whisper |
+| ASR（语音识别） | Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语） |
 | 时间戳 | 识别模型自带时间戳、Qwen3 ForcedAligner 0.6B |
 | TTS（语音合成） | IndexTTS2、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
 | 翻译 | DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
 
 程序不会在任务开始后悄悄换用另一个模型。网页中的模型安装状态来自本地文件和运行环境检测；
 多模型交叉校对也只列出本机完整可用的识别模型。
+
+Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南](docs/BACKENDS.md#使用-large-v3)
+放入程序目录。
 
 ## 数据放在哪里
 
@@ -178,6 +185,11 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 停止程序后，可以复制整个文件夹来备份或搬到另一块磁盘；移动后重新运行 Setup，让脚本修复
 运行环境里的绝对路径。要卸载，先关闭程序和相关模型服务，再删除整个程序文件夹。
 
+## 配套工具
+
+需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到哔哩哔哩的双语音声或视频时，
+可以配合 [ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 使用。
+
 ## 项目目录
 
 每个项目都有自己的设置快照和中间结果：
@@ -189,7 +201,7 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 ├── analysis/            # 分析音频、识别候选和校对记录
 ├── references/          # 项目参考片段
 ├── chinese/             # 逐句中文音频缓存
-├── mix/                 # 可选中文中间轨
+├── mix/                 # 临时混音中间文件
 ├── output/              # 最终音频和视频
 ├── subtitles/           # SRT、LRC 和字幕视频
 ├── exports/             # JSON、CSV 时间轴
@@ -233,7 +245,3 @@ bash scripts/linux/run-cli.sh --help
 项目代码采用 [MIT License](LICENSE)。模型、运行时和云服务适用各自的许可证或服务条款，
 其中 IndexTTS2 使用独立的 bilibili Model Use License。请确认你有权处理输入作品和参考声音，
 并按适用规则标记合成内容。详见[第三方软件与模型说明](docs/THIRD_PARTY_NOTICES.md)。
-
-## 配套工具
-
-[ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 面向DLsite音声作品，可以按顺序快速合并分轨音频，并衔接 ASMR Dubber 的处理流程，方便整理成双语音声或视频后发布到某些视频网站。

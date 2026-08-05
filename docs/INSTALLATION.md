@@ -56,7 +56,7 @@ Linux 环境运行，但桌面浏览器、显卡直通和跨文件系统性能�
 |---|---|---|
 | Parakeet 日语 | CPU 或 NVIDIA CUDA | 约 6 GB 以上显存 |
 | Kotoba-Whisper | CPU；GPU 约 3 GB 显存起 | 约 6 GB 以上显存 |
-| Faster-Whisper | CPU；GPU 约 2 GB 显存起 | 约 6 GB 以上显存 |
+| Faster-Whisper（日语/英语） | CPU；GPU 约 2 GB 显存起 | 约 6 GB 以上显存 |
 | ASMR 专用 VAD | CPU，ONNX Runtime | 无需独立显卡 |
 | Qwen3 ForcedAligner | CPU 或 CUDA，实际速度取决于 PyTorch | 与识别模型共用时留足显存 |
 | IndexTTS2 | NVIDIA CUDA，约 6 GB 显存起 | 10 GB 以上显存 |
@@ -124,7 +124,8 @@ Windows NVIDIA 环境还会准备这些模型需要的 PyTorch、Transformers、
 Runtime、`qwen-asr` 和 Faster-Whisper/CTranslate2。它们是运行库，不是额外模型。
 
 进阶方案适合需要切换识别器、多模型交叉校对、ASMR 专用 VAD 或独立时间戳对齐的用户。它
-不会顺带下载 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它注册表模型。
+不会顺带下载 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它注册表模型。large-v3 可以按
+[后端指南](BACKENDS.md#使用-large-v3)放入程序目录。
 
 ## Windows 安装
 
@@ -247,7 +248,8 @@ bash scripts/linux/run-cli.sh import-model-packs --all
 bash scripts/linux/run-cli.sh doctor --no-network
 ```
 
-需要真实验证某个识别后端时，可以用几秒钟的日语音频执行 `verify-asr`。完整参数见：
+需要真实验证某个识别后端时，可以用几秒钟的日语或英语音频执行 `verify-asr`；英语项目加上
+`--source-language en`。完整参数见：
 
 ```powershell
 .\scripts\windows\run-cli.ps1 verify-asr --help

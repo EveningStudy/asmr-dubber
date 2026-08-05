@@ -12,6 +12,7 @@ import soundfile as sf
 from .constants import DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, require_cuda, resolve_transformers_model_source
 from .errors import AsmrDubberError
+from .languages import SourceLanguage, qwen_language_name
 from .models import ProjectSettings, Sentence
 from .task_control import CancellationSignal, check_cancelled
 
@@ -47,7 +48,7 @@ def _map_group_items_to_sentences(
     # lines are present. The aligner returns the cleaned token text it actually
     # used, so character spans remain exact even when token counts differ.
     clean_token = processor.clean_token
-    sentence_texts = [clean_token(sentence.ja_text) for sentence in sentences]
+    sentence_texts = [clean_token(sentence.source_text) for sentence in sentences]
     item_texts = [clean_token(str(item.text)) for item in items]
     expected = "".join(sentence_texts)
     actual = "".join(item_texts)
@@ -94,6 +95,8 @@ def align_sentences_with_qwen(
     settings: ProjectSettings,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SourceLanguage = "ja",
 ) -> list[dict[str, Any]]:
     """Refine sentence boundaries with the pinned standalone Qwen aligner."""
 
@@ -161,8 +164,8 @@ def align_sentences_with_qwen(
             try:
                 aligned = model.align(
                     audio=(waveform[start_sample:end_sample], sample_rate),
-                    text=sentence.ja_text,
-                    language="Japanese",
+                    text=sentence.source_text,
+                    language=qwen_language_name(source_language),
                 )
                 items = list(aligned[0].items) if aligned else []
                 starts = [float(item.start_time) for item in items]
@@ -205,6 +208,8 @@ def align_script_sentences_with_qwen(
     settings: ProjectSettings,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SourceLanguage = "ja",
 ) -> list[dict[str, Any]]:
     """Align an ordered, untimed script in bounded five-minute groups.
 
@@ -285,7 +290,7 @@ def align_script_sentences_with_qwen(
                     group_index - 1,
                     len(groups),
                 )
-            group_text = "\n".join(sentence.ja_text for sentence in group)
+            group_text = "\n".join(sentence.source_text for sentence in group)
             group_records = [
                 {
                     "sentence_id": sentence.id,
@@ -298,7 +303,7 @@ def align_script_sentences_with_qwen(
                 aligned = model.align(
                     audio=(waveform[start_sample:end_sample], sample_rate),
                     text=group_text,
-                    language="Japanese",
+                    language=qwen_language_name(source_language),
                 )
                 items = list(aligned[0].items) if aligned else []
                 sentence_items = _map_group_items_to_sentences(

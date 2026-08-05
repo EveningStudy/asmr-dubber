@@ -17,7 +17,7 @@ _LRC_TAG = re.compile(r"\[(?P<time>(?:\d{1,3}:)?\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]
 _ASS_OVERRIDE = re.compile(r"\{[^{}]*\}")
 _HTML_TAG = re.compile(r"<[^>]*>")
 
-TranscriptLanguage = Literal["ja", "zh"]
+TranscriptLanguage = Literal["ja", "en", "zh"]
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,9 @@ def _plain_lines(text: str) -> list[str]:
     lines = [_clean_text(line) for line in text.splitlines()]
     lines = [line for line in lines if line]
     if len(lines) == 1:
-        split = re.split(r"(?<=[。！？!?])\s*", lines[0])
+        # English scripts commonly arrive as one paragraph with ASCII full
+        # stops; keep the existing Japanese/Chinese punctuation too.
+        split = re.split(r"(?<=[。！？!?\.])\s*", lines[0])
         lines = [item.strip() for item in split if item.strip()]
     if not lines:
         raise ProjectError("台本中没有可导入的非空文字。")
@@ -187,7 +189,7 @@ def _sentence(
             id=sentence_id,
             start_seconds=start_seconds,
             end_seconds=end_seconds,
-            ja_text="",
+            source_text="",
             zh_text=text,
             status="translated",
         )
@@ -195,7 +197,7 @@ def _sentence(
         id=sentence_id,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
-        ja_text=text,
+        source_text=text,
     )
 
 
@@ -260,8 +262,8 @@ def parse_transcript(
     pasted_text: str = "",
     language: TranscriptLanguage = "ja",
 ) -> TranscriptImport:
-    if language not in {"ja", "zh"}:
-        raise ProjectError("台本语言必须是日语或中文。")
+    if language not in {"ja", "en", "zh"}:
+        raise ProjectError("台本语言必须是日语、英语或中文。")
     source_path = Path(path).expanduser().resolve() if path else None
     file_text = _decode_script(source_path) if source_path is not None else ""
     text = pasted_text.strip() or file_text

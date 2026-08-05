@@ -26,6 +26,7 @@ from .environment import (
     resolve_transformers_model_source,
 )
 from .errors import AsmrDubberError
+from .languages import SpeechSourceLanguage, source_language_label
 from .models import ProjectSettings, Sentence
 from .platforms import current_platform, isolated_runtime_environment, portable_home
 from .segmentation import TimedToken, restore_punctuation, split_timed_tokens
@@ -136,6 +137,7 @@ def _finish_tokens(
     full_text: str,
     language: str,
     settings: ProjectSettings,
+    source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[list[Sentence], str]:
     values = list(tokens)
     if not values:
@@ -147,8 +149,10 @@ def _finish_tokens(
         max_sentence_seconds=settings.max_sentence_seconds,
     )
     if not sentences:
-        raise AsmrDubberError("没有在音频中识别到带有效时间戳的日语句子。")
-    return sentences, language or "Japanese"
+        raise AsmrDubberError(
+            f"没有在音频中识别到带有效时间戳的{source_language_label(source_language)}句子。"
+        )
+    return sentences, language or source_language
 
 
 def _cleanup_cuda() -> None:
@@ -168,6 +172,8 @@ def _transcribe_faster_whisper(
     settings: ProjectSettings,
     progress: Progress | None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[list[Sentence], str]:
     check_cancelled(cancel_event)
     try:
@@ -182,6 +188,10 @@ def _transcribe_faster_whisper(
     try:
         model_source = settings.asr_model
         is_kotoba_faster = model_source == "kotoba-tech/kotoba-whisper-v2.0-faster"
+        if source_language == "en" and is_kotoba_faster:
+            raise AsmrDubberError(
+                "Kotoba-Whisper 是日语模型；英语项目请选择其它 Faster-Whisper 模型。"
+            )
         if model_source == "large-v2":
             model_source = "Systran/faster-whisper-large-v2"
         model_source = resolve_model_source(model_source)
@@ -207,7 +217,7 @@ def _transcribe_faster_whisper(
             compute_type=compute_type,
         )
         transcribe_kwargs = {
-            "language": "ja",
+            "language": source_language,
             "beam_size": settings.asr_beam_size,
             # Kotoba's distilled decoder has two layers, but its converted
             # config still carries the teacher model's alignment heads
@@ -257,7 +267,13 @@ def _transcribe_faster_whisper(
                 if token:
                     tokens.append(token)
         full_text = "".join(str(segment.text) for segment in values)
-        return _finish_tokens(tokens, full_text, str(getattr(info, "language", "ja")), settings)
+        return _finish_tokens(
+            tokens,
+            full_text,
+            str(getattr(info, "language", source_language)),
+            settings,
+            source_language,
+        )
     finally:
         del model
         _cleanup_cuda()
@@ -268,8 +284,12 @@ def _transcribe_kotoba_whisper(
     settings: ProjectSettings,
     progress: Progress | None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[list[Sentence], str]:
     check_cancelled(cancel_event)
+    if source_language != "ja":
+        raise AsmrDubberError("Kotoba-Whisper 仅支持日语；英语项目请使用 Faster-Whisper。")
     configured_model = Path(settings.asr_model).expanduser()
     if not configured_model.is_dir() and cached_model_path(settings.asr_model) is None:
         raise AsmrDubberError(
@@ -364,7 +384,7 @@ def _transcribe_kotoba_whisper(
                     )
                     if token:
                         tokens.append(token)
-        return _finish_tokens(tokens, "".join(full_text), "Japanese", settings)
+        return _finish_tokens(tokens, "".join(full_text), "Japanese", settings, source_language)
     finally:
         del pipe, processor, model
         _cleanup_cuda()
@@ -470,7 +490,7 @@ def _parse_crispasr_payload(
     settings: ProjectSettings,
 ) -> tuple[list[Sentence], str]:
     tokens, full_text, language = _crispasr_payload_tokens(payload)
-    return _finish_tokens(tokens, full_text, language, settings)
+    return _finish_tokens(tokens, full_text, language, settings, "ja")
 
 
 def _transcribe_parakeet(
@@ -478,8 +498,12 @@ def _transcribe_parakeet(
     settings: ProjectSettings,
     progress: Progress | None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[list[Sentence], str]:
     check_cancelled(cancel_event)
+    if source_language != "ja":
+        raise AsmrDubberError("当前安装的 Parakeet 模型仅支持日语；英语项目请使用 Faster-Whisper。")
     executable = _crispasr_executable()
     model_path = _parakeet_model_path(settings.asr_model)
     if not executable.is_file() or not model_path.is_file():
@@ -803,19 +827,29 @@ def _transcribe_parakeet(
                 full_text_parts.append(full_text)
                 if chunk_language:
                     language = chunk_language
-            return _finish_tokens(all_tokens, "".join(full_text_parts), language, settings)
+            return _finish_tokens(
+                all_tokens,
+                "".join(full_text_parts),
+                language,
+                settings,
+                source_language,
+            )
     finally:
         shutil.rmtree(run_directory, ignore_errors=True)
         _cleanup_cuda()
 
 
-def transcribe_japanese(
+def transcribe_source(
     analysis_audio: Path,
     settings: ProjectSettings,
+    source_language: SpeechSourceLanguage = "ja",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], str]:
     """Run one of the three deliberately supported recognition families."""
+
+    if source_language == "en" and settings.asr_backend != "faster_whisper":
+        raise AsmrDubberError("英语识别目前使用现有 Faster-Whisper 模型。")
 
     runners = {
         "parakeet_nemo": _transcribe_parakeet,
@@ -830,6 +864,8 @@ def transcribe_japanese(
             "请选择 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
         ) from exc
     if settings.asr_vad_mode == "asmr":
+        if source_language != "ja":
+            raise AsmrDubberError("日语 ASMR 专用 VAD 不用于英语项目；请选择关闭或后端 VAD。")
         cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
         segments = detect_asmr_speech(
             analysis_audio,
@@ -860,9 +896,20 @@ def transcribe_japanese(
             )
             check_cancelled(cancel_event)
             if cancel_event is None:
-                sentences, language = runner(condensed, inner_settings, progress)
+                sentences, language = runner(
+                    condensed,
+                    inner_settings,
+                    progress,
+                    source_language=source_language,
+                )
             else:
-                sentences, language = runner(condensed, inner_settings, progress, cancel_event)
+                sentences, language = runner(
+                    condensed,
+                    inner_settings,
+                    progress,
+                    cancel_event,
+                    source_language=source_language,
+                )
             remapped: list[Sentence] = []
             for sentence in sentences:
                 start = map_analysis_time(sentence.start_seconds, timeline, end=False)
@@ -885,9 +932,37 @@ def transcribe_japanese(
             shutil.rmtree(run_directory, ignore_errors=True)
     else:
         if cancel_event is None:
-            result = runner(analysis_audio, settings, progress)
+            result = runner(
+                analysis_audio,
+                settings,
+                progress,
+                source_language=source_language,
+            )
         else:
-            result = runner(analysis_audio, settings, progress, cancel_event)
+            result = runner(
+                analysis_audio,
+                settings,
+                progress,
+                cancel_event,
+                source_language=source_language,
+            )
     if progress:
         progress(f"语音识别完成：{len(result[0])} 句", 1, 1)
     return result
+
+
+def transcribe_japanese(
+    analysis_audio: Path,
+    settings: ProjectSettings,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> tuple[list[Sentence], str]:
+    """Backward-compatible Japanese recognition entry point."""
+
+    return transcribe_source(
+        analysis_audio,
+        settings,
+        source_language="ja",
+        progress=progress,
+        cancel_event=cancel_event,
+    )

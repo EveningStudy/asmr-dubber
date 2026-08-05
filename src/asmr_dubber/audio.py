@@ -827,6 +827,7 @@ def render_subtitled_video(
     *,
     replacement_audio: Path | None = None,
     subtitle_language: str = "bilingual",
+    source_language: str = "ja",
 ) -> Path:
     """Create a video with subtitles, preferring a burned-in MP4.
 
@@ -942,8 +943,10 @@ def render_subtitled_video(
                             *subtitle_arguments,
                             "-metadata:s:s:0",
                             "language="
-                            + {"zh": "zho", "ja": "jpn", "bilingual": "und"}.get(
-                                subtitle_language, "und"
+                            + (
+                                {"ja": "jpn", "en": "eng", "zh": "zho"}.get(source_language, "und")
+                                if subtitle_language == "source"
+                                else {"zh": "zho", "bilingual": "und"}.get(subtitle_language, "und")
                             ),
                             str(temporary),
                         ],

@@ -11,6 +11,7 @@ from asmr_dubber.models import (
     Sentence,
     load_project,
     save_project,
+    settings_for_source_language,
 )
 from asmr_dubber.pipeline import output_filename
 
@@ -74,7 +75,7 @@ def test_schema_one_project_migrates_removed_backends_and_creates_backup(
     manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     project, directory = load_project(manifest)
-    assert project.schema_version == 2
+    assert project.schema_version == 3
     assert project.settings.asr_backend == "parakeet_nemo"
     assert project.settings.tts_backend == "indextts2"
     assert project.settings.asr_review_enabled is False
@@ -101,7 +102,88 @@ def test_safe_default_asr_batch_size() -> None:
     assert settings.tts_index_emotion_source == "sentence_reference"
     assert settings.tts_index_emo_alpha == 0.5
     assert settings.mix_peak_protection is True
-    assert settings.retain_chinese_stem is True
+    assert settings.mix_output_mode == "both"
+
+
+def test_schema_two_project_migrates_source_language_text_and_output_mode(tmp_path: Path) -> None:
+    payload = {
+        "schema_version": 2,
+        "app_version": "0.6.1",
+        "revision": 0,
+        "source": audio_info().model_dump(),
+        "settings": {"retain_chinese_stem": False},
+        "sentences": [
+            {
+                "id": "s000001",
+                "start_seconds": 0.0,
+                "end_seconds": 1.0,
+                "ja_text": "Hello.",
+                "zh_text": "你好。",
+            }
+        ],
+        "subtitle_language": "ja",
+    }
+    manifest = tmp_path / "project.json"
+    manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    project, directory = load_project(manifest)
+
+    assert project.schema_version == 3
+    assert project.source_language == "ja"
+    assert project.sentences[0].source_text == "Hello."
+    assert project.settings.mix_output_mode == "mixed"
+    assert project.subtitle_language == "source"
+
+    save_project(project, directory)
+    backups = list((tmp_path / "backups").glob("project-schema-v2-*.json"))
+    assert len(backups) == 1
+    saved = json.loads(manifest.read_text(encoding="utf-8"))
+    assert saved["sentences"][0]["source_text"] == "Hello."
+    assert "ja_text" not in saved["sentences"][0]
+
+
+def test_schema_two_migration_keeps_source_text_if_both_names_are_present(tmp_path: Path) -> None:
+    payload = {
+        "schema_version": 2,
+        "source": audio_info().model_dump(),
+        "sentences": [
+            {
+                "id": "s000001",
+                "start_seconds": 0.0,
+                "end_seconds": 1.0,
+                "source_text": "Keep this text.",
+                "ja_text": "Do not replace it.",
+            }
+        ],
+    }
+    manifest = tmp_path / "project.json"
+    manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    project, _ = load_project(manifest)
+
+    assert project.sentences[0].source_text == "Keep this text."
+
+
+def test_english_source_uses_existing_faster_whisper_without_japanese_only_options() -> None:
+    settings = ProjectSettings(
+        asr_backend="parakeet_nemo",
+        asr_model="nvidia/parakeet-tdt_ctc-0.6b-ja",
+        asr_vad_mode="asmr",
+        asr_review_enabled=True,
+        asr_review_models=[
+            "parakeet_nemo|nvidia/parakeet-tdt_ctc-0.6b-ja",
+            "faster_whisper|large-v3",
+        ],
+    )
+
+    adapted = settings_for_source_language(settings, "en")
+
+    assert adapted.asr_backend == "faster_whisper"
+    assert adapted.asr_model == "large-v2"
+    assert adapted.asr_vad_mode == "off"
+    assert adapted.asr_review_models == ["faster_whisper|large-v3"]
+    assert adapted.asr_review_enabled is True
+    assert adapted.asr_review_text_priority_model == "faster_whisper|large-v2"
 
 
 def test_auto_speed_accepts_up_to_four_times() -> None:

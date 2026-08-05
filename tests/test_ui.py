@@ -10,7 +10,7 @@ from asmr_dubber.audio import sha256_file
 from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.runtime_manager import BackendStatus
-from asmr_dubber.translation import SYSTEM_PROMPT
+from asmr_dubber.translation import SYSTEM_PROMPT, default_translation_prompt
 from asmr_dubber.ui import (
     APP_CSS,
     DownloadController,
@@ -20,8 +20,10 @@ from asmr_dubber.ui import (
     _provider_update,
     _remote_auth,
     _settings_from_form,
-    _transcript_language_update,
+    _source_language_backend_update,
+    _transcript_kind_update,
     _translation_prompt_for_display,
+    _translation_prompt_language_update,
     asr_vad_choices,
     indextts_installation_status,
     offline_model_pack_markdown,
@@ -30,6 +32,7 @@ from asmr_dubber.ui_services import (
     analyze,
     apply_global_settings,
     apply_table,
+    import_transcript_data,
     reference_picker,
     select_reference,
     stage_for_ui,
@@ -196,10 +199,14 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     labels = {getattr(component, "label", None) for component in components}
     values = [getattr(component, "value", None) for component in components]
 
-    assert "日语音频或视频" in labels
+    assert "原始音频或视频" in labels
+    assert "新项目源语言" not in labels
+    assert "当前项目源语言" not in labels
+    assert "新建媒体项目的音频语言" in labels
     assert "ASR（语音识别）后端" in labels
     assert "TTS（语音合成）后端" in labels
-    assert "台本语言" in labels
+    assert "导入内容" in labels
+    assert "台本语言" not in labels
     assert "束搜索宽度（Beam Size）" in labels
     assert "随机度（Temperature）" in labels
     assert "核采样概率（Top P）" in labels
@@ -213,7 +220,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "中文最多提前秒数" not in labels
     assert "提前量最多占日语句长百分比" not in labels
     assert "1 · 运行 ASR（语音识别）" in values
-    assert "4 · TTS（语音合成）并混音" in values
+    assert "4 · TTS（语音合成）并输出" in values
     assert "仅保存为以后新项目默认值" in values
     assert "保存并应用到当前项目" in values
 
@@ -223,9 +230,9 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert [component.label for component in import_callback.inputs] == [
         "当前项目文件",
         "台本或字幕文件",
-        "也可以直接粘贴纯台本",
+        "粘贴纯文本",
         "纯文本台本如何生成时间轴",
-        "台本语言",
+        "导入内容",
     ]
 
     explained_advanced_labels = {
@@ -301,25 +308,50 @@ def test_builtin_translation_prompt_is_visible_but_not_frozen_in_settings(monkey
     monkeypatch.setattr(ui_module, "load_user_settings", UserSettings)
 
     assert _translation_prompt_for_display("") == SYSTEM_PROMPT
-    built_in = _settings_from_form(["translation_prompt"], [SYSTEM_PROMPT], None, None)
+    assert _translation_prompt_for_display("", "en") == default_translation_prompt("en")
+    built_in = _settings_from_form(
+        ["default_source_language", "translation_prompt"],
+        ["ja", SYSTEM_PROMPT],
+        None,
+        None,
+    )
     custom = _settings_from_form(
-        ["translation_prompt"],
-        [SYSTEM_PROMPT + "\n请使用更口语的表达。"],
+        ["default_source_language", "translation_prompt"],
+        ["ja", SYSTEM_PROMPT + "\n请使用更口语的表达。"],
         None,
         None,
     )
 
-    assert built_in.translation_prompt == ""
-    assert custom.translation_prompt.endswith("请使用更口语的表达。")
+    assert built_in.translation_prompt_ja == ""
+    assert custom.translation_prompt_ja.endswith("请使用更口语的表达。")
+    assert custom.translation_prompt_en == ""
+
+
+def test_prompt_editor_switches_languages_without_losing_the_other_draft() -> None:
+    japanese = default_translation_prompt("ja") + "\n日语自定义。"
+    english = default_translation_prompt("en")
+
+    prompt_update, drafts, active, note = _translation_prompt_language_update(
+        "en",
+        japanese,
+        {"ja": default_translation_prompt("ja"), "en": english},
+        "ja",
+    )
+
+    assert prompt_update["value"] == english
+    assert drafts["ja"] == japanese
+    assert drafts["en"] == english
+    assert active == "en"
+    assert "英语 → 中文内置 Prompt" in note
 
 
 def test_chinese_transcript_mode_removes_qwen_timing_choice() -> None:
-    chinese = _transcript_language_update("zh")
-    japanese = _transcript_language_update("ja")
+    chinese = _transcript_kind_update("zh")
+    source = _transcript_kind_update("source")
 
     assert chinese["value"] == "estimate"
     assert [value for _label, value in chinese["choices"]] == ["estimate"]
-    assert [value for _label, value in japanese["choices"]] == ["estimate", "qwen"]
+    assert [value for _label, value in source["choices"]] == ["estimate", "qwen"]
 
     source = Path(ui_module.__file__).read_text(encoding="utf-8").casefold()
     for removed in (
@@ -334,6 +366,33 @@ def test_chinese_transcript_mode_removes_qwen_timing_choice() -> None:
         assert removed not in source
 
 
+def test_original_transcript_follows_current_project_language(tmp_path: Path, monkeypatch) -> None:
+    project, manifest = _project(tmp_path / "project")
+    project.source_language = "en"
+    save_project(project, manifest.parent)
+    received: list[str] = []
+
+    def fake_import(current, _directory, **kwargs):
+        received.append(kwargs["script_language"])
+        return {
+            "language": kwargs["script_language"],
+            "format": "SRT",
+            "sentences": 1,
+            "timed": True,
+            "qwen_aligned_sentences": 0,
+        }
+
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.pipeline.import_project_transcript",
+        fake_import,
+    )
+
+    import_transcript_data(str(manifest), None, "Hello", "estimate", "source")
+    import_transcript_data(str(manifest), None, "你好", "estimate", "zh")
+
+    assert received == ["en", "zh"]
+
+
 def test_project_action_error_preserves_values_and_updates_status(app) -> None:
     callback = next(
         function.fn for function in app.fns.values() if function.name == "subtitle_callback"
@@ -341,11 +400,11 @@ def test_project_action_error_preserves_values_and_updates_status(app) -> None:
 
     result = callback("", [], "zh")
 
-    assert len(result) == 10
-    assert all(value == {"__type__": "update"} for value in result[:7])
-    assert "当前项目、表格和已有输出均已保留" in result[7]
-    assert result[8] == {"__type__": "update"}
-    assert result[9] == {"__type__": "update"}
+    assert len(result) == 12
+    assert all(value == {"__type__": "update"} for value in result[:9])
+    assert "当前项目、表格和已有输出均已保留" in result[9]
+    assert result[10] == {"__type__": "update"}
+    assert result[11] == {"__type__": "update"}
 
 
 def test_changed_asr_settings_are_used_by_the_next_run(
@@ -398,7 +457,7 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
     function = next(
         function for function in app.fns.values() if function.name == "apply_settings_callback"
     )
-    assert len(function.outputs) == 11
+    assert len(function.outputs) == 13
     assert function.outputs[0].label == "设置状态"
 
     values = [getattr(component, "value", None) for component in function.inputs]
@@ -422,8 +481,10 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
         captured["applied"] = settings.asr_review_enabled
         return ui_module.ProjectView(
             manifest=manifest,
+            source_language="ja",
             rows=[],
             output_audio=None,
+            stem_audio=None,
             output_video=None,
             subtitle_files=[],
             subtitle_video=None,
@@ -441,10 +502,10 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
         "manifest": r"D:\projects\current\project.json",
         "applied": False,
     }
-    assert len(result) == 11
+    assert len(result) == 13
     assert "新项目默认值已保存" in result[0]
     assert "多模型交叉校对=关闭" in result[0]
-    assert "多模型交叉校对=关闭" in result[8]
+    assert "多模型交叉校对=关闭" in result[10]
 
     captured.clear()
     values[0] = ""
@@ -452,7 +513,7 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
 
     assert captured == {"saved": False}
     assert "当前没有打开项目" in without_project[0]
-    assert "默认设置已保存；当前没有打开项目" in without_project[8]
+    assert "默认设置已保存；当前没有打开项目" in without_project[10]
 
 
 def test_installation_and_inference_share_one_runtime_queue(app) -> None:
@@ -494,6 +555,21 @@ def test_vad_choices_hide_uninstalled_or_backend_irrelevant_modes(monkeypatch) -
         lambda: BackendStatus("ready", "可用"),
     )
     assert [value for _, value in asr_vad_choices("kotoba_whisper")] == ["off", "asmr"]
+    assert [value for _, value in asr_vad_choices("faster_whisper", "en")] == [
+        "off",
+        "backend",
+    ]
+
+
+def test_english_language_setting_filters_japanese_asr_backends() -> None:
+    backend, note = _source_language_backend_update("en", "parakeet_nemo")
+    assert backend["value"] == "faster_whisper"
+    assert [value for _label, value in backend["choices"]] == ["faster_whisper"]
+    assert "日语专用" in note
+
+    faster = ui_module._asr_backend_update("faster_whisper", "asmr", "en")
+    assert "kotoba-tech/kotoba-whisper-v2.0-faster" not in faster[0]["choices"]
+    assert faster[10]["value"] == "off"
 
 
 def test_translation_provider_hides_unrelated_provider_settings() -> None:
@@ -565,15 +641,16 @@ def test_tts_detail_visibility_tracks_active_reference_mode() -> None:
         "indextts2", "project_sentence", "project_reference", "text", "zero_shot"
     )
 
-    assert [update["visible"] for update in gpt_external] == [True, True, False, False]
+    assert [update["visible"] for update in gpt_external] == [True, True, True, False, False]
     assert [update["visible"] for update in cosy_cross_lingual] == [
         True,
         False,
         False,
         False,
+        False,
     ]
-    assert [update["visible"] for update in index_external] == [True, False, True, False]
-    assert [update["visible"] for update in index_text] == [False, False, False, True]
+    assert [update["visible"] for update in index_external] == [True, False, False, True, False]
+    assert [update["visible"] for update in index_text] == [False, False, False, False, True]
 
 
 def test_download_controller_pauses_only_active_download() -> None:

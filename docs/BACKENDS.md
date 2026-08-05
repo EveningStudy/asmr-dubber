@@ -13,9 +13,9 @@ Kotoba-Whisper 和 Faster-Whisper 三个系列；TTS（语音合成）只接入 
 
 | 后端 | 设备 | 建议显存 | 安装方案中的模型 | 适合场景 |
 |---|---|---:|---|---|
-| Parakeet 日语 / CrispASR | CPU、NVIDIA CUDA | 6 GB | 推荐、进阶 | 默认主识别，日语质量优先 |
-| Kotoba-Whisper | CPU、NVIDIA CUDA | 6 GB | 进阶安装 v2.2 | 日语 Whisper 对照与复核 |
-| Faster-Whisper | CPU、NVIDIA CUDA | 6 GB | 进阶安装 large-v2 | CPU `int8`、词级时间戳和 Whisper 兼容性 |
+| Parakeet（日语） / CrispASR | CPU、NVIDIA CUDA | 6 GB | 推荐、进阶 | 默认主识别，日语质量优先 |
+| Kotoba-Whisper（日语） | CPU、NVIDIA CUDA | 6 GB | 进阶安装 v2.2 | 日语 Whisper 对照与复核 |
+| Faster-Whisper（日语/英语） | CPU、NVIDIA CUDA | 6 GB | 进阶安装 large-v2 | 英语项目唯一的本地 ASR；CPU `int8`、词级时间戳 |
 
 Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较小任务，但还要给驱动、
 音频和中间张量留空间。显存接近下限时保持批大小 1。
@@ -25,7 +25,7 @@ Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较�
 | 后端 | 运行位置 | 参考文字 | API Key |
 |---|---|---|---|
 | IndexTTS2 | 本机 NVIDIA CUDA | 不需要 | 不需要 |
-| GPT-SoVITS API | 用户管理的本机、容器或远程服务 | 需要准确日文 | 取决于服务端 |
+| GPT-SoVITS API | 用户管理的本机、容器或远程服务 | 需要准确源文 | 取决于服务端 |
 | CosyVoice API | 用户管理的 FastAPI 服务 | 零样本需要；跨语言不需要 | 取决于服务端 |
 | Fish Speech / Fish Audio API | 自建或云端服务 | 需要 | 云服务通常需要 |
 
@@ -86,8 +86,7 @@ Kotoba-Whisper 没有在本项目中暴露“后端自带 VAD”选项。需要�
 ## Faster-Whisper
 
 Faster-Whisper 使用 CTranslate2，支持词级时间戳。分档安装固定准备
-`Systran/faster-whisper-large-v2`；注册表中的其它 Faster-Whisper 模型需要用户自行准备完整
-本地缓存。
+`Systran/faster-whisper-large-v2`。其它 Faster-Whisper 模型可以从本地目录加载。
 
 常用计算方式：
 
@@ -97,6 +96,26 @@ Faster-Whisper 使用 CTranslate2，支持词级时间戳。分档安装固定�
 
 Windows 的 CTranslate2 CUDA 构建需要其对应的 CUDA 12 BLAS 运行库。安装器把这些 DLL 放在
 主程序私有环境并只修改当前进程的搜索路径，不要求安装系统级 CUDA Toolkit。
+
+### 使用 large-v3
+
+先在“设置 → 设备与模型”确认 Faster-Whisper 运行环境可用，再把完整的 CTranslate2 模型放到：
+
+```text
+.asmr-dubber\models\faster-whisper-large-v3
+```
+
+模型可以从 [ModelScope](https://modelscope.cn/models/keepitsimple/faster-whisper-large-v3) 手动下载，
+也可以在程序根目录运行：
+
+```powershell
+$env:HF_ENDPOINT = "https://hf-mirror.com"
+& ".\.asmr-dubber\venv\Scripts\python.exe" -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Systran/faster-whisper-large-v3', local_dir=r'.asmr-dubber\models\faster-whisper-large-v3')"
+```
+
+随后在 ASR 设置中选择 Faster-Whisper，并把模型填写为
+`.asmr-dubber\models\faster-whisper-large-v3`。NVIDIA GPU 通常使用 `float16`，显存紧张时使用
+`int8_float16`；CPU 使用 `int8`。已经打开项目时，保存后还需应用到当前项目。
 
 ## VAD、识别和时间戳如何组合
 
@@ -115,13 +134,13 @@ Parakeet/CrispASR 和 Faster-Whisper 可以使用各自的 Silero VAD。它跟�
 
 `TransWithAI/Whisper-Vad-EncDec-ASMR-onnx` 是独立预处理模型，通过 ONNX Runtime 在 CPU
 运行。它读取程序生成的 16 kHz 单声道分析副本，按 30 秒块输出 20 ms 帧级概率，再把保留
-区间映射回原媒体时间。它可以放在 Parakeet、Kotoba-Whisper 或 Faster-Whisper 前面，原文件
+区间映射回原媒体时间。它可以放在日语 Parakeet、Kotoba-Whisper 或 Faster-Whisper 前面，原文件
 不会被裁剪或改写。
 
 ### Qwen3 ForcedAligner
 
-`Qwen/Qwen3-ForcedAligner-0.6B` 接收任一支持识别器得到的日文，只重算句子起止边界。它不
-是识别后端，也不参与修改文字。
+`Qwen/Qwen3-ForcedAligner-0.6B` 接收任一支持识别器得到的日语或英语，只重算句子起止边界。它
+不是识别后端，也不参与修改文字。英语项目同样可以使用它，不需要额外的英文模型。
 
 单模型识别可以直接启用；多模型校对也可以把它选为最终时间戳来源。单句对齐失败时保留 ASR
 原边界，并把原因写进 `analysis/asr_forced_alignment.json` 或
@@ -163,7 +182,7 @@ bash scripts/linux/install-indextts2.sh
 音色和情绪使用不同参考：
 
 - 音色默认取项目统一参考句；
-- 情绪默认取当前日语句；
+- 情绪默认取当前源语言句；
 - 音色也可取当前句或外部音频；
 - 情绪也可取项目参考、音色参考、外部音频或文字描述。
 
@@ -181,7 +200,7 @@ IndexTTS2 使用独立的 bilibili Model Use License，不属于本项目 MIT Li
 默认地址：http://127.0.0.1:9880
 ```
 
-高质量克隆需要准确的参考日文。请求中的 `ref_audio_path` 是文件路径，不是上传字节；同机
+高质量克隆需要准确的参考原文。英语项目填写英语原文。请求中的 `ref_audio_path` 是文件路径，不是上传字节；同机
 服务可以直接读取，Docker 需要把参考目录挂载到一致或可映射的位置，远程服务则需要双方约定
 可见路径。
 

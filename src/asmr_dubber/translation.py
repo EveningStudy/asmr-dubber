@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
+from .languages import (
+    MACHINE_TRANSLATION_LANGUAGE_CODES,
+    SourceLanguage,
+    SpeechSourceLanguage,
+    source_language_label,
+)
 from .models import Sentence
 from .task_control import (
     CancellationSignal,
@@ -68,8 +74,28 @@ def _load_prompt(name: str) -> str:
     return files("asmr_dubber.prompts").joinpath(name).read_text(encoding="utf-8").strip()
 
 
-SYSTEM_PROMPT = _load_prompt("translation.md")
+_SYSTEM_PROMPT_TEMPLATE = _load_prompt("translation.md")
 _DEEPSEEK_STRUCTURE_PROMPT = _load_prompt("translation-structure.md")
+
+_SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str]] = {
+    "ja": ("日语", "日语中的「あ」「え」「う」「ん」「ふふ」「えーと」"),
+    "en": ("英语", "英语中的 “uh”“um”“erm”"),
+}
+
+
+def default_translation_prompt(source_language: SourceLanguage = "ja") -> str:
+    """Render the packaged prompt for one source language."""
+
+    prompt_language: SpeechSourceLanguage = "en" if source_language == "en" else "ja"
+    language, filler_examples = _SOURCE_PROMPT_VALUES[prompt_language]
+    return _SYSTEM_PROMPT_TEMPLATE.replace("{{SOURCE_LANGUAGE}}", language).replace(
+        "{{FILLER_EXAMPLES}}",
+        filler_examples,
+    )
+
+
+# Backward-compatible Japanese default for callers that imported this name.
+SYSTEM_PROMPT = default_translation_prompt("ja")
 
 
 def _deepseek_translation_request(
@@ -107,7 +133,7 @@ def _chunks(
     current: list[Sentence] = []
     count = 0
     for sentence in sentences:
-        length = len(sentence.ja_text)
+        length = len(sentence.source_text)
         if current and (len(current) >= max_lines or count + length > max_chars):
             result.append(TranslationChunk(current))
             current = []
@@ -119,10 +145,10 @@ def _chunks(
     return result
 
 
-def _json_lines(sentences: Iterable[Sentence], field: str = "ja") -> str:
+def _json_lines(sentences: Iterable[Sentence], field: str = "source") -> str:
     items = []
     for sentence in sentences:
-        item = {"id": sentence.id, "ja": sentence.ja_text}
+        item = {"id": sentence.id, "source": sentence.source_text}
         if field == "both" and sentence.zh_text:
             item["existing_zh"] = sentence.zh_text
         items.append(item)
@@ -131,7 +157,7 @@ def _json_lines(sentences: Iterable[Sentence], field: str = "ja") -> str:
 
 def _translation_memory(sentences: Iterable[Sentence]) -> str:
     items = [
-        {"id": sentence.id, "ja": sentence.ja_text, "zh": sentence.zh_text}
+        {"id": sentence.id, "source": sentence.source_text, "zh": sentence.zh_text}
         for sentence in sentences
         if sentence.zh_text
     ]
@@ -208,10 +234,11 @@ class DeepSeekTranslator:
         timeout_seconds: float = 900.0,
         max_retries: int = 5,
         client: httpx.Client | None = None,
-        system_prompt: str = SYSTEM_PROMPT,
+        system_prompt: str = "",
         temperature: float = 0.1,
         top_p: float = 1.0,
         minimum_output_tokens: int = 16_384,
+        source_language: SourceLanguage = "ja",
     ) -> None:
         if not api_key.strip():
             raise TranslationError("缺少 DeepSeek API Key。请在 UI 中填写或设置 DEEPSEEK_API_KEY。")
@@ -219,10 +246,11 @@ class DeepSeekTranslator:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
-        self.system_prompt = system_prompt.strip() or SYSTEM_PROMPT
+        self.system_prompt = system_prompt.strip() or default_translation_prompt(source_language)
         self.temperature = temperature
         self.top_p = top_p
         self.minimum_output_tokens = minimum_output_tokens
+        self.source_language = source_language
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -249,7 +277,7 @@ class DeepSeekTranslator:
             65_536,
             max(
                 self.minimum_output_tokens,
-                sum(len(item.ja_text) for item in chunk.sentences) * 4 + 4_096,
+                sum(len(item.source_text) for item in chunk.sentences) * 4 + 4_096,
             ),
         )
         last_error: Exception | None = None
@@ -259,7 +287,10 @@ class DeepSeekTranslator:
                 messages.append(
                     {
                         "role": "user",
-                        "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
+                        "content": (
+                            f"完整{source_language_label(self.source_language)}转写，"
+                            "仅供保持人物称谓和上下文一致：\n" + full_context
+                        ),
                     }
                 )
             if translation_memory != "[]":
@@ -352,13 +383,14 @@ class LLMTranslator:
         api_key: str,
         model: str,
         base_url: str,
-        system_prompt: str,
+        system_prompt: str = "",
         temperature: float,
         top_p: float,
         max_output_tokens: int,
         timeout_seconds: float = 900.0,
         max_retries: int = 5,
         client: httpx.Client | None = None,
+        source_language: SourceLanguage = "ja",
     ) -> None:
         if not api_key.strip() and provider != "openai_compatible":
             raise TranslationError(f"{provider} 缺少 API Key。")
@@ -368,11 +400,12 @@ class LLMTranslator:
         self.api_key = api_key.strip()
         self.model = model.strip()
         self.base_url = base_url.rstrip("/")
-        self.system_prompt = system_prompt.strip() or SYSTEM_PROMPT
+        self.system_prompt = system_prompt.strip() or default_translation_prompt(source_language)
         self.temperature = temperature
         self.top_p = top_p
         self.max_output_tokens = max_output_tokens
         self.max_retries = max_retries
+        self.source_language = source_language
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -404,7 +437,10 @@ class LLMTranslator:
             messages.append(
                 {
                     "role": "user",
-                    "content": "完整日文转写，仅供保持人物称谓和上下文一致：\n" + full_context,
+                    "content": (
+                        f"完整{source_language_label(self.source_language)}转写，"
+                        "仅供保持人物称谓和上下文一致：\n" + full_context
+                    ),
                 }
             )
         if translation_memory != "[]":
@@ -575,6 +611,7 @@ class MachineTranslationAPI:
         microsoft_region: str,
         timeout_seconds: float = 300.0,
         client: httpx.Client | None = None,
+        source_language: SourceLanguage = "ja",
     ) -> None:
         if not api_key.strip():
             raise TranslationError(f"{provider} 缺少 API Key。")
@@ -584,6 +621,7 @@ class MachineTranslationAPI:
         self.base_url = base_url.rstrip("/")
         self.deepl_formality = deepl_formality
         self.microsoft_region = microsoft_region.strip()
+        self.source_language = source_language
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -604,12 +642,16 @@ class MachineTranslationAPI:
         _translation_memory: str,
         _job_id: str,
     ) -> dict[str, str]:
-        texts = [sentence.ja_text for sentence in chunk.sentences]
+        texts = [sentence.source_text for sentence in chunk.sentences]
+        if self.source_language == "zh":
+            raise TranslationError("中文源文本不需要再次翻译为中文。")
+        language_codes = MACHINE_TRANSLATION_LANGUAGE_CODES[self.provider]
+        source_code = language_codes["en" if self.source_language == "en" else "ja"]
         try:
             if self.provider == "deepl":
                 payload: dict[str, object] = {
                     "text": texts,
-                    "source_lang": "JA",
+                    "source_lang": source_code,
                     "target_lang": "ZH-HANS",
                     "model_type": self.model,
                 }
@@ -631,7 +673,7 @@ class MachineTranslationAPI:
                     headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
                     json={
                         "q": texts,
-                        "source": "ja",
+                        "source": source_code,
                         "target": "zh-CN",
                         "format": "text",
                         "model": self.model,
@@ -651,7 +693,7 @@ class MachineTranslationAPI:
                     headers["Ocp-Apim-Subscription-Region"] = self.microsoft_region
                 response = self.client.post(
                     f"{self.base_url}/translate",
-                    params={"api-version": "3.0", "from": "ja", "to": "zh-Hans"},
+                    params={"api-version": "3.0", "from": source_code, "to": "zh-Hans"},
                     headers=headers,
                     json=[{"Text": text} for text in texts],
                 )
@@ -681,7 +723,8 @@ def translate_sentences(
     model: str,
     base_url: str = DEFAULT_DEEPSEEK_BASE_URL,
     provider: str = "deepseek",
-    system_prompt: str = SYSTEM_PROMPT,
+    source_language: SourceLanguage = "ja",
+    system_prompt: str = "",
     temperature: float = 0.1,
     top_p: float = 1.0,
     max_output_tokens: int = 16_384,
@@ -702,6 +745,8 @@ def translate_sentences(
         if progress:
             progress("所有句子已有中文翻译", 1, 1)
         return
+    if source_language == "zh":
+        raise TranslationError("中文源文本不需要再次翻译为中文。")
     batches = _chunks(pending)
     if provider == "deepseek":
         translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(
@@ -713,6 +758,7 @@ def translate_sentences(
             temperature=temperature,
             top_p=top_p,
             minimum_output_tokens=max_output_tokens,
+            source_language=source_language,
         )
     elif provider in {"openai", "anthropic", "gemini", "openai_compatible"}:
         translator = LLMTranslator(
@@ -725,6 +771,7 @@ def translate_sentences(
             top_p=top_p,
             max_output_tokens=max_output_tokens,
             client=client,
+            source_language=source_language,
         )
     elif provider in {"deepl", "google_translate", "microsoft_translate"}:
         translator = MachineTranslationAPI(
@@ -735,6 +782,7 @@ def translate_sentences(
             deepl_formality=deepl_formality,
             microsoft_region=microsoft_region,
             client=client,
+            source_language=source_language,
         )
     else:
         raise TranslationError(f"未知翻译服务：{provider}")

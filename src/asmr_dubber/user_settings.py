@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .audio import probe_audio, sha256_file
 from .errors import ProjectError
+from .languages import SourceLanguage, SpeechSourceLanguage
 from .models import ProjectSettings
 from .platforms import current_platform, portable_home, user_config_dir
 from .storage import atomic_write_text, exclusive_file_lock
@@ -106,6 +107,23 @@ _PORTABLE_PATH_FIELDS = (
 )
 
 
+def _is_legacy_builtin_translation_prompt(value: str) -> bool:
+    """Recognize packaged prompts saved verbatim by releases before 0.7.0."""
+
+    normalized = " ".join(value.replace("\r\n", "\n").split())
+    if not normalized.endswith(
+        '{"translations":[{"id":"s000001","zh":"中文台词；无实义时为空字符串"}]}'
+    ):
+        return False
+    return normalized.startswith(
+        (
+            "你是日语音声、广播剧和 ASMR 的简体中文配音翻译。",
+            "你是音声、广播剧和 ASMR 的简体中文配音翻译。",
+            "你负责把日语音声、广播剧和 ASMR 台词翻译成简体中文配音稿。",
+        )
+    )
+
+
 class UserSettings(ProjectSettings):
     """Portable global defaults plus paths that do not belong to a project."""
 
@@ -114,12 +132,26 @@ class UserSettings(ProjectSettings):
     projects_root: str = ""
     huggingface_endpoint: str = ""
     pypi_index_url: str = ""
+    default_source_language: SpeechSourceLanguage = "ja"
+    translation_prompt_ja: str = ""
+    translation_prompt_en: str = ""
 
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_fields(cls, value: Any) -> Any:
         if isinstance(value, dict):
             value = dict(value)
+            legacy_prompt = str(value.get("translation_prompt", "") or "").strip()
+            if _is_legacy_builtin_translation_prompt(legacy_prompt):
+                legacy_prompt = ""
+            for language in ("ja", "en"):
+                field = f"translation_prompt_{language}"
+                if _is_legacy_builtin_translation_prompt(str(value.get(field, "") or "")):
+                    value[field] = ""
+            if legacy_prompt:
+                value.setdefault("translation_prompt_ja", legacy_prompt)
+                value.setdefault("translation_prompt_en", legacy_prompt)
+                value["translation_prompt"] = ""
             if (
                 "chinese_target_active_rms_dbfs" not in value
                 and "chinese_max_active_rms_dbfs" in value
@@ -142,7 +174,15 @@ class UserSettings(ProjectSettings):
                 value["tts_model"] = "IndexTTS2"
         return value
 
-    def to_project_settings(self, base: ProjectSettings | None = None) -> ProjectSettings:
+    def translation_prompt_for(self, source_language: SpeechSourceLanguage) -> str:
+        return self.translation_prompt_en if source_language == "en" else self.translation_prompt_ja
+
+    def to_project_settings(
+        self,
+        base: ProjectSettings | None = None,
+        *,
+        source_language: SourceLanguage | None = None,
+    ) -> ProjectSettings:
         values = base.model_dump() if base is not None else {}
         values.update(
             {
@@ -150,6 +190,10 @@ class UserSettings(ProjectSettings):
                 for name in ProjectSettings.model_fields
                 if base is None or name != "tts_reference_sentence_id"
             }
+        )
+        language = source_language or self.default_source_language
+        values["translation_prompt"] = (
+            "" if language == "zh" else self.translation_prompt_for(language)
         )
         return ProjectSettings.model_validate(values)
 

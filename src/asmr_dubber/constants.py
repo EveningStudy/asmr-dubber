@@ -4,7 +4,7 @@ from .platforms import user_data_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-PROJECT_SCHEMA_VERSION = 2
+PROJECT_SCHEMA_VERSION = 3
 DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 ASMR_VAD_MODEL = "TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
 RECOMMENDED_ASR_BACKEND = "parakeet_nemo"
@@ -26,22 +26,22 @@ DEFAULT_CHINESE_MAX_AUTO_SPEED = 1.8
 DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB = -8.0
 MAX_CHINESE_AUTO_SPEED = 4.0
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEFAULT_ASR_REVIEW_PROMPT = """你是日语语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。
+DEFAULT_ASR_REVIEW_PROMPT = """你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。
 
 任务：
-1. 结合相邻窗口、用户提供的作品/人物/场景背景，恢复每个窗口最可信的日文原话。
-2. 特别检查日语 ASR 常见问题：同音字、助词、专名、口语省略、耳语漏字、错误断句、
+1. 结合相邻窗口、用户提供的作品/人物/场景背景，恢复每个窗口最可信的源语言原话。
+2. 检查 ASR 常见问题：同音词、专名、口语省略、耳语漏字、错误断句、
    Whisper/语言模型重复循环、静音处凭空生成内容，以及分段时间戳整体漂移。
 3. 只能依据候选证据纠错，不得补写所有候选都没有支持的剧情或台词。
-4. 笑声、喘息、呻吟、亲吻声、拉长音等纯非语言内容输出空 ja；混有实义台词时保留实义部分。
+4. 笑声、喘息、呻吟、亲吻声、拉长音等纯非语言内容输出空 source；混有实义台词时保留实义部分。
 5. 每个输入 window_id 恰好输出一项并保持顺序。evidence_ids 只能引用该窗口给出的候选 id；
    它们用于程序从真实 ASR 时间戳计算边界，不要自行输出或猜测时间。
-6. 若证据互相冲突且无法可靠判断，优先保留日语专用模型之间一致的部分，并降低 confidence；
-   若基本确定是幻觉，ja 置空。
+6. 若证据互相冲突且无法可靠判断，优先保留多个模型一致且符合上下文的部分，并降低 confidence；
+   若基本确定是幻觉，source 置空。
 7. 输入会标记 text_priority。它是文字判断的优先来源，但不得压过多个模型一致的反证或明显幻觉。
-   timestamp_priority 只由程序计算时间边界，不要为了迁就它而改写 ja。
+   timestamp_priority 只由程序计算时间边界，不要为了迁就它而改写 source。
 8. 只输出严格 JSON：
-{"results":[{"window_id":"w000001","ja":"校对后的日文","evidence_ids":["w000001-c01"],"confidence":0.95}]}
+{"results":[{"window_id":"w000001","source":"校对后的源文","evidence_ids":["w000001-c01"],"confidence":0.95}]}
 """
 DEFAULT_PROJECTS_DIR = user_data_dir() / "projects"
 DEFAULT_RUNTIMES_DIR = user_data_dir() / "runtimes"

@@ -101,6 +101,37 @@ def test_user_settings_copy_all_material_options_to_project() -> None:
     assert project.tts_index_emotion_source == "text"
 
 
+def test_source_language_defaults_keep_separate_translation_prompts() -> None:
+    settings = UserSettings(
+        default_source_language="en",
+        translation_prompt_ja="日语自定义",
+        translation_prompt_en="English custom",
+    )
+
+    assert settings.to_project_settings(source_language="ja").translation_prompt == "日语自定义"
+    assert settings.to_project_settings(source_language="en").translation_prompt == "English custom"
+
+
+def test_legacy_global_translation_prompt_is_preserved_for_both_languages() -> None:
+    settings = UserSettings.model_validate({"translation_prompt": "旧版自定义"})
+
+    assert settings.translation_prompt == ""
+    assert settings.translation_prompt_ja == "旧版自定义"
+    assert settings.translation_prompt_en == "旧版自定义"
+
+
+def test_legacy_packaged_prompt_is_not_migrated_as_a_custom_english_prompt() -> None:
+    legacy = (
+        "你是日语音声、广播剧和 ASMR 的简体中文配音翻译。\n"
+        "规则内容。\n"
+        '{"translations":[{"id":"s000001","zh":"中文台词；无实义时为空字符串"}]}'
+    )
+    settings = UserSettings.model_validate({"translation_prompt": legacy})
+
+    assert settings.translation_prompt_ja == ""
+    assert settings.translation_prompt_en == ""
+
+
 def test_default_relative_chinese_loudness_matches_saved_project_default() -> None:
     settings = UserSettings()
 

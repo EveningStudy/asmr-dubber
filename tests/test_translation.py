@@ -15,13 +15,33 @@ from asmr_dubber.translation import translate_sentences, validate_translation
 
 def test_default_translation_prompts_are_packaged_markdown_resources() -> None:
     prompt_root = files("asmr_dubber.prompts")
-    assert (
-        prompt_root.joinpath("translation.md").read_text(encoding="utf-8").strip()
-    ) == translation_module.SYSTEM_PROMPT
+    template = prompt_root.joinpath("translation.md").read_text(encoding="utf-8").strip()
+    assert "{{SOURCE_LANGUAGE}}" in template
+    assert "{{FILLER_EXAMPLES}}" in template
+    japanese = translation_module.default_translation_prompt("ja")
+    english = translation_module.default_translation_prompt("en")
+    assert "日语原文" in japanese
+    assert "英语原文" in english
+    assert "えーと" in japanese and "えーと" not in english
+    assert "erm" in english and "erm" not in japanese
     structure_prompt = prompt_root.joinpath("translation-structure.md").read_text(encoding="utf-8")
     assert "{{OUTPUT_SCHEMA}}" in structure_prompt
     assert "{{TARGET_JSON}}" in structure_prompt
     assert "顶层对象只能有 `translations` 一个字段" in structure_prompt
+
+
+def test_english_translator_uses_english_builtin_prompt() -> None:
+    translator = translation_module.DeepSeekTranslator(
+        api_key="test",
+        model="test",
+        source_language="en",
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200))),
+    )
+    try:
+        assert translator.system_prompt == translation_module.default_translation_prompt("en")
+        assert "日语原文" not in translator.system_prompt
+    finally:
+        translator.close()
 
 
 def test_validates_exact_translation_ids_and_order() -> None:
@@ -560,4 +580,47 @@ def test_machine_translation_provider_adapters(provider: str) -> None:
             microsoft_region="eastasia",
             client=client,
         )
+    assert sentence.zh_text == "晚安。"
+
+
+@pytest.mark.parametrize("provider", ["deepl", "google_translate", "microsoft_translate"])
+def test_machine_translation_uses_english_source_code(provider: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if provider == "deepl":
+            payload = json.loads(request.content)
+            assert payload["source_lang"] == "EN"
+            return httpx.Response(200, json={"translations": [{"text": "晚安。"}]})
+        if provider == "google_translate":
+            payload = json.loads(request.content)
+            assert payload["source"] == "en"
+            return httpx.Response(
+                200,
+                json={"data": {"translations": [{"translatedText": "晚安。"}]}},
+            )
+        assert request.url.params["from"] == "en"
+        return httpx.Response(200, json=[{"translations": [{"text": "晚安。"}]}])
+
+    sentence = Sentence(
+        id="s000001",
+        start_seconds=0.0,
+        end_seconds=1.0,
+        source_text="Good night.",
+    )
+    base_urls = {
+        "deepl": "https://api.deepl.com",
+        "google_translate": "https://translation.googleapis.com/language/translate/v2",
+        "microsoft_translate": "https://api.cognitive.microsofttranslator.com",
+    }
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        translate_sentences(
+            [sentence],
+            api_key="provider-key",
+            model="general",
+            base_url=base_urls[provider],
+            provider=provider,
+            source_language="en",
+            microsoft_region="eastasia",
+            client=client,
+        )
+
     assert sentence.zh_text == "晚安。"

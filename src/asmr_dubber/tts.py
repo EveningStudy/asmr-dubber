@@ -35,7 +35,7 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
             "id": sentence.id,
             "start": sentence.start_seconds,
             "end": sentence.end_seconds,
-            "ja": sentence.ja_text,
+            "ja": sentence.source_text,
         }
     }
     speaker_source = project.settings.tts_index_speaker_source
@@ -46,7 +46,7 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
             "id": shared.id,
             "start": shared.start_seconds,
             "end": shared.end_seconds,
-            "ja": shared.ja_text,
+            "ja": shared.source_text,
         }
 
     payload: dict[str, object] = {}
@@ -114,9 +114,11 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         payload["reference_plan"] = {
             "start": sentence.start_seconds,
             "end": sentence.end_seconds,
-            "ja": sentence.ja_text,
+            "ja": sentence.source_text,
             "padding": settings.reference_padding_seconds,
         }
+    if project.source_language != "ja":
+        payload["source_language"] = project.source_language
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

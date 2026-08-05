@@ -66,6 +66,19 @@ def test_plain_script_uses_each_line_and_estimates_by_text_length() -> None:
     assert parsed.sentences[-1].end_seconds == pytest.approx(12)
 
 
+def test_english_single_paragraph_splits_on_ascii_full_stops() -> None:
+    parsed = parse_transcript(
+        duration_seconds=12,
+        pasted_text="Hello there. Please make yourself comfortable.",
+        language="en",
+    )
+
+    assert [item.source_text for item in parsed.sentences] == [
+        "Hello there.",
+        "Please make yourself comfortable.",
+    ]
+
+
 def test_reads_shift_jis_dlsite_script(tmp_path: Path) -> None:
     source = tmp_path / "台本.txt"
     source.write_bytes("一行目です。\n二行目です。".encode("cp932"))
@@ -137,7 +150,7 @@ def test_project_import_marks_chinese_script_as_direct_tts_input(tmp_path: Path)
     )
 
     assert result["language"] == "zh"
-    assert project.asr_language == "Chinese (imported 纯文本)"
+    assert project.asr_language == "中文 (imported 纯文本)"
     assert [item.ja_text for item in project.sentences] == ["", ""]
     assert [item.zh_text for item in project.sentences] == ["第一句。", "第二句。"]
     report = json.loads(
@@ -145,6 +158,29 @@ def test_project_import_marks_chinese_script_as_direct_tts_input(tmp_path: Path)
     )
     assert report["language"] == "zh"
     assert report["plain_timing"] == "estimate"
+
+
+def test_project_import_marks_english_script_and_uses_existing_faster_whisper(
+    tmp_path: Path,
+) -> None:
+    project = _import_project(tmp_path)
+
+    result = pipeline.import_project_transcript(
+        project,
+        tmp_path,
+        pasted_text="Good evening.\nAre you comfortable?",
+        script_language="en",
+    )
+
+    assert result["language"] == "en"
+    assert project.source_language == "en"
+    assert project.settings.asr_backend == "faster_whisper"
+    assert project.settings.asr_model == "large-v2"
+    assert [item.source_text for item in project.sentences] == [
+        "Good evening.",
+        "Are you comfortable?",
+    ]
+    assert project.asr_language == "英语 (imported 纯文本)"
 
 
 def test_project_import_rejects_qwen_alignment_for_chinese_script(tmp_path: Path) -> None:

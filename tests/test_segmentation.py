@@ -28,3 +28,16 @@ def test_splits_on_pause_without_punctuation() -> None:
     ]
     sentences = split_timed_tokens(tokens, pause_seconds=0.55)
     assert [item.ja_text for item in sentences] == ["おはよう", "今日はいい天気"]
+
+
+def test_splits_english_sentences_on_ascii_period() -> None:
+    tokens = [
+        TimedToken("Hello.", 0.0, 0.5),
+        TimedToken(" Please", 0.55, 0.9),
+        TimedToken(" sit", 0.9, 1.1),
+        TimedToken(" down.", 1.1, 1.5),
+    ]
+
+    sentences = split_timed_tokens(tokens, pause_seconds=0.8)
+
+    assert [item.source_text for item in sentences] == ["Hello.", "Please sit down."]

@@ -139,7 +139,7 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
     ),
     "faster_whisper": ModelBackend(
         id="faster_whisper",
-        label="Faster-Whisper",
+        label="Faster-Whisper（日语/英语）",
         kind="asr",
         runtime="optional_python",
         default_model="large-v2",
@@ -152,7 +152,10 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
             "medium",
             "small",
         ),
-        help="CTranslate2 版 Whisper，支持词级时间戳和可选后端 VAD。",
+        help=(
+            "CTranslate2 版 Whisper，支持日语/英语、词级时间戳和可选后端 VAD。"
+            "英语项目会自动使用该后端并排除日语专用 Kotoba 模型。"
+        ),
         setup="“进阶”档位会安装运行依赖和 large-v2 模型。",
         tested_default=True,
         support_level="verified",

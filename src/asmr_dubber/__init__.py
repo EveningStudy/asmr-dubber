@@ -1,4 +1,4 @@
-"""ASMR Dubber cross-platform Japanese-to-Chinese dubbing application."""
+"""ASMR Dubber cross-platform Japanese/English-to-Chinese dubbing application."""
 
 from __future__ import annotations
 
@@ -23,4 +23,4 @@ from .platforms import configure_windows_dll_directories  # noqa: E402
 
 configure_windows_dll_directories()
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"

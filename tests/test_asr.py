@@ -113,6 +113,63 @@ def test_faster_whisper_cpu_replaces_unsupported_float16(tmp_path, monkeypatch) 
     assert model_arguments == {"device": "cpu", "compute_type": "int8"}
 
 
+def test_faster_whisper_transcribes_english_with_existing_model(tmp_path, monkeypatch) -> None:
+    audio_path = tmp_path / "english.wav"
+    audio_path.touch()
+    calls: list[dict[str, object]] = []
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def transcribe(self, _audio, **kwargs):
+            calls.append(kwargs)
+            words = [
+                SimpleNamespace(word=" Hello", start=0.1, end=0.4),
+                SimpleNamespace(word=" world.", start=0.4, end=0.9),
+            ]
+            segment = SimpleNamespace(text=" Hello world.", words=words, start=0.1, end=0.9)
+            return [segment], SimpleNamespace(language="en")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(
+            WhisperModel=FakeWhisperModel,
+            BatchedInferencePipeline=object,
+        ),
+    )
+    monkeypatch.setattr(asr, "resolve_model_source", lambda model_id: model_id)
+
+    sentences, language = asr._transcribe_faster_whisper(
+        audio_path,
+        ProjectSettings(
+            asr_backend="faster_whisper",
+            asr_model="large-v2",
+            asr_batch_size=1,
+        ),
+        None,
+        source_language="en",
+    )
+
+    assert language == "en"
+    assert [sentence.source_text for sentence in sentences] == ["Hello world."]
+    assert calls[0]["language"] == "en"
+    assert calls[0]["word_timestamps"] is True
+
+
+def test_english_source_rejects_japanese_only_backends(tmp_path: Path) -> None:
+    audio_path = tmp_path / "english.wav"
+    audio_path.touch()
+
+    with pytest.raises(AsmrDubberError, match="Faster-Whisper"):
+        asr.transcribe_source(
+            audio_path,
+            ProjectSettings(asr_backend="parakeet_nemo"),
+            source_language="en",
+        )
+
+
 def test_kotoba_faster_avoids_invalid_teacher_alignment_heads(tmp_path, monkeypatch) -> None:
     audio_path = tmp_path / "audio.wav"
     audio_path.touch()

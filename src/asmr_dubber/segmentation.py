@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .models import Sentence
 
-_SENTENCE_END = re.compile(r"[。！？!?]+[」』】）)]*$")
+_SENTENCE_END = re.compile(r"[。！？!?\.]+[」』】）)]*$")
 _SOFT_END = re.compile(r"[、，,；;：:…]+[」』】）)]*$")
 _CJK = r"\u3040-\u30ff\u3400-\u9fff"
 _NON_CONTENT = re.compile(rf"[^A-Za-z0-9{_CJK}]")
@@ -99,7 +99,7 @@ def _make_sentence(index: int, tokens: list[TimedToken]) -> Sentence | None:
         id=f"s{index:06d}",
         start_seconds=max(0.0, tokens[0].start_seconds),
         end_seconds=max(tokens[0].start_seconds + 0.01, tokens[-1].end_seconds),
-        ja_text=text,
+        source_text=text,
     )
 
 

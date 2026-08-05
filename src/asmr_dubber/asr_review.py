@@ -15,6 +15,7 @@ import httpx
 
 from .errors import AsmrDubberError
 from .forced_alignment import align_sentences_with_qwen
+from .languages import SourceLanguage, source_language_label
 from .models import ProjectSettings, Sentence
 from .task_control import CancellationSignal, check_cancelled
 from .translation import LLMTranslator
@@ -82,7 +83,7 @@ def _build_windows(
                 Evidence(
                     id="",
                     source=label if source_index else primary_label,
-                    text=sentence.ja_text,
+                    text=sentence.source_text,
                     start=sentence.start_seconds,
                     end=sentence.end_seconds,
                 )
@@ -112,7 +113,7 @@ def _build_windows(
             Evidence(
                 id="",
                 source=label,
-                text=sentence.ja_text,
+                text=sentence.source_text,
                 start=sentence.start_seconds,
                 end=sentence.end_seconds,
             )
@@ -245,7 +246,7 @@ def _validate_results(
     validated: dict[str, tuple[str, list[str], float]] = {}
     for window, item in zip(targets, results, strict=True):
         assert isinstance(item, Mapping)
-        text = str(item.get("ja", "") or "").strip()
+        text = str(item.get("source", item.get("ja", "")) or "").strip()
         ids = item.get("evidence_ids") or []
         if not isinstance(ids, list):
             raise AsmrDubberError(f"{window.id} 的 evidence_ids 不是数组。")
@@ -268,10 +269,15 @@ def _review_chunk(
     targets: list[ReviewWindow],
     settings: ProjectSettings,
     job_id: str,
+    source_language: SourceLanguage,
 ) -> dict[str, tuple[str, list[str], float]]:
     target_ids = [window.id for window in targets]
     messages = [
         {"role": "system", "content": settings.asr_review_prompt},
+        {
+            "role": "user",
+            "content": f"当前音频的源语言是：{source_language_label(source_language)}。",
+        },
         {
             "role": "user",
             "content": (
@@ -316,7 +322,7 @@ def _review_chunk(
                         "role": "user",
                         "content": (
                             f"第 {attempt + 1} 次严格修正：只返回 {target_ids}，保持顺序，"
-                            "每个非空 ja 必须引用本窗口已有 evidence_ids。"
+                            "每个非空 source 必须引用本窗口已有 evidence_ids。"
                         ),
                     }
                 )
@@ -356,6 +362,8 @@ def review_transcriptions(
     analysis_audio: Path | None = None,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SourceLanguage = "ja",
 ) -> list[Sentence]:
     """Resolve several timed ASR hypotheses while keeping timestamps evidence-bound."""
     check_cancelled(cancel_event)
@@ -383,6 +391,7 @@ def review_transcriptions(
                 targets,
                 settings,
                 f"asr-review-{chunk_index}-{int(time.time())}",
+                source_language,
             )
         )
         check_cancelled(cancel_event)
@@ -402,14 +411,14 @@ def review_transcriptions(
                 id=f"s{len(sentences) + 1:06d}",
                 start_seconds=max(0.0, start),
                 end_seconds=end,
-                ja_text=text,
+                source_text=text,
             )
             sentences.append(sentence)
             sentence_by_window[window.id] = sentence
         report_results.append(
             {
                 "window_id": window.id,
-                "ja": text,
+                "source": text,
                 "evidence_ids": selected_ids,
                 "confidence": confidence,
                 "computed_time": [start, end],
@@ -423,7 +432,9 @@ def review_transcriptions(
             }
         )
     if not sentences:
-        raise AsmrDubberError("多 ASR（语音识别）校对没有保留任何可信日语句子。")
+        raise AsmrDubberError(
+            f"多 ASR（语音识别）校对没有保留任何可信{source_language_label(source_language)}句子。"
+        )
     sentences.sort(key=lambda item: (item.start_seconds, item.end_seconds))
     for index, sentence in enumerate(sentences, start=1):
         sentence.id = f"s{index:06d}"
@@ -437,6 +448,7 @@ def review_transcriptions(
             sentences,
             settings,
             progress=progress,
+            source_language=source_language,
             **cancel_kwargs,
         )
     for item in report_results:

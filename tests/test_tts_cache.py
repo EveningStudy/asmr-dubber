@@ -11,6 +11,7 @@ import pytest
 import soundfile as sf
 
 from asmr_dubber.errors import OperationCancelledError
+from asmr_dubber.languages import SourceLanguage
 from asmr_dubber.models import AudioInfo, DubProject, Sentence
 from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.tts import shared_reference_sentence, tts_cache_key
@@ -368,14 +369,24 @@ class _RecordingClient:
         self.closed = True
 
 
-def test_gpt_sovits_http_contract(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("reference_language", ["ja", "en", "zh"])
+def test_gpt_sovits_http_contract(
+    tmp_path: Path,
+    monkeypatch,
+    reference_language: SourceLanguage,
+) -> None:
     _RecordingClient.instances.clear()
     monkeypatch.setattr(httpx, "Client", _RecordingClient)
     project = _project()
     project.settings.tts_api_base_url = "http://127.0.0.1:9880"
     reference_path = tmp_path / "reference.wav"
     reference_path.write_bytes(b"reference")
-    reference = VoiceReference(reference_path, "参考です。", "shared")
+    reference = VoiceReference(
+        reference_path,
+        "Reference text.",
+        "shared",
+        language=reference_language,
+    )
     output = tmp_path / "output.wav"
 
     run, cleanup = _gpt_sovits_runner(project)
@@ -386,7 +397,7 @@ def test_gpt_sovits_http_contract(tmp_path: Path, monkeypatch) -> None:
     call = client.calls[0]
     assert call["url"] == "http://127.0.0.1:9880/tts"
     assert call["json"]["text_lang"] == "zh"
-    assert call["json"]["prompt_lang"] == "ja"
+    assert call["json"]["prompt_lang"] == reference_language
     assert call["json"]["ref_audio_path"] == str(reference_path)
     assert output.read_bytes() == b"mock-wave"
     assert client.closed is True

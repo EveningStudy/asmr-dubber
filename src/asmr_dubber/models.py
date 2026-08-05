@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .constants import (
     DEFAULT_ALIGNER_MODEL,
@@ -29,6 +29,7 @@ from .constants import (
     RECOMMENDED_TTS_MODEL,
 )
 from .errors import ProjectConflictError, ProjectError
+from .languages import SourceLanguage
 from .storage import atomic_write_text, exclusive_file_lock
 
 
@@ -51,7 +52,7 @@ class Sentence(BaseModel):
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
-    ja_text: str
+    source_text: str = Field(validation_alias=AliasChoices("source_text", "ja_text"))
     zh_text: str = ""
     enabled: bool = True
     reference_file: str | None = None
@@ -61,10 +62,20 @@ class Sentence(BaseModel):
     status: str = "pending"
     error: str | None = None
 
-    @field_validator("ja_text", "zh_text")
+    @field_validator("source_text", "zh_text")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return value.strip()
+
+    @property
+    def ja_text(self) -> str:
+        """Compatibility alias for callers and projects created before schema v3."""
+
+        return self.source_text
+
+    @ja_text.setter
+    def ja_text(self, value: str) -> None:
+        self.source_text = value.strip()
 
     @model_validator(mode="after")
     def valid_range(self) -> Sentence:
@@ -131,6 +142,7 @@ class ProjectSettings(BaseModel):
     tts_reference_source: Literal["project_sentence", "external"] = "project_sentence"
     tts_external_reference_audio: str = ""
     tts_external_reference_text: str = ""
+    tts_external_reference_language: Literal["auto", "ja", "en", "zh"] = "auto"
     tts_api_base_url: str = "http://127.0.0.1:9880"
     tts_timeout_seconds: float = Field(default=600.0, ge=10.0, le=7200.0)
     tts_request_concurrency: int = Field(default=2, ge=1, le=8)
@@ -194,7 +206,7 @@ class ProjectSettings(BaseModel):
     chinese_channel_routing: Literal["auto", "all"] = "auto"
     mix_peak_protection: bool = True
     mix_peak_limit_dbfs: float = Field(default=-1.0, ge=-6.0, le=-0.1)
-    retain_chinese_stem: bool = True
+    mix_output_mode: Literal["mixed", "stem", "both"] = "both"
     skip_japanese_fillers: bool = True
     reference_padding_seconds: float = Field(default=0.0, ge=0.0, le=2.0)
     random_seed: int = Field(default=20260722, ge=0)
@@ -257,6 +269,11 @@ class ProjectSettings(BaseModel):
                 value["asr_chunk_seconds"] = 120.0
             if value.get("tts_clone_mode") not in {"stable_reference", "reference_only"}:
                 value["tts_clone_mode"] = "stable_reference"
+            if "mix_output_mode" not in value:
+                value["mix_output_mode"] = (
+                    "both" if value.get("retain_chinese_stem", True) else "mixed"
+                )
+            value.pop("retain_chinese_stem", None)
         return value
 
     @model_validator(mode="after")
@@ -273,16 +290,50 @@ class ProjectSettings(BaseModel):
         return self
 
 
+def settings_for_source_language(
+    settings: ProjectSettings,
+    source_language: SourceLanguage,
+) -> ProjectSettings:
+    """Return settings that cannot dispatch a source to a language-incompatible ASR."""
+
+    if source_language != "en":
+        return settings
+    values = settings.model_dump()
+    model = str(values.get("asr_model", ""))
+    if values.get("asr_backend") != "faster_whisper" or model.startswith("kotoba-tech/"):
+        values["asr_backend"] = "faster_whisper"
+        values["asr_model"] = "large-v2"
+    primary = f"{values['asr_backend']}|{values['asr_model']}"
+    review_models = [
+        str(item)
+        for item in values.get("asr_review_models") or []
+        if str(item).startswith("faster_whisper|") and "kotoba-tech/kotoba-whisper" not in str(item)
+    ]
+    values["asr_review_models"] = review_models
+    if not any(item != primary for item in review_models):
+        values["asr_review_enabled"] = False
+    text_priority = str(values.get("asr_review_text_priority_model", ""))
+    if not text_priority.startswith("faster_whisper|") or "kotoba-tech/" in text_priority:
+        values["asr_review_text_priority_model"] = primary
+    if values.get("asr_vad_mode") == "asmr":
+        values["asr_vad_mode"] = "off"
+    review_prompt = str(values.get("asr_review_prompt", ""))
+    if review_prompt.startswith("你是日语语音识别校对专家"):
+        values["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
+    return ProjectSettings.model_validate(values)
+
+
 class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.6.1"
+    app_version: str = "0.7.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     source: AudioInfo
+    source_language: SourceLanguage = "ja"
     settings: ProjectSettings = Field(default_factory=ProjectSettings)
     sentences: list[Sentence] = Field(default_factory=list)
     asr_language: str | None = None
@@ -290,7 +341,7 @@ class DubProject(BaseModel):
     chinese_stem_file: str | None = None
     output_file: str | None = None
     output_video_file: str | None = None
-    subtitle_language: Literal["bilingual", "zh", "ja"] = "bilingual"
+    subtitle_language: Literal["bilingual", "zh", "source"] = "bilingual"
     subtitle_srt_file: str | None = None
     subtitle_lrc_file: str | None = None
     subtitle_video_file: str | None = None
@@ -350,10 +401,14 @@ def save_project(project: DubProject, project_dir: str | os.PathLike[str]) -> Pa
                 "项目已被另一个窗口或命令修改。请重新加载项目后再保存；"
                 f"当前版本 {project.revision}，磁盘版本 {current_revision}。"
             )
-        if current_payload is not None and int(current_payload.get("schema_version", 1)) < 2:
+        if (
+            current_payload is not None
+            and int(current_payload.get("schema_version", 1)) < PROJECT_SCHEMA_VERSION
+        ):
             backup_dir = directory / "backups"
             stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            backup = backup_dir / f"project-schema-v1-{stamp}.json"
+            old_schema = int(current_payload.get("schema_version", 1))
+            backup = backup_dir / f"project-schema-v{old_schema}-{stamp}.json"
             if not backup.exists():
                 atomic_write_text(
                     backup,
@@ -417,10 +472,41 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.6.1"
+        payload["app_version"] = "0.7.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2
+    if version == 2:
+        sentences = []
+        for raw_sentence in payload.get("sentences") or []:
+            sentence = dict(raw_sentence)
+            if "source_text" not in sentence:
+                sentence["source_text"] = sentence.pop("ja_text", "")
+            else:
+                sentence.pop("ja_text", None)
+            sentences.append(sentence)
+        settings = dict(payload.get("settings") or {})
+        if "mix_output_mode" not in settings:
+            settings["mix_output_mode"] = (
+                "both" if settings.get("retain_chinese_stem", True) else "mixed"
+            )
+        settings.pop("retain_chinese_stem", None)
+        source_language: SourceLanguage = "ja"
+        if (
+            sentences
+            and all(not str(item.get("source_text", "")).strip() for item in sentences)
+            and any(str(item.get("zh_text", "")).strip() for item in sentences)
+        ):
+            source_language = "zh"
+        payload["sentences"] = sentences
+        payload["settings"] = settings
+        payload["source_language"] = source_language
+        if payload.get("subtitle_language") == "ja":
+            payload["subtitle_language"] = "source"
+        payload["schema_version"] = 3
+        payload["revision"] = int(payload.get("revision", 0))
+        payload["migration_warnings"] = warnings
+        version = 3
     if version != PROJECT_SCHEMA_VERSION:
         raise ValueError(f"unsupported project schema {version}")
     return payload

@@ -8,9 +8,9 @@ import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from .asr import transcribe_japanese
+from .asr import transcribe_source
 from .asr_review import review_transcriptions
 from .audio import (
     build_chinese_stem,
@@ -28,7 +28,15 @@ from .constants import DEFAULT_PROJECTS_DIR
 from .errors import ProjectError, SynthesisError
 from .filtering import implausible_asr_reason, is_japanese_filler_only
 from .forced_alignment import align_script_sentences_with_qwen, align_sentences_with_qwen
-from .models import DubProject, ProjectSettings, Sentence, load_project, save_project
+from .languages import SourceLanguage, source_language_label
+from .models import (
+    DubProject,
+    ProjectSettings,
+    Sentence,
+    load_project,
+    save_project,
+    settings_for_source_language,
+)
 from .performance import measure_stage
 from .platforms import portable_home, require_supported_platform
 from .storage import atomic_write_text, exclusive_file_lock
@@ -75,7 +83,12 @@ def output_filename(project: DubProject, project_dir: Path) -> str:
         else project.settings.tts_clone_mode
     )
     tts_label = _safe_name(f"{project.settings.tts_backend}-{model_label}-{reference_label}")
-    return f"{_safe_name(source_label)}__ja-zh__{tts_label}.wav"
+    return f"{_safe_name(source_label)}__{project.source_language}-zh__{tts_label}.wav"
+
+
+def stem_output_filename(project: DubProject, project_dir: Path) -> str:
+    mixed = Path(output_filename(project, project_dir))
+    return f"{mixed.stem}__chinese-voice-stem.wav"
 
 
 def output_video_filename(project: DubProject, project_dir: Path) -> str:
@@ -103,6 +116,7 @@ def create_project(
     projects_root: str | Path | None = None,
     settings: ProjectSettings | None = None,
     project_name: str | None = None,
+    source_language: SourceLanguage = "ja",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> tuple[DubProject, Path]:
@@ -121,7 +135,15 @@ def create_project(
     with measure_stage(project_dir, "project_init", source_bytes=source.stat().st_size):
         _, info = copy_source_verbatim(source, project_dir, progress=progress)
         check_cancelled(cancel_event)
-        project = DubProject(source=info, settings=settings or ProjectSettings())
+        project_settings = settings_for_source_language(
+            settings or ProjectSettings(),
+            source_language,
+        )
+        project = DubProject(
+            source=info,
+            source_language=source_language,
+            settings=project_settings,
+        )
         save_project(project, project_dir)
         export_transcript(project, project_dir)
     return project, project_dir
@@ -144,8 +166,8 @@ def import_project_transcript(
     check_cancelled(cancel_event)
     if plain_timing not in {"estimate", "qwen"}:
         raise ProjectError("纯台本时间轴方式必须是按长度估算或 Qwen3 自动对齐。")
-    if script_language not in {"ja", "zh"}:
-        raise ProjectError("台本语言必须是日语或中文。")
+    if script_language not in {"ja", "en", "zh"}:
+        raise ProjectError("台本语言必须是日语、英语或中文。")
     if script_language == "zh" and plain_timing == "qwen":
         raise ProjectError("中文纯台本不能使用 Qwen3 自动对齐，请选择按台词长度估算。")
     source = verify_source(project_dir, project.source)
@@ -164,6 +186,7 @@ def import_project_transcript(
             analysis,
             sentences,
             project.settings,
+            source_language=cast(SourceLanguage, script_language),
             progress=progress,
             **cancel_kwargs,
         )
@@ -192,7 +215,9 @@ def import_project_transcript(
     )
 
     project.sentences = sentences
-    language_name = "Japanese" if parsed.language == "ja" else "Chinese"
+    project.source_language = cast(SourceLanguage, parsed.language)
+    project.settings = settings_for_source_language(project.settings, project.source_language)
+    language_name = source_language_label(parsed.language)
     project.asr_language = f"{language_name} (imported {parsed.source_format})"
     project.asr_settings_dirty = False
     project.settings.tts_reference_sentence_id = None
@@ -222,6 +247,9 @@ def _analyze_project_impl(
 ) -> None:
     check_cancelled(cancel_event)
     require_supported_platform()
+    if project.source_language == "zh":
+        raise ProjectError("中文台本项目不需要运行 ASR（语音识别）。")
+    project.settings = settings_for_source_language(project.settings, project.source_language)
     if project.sentences and not force:
         if progress:
             progress(f"已存在 {len(project.sentences)} 句识别缓存", 1, 1)
@@ -229,9 +257,10 @@ def _analyze_project_impl(
     source = verify_source(project_dir, project.source)
     analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
-    sentences, language = transcribe_japanese(
+    sentences, language = transcribe_source(
         analysis,
         project.settings,
+        source_language=project.source_language,
         progress=progress,
         **cancel_kwargs,
     )
@@ -268,9 +297,10 @@ def _analyze_project_impl(
                 asr_review_enabled=False,
             )
             candidate_settings = ProjectSettings.model_validate(candidate_payload)
-            candidate_sentences, _ = transcribe_japanese(
+            candidate_sentences, _ = transcribe_source(
                 analysis,
                 candidate_settings,
+                source_language=project.source_language,
                 progress=progress,
                 **cancel_kwargs,
             )
@@ -299,11 +329,12 @@ def _analyze_project_impl(
             project.settings,
             project_dir / "analysis" / "asr_review.json",
             analysis_audio=analysis,
+            source_language=project.source_language,
             progress=progress,
             **review_cancel_kwargs,
         )
         check_cancelled(cancel_event)
-        language = "Japanese (multi-ASR reviewed)"
+        language = f"{source_language_label(project.source_language)}（多模型校对）"
     already_qwen_aligned = (
         project.settings.asr_review_enabled
         and project.settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|")
@@ -313,6 +344,7 @@ def _analyze_project_impl(
             analysis,
             sentences,
             project.settings,
+            source_language=project.source_language,
             progress=progress,
             **cancel_kwargs,
         )
@@ -338,15 +370,17 @@ def _analyze_project_impl(
         sentence.end_seconds = min(sentence.end_seconds, project.source.duration_seconds)
         if sentence.end_seconds > sentence.start_seconds:
             duration = sentence.end_seconds - sentence.start_seconds
-            hallucination_reason = implausible_asr_reason(sentence.ja_text, duration)
+            hallucination_reason = implausible_asr_reason(sentence.source_text, duration)
             if hallucination_reason:
                 sentence.enabled = False
                 sentence.status = "skipped_hallucination"
                 sentence.error = hallucination_reason
-            elif project.settings.skip_japanese_fillers and is_japanese_filler_only(
-                sentence.ja_text
+            elif (
+                project.source_language == "ja"
+                and project.settings.skip_japanese_fillers
+                and is_japanese_filler_only(sentence.source_text)
             ):
-                # Keep the Japanese row and original audio intact.  `enabled`
+                # Keep the source row and original audio intact.  `enabled`
                 # controls only translation and Chinese dubbing, and the user
                 # can opt a row back in from the table.
                 sentence.enabled = False
@@ -463,6 +497,7 @@ def _translate_project_impl(
         model=project.settings.translation_model,
         base_url=base_url,
         provider=provider,
+        source_language=project.source_language,
         system_prompt=project.settings.translation_prompt,
         temperature=project.settings.translation_temperature,
         top_p=project.settings.translation_top_p,
@@ -662,14 +697,20 @@ def _mix_project_impl(
     )
     if not events:
         raise ProjectError("没有可混入的中文配音。")
-    stem = project_dir / "mix" / "chinese_stem_float32.wav"
+    output_mode = project.settings.mix_output_mode
+    keep_stem = output_mode in {"stem", "both"}
+    stem = (
+        project_dir / "output" / stem_output_filename(project, project_dir)
+        if keep_stem
+        else project_dir / "mix" / "chinese_stem_float32.wav"
+    )
     output = project_dir / "output" / output_filename(project, project_dir)
     loudness_reference = make_analysis_copy(
         source,
         project_dir / "analysis" / "asr_16k_mono.wav",
     )
     if progress:
-        progress("按对应日语句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
+        progress("按对应源语言句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
     build_chinese_stem(
         destination=stem,
         events=events,
@@ -689,19 +730,22 @@ def _mix_project_impl(
         progress=progress,
     )
     check_cancelled(cancel_event)
-    if progress:
-        progress("正在混合原轨与中文轨，并执行最终峰值保护", 0, 1)
-    mix_original_and_stem(
-        source,
-        stem,
-        output,
-        project.source,
-        output_codec="pcm_s24le",
-        peak_protection=project.settings.mix_peak_protection,
-        peak_limit_dbfs=project.settings.mix_peak_limit_dbfs,
-    )
-    check_cancelled(cancel_event)
-    if project.settings.retain_chinese_stem:
+    mixed_output: Path | None = None
+    if output_mode in {"mixed", "both"}:
+        if progress:
+            progress("正在把中文克隆音轨加入原音轨，并执行最终峰值保护", 0, 1)
+        mix_original_and_stem(
+            source,
+            stem,
+            output,
+            project.source,
+            output_codec="pcm_s24le",
+            peak_protection=project.settings.mix_peak_protection,
+            peak_limit_dbfs=project.settings.mix_peak_limit_dbfs,
+        )
+        mixed_output = output
+        check_cancelled(cancel_event)
+    if keep_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
     else:
         try:
@@ -713,24 +757,26 @@ def _mix_project_impl(
             project.chinese_stem_file = str(stem.relative_to(project_dir))
             if progress:
                 progress("最终音频已完成；中文中间轨暂时被占用，未能自动删除", 1, 1)
-    project.output_file = str(output.relative_to(project_dir))
+    project.output_file = (
+        str(mixed_output.relative_to(project_dir)) if mixed_output is not None else None
+    )
     project.output_video_file = None
     project.subtitle_video_file = None
     save_project(project, project_dir)
-    if project.source.media_type == "video":
+    if project.source.media_type == "video" and mixed_output is not None:
         if progress:
             progress("保留原画面并封装中文混合音轨", 0, 1)
         video_output = mux_mixed_video(
             source,
-            output,
+            mixed_output,
             project_dir / "output" / output_video_filename(project, project_dir),
         )
         project.output_video_file = video_output.relative_to(project_dir).as_posix()
     save_project(project, project_dir)
     export_transcript(project, project_dir)
     if progress:
-        progress("混音完成", 1, 1)
-    return output
+        progress("中文配音输出完成", 1, 1)
+    return mixed_output or stem
 
 
 def mix_project(
@@ -745,7 +791,7 @@ def mix_project(
         audio_seconds=project.source.duration_seconds,
         sample_rate=project.source.sample_rate,
         channels=project.source.channels,
-        retained_stem=project.settings.retain_chinese_stem,
+        output_mode=project.settings.mix_output_mode,
     ) as metrics:
         output = _mix_project_impl(
             project,
@@ -754,6 +800,14 @@ def mix_project(
             cancel_event=cancel_event,
         )
         metrics["output_bytes"] = output.stat().st_size
+        if project.chinese_stem_file:
+            stem_output = resolve_project_path(
+                project_dir,
+                project.chinese_stem_file,
+                "中文克隆音轨",
+            )
+            if stem_output.is_file():
+                metrics["stem_output_bytes"] = stem_output.stat().st_size
         if project.output_video_file:
             video_output = resolve_project_path(
                 project_dir,
@@ -768,13 +822,14 @@ def mix_project(
 def generate_subtitles(
     project: DubProject,
     project_dir: Path,
-    language: SubtitleLanguage = "bilingual",
+    language: SubtitleLanguage | Literal["ja"] = "bilingual",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> tuple[Path, Path, Path | None]:
     """Create external subtitles and, for video projects, a subtitled video."""
     require_supported_platform()
     check_cancelled(cancel_event)
+    normalized_language: SubtitleLanguage = "source" if language == "ja" else language
     source = verify_source(project_dir, project.source)
 
     if progress:
@@ -782,7 +837,7 @@ def generate_subtitles(
     srt, lrc = write_subtitle_files(
         project.sentences,
         project_dir / "subtitles",
-        language,
+        normalized_language,
         timeline=project.settings.subtitle_timeline,
         maximum_chars=project.settings.subtitle_max_chars_per_line,
         minimum_duration=project.settings.subtitle_min_duration_seconds,
@@ -806,14 +861,19 @@ def generate_subtitles(
             srt,
             project_dir
             / "output"
-            / subtitle_video_filename(project_dir, language, mixed=mixed_audio is not None),
+            / subtitle_video_filename(
+                project_dir,
+                normalized_language,
+                mixed=mixed_audio is not None,
+            ),
             replacement_audio=mixed_audio,
-            subtitle_language=language,
+            subtitle_language=normalized_language,
+            source_language=project.source_language,
         )
         check_cancelled(cancel_event)
     # Commit metadata only after every requested artifact succeeds. Cancellation
     # or FFmpeg failure must leave the previous downloadable outputs visible.
-    project.subtitle_language = language
+    project.subtitle_language = normalized_language
     project.subtitle_srt_file = srt.relative_to(project_dir).as_posix()
     project.subtitle_lrc_file = lrc.relative_to(project_dir).as_posix()
     project.subtitle_video_file = (
@@ -840,8 +900,9 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
         {
             "id": sentence.id,
             "enabled": sentence.enabled,
-            "ja_start_seconds": sentence.start_seconds,
-            "ja_end_seconds": sentence.end_seconds,
+            "source_language": project.source_language,
+            "source_start_seconds": sentence.start_seconds,
+            "source_end_seconds": sentence.end_seconds,
             "zh_start_seconds": (
                 timing_by_id[sentence.id].start_seconds
                 if sentence.id in timing_by_id
@@ -864,7 +925,7 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
                 if sentence.id in timing_by_id
                 else 0.0
             ),
-            "ja": sentence.ja_text,
+            "source": sentence.source_text,
             "zh": sentence.zh_text,
             "status": sentence.status,
             "error": sentence.error,

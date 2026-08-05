@@ -14,11 +14,12 @@ from rich.console import Console
 from rich.table import Table
 
 from .app_logging import configure_logging
-from .asr import transcribe_japanese
+from .asr import transcribe_source
 from .audio import make_analysis_copy
 from .constants import ASMR_VAD_MODEL, DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, cuda_summary, ffmpeg_version
 from .errors import AsmrDubberError
+from .languages import SpeechSourceLanguage
 from .model_pack_download import ModelPackDownloadError, prepare_remote_model_pack
 from .model_packs import (
     ModelPackError,
@@ -68,7 +69,7 @@ app = typer.Typer(
     name="asmr-dubber",
     no_args_is_help=True,
     add_completion=False,
-    help="日语 ASMR → 逐句同音色中文复述（Windows / Linux）",
+    help="日语/英语音声 → 逐句同音色中文复述（Windows / Linux）",
 )
 console = Console()
 
@@ -95,9 +96,12 @@ def create_command(
     projects_root: Annotated[Path | None, typer.Option("--projects-root")] = None,
     offset_ms: Annotated[int | None, typer.Option("--offset-ms")] = None,
     max_speed: Annotated[float | None, typer.Option("--max-speed")] = None,
+    source_language: Annotated[str, typer.Option("--source-language")] = "ja",
 ) -> None:
     """从音频或视频建立项目并保存原始文件副本。"""
     try:
+        if source_language not in {"ja", "en"}:
+            raise ValueError("--source-language 只能是 ja 或 en。")
         settings = load_user_settings().to_project_settings()
         if offset_ms is not None or max_speed is not None:
             values = settings.model_dump()
@@ -110,6 +114,7 @@ def create_command(
             input_media,
             projects_root,
             settings=settings,
+            source_language=cast(SpeechSourceLanguage, source_language),
         )
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
@@ -178,6 +183,8 @@ def mix_command(project_path: Annotated[Path, typer.Argument(exists=True)]) -> N
     console.print(f"[bold green]{output}[/bold green]")
     if project.output_video_file:
         console.print(f"[bold green]{directory / project.output_video_file}[/bold green]")
+    if project.chinese_stem_file:
+        console.print(f"[bold green]{directory / project.chinese_stem_file}[/bold green]")
 
 
 @app.command("subtitles")
@@ -185,13 +192,15 @@ def subtitles_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
     language: Annotated[
         str,
-        typer.Option("--language", "-l", help="bilingual、zh 或 ja"),
+        typer.Option("--language", "-l", help="bilingual、zh 或 source（ja 为兼容别名）"),
     ] = "bilingual",
 ) -> None:
     """独立生成 SRT/LRC；视频项目同时生成带字幕视频。"""
     try:
-        if language not in {"bilingual", "zh", "ja"}:
-            raise ValueError("--language 只能是 bilingual、zh 或 ja。")
+        if language == "ja":
+            language = "source"
+        if language not in {"bilingual", "zh", "source"}:
+            raise ValueError("--language 只能是 bilingual、zh 或 source。")
         project, directory = reload_project(project_path)
         srt, lrc, video = generate_subtitles(
             project,
@@ -560,11 +569,14 @@ def verify_asr_command(
         typer.Option("--kotoba-chunk-seconds"),
     ] = 30.0,
     batch_size: Annotated[int, typer.Option("--batch-size")] = 1,
+    source_language: Annotated[str, typer.Option("--source-language")] = "ja",
 ) -> None:
     """用短音频真实加载一个 ASR（语音识别）后端，不翻译或写入项目。"""
     token = uuid.uuid4().hex
     temporary = portable_home() / "temp" / f"verify-asr-{token}.wav"
     try:
+        if source_language not in {"ja", "en"}:
+            raise ValueError("--source-language 只能是 ja 或 en。")
         analysis = make_analysis_copy(audio.resolve(), temporary)
         settings = ProjectSettings.model_validate(
             {
@@ -579,7 +591,11 @@ def verify_asr_command(
                 "asr_batch_size": batch_size,
             }
         )
-        sentences, language = transcribe_japanese(analysis, settings)
+        sentences, language = transcribe_source(
+            analysis,
+            settings,
+            source_language=cast(SpeechSourceLanguage, source_language),
+        )
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
     finally:
@@ -591,7 +607,7 @@ def verify_asr_command(
                 {
                     "start": sentence.start_seconds,
                     "end": sentence.end_seconds,
-                    "text": sentence.ja_text,
+                    "text": sentence.source_text,
                 }
                 for sentence in sentences
             ],

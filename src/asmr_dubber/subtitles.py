@@ -11,7 +11,7 @@ from .models import Sentence
 from .storage import atomic_write_text
 from .timing import DubbingTiming, plan_dubbing_timing
 
-SubtitleLanguage = Literal["bilingual", "zh", "ja"]
+SubtitleLanguage = Literal["bilingual", "zh", "source"]
 SubtitleTimeline = Literal["source", "dubbing"]
 
 
@@ -52,15 +52,15 @@ def _subtitle_lines(
     language: SubtitleLanguage,
     maximum_chars: int,
 ) -> list[str]:
-    japanese = _wrap_line(sentence.ja_text, maximum_chars)
+    source = _wrap_line(sentence.source_text, maximum_chars)
     chinese = _wrap_line(sentence.zh_text, maximum_chars)
     if language in {"bilingual", "zh"} and not chinese:
         raise ProjectError(f"句子 {sentence.id} 没有中文，无法生成所选字幕。")
-    if language == "ja":
-        return japanese
+    if language == "source":
+        return source
     if language == "zh":
         return chinese
-    return [*japanese, *chinese]
+    return [*source, *chinese]
 
 
 def _subtitle_range(
@@ -100,7 +100,7 @@ def write_subtitle_files(
 ) -> tuple[Path, Path]:
     """Write readable, atomic UTF-8 SRT and LRC subtitle files."""
 
-    if language not in {"bilingual", "zh", "ja"}:
+    if language not in {"bilingual", "zh", "source"}:
         raise ProjectError(f"未知字幕语言：{language}")
     if timeline not in {"source", "dubbing"}:
         raise ProjectError(f"未知字幕时间轴：{timeline}")

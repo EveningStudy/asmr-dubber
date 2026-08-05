@@ -225,3 +225,23 @@ def test_cancelled_video_subtitles_preserve_previous_project_outputs(
     assert loaded.subtitle_lrc_file == "subtitles/old.lrc"
     assert loaded.subtitle_video_file == "output/old.mp4"
     assert old_video.read_bytes() == b"old video"
+
+
+def test_source_subtitles_render_english_text_without_japanese_assumptions(tmp_path: Path) -> None:
+    sentence = Sentence(
+        id="s000001",
+        start_seconds=0.0,
+        end_seconds=2.0,
+        source_text="Please make yourself comfortable.",
+        zh_text="请放松一点。",
+    )
+
+    source_srt, _ = write_subtitle_files([sentence], tmp_path / "source", "source")
+    bilingual_srt, _ = write_subtitle_files([sentence], tmp_path / "bilingual", "bilingual")
+
+    source_text = source_srt.read_text(encoding="utf-8")
+    bilingual_text = bilingual_srt.read_text(encoding="utf-8")
+    assert "Please make yourself\ncomfortable." in source_text
+    assert "请放松一点。" not in source_text
+    assert "Please make yourself\ncomfortable." in bilingual_text
+    assert "请放松一点。" in bilingual_text

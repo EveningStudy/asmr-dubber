@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 
+from . import __version__
 from .app_logging import application_log_path, configure_logging, recent_log_text
 from .constants import (
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
@@ -27,8 +28,10 @@ from .constants import (
     MAX_CHINESE_AUTO_SPEED,
 )
 from .errors import InstallPausedError, OperationCancelledError
+from .languages import SpeechSourceLanguage, source_language_label
 from .model_packs import discover_model_packs, import_discovered_model_packs, model_pack_directory
 from .model_registry import ASR_BACKENDS, CLONE_MODE_LABELS, TTS_BACKENDS
+from .models import ProjectSettings, settings_for_source_language
 from .platforms import portable_home, require_supported_platform, runtime_executable_candidates
 from .runtime_manager import (
     asmr_vad_status,
@@ -43,7 +46,7 @@ from .runtime_manager import (
     refresh_hardware,
 )
 from .task_control import CancellationToken, cancellation_scope
-from .translation import SYSTEM_PROMPT
+from .translation import default_translation_prompt
 from .ui_services import (
     TABLE_HEADERS,
     TABLE_TYPES,
@@ -107,8 +110,41 @@ APP_CSS = """
 #asmr-dubber-product-marker { margin: .25rem 0 1rem; }
 #asmr-dubber-product-marker h1 { margin: 0; font-size: clamp(1.75rem, 5vw, 2.45rem); }
 #asmr-dubber-product-marker p { margin: .35rem 0 0; color: var(--body-text-color-subdued); }
-.workflow-hint { border-left: 4px solid var(--color-accent); padding-left: .85rem; }
+#workflow-hint { border-left: 4px solid var(--color-accent); padding-left: .85rem; }
+#workflow-hint #workflow-hint { border-left: 0 !important; padding-left: 0 !important; }
+#project-start {
+    border: 1px solid var(--border-color-primary) !important;
+    border-left: 4px solid var(--color-accent) !important;
+    border-radius: 10px !important;
+    padding: clamp(.75rem, 2vw, 1.15rem) !important;
+}
+#project-start #project-start {
+    border: 0 !important;
+    padding: 0 !important;
+}
+#project-summary {
+    margin: .25rem 0 .75rem !important;
+    padding: .7rem .85rem !important;
+    border-radius: 8px;
+    background: var(--block-background-fill);
+    color: var(--body-text-color-subdued);
+}
+#project-summary p { margin: 0 !important; }
+#project-summary #project-summary {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+}
+.workflow-actions button { min-height: 44px; font-weight: 600; }
+#project-status {
+    border-left: 4px solid var(--color-accent) !important;
+    padding: .65rem .85rem !important;
+    background: var(--block-background-fill);
+}
+#project-status p { margin: 0 !important; white-space: pre-wrap; }
+#project-status #project-status { border-left: 0 !important; padding: 0 !important; }
 .status-panel textarea, .diagnostics-panel textarea { font-family: var(--font); }
+.optional-section { opacity: .96; }
 .sentence-table, .backend-table, .profile-table {
     min-width: 0 !important;
     max-width: 100% !important;
@@ -168,20 +204,50 @@ _NATIVE_VAD_LABELS = {
 logger = logging.getLogger(__name__)
 
 
-def asr_vad_choices(backend_id: str) -> list[tuple[str, str]]:
+def _speech_language(value: Any) -> SpeechSourceLanguage:
+    return "en" if str(value or "ja") == "en" else "ja"
+
+
+def _asr_backend_choices(language: SpeechSourceLanguage) -> list[tuple[str, str]]:
+    if language == "en":
+        spec = ASR_BACKENDS["faster_whisper"]
+        return [(spec.label, spec.id)]
+    return [(spec.label, key) for key, spec in ASR_BACKENDS.items()]
+
+
+def _asr_models_for_language(
+    backend_id: str,
+    language: SpeechSourceLanguage,
+) -> list[str]:
+    if language == "en":
+        if backend_id != "faster_whisper":
+            return ["large-v2"]
+        return [
+            model
+            for model in ASR_BACKENDS[backend_id].models
+            if not model.startswith("kotoba-tech/")
+        ]
+    return list(ASR_BACKENDS[backend_id].models)
+
+
+def asr_vad_choices(
+    backend_id: str,
+    source_language: SpeechSourceLanguage = "ja",
+) -> list[tuple[str, str]]:
     """Return only VAD modes that can run for the selected backend right now."""
 
     choices = [("不做 VAD 预处理", "off")]
     native = _NATIVE_VAD_LABELS.get(str(backend_id))
     if native:
         choices.append((native, "backend"))
-    if asmr_vad_status().state == "ready":
+    if source_language == "ja" and asmr_vad_status().state == "ready":
         choices.append(("日语 ASMR 专用 Whisper VAD（独立预处理）", "asmr"))
     return choices
 
 
 def _review_control_state(
-    settings: UserSettings,
+    settings: ProjectSettings | UserSettings,
+    source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[
     list[tuple[str, str]],
     list[str],
@@ -190,6 +256,12 @@ def _review_control_state(
     str | None,
 ]:
     review_choices = available_asr_review_choices(settings)
+    if source_language == "en":
+        review_choices = [
+            choice
+            for choice in review_choices
+            if choice[1].startswith("faster_whisper|") and "kotoba-tech/" not in choice[1]
+        ]
     review_values = {value for _, value in review_choices}
     selected = [value for value in settings.asr_review_models if value in review_values]
     primary = f"{settings.asr_backend}|{settings.asr_model}"
@@ -200,6 +272,13 @@ def _review_control_state(
         text_priority = review_choices[0][1]
 
     timestamp_choices = available_timestamp_review_choices(settings)
+    if source_language == "en":
+        timestamp_choices = [
+            choice
+            for choice in timestamp_choices
+            if choice[1].startswith("qwen_forced_aligner|")
+            or (choice[1].startswith("faster_whisper|") and "kotoba-tech/" not in choice[1])
+        ]
     timestamp_values = {value for _, value in timestamp_choices}
     timestamp_priority = settings.asr_review_timestamp_priority_model
     if timestamp_priority not in timestamp_values:
@@ -419,11 +498,16 @@ def _view_values(view: ProjectView) -> tuple[Any, ...]:
             choices, selected, preview = reference_picker(view.manifest)
     return (
         view.manifest,
+        (
+            f"**当前项目：** `{view.manifest}`  \n"
+            f"**音频/台本语言：** {source_language_label(view.source_language)}"
+        ),
         view.rows,
-        view.output_audio,
-        view.output_video,
-        view.subtitle_files,
-        view.subtitle_video,
+        _gr_update(value=view.output_audio, visible=bool(view.output_audio)),
+        _gr_update(value=view.stem_audio, visible=bool(view.stem_audio)),
+        _gr_update(value=view.output_video, visible=bool(view.output_video)),
+        _gr_update(value=view.subtitle_files or None, visible=bool(view.subtitle_files)),
+        _gr_update(value=view.subtitle_video, visible=bool(view.subtitle_video)),
         view.diagnostics,
         view.status,
         _gr_update(choices=choices, value=selected),
@@ -432,7 +516,7 @@ def _view_values(view: ProjectView) -> tuple[Any, ...]:
 
 
 def _empty_project_updates(message: str) -> tuple[Any, ...]:
-    return (*(_gr_update() for _ in range(7)), message, _gr_update(), _gr_update())
+    return (*(_gr_update() for _ in range(9)), message, _gr_update(), _gr_update())
 
 
 def _gr_update(**kwargs: Any) -> Any:
@@ -479,6 +563,13 @@ def _settings_from_form(
 ) -> UserSettings:
     current = load_user_settings().model_dump()
     form = dict(zip(field_names, values, strict=True))
+    selected_language = str(
+        form.get("default_source_language", current.get("default_source_language", "ja")) or "ja"
+    )
+    if selected_language not in {"ja", "en"}:
+        raise ValueError(f"未知音频语言：{selected_language}")
+    prompt_drafts = form.pop("translation_prompt_drafts", None)
+    displayed_prompt = form.pop("translation_prompt", None)
     loudness_mode = form.pop("loudness_mode", None)
     source_ceiling = form.pop("loudness_source_ceiling_dbfs", None)
     uniform_target = form.pop("loudness_uniform_target_dbfs", None)
@@ -496,11 +587,30 @@ def _settings_from_form(
             current["chinese_target_active_rms_dbfs"] = uniform_target
         elif mode == "raw" and raw_gain is not None:
             current["chinese_gain_db"] = raw_gain
-    displayed_prompt = str(current.get("translation_prompt", "")).replace("\r\n", "\n").strip()
-    if displayed_prompt == SYSTEM_PROMPT.replace("\r\n", "\n"):
-        # Show the built-in prompt in the form without freezing a duplicate in
-        # settings.json. Future built-in improvements still take effect when
-        # the displayed text has not been edited.
+    if displayed_prompt is not None:
+        drafts = dict(prompt_drafts) if isinstance(prompt_drafts, dict) else {}
+        drafts[selected_language] = str(displayed_prompt or "")
+        for language in ("ja", "en"):
+            candidate = (
+                str(
+                    drafts.get(
+                        language,
+                        _translation_prompt_for_display(
+                            current.get(f"translation_prompt_{language}", ""),
+                            cast(SpeechSourceLanguage, language),
+                        ),
+                    )
+                    or ""
+                )
+                .replace("\r\n", "\n")
+                .strip()
+            )
+            built_in = default_translation_prompt(cast(SpeechSourceLanguage, language)).replace(
+                "\r\n", "\n"
+            )
+            current[f"translation_prompt_{language}"] = "" if candidate == built_in else candidate
+        # ProjectSettings keeps one active prompt. UserSettings stores one
+        # override per source language and chooses it when a project is made.
         current["translation_prompt"] = ""
     primary_asr = f"{current.get('asr_backend', '')}|{current.get('asr_model', '')}"
     if not current.get("asr_review_text_priority_model"):
@@ -532,8 +642,71 @@ def _provider_update(provider: Any) -> tuple[Any, ...]:
     )
 
 
-def _translation_prompt_for_display(value: Any) -> str:
-    return str(value or "").strip() or SYSTEM_PROMPT
+def _translation_prompt_for_display(
+    value: Any,
+    source_language: SpeechSourceLanguage = "ja",
+) -> str:
+    return str(value or "").strip() or default_translation_prompt(source_language)
+
+
+def _translation_prompt_drafts(settings: UserSettings) -> dict[str, str]:
+    return {
+        language: _translation_prompt_for_display(
+            settings.translation_prompt_for(cast(SpeechSourceLanguage, language)),
+            cast(SpeechSourceLanguage, language),
+        )
+        for language in ("ja", "en")
+    }
+
+
+def _translation_prompt_note(language: SpeechSourceLanguage, prompt: str) -> str:
+    label = source_language_label(language)
+    built_in = default_translation_prompt(language).replace("\r\n", "\n").strip()
+    current = str(prompt or "").replace("\r\n", "\n").strip()
+    if current == built_in:
+        return f"当前使用 **{label} → 中文内置 Prompt**。程序更新内置内容后会自动跟随。"
+    return f"当前使用 **{label} → 中文自定义 Prompt**。另一种语言的 Prompt 不会被覆盖。"
+
+
+def _translation_prompt_language_update(
+    language: Any,
+    current_prompt: Any,
+    drafts: Any,
+    active_language: Any,
+) -> tuple[Any, dict[str, str], str, str]:
+    selected = "en" if str(language or "ja") == "en" else "ja"
+    previous = "en" if str(active_language or "ja") == "en" else "ja"
+    values = dict(drafts) if isinstance(drafts, dict) else {}
+    values[previous] = str(current_prompt or "")
+    prompt = str(values.get(selected) or default_translation_prompt(selected)).strip()
+    values[selected] = prompt
+    return (
+        _gr_update(
+            label=f"翻译 Prompt（{source_language_label(selected)} → 中文）",
+            value=prompt,
+        ),
+        values,
+        selected,
+        _translation_prompt_note(selected, prompt),
+    )
+
+
+def _reset_translation_prompt(
+    language: Any,
+    drafts: Any,
+) -> tuple[Any, dict[str, str], str]:
+    selected = "en" if str(language or "ja") == "en" else "ja"
+    prompt = default_translation_prompt(selected)
+    values = dict(drafts) if isinstance(drafts, dict) else {}
+    values[selected] = prompt
+    return (
+        _gr_update(
+            label=f"翻译 Prompt（{source_language_label(selected)} → 中文）",
+            value=prompt,
+        ),
+        values,
+        _translation_prompt_note(selected, prompt),
+    )
 
 
 def _loudness_mode(normalize: bool, match_source: bool) -> str:
@@ -560,12 +733,12 @@ def _loudness_mode_update(mode: Any) -> tuple[Any, ...]:
 
 _TRANSCRIPT_TIMING_CHOICES = [
     ("按台词长度估算（无需模型，之后手动校对）", "estimate"),
-    ("Qwen3 ForcedAligner 自动对齐（仅日语台本，需要进阶组件）", "qwen"),
+    ("Qwen3 ForcedAligner 自动对齐（需要进阶组件）", "qwen"),
 ]
 
 
-def _transcript_language_update(language: Any) -> Any:
-    if str(language or "ja") == "zh":
+def _transcript_kind_update(script_kind: Any) -> Any:
+    if str(script_kind or "source") == "zh":
         return _gr_update(
             choices=[_TRANSCRIPT_TIMING_CHOICES[0]],
             value="estimate",
@@ -573,16 +746,38 @@ def _transcript_language_update(language: Any) -> Any:
     return _gr_update(choices=_TRANSCRIPT_TIMING_CHOICES, value="estimate")
 
 
-def _asr_backend_update(backend: Any, current_vad_mode: Any = "off") -> tuple[Any, ...]:
+def _source_language_backend_update(language: Any, current_backend: Any) -> tuple[Any, str]:
+    selected = _speech_language(language)
+    backend_id = str(current_backend or "")
+    if selected == "en" or backend_id not in ASR_BACKENDS:
+        backend_id = "faster_whisper" if selected == "en" else "parakeet_nemo"
+    note = (
+        "英语项目使用 Faster-Whisper；日语专用的 Parakeet、Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
+        if selected == "en"
+        else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
+    )
+    return _gr_update(choices=_asr_backend_choices(selected), value=backend_id), note
+
+
+def _asr_backend_update(
+    backend: Any,
+    current_vad_mode: Any = "off",
+    source_language: Any = "ja",
+) -> tuple[Any, ...]:
+    language = _speech_language(source_language)
     backend_id = str(backend or "")
+    if language == "en":
+        backend_id = "faster_whisper"
     spec = ASR_BACKENDS.get(backend_id, ASR_BACKENDS["parakeet_nemo"])
-    vad_choices = asr_vad_choices(backend_id)
+    models = _asr_models_for_language(backend_id, language)
+    default_model = spec.default_model if spec.default_model in models else models[0]
+    vad_choices = asr_vad_choices(backend_id, language)
     vad_values = {value for _, value in vad_choices}
     vad_mode = str(current_vad_mode or "off")
     if vad_mode not in vad_values:
         vad_mode = "off"
     return (
-        _gr_update(choices=list(spec.models), value=spec.default_model),
+        _gr_update(choices=models, value=default_model),
         f"{spec.help}\n\n{spec.setup}",
         _gr_update(visible=backend_id == "faster_whisper"),
         _gr_update(visible=backend_id == "faster_whisper"),
@@ -636,6 +831,56 @@ def _asr_vad_update(mode: Any) -> tuple[Any, ...]:
 def _review_visibility_update(enabled: Any) -> tuple[Any, ...]:
     update = _gr_update(visible=bool(enabled))
     return tuple(update.copy() for _ in range(6))
+
+
+def _review_language_update(
+    language: Any,
+    enabled: Any,
+    selected_models: Any,
+    text_priority: Any,
+    timestamp_priority: Any,
+    backend: Any,
+    model: Any,
+) -> tuple[Any, Any, Any, Any]:
+    source_language = _speech_language(language)
+    settings = load_user_settings()
+    choices = available_asr_review_choices(settings)
+    timestamps = available_timestamp_review_choices(settings)
+    if source_language == "en":
+        choices = [
+            choice
+            for choice in choices
+            if choice[1].startswith("faster_whisper|") and "kotoba-tech/" not in choice[1]
+        ]
+        timestamps = [
+            choice
+            for choice in timestamps
+            if choice[1].startswith("qwen_forced_aligner|")
+            or (choice[1].startswith("faster_whisper|") and "kotoba-tech/" not in choice[1])
+        ]
+    values = {value for _, value in choices}
+    timestamp_values = {value for _, value in timestamps}
+    selected = [str(item) for item in (selected_models or []) if str(item) in values]
+    primary = f"{backend}|{model}"
+    chosen_text = str(text_priority or "")
+    if chosen_text not in values:
+        chosen_text = primary if primary in values else (choices[0][1] if choices else "")
+    chosen_timestamp = str(timestamp_priority or "")
+    if chosen_timestamp not in timestamp_values:
+        chosen_timestamp = (
+            primary if primary in timestamp_values else (timestamps[0][1] if timestamps else "")
+        )
+    review_enabled = bool(enabled) and any(item != primary for item in selected)
+    return (
+        _gr_update(value=review_enabled, interactive=bool(choices)),
+        _gr_update(choices=choices, value=selected, visible=review_enabled),
+        _gr_update(choices=choices, value=chosen_text or None, visible=review_enabled),
+        _gr_update(
+            choices=timestamps,
+            value=chosen_timestamp or None,
+            visible=review_enabled,
+        ),
+    )
 
 
 _TTS_DEFAULT_URLS = {
@@ -697,9 +942,13 @@ def _tts_detail_visibility(
         and str(reference_source or "") == "external"
         and not (backend_id == "cosyvoice" and str(cosyvoice_mode or "") == "cross_lingual")
     )
+    external_reference_language = (
+        backend_id == "gpt_sovits" and str(reference_source or "") == "external"
+    )
     return (
         _gr_update(visible=external_speaker),
         _gr_update(visible=external_reference_text),
+        _gr_update(visible=external_reference_language),
         _gr_update(visible=is_index and str(index_emotion_source or "") == "external"),
         _gr_update(visible=is_index and str(index_emotion_source or "") == "text"),
     )
@@ -731,18 +980,23 @@ def build_app() -> Any:
     import gradio as gr
 
     stored = load_user_settings()
+    selected_source_language = stored.default_source_language
+    asr_stored = settings_for_source_language(
+        stored.to_project_settings(source_language=selected_source_language),
+        selected_source_language,
+    )
     controller = DownloadController()
     task_controller = ProjectTaskController()
-    asr_spec = ASR_BACKENDS[stored.asr_backend]
+    asr_spec = ASR_BACKENDS[asr_stored.asr_backend]
     tts_spec = TTS_BACKENDS[stored.tts_backend]
     provider = PROVIDER_PRESETS.get(stored.translation_provider, PROVIDER_PRESETS["deepseek"])
     initial_loudness_mode = _loudness_mode(
         stored.normalize_chinese_loudness,
         stored.match_source_loudness,
     )
-    initial_vad_choices = asr_vad_choices(stored.asr_backend)
+    initial_vad_choices = asr_vad_choices(asr_stored.asr_backend, selected_source_language)
     initial_vad_values = {value for _, value in initial_vad_choices}
-    initial_vad_mode = stored.asr_vad_mode
+    initial_vad_mode = asr_stored.asr_vad_mode
     if initial_vad_mode not in initial_vad_values:
         initial_vad_mode = "off"
     (
@@ -751,68 +1005,76 @@ def build_app() -> Any:
         initial_review_text_priority,
         initial_timestamp_choices,
         initial_review_timestamp_priority,
-    ) = _review_control_state(stored)
+    ) = _review_control_state(asr_stored, selected_source_language)
     initial_aligner_ready = any(
         value.startswith("qwen_forced_aligner|") for _, value in initial_timestamp_choices
     )
-    initial_review_enabled = stored.asr_review_enabled and bool(initial_review_models)
+    initial_review_enabled = asr_stored.asr_review_enabled and bool(initial_review_models)
     recent = recent_projects(stored.projects_root or None)
     initial_recent = recent[0][1] if recent else None
 
-    with gr.Blocks(title="ASMR Dubber 0.4") as app:
+    with gr.Blocks(title=f"ASMR Dubber {__version__}") as app:
         gr.HTML(
             "<header><h1>ASMR Dubber</h1>"
-            "<p>把日语 ASMR 转成逐句同音色中文配音 · 便携版 0.4</p></header>",
+            f"<p>音频识别、翻译、中文配音与字幕制作 · {__version__}</p></header>",
             elem_id="asmr-dubber-product-marker",
         )
 
         with gr.Tabs():
             with gr.Tab("项目工作台", id="project-workspace"):
                 gr.Markdown(
-                    "**推荐顺序：** 新建/打开项目 → ASR（语音识别）→ 翻译并校对 → "
-                    "TTS（语音合成）与混音。每一步都会保存项目，可随时关闭后继续。",
-                    elem_classes=["workflow-hint"],
+                    "新建或打开项目后，按下面的 1–4 步处理。每一步都会自动保存。",
+                    elem_id="workflow-hint",
                 )
-                with gr.Row(elem_classes=["mobile-stack"]):
-                    source_input = gr.File(
-                        label="日语音频或视频",
-                        file_types=["audio", "video"],
-                        type="filepath",
-                        scale=2,
+                with gr.Group(elem_id="project-start"):
+                    gr.Markdown("### 新建或打开项目")
+                    with gr.Row(elem_classes=["mobile-stack"]):
+                        source_input = gr.File(
+                            label="原始音频或视频",
+                            file_types=["audio", "video"],
+                            type="filepath",
+                            scale=3,
+                        )
+                        with gr.Column(scale=1):
+                            create_button = gr.Button("新建项目", variant="primary")
+                            refresh_projects_button = gr.Button("刷新项目列表")
+                    with gr.Row(elem_classes=["mobile-stack"]):
+                        recent_project = gr.Dropdown(
+                            label="最近项目",
+                            choices=recent,
+                            value=initial_recent,
+                            allow_custom_value=True,
+                            info="也可以粘贴 project.json 的完整路径。",
+                            scale=3,
+                        )
+                        open_project_button = gr.Button("打开项目", scale=1)
+                    project_path = gr.Textbox(
+                        label="当前项目文件",
+                        interactive=False,
+                        visible=False,
                     )
-                    with gr.Column(scale=1):
-                        create_button = gr.Button("新建项目", variant="primary")
-                        refresh_projects_button = gr.Button("刷新最近项目")
-                with gr.Row():
-                    recent_project = gr.Dropdown(
-                        label="最近项目",
-                        choices=recent,
-                        value=initial_recent,
-                        allow_custom_value=True,
-                        info="也可以粘贴 project.json 的完整路径。",
-                        scale=3,
+                    project_summary = gr.Markdown(
+                        "尚未打开项目。新建项目的音频语言在“设置 → ASR（语音识别）”中选择。",
+                        elem_id="project-summary",
                     )
-                    open_project_button = gr.Button("打开项目", scale=1)
-                project_path = gr.Textbox(
-                    label="当前项目文件",
-                    interactive=False,
-                )
 
-                with gr.Accordion("已有台本或字幕（可跳过 ASR）", open=False):
+                with gr.Accordion(
+                    "使用已有台本或字幕（可选）",
+                    open=False,
+                    elem_classes=["optional-section"],
+                ):
                     gr.Markdown(
-                        "有时间戳的 SRT、VTT、ASS/SSA、LRC 会直接建立句子时间轴。"
-                        "TXT 或粘贴文字按每个非空行作为一句，可按台词长度估算，"
-                        "日语纯台本也可用进阶组件 Qwen3 ForcedAligner 自动对齐。"
-                        "中文台本会直接写入中文配音列，跳过 ASR（语音识别）和翻译。"
-                        "导入会替换当前句子表，但不会修改原音频。"
+                        "先新建或打开项目。带时间轴的字幕会直接导入；TXT 和粘贴文本可以"
+                        "估算时间，也可以用 Qwen3 ForcedAligner 对齐。导入会替换当前句子表，"
+                        "原始音频不会改变。"
                     )
-                    transcript_language = gr.Radio(
-                        label="台本语言",
+                    transcript_kind = gr.Radio(
+                        label="导入内容",
                         choices=[
-                            ("日语台本（跳过 ASR，之后翻译）", "ja"),
-                            ("中文配音文本（跳过 ASR 和翻译）", "zh"),
+                            ("原文台本或字幕（沿用当前项目语言，之后翻译）", "source"),
+                            ("中文配音稿或中文字幕（直接配音）", "zh"),
                         ],
-                        value="ja",
+                        value="source",
                     )
                     transcript_file = gr.File(
                         label="台本或字幕文件",
@@ -820,7 +1082,7 @@ def build_app() -> Any:
                         type="filepath",
                     )
                     transcript_text = gr.Textbox(
-                        label="也可以直接粘贴纯台本",
+                        label="粘贴纯文本",
                         placeholder="每个非空行作为一句；选择文件时，粘贴内容优先。",
                         lines=6,
                     )
@@ -834,13 +1096,23 @@ def build_app() -> Any:
                         variant="primary",
                     )
 
-                gr.Markdown("## 处理步骤")
-                with gr.Row(equal_height=True):
+                gr.Markdown("## 制作流程")
+                with gr.Row(
+                    equal_height=True,
+                    elem_classes=["workflow-actions", "mobile-stack"],
+                ):
                     asr_button = gr.Button("1 · 运行 ASR（语音识别）", variant="primary")
-                    translate_button = gr.Button("2 · 翻译日文")
+                    translate_button = gr.Button("2 · 翻译为中文")
                     save_table_button = gr.Button("3 · 保存校对表格")
-                    synthesize_button = gr.Button("4 · TTS（语音合成）并混音", variant="primary")
+                    synthesize_button = gr.Button(
+                        "4 · TTS（语音合成）并输出",
+                        variant="primary",
+                    )
                 cancel_task_button = gr.Button("取消当前执行", variant="stop")
+                status = gr.Markdown(
+                    "请选择原始文件新建项目，或从最近项目中继续。",
+                    elem_id="project-status",
+                )
 
                 sentence_table = gr.Dataframe(
                     headers=TABLE_HEADERS,
@@ -853,15 +1125,17 @@ def build_app() -> Any:
                     elem_classes=["sentence-table"],
                 )
                 gr.Markdown(
-                    "可编辑启用状态、时间、日文和中文；清空一行的日文和中文即可删除"
-                    "该句。状态与错误不会混入业务数据。"
+                    "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
+                    "保存后会删除该句。"
                 )
 
-                with gr.Accordion("统一音色参考", open=False):
-                    gr.Markdown(
-                        "推荐选择 5–15 秒、清晰且包含完整台词的一句。只影响项目内统一音色模式。"
-                    )
-                    with gr.Row():
+                with gr.Accordion(
+                    "统一音色参考（可选）",
+                    open=False,
+                    elem_classes=["optional-section"],
+                ):
+                    gr.Markdown("建议选择一段 5–15 秒、声音清楚且台词完整的片段。")
+                    with gr.Row(elem_classes=["mobile-stack"]):
                         reference_sentence = gr.Dropdown(
                             label="项目参考句",
                             choices=[],
@@ -875,51 +1149,74 @@ def build_app() -> Any:
                         interactive=False,
                     )
 
-                with gr.Row():
+                with (
+                    gr.Accordion(
+                        "生成字幕（可选）",
+                        open=False,
+                        elem_classes=["optional-section"],
+                    ),
+                    gr.Row(elem_classes=["mobile-stack"]),
+                ):
                     subtitle_language = gr.Radio(
                         label="字幕内容",
                         choices=[
-                            ("日中双语", "bilingual"),
+                            ("原文 + 中文", "bilingual"),
                             ("仅中文", "zh"),
-                            ("仅日文", "ja"),
+                            ("仅原文", "source"),
                         ],
                         value="bilingual",
                     )
                     subtitle_button = gr.Button("生成字幕")
 
-                with gr.Row():
+                gr.Markdown("## 输出文件")
+                with gr.Row(elem_classes=["mobile-stack"]):
                     output_audio = gr.Audio(
-                        label="完成音频",
+                        label="混音成品",
                         type="filepath",
                         interactive=False,
+                        visible=False,
                     )
-                    output_video = gr.Video(label="完成视频", interactive=False)
-                with gr.Row():
+                    stem_audio = gr.Audio(
+                        label="中文克隆音轨",
+                        type="filepath",
+                        interactive=False,
+                        visible=False,
+                    )
+                with gr.Row(elem_classes=["mobile-stack"]):
+                    output_video = gr.Video(
+                        label="完成视频",
+                        interactive=False,
+                        visible=False,
+                    )
+                with gr.Row(elem_classes=["mobile-stack"]):
                     subtitle_files = gr.File(
                         label="字幕文件（SRT / LRC）",
                         file_count="multiple",
                         interactive=False,
+                        visible=False,
                     )
-                    subtitle_video = gr.Video(label="带字幕视频", interactive=False)
-                diagnostics = gr.Textbox(
-                    label="项目诊断",
-                    lines=6,
-                    interactive=False,
-                    elem_classes=["diagnostics-panel"],
-                )
-                status = gr.Textbox(
-                    label="状态与错误",
-                    value="请选择源文件新建项目，或打开最近项目。",
-                    lines=4,
-                    interactive=False,
-                    elem_classes=["status-panel"],
-                )
+                    subtitle_video = gr.Video(
+                        label="带字幕视频",
+                        interactive=False,
+                        visible=False,
+                    )
+                with gr.Accordion(
+                    "项目详情与诊断",
+                    open=False,
+                    elem_classes=["optional-section"],
+                ):
+                    diagnostics = gr.Textbox(
+                        label="诊断信息",
+                        lines=6,
+                        interactive=False,
+                        elem_classes=["diagnostics-panel"],
+                    )
 
             with gr.Tab("设置", id="settings"):
                 gr.Markdown(
-                    "这里可以编辑**以后新项目的默认值**，也可以把同一份表单保存并应用到"
-                    "当前项目。打开旧项目不会自动覆盖其设置。密钥以明文保存在程序目录的"
-                    " `.asmr-dubber/config/secrets.json`；删除整个程序文件夹时会一并删除。"
+                    "这里保存新项目的默认设置。已经打开的项目仍使用自己的设置；需要更新时，"
+                    "请点击页面底部的“保存并应用到当前项目”。API 密钥保存在程序目录的"
+                    " `.asmr-dubber/config/secrets.json`。"
                 )
                 settings_status = gr.Textbox(
                     label="设置状态",
@@ -928,6 +1225,9 @@ def build_app() -> Any:
                     lines=3,
                 )
                 settings_components: dict[str, Any] = {}
+                prompt_drafts = _translation_prompt_drafts(stored)
+                settings_components["translation_prompt_drafts"] = gr.State(prompt_drafts)
+                active_prompt_language = gr.State(selected_source_language)
 
                 with gr.Tabs():
                     with gr.Tab("设备与模型", id="models"):
@@ -1016,15 +1316,35 @@ def build_app() -> Any:
                         )
 
                     with gr.Tab("ASR（语音识别）", id="asr"):
+                        gr.Markdown("### 新建项目")
+                        settings_components["default_source_language"] = gr.Radio(
+                            label="新建媒体项目的音频语言",
+                            choices=[("日语", "ja"), ("英语", "en")],
+                            value=selected_source_language,
+                            info=(
+                                "新建项目时使用。当前已经打开的项目会保留自己的语言；"
+                                "导入原文台本时直接沿用当前项目语言。"
+                            ),
+                        )
+                        source_language_help = gr.Markdown(
+                            "英语项目使用 Faster-Whisper；日语专用的 Parakeet、"
+                            "Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
+                            if selected_source_language == "en"
+                            else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
+                        )
+                        gr.Markdown("### 识别方式")
                         settings_components["asr_backend"] = gr.Dropdown(
                             label="ASR（语音识别）后端",
-                            choices=[(spec.label, key) for key, spec in ASR_BACKENDS.items()],
-                            value=stored.asr_backend,
+                            choices=_asr_backend_choices(selected_source_language),
+                            value=asr_stored.asr_backend,
                         )
                         settings_components["asr_model"] = gr.Dropdown(
                             label="ASR（语音识别）模型",
-                            choices=list(asr_spec.models),
-                            value=stored.asr_model,
+                            choices=_asr_models_for_language(
+                                asr_stored.asr_backend,
+                                selected_source_language,
+                            ),
+                            value=asr_stored.asr_model,
                             allow_custom_value=True,
                         )
                         asr_help = gr.Markdown(f"{asr_spec.help}\n\n{asr_spec.setup}")
@@ -1032,23 +1352,23 @@ def build_app() -> Any:
                             settings_components["asr_device"] = gr.Dropdown(
                                 label="识别设备",
                                 choices=[("NVIDIA CUDA", "cuda"), ("CPU", "cpu")],
-                                value=stored.asr_device,
+                                value=asr_stored.asr_device,
                             )
                             settings_components["asr_compute_type"] = gr.Dropdown(
                                 label="计算精度",
                                 choices=["float16", "float32", "int8_float16", "int8"],
-                                value=stored.asr_compute_type,
+                                value=asr_stored.asr_compute_type,
                                 allow_custom_value=True,
-                                visible=stored.asr_backend == "faster_whisper",
+                                visible=asr_stored.asr_backend == "faster_whisper",
                             )
                             settings_components["asr_batch_size"] = gr.Number(
-                                label="批大小", value=stored.asr_batch_size, precision=0
+                                label="批大小", value=asr_stored.asr_batch_size, precision=0
                             )
                             settings_components["asr_beam_size"] = gr.Number(
                                 label="束搜索宽度（Beam Size）",
-                                value=stored.asr_beam_size,
+                                value=asr_stored.asr_beam_size,
                                 precision=0,
-                                visible=stored.asr_backend == "faster_whisper",
+                                visible=asr_stored.asr_backend == "faster_whisper",
                             )
                         with gr.Row():
                             settings_components["pause_split_seconds"] = gr.Number(
@@ -1059,8 +1379,8 @@ def build_app() -> Any:
                             )
                             settings_components["asr_timeout_seconds"] = gr.Number(
                                 label="Parakeet 连续无响应超时（秒）",
-                                value=stored.asr_timeout_seconds,
-                                visible=stored.asr_backend == "parakeet_nemo",
+                                value=asr_stored.asr_timeout_seconds,
+                                visible=asr_stored.asr_backend == "parakeet_nemo",
                                 info="持续收到识别进度时不会因总耗时超过该值而停止。",
                             )
                         with gr.Accordion("VAD 与当前后端参数", open=False):
@@ -1075,73 +1395,75 @@ def build_app() -> Any:
                             )
                             settings_components["asr_vad_min_silence_ms"] = gr.Number(
                                 label="VAD 最短静音毫秒",
-                                value=stored.asr_vad_min_silence_ms,
+                                value=asr_stored.asr_vad_min_silence_ms,
                                 precision=0,
                                 visible=initial_vad_mode == "backend",
                             )
                             settings_components["asr_asmr_vad_threshold"] = gr.Number(
                                 label="ASMR VAD 语音阈值",
-                                value=stored.asr_asmr_vad_threshold,
+                                value=asr_stored.asr_asmr_vad_threshold,
                                 visible=initial_vad_mode == "asmr",
                             )
                             settings_components["asr_asmr_vad_min_speech_ms"] = gr.Number(
                                 label="ASMR VAD 最短语音毫秒",
-                                value=stored.asr_asmr_vad_min_speech_ms,
+                                value=asr_stored.asr_asmr_vad_min_speech_ms,
                                 precision=0,
                                 visible=initial_vad_mode == "asmr",
                             )
                             settings_components["asr_asmr_vad_min_silence_ms"] = gr.Number(
                                 label="ASMR VAD 最短静音毫秒",
-                                value=stored.asr_asmr_vad_min_silence_ms,
+                                value=asr_stored.asr_asmr_vad_min_silence_ms,
                                 precision=0,
                                 visible=initial_vad_mode == "asmr",
                             )
                             settings_components["asr_asmr_vad_speech_pad_ms"] = gr.Number(
                                 label="ASMR VAD 边界保留毫秒",
-                                value=stored.asr_asmr_vad_speech_pad_ms,
+                                value=asr_stored.asr_asmr_vad_speech_pad_ms,
                                 precision=0,
                                 visible=initial_vad_mode == "asmr",
                             )
                             settings_components["asr_condition_on_previous_text"] = gr.Checkbox(
                                 label="使用上一段文字作为识别条件",
-                                value=stored.asr_condition_on_previous_text,
-                                visible=stored.asr_backend in {"kotoba_whisper", "faster_whisper"},
+                                value=asr_stored.asr_condition_on_previous_text,
+                                visible=asr_stored.asr_backend
+                                in {"kotoba_whisper", "faster_whisper"},
                             )
                             settings_components["asr_initial_prompt"] = gr.Textbox(
-                                label="日文识别提示词",
-                                value=stored.asr_initial_prompt,
+                                label="识别提示词（人名、作品名或特殊读法）",
+                                value=asr_stored.asr_initial_prompt,
                                 lines=3,
-                                visible=stored.asr_backend in {"parakeet_nemo", "faster_whisper"},
+                                visible=asr_stored.asr_backend
+                                in {"parakeet_nemo", "faster_whisper"},
                             )
                             settings_components["asr_parakeet_decoder"] = gr.Radio(
                                 label="Parakeet 解码头",
                                 choices=[("TDT", "tdt"), ("CTC", "ctc")],
-                                value=stored.asr_parakeet_decoder,
+                                value=asr_stored.asr_parakeet_decoder,
                                 visible=(
-                                    stored.asr_backend == "parakeet_nemo"
-                                    and stored.asr_model == "nvidia/parakeet-tdt_ctc-0.6b-ja"
+                                    asr_stored.asr_backend == "parakeet_nemo"
+                                    and asr_stored.asr_model == "nvidia/parakeet-tdt_ctc-0.6b-ja"
                                 ),
                             )
                             settings_components["asr_chunk_seconds"] = gr.Number(
                                 label="Parakeet 分块秒数（15–600）",
-                                value=stored.asr_chunk_seconds,
-                                visible=stored.asr_backend == "parakeet_nemo",
+                                value=asr_stored.asr_chunk_seconds,
+                                visible=asr_stored.asr_backend == "parakeet_nemo",
                             )
                             settings_components["asr_kotoba_chunk_seconds"] = gr.Number(
                                 label="Kotoba-Whisper 分块秒数（5–120）",
-                                value=stored.asr_kotoba_chunk_seconds,
+                                value=asr_stored.asr_kotoba_chunk_seconds,
                                 visible=(
-                                    stored.asr_backend == "kotoba_whisper"
+                                    asr_stored.asr_backend == "kotoba_whisper"
                                     or (
-                                        stored.asr_backend == "faster_whisper"
-                                        and stored.asr_model
+                                        asr_stored.asr_backend == "faster_whisper"
+                                        and asr_stored.asr_model
                                         == "kotoba-tech/kotoba-whisper-v2.0-faster"
                                     )
                                 ),
                             )
                         settings_components["asr_forced_alignment_enabled"] = gr.Checkbox(
                             label=("识别后使用 Qwen3 ForcedAligner 0.6B（阿里）重新计算时间戳"),
-                            value=stored.asr_forced_alignment_enabled,
+                            value=asr_stored.asr_forced_alignment_enabled,
                             visible=initial_aligner_ready,
                             info="识别文字不变；该模型只重新寻找每句话的起止时间。",
                         )
@@ -1178,18 +1500,18 @@ def build_app() -> Any:
                             )
                             settings_components["asr_review_max_drift_seconds"] = gr.Number(
                                 label="允许时间漂移秒数",
-                                value=stored.asr_review_max_drift_seconds,
+                                value=asr_stored.asr_review_max_drift_seconds,
                                 visible=initial_review_enabled,
                             )
                             settings_components["asr_review_background"] = gr.Textbox(
                                 label="作品、人物与场景背景",
-                                value=stored.asr_review_background,
+                                value=asr_stored.asr_review_background,
                                 lines=4,
                                 visible=initial_review_enabled,
                             )
                             settings_components["asr_review_prompt"] = gr.Textbox(
                                 label="ASR（语音识别）校对提示词（Prompt）",
-                                value=stored.asr_review_prompt,
+                                value=asr_stored.asr_review_prompt,
                                 lines=10,
                                 visible=initial_review_enabled,
                             )
@@ -1247,14 +1569,24 @@ def build_app() -> Any:
                                     precision=0,
                                 )
                             settings_components["translation_prompt"] = gr.Textbox(
-                                label="自定义翻译 Prompt（留空使用内置）",
-                                value=_translation_prompt_for_display(stored.translation_prompt),
+                                label=(
+                                    "翻译 Prompt"
+                                    f"（{source_language_label(selected_source_language)} → 中文）"
+                                ),
+                                value=prompt_drafts[selected_source_language],
                                 lines=12,
                                 info=(
-                                    "当前直接显示实际使用的 Prompt。保持原样保存时仍跟随内置版本；"
-                                    "修改后保存为自定义 Prompt。"
+                                    "日语和英语分别保存。直接编辑会改为自定义；"
+                                    "点击下方按钮可恢复当前语言的内置版本。"
                                 ),
                             )
+                            translation_prompt_note = gr.Markdown(
+                                _translation_prompt_note(
+                                    selected_source_language,
+                                    prompt_drafts[selected_source_language],
+                                )
+                            )
+                            reset_translation_prompt_button = gr.Button("恢复当前语言的内置 Prompt")
                         with gr.Group(
                             visible=stored.translation_provider == "deepl"
                         ) as deepl_translation_group:
@@ -1370,7 +1702,7 @@ def build_app() -> Any:
                                 value=stored.tts_clone_mode,
                             )
                             settings_components["tts_external_reference_text"] = gr.Textbox(
-                                label="外部参考音频对应日文",
+                                label="外部参考音频对应原文",
                                 value=stored.tts_external_reference_text,
                                 lines=3,
                                 visible=(
@@ -1379,6 +1711,20 @@ def build_app() -> Any:
                                         stored.tts_backend == "cosyvoice"
                                         and stored.tts_cosyvoice_mode == "cross_lingual"
                                     )
+                                ),
+                            )
+                            settings_components["tts_external_reference_language"] = gr.Dropdown(
+                                label="外部参考音频语言",
+                                choices=[
+                                    ("跟随当前项目语言", "auto"),
+                                    ("日语", "ja"),
+                                    ("英语", "en"),
+                                    ("中文", "zh"),
+                                ],
+                                value=stored.tts_external_reference_language,
+                                visible=(
+                                    stored.tts_backend == "gpt_sovits"
+                                    and stored.tts_reference_source == "external"
                                 ),
                             )
 
@@ -1625,17 +1971,29 @@ def build_app() -> Any:
                             choices=[("自动（优先中置）", "auto"), ("复制到全部声道", "all")],
                             value=stored.chinese_channel_routing,
                         )
-                        settings_components["mix_peak_protection"] = gr.Checkbox(
-                            label="最终混音峰值保护", value=stored.mix_peak_protection
+                        settings_components["mix_output_mode"] = gr.Radio(
+                            label="音频输出方式",
+                            choices=[
+                                ("混音成品和中文克隆音轨", "both"),
+                                ("仅混音成品", "mixed"),
+                                ("仅中文克隆音轨", "stem"),
+                            ],
+                            value=stored.mix_output_mode,
+                            info=(
+                                "“仅中文克隆音轨”会导出一条与原文件等长的 WAV，方便单独编辑。"
+                                "之后改回包含混音成品的选项，可以直接重新混音，不会重新生成配音。"
+                            ),
                         )
-                        settings_components["mix_peak_limit_dbfs"] = gr.Number(
-                            label="最终峰值上限（dBFS）", value=stored.mix_peak_limit_dbfs
-                        )
-                        settings_components["retain_chinese_stem"] = gr.Checkbox(
-                            label="保留中文中间轨", value=stored.retain_chinese_stem
-                        )
+                        with gr.Group(visible=stored.mix_output_mode != "stem") as final_mix_group:
+                            settings_components["mix_peak_protection"] = gr.Checkbox(
+                                label="最终混音峰值保护", value=stored.mix_peak_protection
+                            )
+                            settings_components["mix_peak_limit_dbfs"] = gr.Number(
+                                label="最终峰值上限（dBFS）", value=stored.mix_peak_limit_dbfs
+                            )
                         settings_components["skip_japanese_fillers"] = gr.Checkbox(
-                            label="跳过纯日语语气词", value=stored.skip_japanese_fillers
+                            label="日语项目跳过纯语气词",
+                            value=stored.skip_japanese_fillers,
                         )
                         settings_components["reference_padding_seconds"] = gr.Number(
                             label="参考音频边缘扩展秒数",
@@ -1647,7 +2005,7 @@ def build_app() -> Any:
                         gr.Markdown("### 字幕")
                         settings_components["subtitle_timeline"] = gr.Radio(
                             label="字幕时间轴",
-                            choices=[("原日语时间", "source"), ("中文配音时间", "dubbing")],
+                            choices=[("原字幕时间", "source"), ("中文配音时间", "dubbing")],
                             value=stored.subtitle_timeline,
                         )
                         with gr.Row():
@@ -1692,8 +2050,10 @@ def build_app() -> Any:
 
         common_outputs = [
             project_path,
+            project_summary,
             sentence_table,
             output_audio,
+            stem_audio,
             output_video,
             subtitle_files,
             subtitle_video,
@@ -1723,11 +2083,16 @@ def build_app() -> Any:
             finally:
                 task_controller.finish(label)
 
-        def create_callback(source: Any, progress: gr.Progress = gr.Progress()) -> tuple[Any, ...]:
+        def create_callback(
+            source: Any,
+            language: str,
+            progress: gr.Progress = gr.Progress(),
+        ) -> tuple[Any, ...]:
             return run_project_task(
                 "新建项目",
                 create_project,
                 source,
+                language,
                 _StageProgress(progress),
             )
 
@@ -1754,7 +2119,7 @@ def build_app() -> Any:
             transcript: Any,
             text: str,
             timing: str,
-            language: str,
+            script_kind: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
             return run_project_task(
@@ -1764,7 +2129,7 @@ def build_app() -> Any:
                 transcript,
                 text,
                 timing,
-                language,
+                script_kind,
                 _StageProgress(progress),
             )
 
@@ -1790,7 +2155,7 @@ def build_app() -> Any:
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
             return run_project_task(
-                "TTS（语音合成）与混音",
+                "TTS（语音合成）与输出",
                 synthesize_and_mix,
                 manifest,
                 table,
@@ -1838,7 +2203,7 @@ def build_app() -> Any:
 
         create_button.click(
             create_callback,
-            inputs=[source_input],
+            inputs=[source_input, settings_components["default_source_language"]],
             outputs=common_outputs,
             api_name="create_project",
             **runtime_options,
@@ -1870,15 +2235,15 @@ def build_app() -> Any:
                 transcript_file,
                 transcript_text,
                 plain_timing,
-                transcript_language,
+                transcript_kind,
             ],
             outputs=common_outputs,
             api_name="import_transcript",
             **runtime_options,
         )
-        transcript_language.change(
-            _transcript_language_update,
-            inputs=[transcript_language],
+        transcript_kind.change(
+            _transcript_kind_update,
+            inputs=[transcript_kind],
             outputs=[plain_timing],
             api_name=_PRIVATE_API,
             queue=False,
@@ -1938,11 +2303,86 @@ def build_app() -> Any:
             queue=False,
         )
 
+        source_language_event = settings_components["default_source_language"].change(
+            _source_language_backend_update,
+            inputs=[
+                settings_components["default_source_language"],
+                settings_components["asr_backend"],
+            ],
+            outputs=[settings_components["asr_backend"], source_language_help],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        source_language_event.then(
+            _asr_backend_update,
+            inputs=[
+                settings_components["asr_backend"],
+                settings_components["asr_vad_mode"],
+                settings_components["default_source_language"],
+            ],
+            outputs=[
+                settings_components["asr_model"],
+                asr_help,
+                settings_components["asr_compute_type"],
+                settings_components["asr_beam_size"],
+                settings_components["asr_condition_on_previous_text"],
+                settings_components["asr_initial_prompt"],
+                settings_components["asr_timeout_seconds"],
+                settings_components["asr_chunk_seconds"],
+                settings_components["asr_parakeet_decoder"],
+                settings_components["asr_kotoba_chunk_seconds"],
+                settings_components["asr_vad_mode"],
+                settings_components["asr_vad_min_silence_ms"],
+                settings_components["asr_asmr_vad_threshold"],
+                settings_components["asr_asmr_vad_min_speech_ms"],
+                settings_components["asr_asmr_vad_min_silence_ms"],
+                settings_components["asr_asmr_vad_speech_pad_ms"],
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        ).then(
+            _review_language_update,
+            inputs=[
+                settings_components["default_source_language"],
+                settings_components["asr_review_enabled"],
+                settings_components["asr_review_models"],
+                settings_components["asr_review_text_priority_model"],
+                settings_components["asr_review_timestamp_priority_model"],
+                settings_components["asr_backend"],
+                settings_components["asr_model"],
+            ],
+            outputs=[
+                settings_components["asr_review_enabled"],
+                settings_components["asr_review_models"],
+                settings_components["asr_review_text_priority_model"],
+                settings_components["asr_review_timestamp_priority_model"],
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        source_language_event.then(
+            _translation_prompt_language_update,
+            inputs=[
+                settings_components["default_source_language"],
+                settings_components["translation_prompt"],
+                settings_components["translation_prompt_drafts"],
+                active_prompt_language,
+            ],
+            outputs=[
+                settings_components["translation_prompt"],
+                settings_components["translation_prompt_drafts"],
+                active_prompt_language,
+                translation_prompt_note,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         settings_components["asr_backend"].change(
             _asr_backend_update,
             inputs=[
                 settings_components["asr_backend"],
                 settings_components["asr_vad_mode"],
+                settings_components["default_source_language"],
             ],
             outputs=[
                 settings_components["asr_model"],
@@ -2024,6 +2464,20 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+        reset_translation_prompt_button.click(
+            _reset_translation_prompt,
+            inputs=[
+                settings_components["default_source_language"],
+                settings_components["translation_prompt_drafts"],
+            ],
+            outputs=[
+                settings_components["translation_prompt"],
+                settings_components["translation_prompt_drafts"],
+                translation_prompt_note,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         tts_backend_event = (
             settings_components["tts_backend"]
             .change(
@@ -2068,6 +2522,7 @@ def build_app() -> Any:
         tts_detail_outputs = [
             external_speaker_group,
             settings_components["tts_external_reference_text"],
+            settings_components["tts_external_reference_language"],
             external_emotion_group,
             settings_components["tts_index_emo_text"],
         ]
@@ -2138,6 +2593,13 @@ def build_app() -> Any:
                 settings_components["chinese_gain_db"],
                 settings_components["chinese_stem_peak_dbfs"],
             ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["mix_output_mode"].change(
+            lambda mode: gr.update(visible=str(mode or "both") != "stem"),
+            inputs=[settings_components["mix_output_mode"]],
+            outputs=[final_mix_group],
             api_name=_PRIVATE_API,
             queue=False,
         )

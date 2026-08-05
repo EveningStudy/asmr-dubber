@@ -219,7 +219,8 @@ bash scripts/linux/install-parakeet.sh
 ## Kotoba/Faster-Whisper 显示模型不完整
 
 进阶方案固定准备 Kotoba-Whisper v2.2 和 Faster-Whisper large-v2。选择同系列其它变体时，
-用户必须自行把完整模型放入程序识别的本地缓存；程序不会在点击识别时静默下载大型模型。
+用户需要自行准备完整模型；程序不会在点击识别时静默下载大型模型。Faster-Whisper large-v3
+的本地安装方法见[后端指南](BACKENDS.md#使用-large-v3)。
 
 如果当前选择正是 v2.2/large-v2：
 

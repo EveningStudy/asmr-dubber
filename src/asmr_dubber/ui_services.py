@@ -13,7 +13,14 @@ from typing import Any, cast
 from . import pipeline
 from .audio import extract_reference, verify_source
 from .errors import ProjectError
-from .models import DubProject, ProjectSettings, Sentence, save_project
+from .languages import SourceLanguage, SpeechSourceLanguage, source_language_label
+from .models import (
+    DubProject,
+    ProjectSettings,
+    Sentence,
+    save_project,
+    settings_for_source_language,
+)
 from .platforms import portable_home
 from .subtitles import SubtitleLanguage
 from .task_control import CancellationSignal
@@ -25,7 +32,7 @@ TABLE_HEADERS = [
     "启用中文处理",
     "开始（秒）",
     "结束（秒）",
-    "日文原文",
+    "原文",
     "中文译文",
 ]
 TABLE_TYPES = ["str", "bool", "number", "number", "str", "str"]
@@ -41,8 +48,10 @@ _ASR_AFFECTING_SETTINGS = frozenset(
 @dataclass(frozen=True)
 class ProjectView:
     manifest: str
+    source_language: str
     rows: list[list[Any]]
     output_audio: str | None
+    stem_audio: str | None
     output_video: str | None
     subtitle_files: list[str]
     subtitle_video: str | None
@@ -99,7 +108,7 @@ def project_rows(project: DubProject) -> list[list[Any]]:
             sentence.enabled,
             sentence.start_seconds,
             sentence.end_seconds,
-            sentence.ja_text,
+            sentence.source_text,
             sentence.zh_text,
         ]
         for sentence in project.sentences
@@ -117,9 +126,9 @@ def apply_table(project: DubProject, table: Any) -> bool:
         if len(row) != len(TABLE_HEADERS):
             raise ProjectError(f"第 {index} 行列数错误，应为 {len(TABLE_HEADERS)} 列。")
         sentence_id = _text(row[0], f"第 {index} 行句子 ID", required=True)
-        ja_text = _text(row[4], f"{sentence_id} 日文")
+        source_text = _text(row[4], f"{sentence_id} 源文")
         zh_text = _text(row[5], f"{sentence_id} 中文")
-        if not ja_text and not zh_text:
+        if not source_text and not zh_text:
             # Clearing the only available text is how a user removes a sentence
             # from Gradio's fixed-column table.  Leave it out of the persisted
             # list so subtitles, TTS and mixing all observe the deletion.
@@ -137,7 +146,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
             "enabled": _boolean(row[1], f"{sentence_id} 启用状态"),
             "start_seconds": start,
             "end_seconds": end,
-            "ja_text": ja_text,
+            "source_text": source_text,
             "zh_text": zh_text,
         }
         if old is None:
@@ -238,7 +247,10 @@ def _project_asset(project_dir: Path, stored: str | None) -> Path | None:
 
 def diagnostics(project: DubProject) -> str:
     counts = Counter(sentence.status for sentence in project.sentences)
-    lines = [f"总句数：{len(project.sentences)}"]
+    lines = [
+        f"项目语言：{source_language_label(project.source_language)}",
+        f"总句数：{len(project.sentences)}",
+    ]
     if counts:
         lines.append("状态：" + "；".join(f"{key} {value}" for key, value in counts.items()))
     errors = [f"{item.id}：{item.error}" for item in project.sentences if item.error]
@@ -261,8 +273,10 @@ def view(project: DubProject, project_dir: Path, status: str) -> ProjectView:
     ]
     return ProjectView(
         manifest=str((project_dir / "project.json").resolve()),
+        source_language=project.source_language,
         rows=project_rows(project),
         output_audio=stage_for_ui(_project_asset(project_dir, project.output_file)),
+        stem_audio=stage_for_ui(_project_asset(project_dir, project.chinese_stem_file)),
         output_video=stage_for_ui(_project_asset(project_dir, project.output_video_file)),
         subtitle_files=[path for path in subtitle_paths if path],
         subtitle_video=stage_for_ui(_project_asset(project_dir, project.subtitle_video_file)),
@@ -278,21 +292,31 @@ def load_view(project_path: str, status: str = "项目已加载。") -> ProjectV
 
 def create_project(
     source_media: Any,
+    source_language: str = "ja",
     progress: Any | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> ProjectView:
     source = Path(str(source_media or "")).expanduser().resolve()
     if not source.is_file():
-        raise ProjectError("请先选择日语音频或视频。")
+        raise ProjectError("请先选择音频或视频。")
+    if source_language not in {"ja", "en"}:
+        raise ProjectError("新项目的音频语言必须是日语或英语。")
     defaults = load_user_settings()
     project, directory = pipeline.create_project(
         source,
         projects_root=defaults.projects_root or None,
-        settings=defaults.to_project_settings(),
+        settings=defaults.to_project_settings(
+            source_language=cast(SpeechSourceLanguage, source_language)
+        ),
+        source_language=cast(SourceLanguage, source_language),
         progress=progress,
         cancel_event=cancel_event,
     )
-    return view(project, directory, "项目已建立。下一步运行 ASR（语音识别）。")
+    return view(
+        project,
+        directory,
+        f"项目已建立，音频语言为{source_language_label(source_language)}。可以开始识别。",
+    )
 
 
 def save_table(project_path: str, table: Any) -> ProjectView:
@@ -309,46 +333,51 @@ def import_transcript_data(
     transcript_file: Any,
     pasted_text: str,
     plain_timing: str,
-    script_language: str = "ja",
+    script_kind: str = "source",
     progress: Any | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
+    if script_kind not in {"source", "zh"}:
+        raise ProjectError("导入内容必须是原文台本或中文配音稿。")
+    if script_kind == "source" and project.source_language == "zh":
+        raise ProjectError("当前项目使用中文配音稿；如需导入原文，请按正确的音频语言新建项目。")
+    script_language = "zh" if script_kind == "zh" else project.source_language
     result = pipeline.import_project_transcript(
         project,
         directory,
         transcript_path=str(transcript_file) if transcript_file else None,
         pasted_text=str(pasted_text or ""),
         plain_timing=str(plain_timing or "estimate"),
-        script_language=str(script_language or "ja"),
+        script_language=script_language,
         progress=progress,
         cancel_event=cancel_event,
     )
     chinese_script = result["language"] == "zh"
     if result["timed"] and chinese_script:
         message = (
-            f"已从 {result['format']} 导入 {result['sentences']} 句中文配音文本及原时间轴；"
-            "已跳过 ASR（语音识别）和翻译，校对后可直接运行 TTS（语音合成）。"
+            f"已从 {result['format']} 导入 {result['sentences']} 句中文配音稿和时间轴。"
+            "校对后可以直接生成配音。"
         )
     elif result["timed"]:
         message = (
-            f"已从 {result['format']} 导入 {result['sentences']} 句及原时间轴；"
-            "已跳过 ASR（语音识别）和自动切分，下一步翻译日文。"
+            f"已从 {result['format']} 导入 {result['sentences']} 句原文和时间轴。"
+            "检查内容后可以翻译为中文。"
         )
     elif plain_timing == "qwen":
         message = (
-            f"已导入 {result['sentences']} 句纯台本；Qwen3 ForcedAligner 成功对齐 "
-            f"{result['qwen_aligned_sentences']} 句。请抽查时间轴后再翻译。"
+            f"已导入 {result['sentences']} 句纯台本，Qwen3 ForcedAligner 成功对齐 "
+            f"{result['qwen_aligned_sentences']} 句。请先抽查时间轴。"
         )
     elif chinese_script:
         message = (
-            f"已导入 {result['sentences']} 句中文配音文本并按台词长度生成初始时间轴。"
-            "请校对时间轴，之后可跳过 ASR（语音识别）和翻译，直接运行 TTS（语音合成）。"
+            f"已导入 {result['sentences']} 句中文配音稿，并按文字长度生成初始时间轴。"
+            "请先校对时间轴，再生成配音。"
         )
     else:
         message = (
-            f"已导入 {result['sentences']} 句纯台本并按台词长度生成初始时间轴。"
-            "该时间轴只是估算，请在表格中校对后再继续。"
+            f"已导入 {result['sentences']} 句纯台本，并按文字长度生成初始时间轴。"
+            "时间仅供起步，请在表格中校对。"
         )
     return view(project, directory, message)
 
@@ -406,7 +435,12 @@ def synthesize_and_mix(
         cancel_event=cancel_event,
     )
     pipeline.mix_project(project, directory, progress=progress, cancel_event=cancel_event)
-    return view(project, directory, "TTS（语音合成）与混音完成。")
+    mode_label = {
+        "mixed": "混音成品",
+        "stem": "中文克隆音轨",
+        "both": "混音成品和中文克隆音轨",
+    }[project.settings.mix_output_mode]
+    return view(project, directory, f"TTS（语音合成）与输出完成：{mode_label}。")
 
 
 def subtitles(
@@ -418,8 +452,10 @@ def subtitles(
 ) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
-    if language not in {"bilingual", "zh", "ja"}:
-        raise ProjectError("字幕内容必须是日中双语、仅中文或仅日文。")
+    if language == "ja":
+        language = "source"
+    if language not in {"bilingual", "zh", "source"}:
+        raise ProjectError("字幕内容必须是双语、仅中文或仅源文。")
     pipeline.generate_subtitles(
         project,
         directory,
@@ -433,7 +469,13 @@ def subtitles(
 def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     previous = project.settings.model_dump()
-    project.settings = settings.to_project_settings(project.settings)
+    project.settings = settings_for_source_language(
+        settings.to_project_settings(
+            project.settings,
+            source_language=project.source_language,
+        ),
+        project.source_language,
+    )
     current = project.settings.model_dump()
     changed_fields = sorted(
         name for name in ProjectSettings.model_fields if previous.get(name) != current.get(name)
@@ -456,9 +498,16 @@ def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectV
         or project.settings.asr_review_timestamp_priority_model.startswith("qwen_forced_aligner|")
         else "ASR 自带"
     )
+    output_mode = {
+        "mixed": "仅混音成品",
+        "stem": "仅中文克隆音轨",
+        "both": "混音成品+中文克隆音轨",
+    }[project.settings.mix_output_mode]
     effective = (
+        f"项目语言={source_language_label(project.source_language)}；"
         f"ASR={project.settings.asr_backend}；VAD={project.settings.asr_vad_mode}；"
         f"多模型交叉校对={review}；时间戳={timestamp}"
+        f"；音频输出={output_mode}"
     )
     if not changed_fields:
         message = f"当前项目设置没有变化。生效配置：{effective}"
@@ -505,7 +554,7 @@ def reference_picker(project_path: str) -> tuple[list[tuple[str, str]], str | No
         duration = sentence.end_seconds - sentence.start_seconds
         prefix = "★ 推荐 · " if sentence.id == recommended_id else ""
         warning = "⚠ 过短 · " if duration < 1.5 else ""
-        excerpt = " ".join((sentence.ja_text or sentence.zh_text).split())[:42] or "（无文本）"
+        excerpt = " ".join((sentence.source_text or sentence.zh_text).split())[:42] or "（无文本）"
         choices.append(
             (
                 f"{prefix}{warning}{sentence.id} · {duration:.1f}s · {excerpt}",
