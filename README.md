@@ -187,8 +187,7 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 
 ## 配套工具
 
-需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到哔哩哔哩的双语音声或视频时，
-可以配合 [ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 使用。
+需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到某些平台的双语音声或视频时，可以配合项目 [ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 使用。
 
 ## 项目目录
 
