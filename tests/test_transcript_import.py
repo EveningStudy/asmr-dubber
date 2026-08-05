@@ -194,3 +194,104 @@ def test_project_import_rejects_qwen_alignment_for_chinese_script(tmp_path: Path
             plain_timing="qwen",
             script_language="zh",
         )
+
+
+def test_untimed_source_script_reuses_asr_timing_and_reconciles_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _import_project(tmp_path)
+
+    def fake_analyze(working: DubProject, *_args: object, **_kwargs: object) -> None:
+        from asmr_dubber.models import Sentence
+
+        working.sentences = [
+            Sentence(id="s000001", start_seconds=1.0, end_seconds=2.5, source_text="识别错误。")
+        ]
+
+    def fake_reconcile(*_args: object, **_kwargs: object) -> tuple[dict[str, str], list[dict]]:
+        return {"s000001": "台本正确文本。"}, [{"recognized_ids": ["s000001"]}]
+
+    monkeypatch.setattr(pipeline, "_analyze_project_impl", fake_analyze)
+    monkeypatch.setattr(pipeline, "reconcile_script_sentences", fake_reconcile)
+    monkeypatch.setattr(pipeline, "resolve_api_key", lambda *_args, **_kwargs: "test-key")
+
+    result = pipeline.import_project_transcript(
+        project,
+        tmp_path,
+        pasted_text="台本正确文本。",
+        plain_timing="script_review",
+        script_language="ja",
+    )
+
+    assert result["script_reconciled"] is True
+    assert project.source_language == "ja"
+    assert project.asr_language == "日语（ASR + 台本校对）"
+    assert project.sentences[0].source_text == "台本正确文本。"
+    assert project.sentences[0].start_seconds == pytest.approx(1.0)
+    assert project.sentences[0].end_seconds == pytest.approx(2.5)
+    report = json.loads(
+        (tmp_path / "imports" / "latest-transcript.json").read_text(encoding="utf-8")
+    )
+    assert report["script_reconciled"] is True
+
+
+def test_timed_subtitle_stays_direct_even_when_smart_script_mode_is_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _import_project(tmp_path)
+
+    def unexpected_reconcile(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("timed subtitles must not invoke smart script reconciliation")
+
+    monkeypatch.setattr(pipeline, "_reconcile_untimed_script", unexpected_reconcile)
+    result = pipeline.import_project_transcript(
+        project,
+        tmp_path,
+        pasted_text="1\n00:00:01,000 --> 00:00:02,000\n台本字幕。\n",
+        plain_timing="script_review",
+        script_language="ja",
+    )
+
+    assert result["timed"] is True
+    assert result["script_reconciled"] is False
+    assert project.sentences[0].source_text == "台本字幕。"
+    assert project.sentences[0].start_seconds == pytest.approx(1.0)
+
+
+def test_untimed_chinese_script_reconciles_translation_without_changing_source_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _import_project(tmp_path)
+
+    def fake_analyze(working: DubProject, *_args: object, **_kwargs: object) -> None:
+        from asmr_dubber.models import Sentence
+
+        working.sentences = [
+            Sentence(id="s000001", start_seconds=2.0, end_seconds=4.0, source_text="おやすみ。")
+        ]
+
+    def fake_translate(working: DubProject, *_args: object, **_kwargs: object) -> None:
+        working.sentences[0].zh_text = "晚安。"
+        working.sentences[0].status = "translated"
+
+    def fake_reconcile(*_args: object, **_kwargs: object) -> tuple[dict[str, str], list[dict]]:
+        return {"s000001": "好好休息，晚安。"}, []
+
+    monkeypatch.setattr(pipeline, "_analyze_project_impl", fake_analyze)
+    monkeypatch.setattr(pipeline, "_translate_project_impl", fake_translate)
+    monkeypatch.setattr(pipeline, "reconcile_script_sentences", fake_reconcile)
+    monkeypatch.setattr(pipeline, "resolve_api_key", lambda *_args, **_kwargs: "test-key")
+
+    result = pipeline.import_project_transcript(
+        project,
+        tmp_path,
+        pasted_text="好好休息，晚安。",
+        plain_timing="script_review",
+        script_language="zh",
+    )
+
+    assert result["script_reconciled"] is True
+    assert project.source_language == "ja"
+    assert project.sentences[0].source_text == "おやすみ。"
+    assert project.sentences[0].zh_text == "好好休息，晚安。"
+    assert project.sentences[0].start_seconds == pytest.approx(2.0)

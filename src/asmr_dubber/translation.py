@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib.resources import files
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -65,6 +66,32 @@ class TranslationEnvelope(BaseModel):
     translations: list[TranslationItem] = Field(min_length=1)
 
 
+class ScriptCorrection(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    id: str
+    text: str
+
+    @field_validator("id")
+    @classmethod
+    def nonempty_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class ScriptCorrectionEnvelope(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    corrections: list[ScriptCorrection] = Field(min_length=1)
+
+
 @dataclass(frozen=True)
 class TranslationChunk:
     sentences: list[Sentence]
@@ -76,6 +103,11 @@ def _load_prompt(name: str) -> str:
 
 _SYSTEM_PROMPT_TEMPLATE = _load_prompt("translation.md")
 _DEEPSEEK_STRUCTURE_PROMPT = _load_prompt("translation-structure.md")
+_SCRIPT_RECONCILIATION_PROMPT = _load_prompt("script-reconciliation.md")
+
+LLM_RECONCILIATION_PROVIDERS = frozenset(
+    {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
+)
 
 _SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str]] = {
     "ja": ("日语", "日语中的「あ」「え」「う」「ん」「ふふ」「えーと」"),
@@ -223,6 +255,21 @@ def validate_translation(content: str, expected_ids: list[str]) -> dict[str, str
         extra = [item for item in actual_ids if item not in expected_ids]
         raise TranslationError(f"翻译返回的 id/顺序不一致；缺少={missing[:8]}，多出={extra[:8]}")
     return {item.id: item.zh for item in envelope.translations}
+
+
+def validate_script_reconciliation(content: str, expected_ids: list[str]) -> dict[str, str]:
+    try:
+        envelope = ScriptCorrectionEnvelope.model_validate(_extract_json(content))
+    except (ValidationError, TranslationError) as exc:
+        raise TranslationError(f"台本校对返回的结构无效：{exc}") from exc
+    actual_ids = [item.id for item in envelope.corrections]
+    if actual_ids != expected_ids:
+        missing = [item for item in expected_ids if item not in actual_ids]
+        extra = [item for item in actual_ids if item not in expected_ids]
+        raise TranslationError(
+            f"台本校对返回的 id/顺序不一致；缺少={missing[:8]}，多出={extra[:8]}"
+        )
+    return {item.id: item.text for item in envelope.corrections}
 
 
 class DeepSeekTranslator:
@@ -460,7 +507,7 @@ class LLMTranslator:
         return messages
 
     def _request(self, messages: list[dict[str, str]], job_id: str) -> tuple[str, bool]:
-        if self.provider in {"openai", "openai_compatible"}:
+        if self.provider in {"deepseek", "openai", "openai_compatible"}:
             token_field = "max_completion_tokens" if self.provider == "openai" else "max_tokens"
             payload: dict[str, object] = {
                 "model": self.model,
@@ -472,6 +519,8 @@ class LLMTranslator:
                 "stream": False,
                 "user": job_id,
             }
+            if self.provider == "deepseek":
+                payload["thinking"] = {"type": "disabled"}
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
@@ -597,6 +646,198 @@ class LLMTranslator:
         raise TranslationError(
             f"{self.provider} 翻译在 {self.max_retries} 次尝试后仍失败：{last_error}"
         ) from last_error
+
+
+@dataclass(frozen=True)
+class ScriptReconciliationBatch:
+    recognized: list[Sentence]
+    script: list[tuple[str, str]]
+
+
+def _script_reconciliation_batches(
+    recognized: list[Sentence],
+    script_lines: list[str],
+    *,
+    maximum_recognized: int = 8,
+    context_lines: int = 6,
+) -> list[ScriptReconciliationBatch]:
+    if not recognized:
+        raise TranslationError("没有可供台本校对的识别结果。")
+    if not script_lines:
+        raise TranslationError("台本中没有可供校对的文字。")
+    total_recognized = len(recognized)
+    total_script = len(script_lines)
+    batches: list[ScriptReconciliationBatch] = []
+    for start in range(0, total_recognized, maximum_recognized):
+        end = min(total_recognized, start + maximum_recognized)
+        estimated_start = int(start * total_script / total_recognized)
+        estimated_end = int(end * total_script / total_recognized)
+        window_start = max(0, estimated_start - context_lines)
+        window_end = min(total_script, estimated_end + context_lines)
+        if window_end - window_start > 48:
+            window_end = min(total_script, window_start + 48)
+        if window_end <= window_start:
+            window_end = min(total_script, window_start + 1)
+        script = [
+            (f"p{index + 1:06d}", text)
+            for index, text in enumerate(script_lines[window_start:window_end], start=window_start)
+        ]
+        batches.append(ScriptReconciliationBatch(recognized[start:end], script))
+    return batches
+
+
+def _script_reconciliation_messages(
+    batch: ScriptReconciliationBatch,
+    *,
+    source_language: SourceLanguage,
+    target: Literal["source", "zh"],
+    attempt: int,
+) -> list[dict[str, str]]:
+    output_label = source_language_label(source_language) if target == "source" else "中文"
+    retry_note = (
+        ""
+        if attempt == 1
+        else f"这是第 {attempt} 次校验重试。必须返回全部识别 id，且顺序完全一致。"
+    )
+    recognized_payload = []
+    for sentence in batch.recognized:
+        item: dict[str, object] = {
+            "id": sentence.id,
+            "start": round(sentence.start_seconds, 3),
+            "end": round(sentence.end_seconds, 3),
+            "recognized": sentence.source_text,
+        }
+        if target == "zh":
+            item["translation"] = sentence.zh_text
+        recognized_payload.append(item)
+    script_payload = [{"id": line_id, "text": text} for line_id, text in batch.script]
+    recognized_json = json.dumps(recognized_payload, ensure_ascii=False, separators=(",", ":"))
+    script_json = json.dumps(script_payload, ensure_ascii=False, separators=(",", ":"))
+    system = (
+        _SCRIPT_RECONCILIATION_PROMPT.replace("{{OUTPUT_LABEL}}", output_label)
+        .replace("{{RETRY_NOTE}}", retry_note)
+        .replace("{{RECOGNIZED_JSON}}", recognized_json)
+        .replace("{{SCRIPT_JSON}}", script_json)
+        .strip()
+    )
+    user = (
+        "请只根据下面两组数据完成校对。输出结构必须是："
+        + json.dumps(
+            {"corrections": [{"id": sentence.id, "text": ""} for sentence in batch.recognized]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n请根据系统消息中的数据完成校对。"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def reconcile_script_sentences(
+    recognized: list[Sentence],
+    script_lines: list[str],
+    *,
+    source_language: SourceLanguage,
+    target: Literal["source", "zh"],
+    provider: str,
+    api_key: str,
+    model: str,
+    base_url: str = DEFAULT_DEEPSEEK_BASE_URL,
+    temperature: float = 0.1,
+    top_p: float = 1.0,
+    max_output_tokens: int = 16_384,
+    job_id: str = "asmr_dubber_script_review",
+    progress: Progress | None = None,
+    on_batch: Callable[[], None] | None = None,
+    client: httpx.Client | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> tuple[dict[str, str], list[dict[str, object]]]:
+    """Use an LLM to map an untimed script onto ASR timing without changing time ranges."""
+
+    if provider not in LLM_RECONCILIATION_PROVIDERS:
+        raise TranslationError(
+            "台本校对需要大模型翻译服务；请选择 DeepSeek、OpenAI、Claude、Gemini "
+            "或本地/自定义 OpenAI-compatible。"
+        )
+    batches = _script_reconciliation_batches(recognized, script_lines)
+    translator = LLMTranslator(
+        provider=provider,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        system_prompt="",
+        temperature=temperature,
+        top_p=top_p,
+        max_output_tokens=max_output_tokens,
+        client=client,
+        source_language=source_language,
+    )
+    cancel_translation = translator.close
+    callback_signal = register_cancel_callback(cancel_translation, cancel_event)
+    corrections: dict[str, str] = {}
+    report: list[dict[str, object]] = []
+    try:
+        with translator:
+            for index, batch in enumerate(batches):
+                check_cancelled(cancel_event)
+                expected_ids = [sentence.id for sentence in batch.recognized]
+                last_error: Exception | None = None
+                result: dict[str, str] | None = None
+                for attempt in range(1, 4):
+                    check_cancelled(cancel_event)
+                    messages = _script_reconciliation_messages(
+                        batch,
+                        source_language=source_language,
+                        target=target,
+                        attempt=attempt,
+                    )
+                    # Anthropic and Gemini use this field as their system instruction;
+                    # OpenAI-compatible providers also receive the explicit system message.
+                    translator.system_prompt = messages[0]["content"]
+                    try:
+                        content, output_limited = translator._request(messages, job_id)
+                        if output_limited:
+                            raise _OutputLengthTranslationError(
+                                f"台本校对第 {index + 1} 批输出达到长度上限。"
+                            )
+                        if not content.strip():
+                            raise TranslationError("台本校对模型返回了空内容。")
+                        result = validate_script_reconciliation(content, expected_ids)
+                        break
+                    except (_NonRetryableTranslationError, _OutputLengthTranslationError):
+                        raise
+                    except TranslationError as exc:
+                        last_error = exc
+                    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+                        last_error = exc
+                    if attempt < 3:
+                        time.sleep(min(8.0, attempt * 1.5 + random.uniform(0.0, 0.5)))
+                if result is None:
+                    raise TranslationError(
+                        f"台本校对第 {index + 1}/{len(batches)} 批失败：{last_error}"
+                    ) from last_error
+                corrections.update(result)
+                report.append(
+                    {
+                        "recognized_ids": expected_ids,
+                        "script_ids": [line_id for line_id, _ in batch.script],
+                        "corrections": result,
+                    }
+                )
+                if on_batch:
+                    on_batch()
+                if progress:
+                    progress(
+                        f"台本校对第 {index + 1}/{len(batches)} 批完成",
+                        index + 1,
+                        len(batches),
+                    )
+                check_cancelled(cancel_event)
+    finally:
+        unregister_cancel_callback(cancel_translation, callback_signal)
+    return corrections, report
 
 
 class MachineTranslationAPI:

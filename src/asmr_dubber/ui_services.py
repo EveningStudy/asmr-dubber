@@ -354,7 +354,13 @@ def import_transcript_data(
         cancel_event=cancel_event,
     )
     chinese_script = result["language"] == "zh"
-    if result["timed"] and chinese_script:
+    if result.get("script_reconciled"):
+        stage = "ASR、翻译和台本校对" if chinese_script else "ASR 和台本校对"
+        message = (
+            f"已完成 {stage}，保留识别得到的时间轴并校正了 {result['sentences']} 句文字。"
+            "请抽查句子表后继续。"
+        )
+    elif result["timed"] and chinese_script:
         message = (
             f"已从 {result['format']} 导入 {result['sentences']} 句中文配音稿和时间轴。"
             "校对后可以直接生成配音。"

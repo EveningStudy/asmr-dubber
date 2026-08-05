@@ -4,6 +4,8 @@ import csv
 import json
 import os
 import re
+import shutil
+import tempfile
 import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -44,7 +46,11 @@ from .subtitles import SubtitleLanguage, write_subtitle_files
 from .task_control import CancellationSignal, check_cancelled
 from .timing import dubbing_start_seconds, plan_dubbing_timing
 from .transcript_import import TranscriptLanguage, parse_transcript
-from .translation import translate_sentences
+from .translation import (
+    LLM_RECONCILIATION_PROVIDERS,
+    reconcile_script_sentences,
+    translate_sentences,
+)
 from .tts import synthesize_sentences, tts_cache_key
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
 
@@ -149,6 +155,113 @@ def create_project(
     return project, project_dir
 
 
+def _reconcile_untimed_script(
+    project: DubProject,
+    project_dir: Path,
+    *,
+    script_lines: list[str],
+    script_language: TranscriptLanguage,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> tuple[list[Sentence], list[dict[str, object]]]:
+    """Run the normal ASR/translation flow in a temporary project, then apply the script text."""
+
+    provider = project.settings.translation_provider
+    if provider not in LLM_RECONCILIATION_PROVIDERS:
+        raise ProjectError(
+            "无时间轴台本的智能校对需要大模型翻译服务；请先在设置中选择 DeepSeek、OpenAI、"
+            "Claude、Gemini 或本地/自定义 OpenAI-compatible。"
+        )
+    preset = PROVIDER_PRESETS.get(provider)
+    if preset is None:
+        raise ProjectError(f"未知翻译服务：{provider}")
+    key = resolve_api_key(provider)
+    base_url = project.settings.translation_base_url.strip() or str(preset["base_url"])
+    source = verify_source(project_dir, project.source)
+    temporary_root = project_dir / "temp"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="script-reconcile-", dir=temporary_root) as name:
+        working_dir = Path(name)
+        source_name = Path(project.source.path).name or "source.media"
+        working_source = working_dir / source_name
+        try:
+            os.link(source, working_source)
+        except OSError:
+            # Hard links avoid copying multi-hour DLsite files on the same volume;
+            # a normal copy keeps the feature usable across filesystems.
+            shutil.copy2(source, working_source)
+        working = project.model_copy(deep=True)
+        working.source.path = source_name
+        working.sentences = []
+        working.revision = 0
+        working.asr_language = None
+        working.chinese_stem_file = None
+        working.output_file = None
+        working.output_video_file = None
+        working.subtitle_srt_file = None
+        working.subtitle_lrc_file = None
+        working.subtitle_video_file = None
+        working.source_language = project.source_language
+        _analyze_project_impl(
+            working,
+            working_dir,
+            force=True,
+            progress=progress,
+            cancel_event=cancel_event,
+        )
+        target: Literal["source", "zh"] = "source"
+        if script_language == "zh":
+            _translate_project_impl(
+                working,
+                working_dir,
+                api_key=key,
+                force=True,
+                progress=progress,
+                cancel_event=cancel_event,
+            )
+            target = "zh"
+        corrections, report = reconcile_script_sentences(
+            working.sentences,
+            script_lines,
+            source_language=project.source_language,
+            target=target,
+            provider=provider,
+            api_key=key,
+            model=project.settings.translation_model,
+            base_url=base_url,
+            temperature=project.settings.translation_temperature,
+            top_p=project.settings.translation_top_p,
+            max_output_tokens=project.settings.translation_max_output_tokens,
+            job_id=f"asmr_{project.source.sha256[:24]}_script",
+            progress=progress,
+            cancel_event=cancel_event,
+        )
+        fallback_ids: list[str] = []
+        for sentence in working.sentences:
+            candidate = sentence.source_text if target == "source" else sentence.zh_text
+            corrected = str(corrections.get(sentence.id, "")).strip()
+            if not corrected and candidate.strip():
+                # A malformed or over-aggressive empty answer must not silently
+                # delete a real ASR/translation line.
+                corrected = candidate.strip()
+                fallback_ids.append(sentence.id)
+            if target == "source":
+                sentence.source_text = corrected
+                sentence.zh_text = ""
+                sentence.status = "pending" if corrected else "skipped_filler"
+            else:
+                sentence.zh_text = corrected
+                sentence.status = "translated" if corrected else "skipped_filler"
+            sentence.enabled = bool(corrected)
+            sentence.tts_file = None
+            sentence.tts_cache_key = None
+            sentence.tts_duration_seconds = None
+            sentence.error = None
+        if fallback_ids:
+            report.append({"fallback_ids": fallback_ids, "reason": "模型返回空文本，保留候选文本"})
+        return [item.model_copy(deep=True) for item in working.sentences], report
+
+
 def import_project_transcript(
     project: DubProject,
     project_dir: Path,
@@ -164,12 +277,16 @@ def import_project_transcript(
 
     require_supported_platform()
     check_cancelled(cancel_event)
-    if plain_timing not in {"estimate", "qwen"}:
-        raise ProjectError("纯台本时间轴方式必须是按长度估算或 Qwen3 自动对齐。")
+    if plain_timing not in {"estimate", "qwen", "script_review"}:
+        raise ProjectError("纯台本时间轴方式无效。")
     if script_language not in {"ja", "en", "zh"}:
         raise ProjectError("台本语言必须是日语、英语或中文。")
     if script_language == "zh" and plain_timing == "qwen":
         raise ProjectError("中文纯台本不能使用 Qwen3 自动对齐，请选择按台词长度估算。")
+    if plain_timing == "script_review" and project.source_language == "zh":
+        raise ProjectError(
+            "当前项目已经是中文台本项目，不能再次运行源音频识别；请新建原始音频项目。"
+        )
     source = verify_source(project_dir, project.source)
     parsed = parse_transcript(
         duration_seconds=project.source.duration_seconds,
@@ -179,7 +296,23 @@ def import_project_transcript(
     )
     sentences = [sentence.model_copy(deep=True) for sentence in parsed.sentences]
     alignment_report: list[dict[str, object]] = []
-    if not parsed.timed and plain_timing == "qwen":
+    reconciliation_report: list[dict[str, object]] = []
+    reconciled = False
+    if not parsed.timed and plain_timing == "script_review":
+        script_lines = [
+            sentence.zh_text if script_language == "zh" else sentence.source_text
+            for sentence in parsed.sentences
+        ]
+        sentences, reconciliation_report = _reconcile_untimed_script(
+            project,
+            project_dir,
+            script_lines=script_lines,
+            script_language=cast(TranscriptLanguage, script_language),
+            progress=progress,
+            cancel_event=cancel_event,
+        )
+        reconciled = True
+    elif not parsed.timed and plain_timing == "qwen":
         analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
         cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
         alignment_report = align_script_sentences_with_qwen(
@@ -206,6 +339,8 @@ def import_project_transcript(
                 "plain_timing": None if parsed.timed else plain_timing,
                 "sentences": len(sentences),
                 "qwen_aligned_sentences": aligned_count,
+                "script_reconciled": reconciled,
+                "reconciliation": reconciliation_report,
                 "alignment": alignment_report,
             },
             ensure_ascii=False,
@@ -215,10 +350,15 @@ def import_project_transcript(
     )
 
     project.sentences = sentences
-    project.source_language = cast(SourceLanguage, parsed.language)
-    project.settings = settings_for_source_language(project.settings, project.source_language)
-    language_name = source_language_label(parsed.language)
-    project.asr_language = f"{language_name} (imported {parsed.source_format})"
+    if not reconciled:
+        project.source_language = cast(SourceLanguage, parsed.language)
+        project.settings = settings_for_source_language(project.settings, project.source_language)
+        language_name = source_language_label(parsed.language)
+        project.asr_language = f"{language_name} (imported {parsed.source_format})"
+    else:
+        language_name = source_language_label(project.source_language)
+        suffix = "翻译 + 台本校对" if parsed.language == "zh" else "台本校对"
+        project.asr_language = f"{language_name}（ASR + {suffix}）"
     project.asr_settings_dirty = False
     project.settings.tts_reference_sentence_id = None
     project.chinese_stem_file = None
@@ -235,6 +375,7 @@ def import_project_transcript(
         "timed": parsed.timed,
         "sentences": len(sentences),
         "qwen_aligned_sentences": aligned_count,
+        "script_reconciled": reconciled,
     }
 
 

@@ -10,7 +10,12 @@ from asmr_dubber import translation as translation_module
 from asmr_dubber.errors import OperationCancelledError, TranslationError
 from asmr_dubber.models import Sentence
 from asmr_dubber.task_control import CancellationToken
-from asmr_dubber.translation import translate_sentences, validate_translation
+from asmr_dubber.translation import (
+    reconcile_script_sentences,
+    translate_sentences,
+    validate_script_reconciliation,
+    validate_translation,
+)
 
 
 def test_default_translation_prompts_are_packaged_markdown_resources() -> None:
@@ -28,6 +33,12 @@ def test_default_translation_prompts_are_packaged_markdown_resources() -> None:
     assert "{{OUTPUT_SCHEMA}}" in structure_prompt
     assert "{{TARGET_JSON}}" in structure_prompt
     assert "顶层对象只能有 `translations` 一个字段" in structure_prompt
+    reconciliation_prompt = prompt_root.joinpath("script-reconciliation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "{{OUTPUT_LABEL}}" in reconciliation_prompt
+    assert "{{RECOGNIZED_JSON}}" in reconciliation_prompt
+    assert "{{SCRIPT_JSON}}" in reconciliation_prompt
 
 
 def test_english_translator_uses_english_builtin_prompt() -> None:
@@ -67,6 +78,80 @@ def test_rejects_missing_or_reordered_ids() -> None:
 def test_accepts_empty_translation_for_nonverbal_audio() -> None:
     content = '{"translations":[{"id":"s000001","zh":""}]}'
     assert validate_translation(content, ["s000001"]) == {"s000001": ""}
+
+
+def test_validates_script_reconciliation_ids_and_empty_text() -> None:
+    content = '{"corrections":[{"id":"s000001","text":"はい。"},{"id":"s000002","text":""}]}'
+    assert validate_script_reconciliation(content, ["s000001", "s000002"]) == {
+        "s000001": "はい。",
+        "s000002": "",
+    }
+
+
+def test_reconcile_script_sentences_keeps_asr_timing_and_uses_script_text() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        seen["payload"] = payload
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": ('{"corrections":[{"id":"s000001","text":"台本の一文。"}]}')
+                        },
+                    }
+                ]
+            },
+        )
+
+    sentence = Sentence(
+        id="s000001",
+        start_seconds=12.34,
+        end_seconds=13.21,
+        source_text="認識の一文。",
+    )
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        corrections, report = reconcile_script_sentences(
+            [sentence],
+            ["台本の一文。"],
+            source_language="ja",
+            target="source",
+            provider="deepseek",
+            api_key="secret-test-key",
+            model="deepseek-v4-flash",
+            client=client,
+        )
+
+    assert corrections == {"s000001": "台本の一文。"}
+    assert report[0]["recognized_ids"] == ["s000001"]
+    assert sentence.start_seconds == 12.34
+    assert sentence.end_seconds == 13.21
+    payload = seen["payload"]
+    assert isinstance(payload, dict)
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "台本是文字校对的主要依据" in payload["messages"][0]["content"]
+    assert "台本の一文。" in json.dumps(payload, ensure_ascii=False)
+    assert "{{RECOGNIZED_JSON}}" not in payload["messages"][0]["content"]
+    assert "{{SCRIPT_JSON}}" not in payload["messages"][0]["content"]
+
+
+def test_script_reconciliation_rejects_machine_translation_provider() -> None:
+    sentence = Sentence(id="s000001", start_seconds=0.0, end_seconds=1.0, source_text="はい。")
+    with pytest.raises(TranslationError, match="需要大模型翻译服务"):
+        reconcile_script_sentences(
+            [sentence],
+            ["はい。"],
+            source_language="ja",
+            target="source",
+            provider="deepl",
+            api_key="provider-key",
+            model="general",
+            base_url="https://api.deepl.com",
+        )
 
 
 def test_empty_llm_translation_disables_chinese_dubbing() -> None:

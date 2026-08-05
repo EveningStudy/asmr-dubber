@@ -231,7 +231,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
         "当前项目文件",
         "台本或字幕文件",
         "粘贴纯文本",
-        "纯文本台本如何生成时间轴",
+        "纯文本台本的处理方式",
         "导入内容",
     ]
 
@@ -345,13 +345,17 @@ def test_prompt_editor_switches_languages_without_losing_the_other_draft() -> No
     assert "英语 → 中文内置 Prompt" in note
 
 
-def test_chinese_transcript_mode_removes_qwen_timing_choice() -> None:
+def test_chinese_transcript_mode_keeps_only_supported_timing_choices() -> None:
     chinese = _transcript_kind_update("zh")
     source = _transcript_kind_update("source")
 
     assert chinese["value"] == "estimate"
-    assert [value for _label, value in chinese["choices"]] == ["estimate"]
-    assert [value for _label, value in source["choices"]] == ["estimate", "qwen"]
+    assert [value for _label, value in chinese["choices"]] == ["estimate", "script_review"]
+    assert [value for _label, value in source["choices"]] == [
+        "estimate",
+        "qwen",
+        "script_review",
+    ]
 
     source = Path(ui_module.__file__).read_text(encoding="utf-8").casefold()
     for removed in (

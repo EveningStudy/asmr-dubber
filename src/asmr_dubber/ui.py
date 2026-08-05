@@ -734,13 +734,18 @@ def _loudness_mode_update(mode: Any) -> tuple[Any, ...]:
 _TRANSCRIPT_TIMING_CHOICES = [
     ("按台词长度估算（无需模型，之后手动校对）", "estimate"),
     ("Qwen3 ForcedAligner 自动对齐（需要进阶组件）", "qwen"),
+    ("先运行 ASR/翻译，再用大模型校对台本（推荐）", "script_review"),
+]
+_CHINESE_TRANSCRIPT_TIMING_CHOICES = [
+    _TRANSCRIPT_TIMING_CHOICES[0],
+    _TRANSCRIPT_TIMING_CHOICES[2],
 ]
 
 
 def _transcript_kind_update(script_kind: Any) -> Any:
     if str(script_kind or "source") == "zh":
         return _gr_update(
-            choices=[_TRANSCRIPT_TIMING_CHOICES[0]],
+            choices=_CHINESE_TRANSCRIPT_TIMING_CHOICES,
             value="estimate",
         )
     return _gr_update(choices=_TRANSCRIPT_TIMING_CHOICES, value="estimate")
@@ -1064,8 +1069,8 @@ def build_app() -> Any:
                     elem_classes=["optional-section"],
                 ):
                     gr.Markdown(
-                        "先新建或打开项目。带时间轴的字幕会直接导入；TXT 和粘贴文本可以"
-                        "估算时间，也可以用 Qwen3 ForcedAligner 对齐。导入会替换当前句子表，"
+                        "先新建或打开项目。带时间轴的字幕会直接导入；TXT 和粘贴文本可以按长度估算，"
+                        "也可以先运行识别/翻译，再让大模型按台本校对文字。导入会替换当前句子表，"
                         "原始音频不会改变。"
                     )
                     transcript_kind = gr.Radio(
@@ -1087,9 +1092,14 @@ def build_app() -> Any:
                         lines=6,
                     )
                     plain_timing = gr.Radio(
-                        label="纯文本台本如何生成时间轴",
+                        label="纯文本台本的处理方式",
                         choices=_TRANSCRIPT_TIMING_CHOICES,
                         value="estimate",
+                    )
+                    gr.Markdown(
+                        "智能台本校对会使用当前翻译设置中的大模型；"
+                        "DeepL、Google Cloud Translation、Microsoft Translator 等"
+                        "机器翻译服务不支持此方式。"
                     )
                     import_transcript_button = gr.Button(
                         "导入并建立句子时间轴",
