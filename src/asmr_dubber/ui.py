@@ -56,6 +56,7 @@ from .ui_services import (
     create_project,
     import_transcript_data,
     load_view,
+    open_project_directory,
     preview_reference,
     recent_projects,
     reference_picker,
@@ -1053,6 +1054,7 @@ def build_app() -> Any:
                             scale=3,
                         )
                         open_project_button = gr.Button("打开项目", scale=1)
+                        open_project_directory_button = gr.Button("打开项目目录", scale=1)
                     project_path = gr.Textbox(
                         label="当前项目文件",
                         interactive=False,
@@ -2111,6 +2113,13 @@ def build_app() -> Any:
                 return _empty_project_updates("请先选择最近项目或粘贴 project.json 路径。")
             return _run_project_action(load_view, str(path))
 
+        def open_project_directory_callback(manifest: str) -> str:
+            try:
+                return open_project_directory(manifest)
+            except Exception as exc:
+                logger.exception("打开项目目录失败")
+                return f"无法打开项目目录：{_safe_error(exc)}"
+
         def asr_callback(
             manifest: str,
             table: Any,
@@ -2224,6 +2233,13 @@ def build_app() -> Any:
             outputs=common_outputs,
             api_name="open_project",
             **runtime_options,
+        )
+        open_project_directory_button.click(
+            open_project_directory_callback,
+            inputs=[project_path],
+            outputs=[status],
+            api_name=_PRIVATE_API,
+            queue=False,
         )
         refresh_projects_button.click(
             refresh_projects_callback,

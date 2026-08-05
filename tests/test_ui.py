@@ -33,6 +33,7 @@ from asmr_dubber.ui_services import (
     apply_global_settings,
     apply_table,
     import_transcript_data,
+    open_project_directory,
     reference_picker,
     select_reference,
     stage_for_ui,
@@ -144,6 +145,20 @@ def test_ui_staging_is_deterministic_and_below_one_allowlist(tmp_path: Path, mon
     assert first.read_bytes() == b"audio"
 
 
+def test_open_project_directory_uses_loaded_project_path(tmp_path: Path, monkeypatch) -> None:
+    _project_value, manifest = _project(tmp_path / "project")
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.open_directory",
+        lambda path: opened.append(Path(path).resolve()) or Path(path).resolve(),
+    )
+
+    message = open_project_directory(str(manifest))
+
+    assert opened == [manifest.parent.resolve()]
+    assert str(manifest.parent.resolve()) in message
+
+
 def test_reference_picker_previews_and_persists_selection(
     tmp_path: Path,
     monkeypatch,
@@ -221,6 +236,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "提前量最多占日语句长百分比" not in labels
     assert "1 · 运行 ASR（语音识别）" in values
     assert "4 · TTS（语音合成）并输出" in values
+    assert "打开项目目录" in values
     assert "仅保存为以后新项目默认值" in values
     assert "保存并应用到当前项目" in values
 

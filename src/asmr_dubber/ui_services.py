@@ -21,7 +21,7 @@ from .models import (
     save_project,
     settings_for_source_language,
 )
-from .platforms import portable_home
+from .platforms import open_directory, portable_home
 from .subtitles import SubtitleLanguage
 from .task_control import CancellationSignal
 from .user_settings import UserSettings, load_user_settings, resolve_api_key
@@ -288,6 +288,14 @@ def view(project: DubProject, project_dir: Path, status: str) -> ProjectView:
 def load_view(project_path: str, status: str = "项目已加载。") -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     return view(project, directory, status)
+
+
+def open_project_directory(project_path: str) -> str:
+    if not str(project_path or "").strip():
+        raise ProjectError("请先新建或打开项目。")
+    _project, directory = pipeline.reload_project(project_path)
+    opened = open_directory(directory)
+    return f"已在文件管理器中打开项目目录：{opened}"
 
 
 def create_project(

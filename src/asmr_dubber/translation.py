@@ -109,9 +109,15 @@ LLM_RECONCILIATION_PROVIDERS = frozenset(
     {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
 )
 
-_SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str]] = {
-    "ja": ("日语", "日语中的「あ」「え」「う」「ん」「ふふ」「えーと」"),
-    "en": ("英语", "英语中的 “uh”“um”“erm”"),
+_SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str, str]] = {
+    "ja": (
+        "日语",
+        "日语中的「あ」「え」「う」「ん」「ふふ」「えーと」",
+        "\n   日语中的「しこしこ」「シコシコ」及其罗马字转写 “shiko shiko” 或 “shikoshiko” "
+        "一律按动作或摩擦拟声删除，不得翻译成“撸”“撸撸”等会被合成语音的文字；"
+        "同项还有实义台词时只翻译台词，除此之外没有实义时将 zh 设为空字符串。",
+    ),
+    "en": ("英语", "英语中的 “uh”“um”“erm”", ""),
 }
 
 
@@ -119,10 +125,11 @@ def default_translation_prompt(source_language: SourceLanguage = "ja") -> str:
     """Render the packaged prompt for one source language."""
 
     prompt_language: SpeechSourceLanguage = "en" if source_language == "en" else "ja"
-    language, filler_examples = _SOURCE_PROMPT_VALUES[prompt_language]
-    return _SYSTEM_PROMPT_TEMPLATE.replace("{{SOURCE_LANGUAGE}}", language).replace(
-        "{{FILLER_EXAMPLES}}",
-        filler_examples,
+    language, filler_examples, sound_rule = _SOURCE_PROMPT_VALUES[prompt_language]
+    return (
+        _SYSTEM_PROMPT_TEMPLATE.replace("{{SOURCE_LANGUAGE}}", language)
+        .replace("{{FILLER_EXAMPLES}}", filler_examples)
+        .replace("{{SOURCE_SPECIFIC_SOUND_RULE}}", sound_rule)
     )
 
 

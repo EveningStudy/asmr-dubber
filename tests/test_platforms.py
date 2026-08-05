@@ -38,6 +38,21 @@ def test_windows_user_directories_and_venv_layout(monkeypatch, tmp_path: Path) -
     )
 
 
+def test_open_directory_uses_windows_file_manager(monkeypatch, tmp_path: Path) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(
+        platforms,
+        "current_platform",
+        lambda: platforms.PlatformInfo("Windows", "AMD64", True, False, False),
+    )
+    monkeypatch.setattr(platforms.os, "startfile", opened.append, raising=False)
+
+    result = platforms.open_directory(tmp_path)
+
+    assert result == tmp_path.resolve()
+    assert opened == [str(tmp_path.resolve())]
+
+
 def test_isolated_windows_runtime_redirects_profile_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         platforms,

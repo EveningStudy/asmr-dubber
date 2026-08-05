@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
+import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
@@ -71,6 +73,36 @@ def require_supported_platform() -> None:
         raise EnvironmentError(f"当前系统 {info.system} 尚未支持；支持 Windows 和 Linux。")
     if not sys.maxsize > 2**32:
         raise EnvironmentError("本工具只支持 64 位 Windows/Linux。")
+
+
+def open_directory(path: str | os.PathLike[str]) -> Path:
+    """Open an existing local directory in the platform file manager."""
+
+    directory = _absolute_user_path(path)
+    if not directory.is_dir():
+        raise EnvironmentError(f"目录不存在：{directory}")
+    info = current_platform()
+    try:
+        if info.is_windows:
+            startfile = getattr(os, "startfile", None)
+            if startfile is None:
+                raise EnvironmentError("当前 Python 无法调用 Windows 资源管理器。")
+            startfile(str(directory))
+        elif info.is_linux:
+            opener = shutil.which("xdg-open")
+            if not opener:
+                raise EnvironmentError("未找到 xdg-open，无法调用系统文件管理器。")
+            subprocess.Popen(
+                [opener, str(directory)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            raise EnvironmentError(f"当前系统 {info.system} 不支持打开项目目录。")
+    except OSError as exc:
+        raise EnvironmentError(f"无法打开目录 {directory}：{exc}") from exc
+    return directory
 
 
 def portable_home() -> Path:

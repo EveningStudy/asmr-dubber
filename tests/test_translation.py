@@ -23,12 +23,16 @@ def test_default_translation_prompts_are_packaged_markdown_resources() -> None:
     template = prompt_root.joinpath("translation.md").read_text(encoding="utf-8").strip()
     assert "{{SOURCE_LANGUAGE}}" in template
     assert "{{FILLER_EXAMPLES}}" in template
+    assert "{{SOURCE_SPECIFIC_SOUND_RULE}}" in template
     japanese = translation_module.default_translation_prompt("ja")
     english = translation_module.default_translation_prompt("en")
     assert "日语原文" in japanese
     assert "英语原文" in english
     assert "えーと" in japanese and "えーと" not in english
     assert "erm" in english and "erm" not in japanese
+    assert "しこしこ" in japanese and "shikoshiko" in japanese
+    assert "不得翻译成“撸”“撸撸”" in japanese
+    assert "しこしこ" not in english and "shikoshiko" not in english
     structure_prompt = prompt_root.joinpath("translation-structure.md").read_text(encoding="utf-8")
     assert "{{OUTPUT_SCHEMA}}" in structure_prompt
     assert "{{TARGET_JSON}}" in structure_prompt
