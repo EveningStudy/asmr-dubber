@@ -1479,7 +1479,8 @@ def build_app() -> Any:
                             visible=initial_aligner_ready,
                             info="识别文字不变；该模型只重新寻找每句话的起止时间。",
                         )
-                        with gr.Accordion("多模型交叉校对（进阶）", open=False):
+                        with gr.Accordion("多模型交叉校对（实验性）", open=False):
+                            gr.Markdown("**实验性，不建议使用。**")
                             settings_components["asr_review_enabled"] = gr.Checkbox(
                                 label="启用多 ASR（语音识别）+ 大模型交叉校对",
                                 value=initial_review_enabled,

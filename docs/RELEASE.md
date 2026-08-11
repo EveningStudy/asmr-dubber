@@ -1,8 +1,12 @@
-# ASMR Dubber 0.7.2
+# ASMR Dubber 0.7.3
 
 ASMR Dubber 面向 64 位 Windows 10/11 和 x86_64 Linux。它处理日语或英语音频/视频，提供可校对的
 源语言识别、中文翻译、音色克隆、混音和字幕工作流，也支持导入中文台本后直接配音。英语项目
 使用现有 Faster-Whisper，不增加新的识别模型。
+
+多模型交叉校对在界面中明确标为实验性功能。打开项目时可以处理中文路径以及从资源管理器、
+终端复制的成对引号；Windows Setup 会报告 Visual C++ 和已有 CrispASR 原生运行库状态，检查
+结果不会中止安装。
 
 主界面可以直接在系统文件管理器中打开当前项目目录。日语内置翻译 Prompt 会把
 「しこしこ」「シコシコ」及其罗马字转写按拟声处理，避免它们进入中文配音。
@@ -39,7 +43,7 @@ DeepSeek Flash 翻译使用随包提供的结构约束 Prompt，并在返回格�
 下载包不包含大型模型、用户项目、API Key 或已经建立的运行环境。首次安装会按用户选择准备
 便携 Python、依赖和固定模型，所有内容默认放在程序目录的 `.asmr-dubber`。
 
-Windows 用户从 [GitHub Releases](https://github.com/EveningStudy/ASMR-Dubber/releases/latest)
+Windows 用户从 [GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)
 下载 `ASMR-Dubber-windows-portable.zip`，完整解压后运行 `ASMR-Dubber-Setup.exe`。
 
 ## 安装方案

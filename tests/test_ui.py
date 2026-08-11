@@ -237,6 +237,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "1 · 运行 ASR（语音识别）" in values
     assert "4 · TTS（语音合成）并输出" in values
     assert "打开项目目录" in values
+    assert any("实验性，不建议使用" in str(value) for value in values)
     assert "仅保存为以后新项目默认值" in values
     assert "保存并应用到当前项目" in values
 

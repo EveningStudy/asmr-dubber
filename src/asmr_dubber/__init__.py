@@ -23,4 +23,4 @@ from .platforms import configure_windows_dll_directories  # noqa: E402
 
 configure_windows_dll_directories()
 
-__version__ = "0.7.2"
+__version__ = "0.7.3"

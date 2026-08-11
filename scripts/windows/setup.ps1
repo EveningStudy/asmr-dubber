@@ -64,6 +64,83 @@ function Invoke-Checked {
     }
 }
 
+function Write-ASMRDubberNativeRuntimeReport {
+    Write-Host "正在检查 Windows 原生运行库（仅报告，不会中止安装）..." `
+        -ForegroundColor Cyan
+    try {
+        $SystemDirectory = [Environment]::GetFolderPath(
+            [Environment+SpecialFolder]::System
+        )
+        $RequiredVisualCppDlls = @(
+            "MSVCP140.dll",
+            "VCOMP140.DLL",
+            "VCRUNTIME140.dll",
+            "VCRUNTIME140_1.dll"
+        )
+        $MissingVisualCppDlls = @(
+            $RequiredVisualCppDlls | Where-Object {
+                -not (Test-Path -LiteralPath (Join-Path $SystemDirectory $_) -PathType Leaf)
+            }
+        )
+        if ($MissingVisualCppDlls.Count -eq 0) {
+            Write-Host "Microsoft Visual C++ x64 运行库检查通过。" -ForegroundColor Green
+        } else {
+            Write-Warning (
+                "Microsoft Visual C++ x64 运行库可能不完整，缺少：" +
+                ($MissingVisualCppDlls -join "、") +
+                "。Parakeet 或 Faster-Whisper 可能无法启动；Setup 仍会继续。" +
+                "官方修复地址：https://aka.ms/vc14/vc_redist.x64.exe"
+            )
+        }
+
+        $CrispBin = Join-Path $DataRoot "runtimes\crispasr\bin"
+        $CrispExecutable = Join-Path $CrispBin "crispasr.exe"
+        if (Test-Path -LiteralPath $CrispExecutable -PathType Leaf) {
+            $RequiredCrispFiles = @(
+                "crispasr.dll",
+                "ggml.dll",
+                "ggml-base.dll",
+                "ggml-cpu.dll"
+            )
+            $MissingCrispFiles = @(
+                $RequiredCrispFiles | Where-Object {
+                    -not (Test-Path -LiteralPath (Join-Path $CrispBin $_) -PathType Leaf)
+                }
+            )
+            if ($MissingCrispFiles.Count -gt 0) {
+                Write-Warning (
+                    "现有 CrispASR 原生运行时不完整，缺少：" +
+                    ($MissingCrispFiles -join "、") + "。Setup 仍会继续。"
+                )
+            } else {
+                try {
+                    $CrispExitCode = Invoke-ASMRDubberProcess `
+                        -FilePath $CrispExecutable -ArgumentList @("--version") `
+                        -WorkingDirectory $Root
+                    if ($CrispExitCode -eq 0) {
+                        Write-Host "现有 CrispASR 原生运行时可以启动。" -ForegroundColor Green
+                    } else {
+                        Write-Warning (
+                            "现有 CrispASR 原生运行时启动检查退出码：$CrispExitCode。" +
+                            "Setup 仍会继续。"
+                        )
+                    }
+                } catch {
+                    Write-Warning (
+                        "现有 CrispASR 原生运行时启动检查失败：" +
+                        "$($_.Exception.Message)。Setup 仍会继续。"
+                    )
+                }
+            }
+        }
+    } catch {
+        Write-Warning (
+            "Windows 原生运行库检查未完成：$($_.Exception.Message)。" +
+            "这只是诊断信息，Setup 将继续。"
+        )
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $Bootstrap, $UvDir, $DataRoot | Out-Null
 $env:UV_NO_MODIFY_PATH = "1"
 $env:UV_UNMANAGED_INSTALL = $UvDir
@@ -122,6 +199,8 @@ if ($Profile -ne "基础") {
     Write-Host "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS（语音合成），实际占用将减少。" `
         -ForegroundColor DarkGray
 }
+
+Write-ASMRDubberNativeRuntimeReport
 
 function Test-PortableUv {
     if (-not (Test-Path $Uv)) {

@@ -51,7 +51,7 @@ https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
 
 ## 下载与安装（Windows）
 
-从 [GitHub Releases](https://github.com/EveningStudy/ASMR-Dubber/releases/latest) 下载
+从 [GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest) 下载
 `ASMR-Dubber-windows-portable.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
 
 > **使用前请开启 Windows 长路径。以避免一些问题** 进入“设置 → 系统 → 高级 → 文件资源管理器”，打开
@@ -188,7 +188,7 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 
 ## 配套工具
 
-需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到某些平台的双语音声或视频时，可以配合项目 [ASMR-Dubber AutoFlow](https://github.com/EveningStudy/asmr-dubber-autoflow) 使用。
+需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到某些平台的双语音声或视频时，可以配合项目 [asmr-dubber-batch](https://github.com/EveningStudy/asmr-dubber-batch) 使用。
 
 ## 项目目录
 

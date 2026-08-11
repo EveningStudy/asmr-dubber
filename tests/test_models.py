@@ -42,6 +42,41 @@ def test_project_round_trip(tmp_path: Path) -> None:
     assert loaded.sentences[0].ja_text == "はい。"
 
 
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [
+        ('"', '"'),
+        ("'", "'"),
+        ("`", "`"),
+        ("“", "”"),
+        ("‘", "’"),
+        ("「", "」"),
+        ("『", "』"),
+    ],
+)
+def test_project_path_accepts_unicode_directories_and_wrapping_quotes(
+    tmp_path: Path,
+    opening: str,
+    closing: str,
+) -> None:
+    directory = tmp_path / "中文项目（角色 A）"
+    manifest = save_project(DubProject(source=audio_info()), directory)
+
+    loaded, loaded_directory = load_project(f" \ufeff{opening}{manifest.parent}{closing}\u200b ")
+
+    assert loaded.source.path == "source.wav"
+    assert loaded_directory == directory.resolve()
+
+
+def test_project_path_accepts_nested_clipboard_quotes(tmp_path: Path) -> None:
+    directory = tmp_path / "中文 项目"
+    manifest = save_project(DubProject(source=audio_info()), directory)
+
+    _loaded, loaded_directory = load_project(f"'“{manifest}”'")
+
+    assert loaded_directory == directory.resolve()
+
+
 def test_concurrent_project_save_detects_stale_revision(tmp_path: Path) -> None:
     manifest = save_project(DubProject(source=audio_info()), tmp_path)
     first, _ = load_project(manifest)

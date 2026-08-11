@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [string]$OutputDirectory = "",
-    [string]$Version = "0.7.2",
+    [string]$Version = "0.7.3",
     [switch]$KeepStaging
 )
 

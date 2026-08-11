@@ -14,8 +14,8 @@ using System.Threading;
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("0.7.2.0")]
-[assembly: AssemblyFileVersion("0.7.2.0")]
+[assembly: AssemblyVersion("0.7.3.0")]
+[assembly: AssemblyFileVersion("0.7.3.0")]
 
 namespace ASMRDubberLauncher
 {

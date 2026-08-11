@@ -72,7 +72,7 @@ CUDA 13；NVIDIA 已从 CUDA 13 移除 Maxwell、Pascal 和 Volta 的离线编�
 
 ## 下载
 
-Windows 用户从 [GitHub Releases](https://github.com/EveningStudy/ASMR-Dubber/releases/latest)
+Windows 用户从 [GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)
 下载 `ASMR-Dubber-windows-portable.zip`。完整解压到最终使用位置后运行 Setup；发行包不包含
 大型模型和已经安装的 Python 依赖。
 

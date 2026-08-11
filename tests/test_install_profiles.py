@@ -82,6 +82,27 @@ def test_windows_setup_exposes_three_chinese_monotonic_profiles() -> None:
     assert '"torchaudio==2.11.0+cu130"' in cuda_block
 
 
+def test_windows_setup_reports_native_runtime_problems_without_stopping() -> None:
+    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    report = _between(
+        setup,
+        "function Write-ASMRDubberNativeRuntimeReport {",
+        "\n}\n\nNew-Item",
+    )
+
+    for dll in (
+        "MSVCP140.dll",
+        "VCOMP140.DLL",
+        "VCRUNTIME140.dll",
+        "VCRUNTIME140_1.dll",
+    ):
+        assert dll in report
+    assert "仅报告，不会中止安装" in report
+    assert "Setup 仍会继续" in report
+    assert "throw" not in report.casefold()
+    assert "Write-ASMRDubberNativeRuntimeReport" in setup
+
+
 def test_linux_setup_exposes_same_three_chinese_profiles() -> None:
     setup = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
 
@@ -318,8 +339,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("0.7.2.0")' in source
-        assert 'AssemblyFileVersion("0.7.2.0")' in source
+        assert 'AssemblyVersion("0.7.3.0")' in source
+        assert 'AssemblyFileVersion("0.7.3.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

@@ -327,7 +327,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.7.2"
+    app_version: str = "0.7.3"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -360,7 +360,27 @@ class DubProject(BaseModel):
 
 
 def manifest_path(path: str | os.PathLike[str]) -> Path:
-    candidate = Path(path).expanduser().resolve()
+    raw = os.fspath(path)
+    if isinstance(raw, str):
+        value = raw.strip(" \t\r\n\ufeff\u200b")
+        quote_pairs = {
+            '"': '"',
+            "'": "'",
+            "`": "`",
+            "“": "”",
+            "‘": "’",
+            "「": "」",
+            "『": "』",
+        }
+        for _ in range(4):
+            closing = quote_pairs.get(value[:1])
+            if closing is None or not value.endswith(closing) or len(value) < 2:
+                break
+            value = value[1:-1].strip(" \t\r\n\ufeff\u200b")
+        if not value:
+            raise ProjectError("项目路径不能为空。")
+        raw = value
+    candidate = Path(raw).expanduser().resolve()
     if candidate.is_dir():
         candidate = candidate / "project.json"
     return candidate
@@ -472,7 +492,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.7.2"
+        payload["app_version"] = "0.7.3"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

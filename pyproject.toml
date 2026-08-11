@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asmr-dubber"
-version = "0.7.2"
+version = "0.7.3"
 description = "Japanese ASMR to Chinese voice-cloned sentence dubbing for Windows and Linux"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -73,11 +73,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/EveningStudy/ASMR-Dubber"
-Documentation = "https://github.com/EveningStudy/ASMR-Dubber/tree/main/docs"
-Repository = "https://github.com/EveningStudy/ASMR-Dubber.git"
-Issues = "https://github.com/EveningStudy/ASMR-Dubber/issues"
-"Release notes" = "https://github.com/EveningStudy/ASMR-Dubber/blob/main/docs/RELEASE.md"
+Homepage = "https://github.com/EveningStudy/asmr-dubber"
+Documentation = "https://github.com/EveningStudy/asmr-dubber/tree/main/docs"
+Repository = "https://github.com/EveningStudy/asmr-dubber.git"
+Issues = "https://github.com/EveningStudy/asmr-dubber/issues"
+"Release notes" = "https://github.com/EveningStudy/asmr-dubber/blob/main/docs/RELEASE.md"
 
 [project.scripts]
 asmr-dubber = "asmr_dubber.cli:app"
