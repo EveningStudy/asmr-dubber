@@ -3,9 +3,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from .constants import MAX_CHINESE_AUTO_SPEED
 from .models import Sentence
+
+DubbingTimingMode = Literal["fit_window", "sequential"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ def plan_dubbing_timing(
     offset_ms: int = 0,
     max_auto_speed: float = 1.2,
     durations: Mapping[str, float] | None = None,
+    mode: DubbingTimingMode = "fit_window",
 ) -> list[DubbingTiming]:
     """Plan starts and minimal tempo changes for available Chinese clips.
 
@@ -41,6 +45,8 @@ def plan_dubbing_timing(
 
     if not math.isfinite(max_auto_speed) or not 1.0 <= max_auto_speed <= MAX_CHINESE_AUTO_SPEED:
         raise ValueError(f"max_auto_speed must be between 1.0 and {MAX_CHINESE_AUTO_SPEED}")
+    if mode not in {"fit_window", "sequential"}:
+        raise ValueError(f"unsupported dubbing timing mode: {mode}")
 
     candidates: list[tuple[Sentence, float]] = []
     for sentence in sentences:
@@ -57,12 +63,21 @@ def plan_dubbing_timing(
         candidates.append((sentence, duration))
 
     candidates.sort(key=lambda item: (item[0].start_seconds, item[0].end_seconds, item[0].id))
-    starts = [dubbing_start_seconds(sentence, offset_ms) for sentence, _ in candidates]
+    requested_starts = [dubbing_start_seconds(sentence, offset_ms) for sentence, _ in candidates]
+    if mode == "sequential":
+        starts: list[float] = []
+        previous_end = 0.0
+        for requested, (_sentence, duration) in zip(requested_starts, candidates, strict=True):
+            start = max(requested, previous_end)
+            starts.append(start)
+            previous_end = start + duration
+    else:
+        starts = requested_starts
     planned: list[DubbingTiming] = []
     for index, ((sentence, duration), start) in enumerate(zip(candidates, starts, strict=True)):
         next_start = starts[index + 1] if index + 1 < len(starts) else None
         speed = 1.0
-        if next_start is not None:
+        if mode == "fit_window" and next_start is not None:
             available = next_start - start
             required = duration / available if available > 0.0 else math.inf
             speed = min(max(required, 1.0), max_auto_speed)

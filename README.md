@@ -1,29 +1,24 @@
 # ASMR Dubber
 
-ASMR Dubber 用于制作日语、英语音视频的中文配音和字幕。识别结果会整理成可编辑的句子表，
-之后可以逐步完成翻译、音色克隆和混音，也可以单独导出原文或中文字幕。程序通过本机网页操作，
-项目、模型、设置和缓存默认都留在程序文件夹中。
-
+ASMR Dubber 用于制作日语、英语音视频的中文配音和字幕。识别结果会整理成可编辑的句子表，之后可以逐步完成翻译、音色克隆和混音，也可以单独导出原文或中文字幕。程序通过本机网页操作，项目、模型、设置和缓存默认都留在程序文件夹中。
 
 ## 能做什么
 
 - 从音频或视频创建独立项目，并保留输入文件的原始副本；
 - 使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper 做 ASR（语音识别）；
-- 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，
-  直接进入校对和配音；
+- 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，直接进入校对和配音；
 - 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
 - 使用多个已安装的识别模型交叉校对源文；
 - 通过 DeepSeek、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
-- 使用本地 IndexTTS2，或连接 GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做
-  TTS（语音合成）；
+- 使用本地 IndexTTS2，或连接 GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
 - 逐句调整源文、中文、起止时间和是否配音；
 - 输出混音后的 WAV、视频，以及双语/中文/源文 SRT 和 LRC 字幕；
 - 可以只导出完整时间轴的中文克隆音轨，之后再把它加入原音轨，不必重新生成 TTS；
-- 中断后继续工作，只重做缺失或设置已经失效的部分。
+- 可在“批量处理”中扫描 DLsite 作品目录，按音轨或整部作品排队生成音频、静态视频和字幕；
+- 中断后继续工作，只重做缺失或设置已经失效的部分；
 - 长任务可在网页中取消；程序日志可直接查看和下载。
 
-英语项目使用现有的 Faster-Whisper 模型；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。
-翻译和配音目标语言为简体中文。
+英语项目使用现有的 Faster-Whisper 模型；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。翻译和配音目标语言为简体中文。
 
 ## 演示
 
@@ -51,19 +46,13 @@ https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
 
 ## 下载与安装（Windows）
 
-从 [GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest) 下载
-`ASMR-Dubber-windows-portable.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
+从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)下载 `ASMR-Dubber-windows-portable.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
 
-> **使用前请开启 Windows 长路径。以避免一些问题** 进入“设置 → 系统 → 高级 → 文件资源管理器”，打开
-> “启用长路径”，然后重新启动 ASMR Dubber。未开启时，IndexTTS2 等第三方运行环境中的深层
-> 文件可能超过 Windows 的传统路径限制，出现“文件明明存在但程序报告找不到”的错误。如果
-> 当前 Windows 没有这个开关，请把程序解压到 `D:\ASMR-Dubber` 这类短路径。
+> **使用前请启用 Windows 长路径。** 进入“设置 → 系统 → 高级 → 文件资源管理器”，打开“启用长路径”，然后重新启动 ASMR Dubber。未启用时，IndexTTS2 等第三方运行环境中的深层文件可能超过 Windows 的传统路径限制，出现“文件明明存在但程序报告找不到”的错误。如果当前 Windows 没有这个开关，请把程序解压到 `D:\ASMR-Dubber` 这类短路径。
 
 ![Windows“启用长路径”开关位置](assets/windows-enable-long-paths.png)
 
-Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新架构。主环境使用 CUDA 13，
-不支持 Maxwell、Pascal 和 Volta；这些旧卡即使显存较大，也不属于完整本地 GPU 支持范围。
-
+Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新架构。主环境使用 CUDA 13，不支持 Maxwell、Pascal 和 Volta；这些旧卡即使显存较大，也不属于完整本地 GPU 支持范围。
 
 ## 快速开始
 
@@ -74,17 +63,14 @@ Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新�
 1. 下载项目压缩包并完整解压。不要直接在压缩软件里运行。
 2. 双击 `ASMR-Dubber-Setup.exe`，按提示选择安装方案。
 3. 安装结束后双击 `ASMR-Dubber.exe`。
-4. 浏览器打开后，先到“设置”确认识别、翻译和合成方式，再回到“项目工作台”。
+4. 浏览器打开后，先到“设置”确认识别、翻译和合成方式，再回到“单个作品”。
 5. 保留启动终端。要停止程序，按 `Ctrl+C` 或关闭终端。
 
 IndexTTS2 第一次生成语音时需要加载模型并初始化 CUDA，等待时间可能明显长于后续任务。
 
-不需要预装 Python、uv、Git、FFmpeg 或 CUDA Toolkit。启动器优先使用 PowerShell 7；电脑上
-没有 PowerShell 7 时会使用 Windows 自带的 PowerShell 5.1。下载阶段需要系统中的
-`curl.exe`。
+不需要预装 Python、uv、Git、FFmpeg 或 CUDA Toolkit。启动器优先使用 PowerShell 7；电脑上没有 PowerShell 7 时会使用 Windows 自带的 PowerShell 5.1。下载阶段需要系统中的 `curl.exe`。
 
-建议把程序解压到短且可写的路径，例如 `D:\Apps\ASMR-Dubber`。不要放在
-`C:\Program Files`，也不要让云盘同步程序运行时目录。
+建议把程序解压到短且可写的路径，例如 `D:\Apps\ASMR-Dubber`。不要放在 `C:\Program Files`，也不要让云盘同步程序运行时目录。
 
 ### Linux
 
@@ -97,8 +83,7 @@ bash scripts/linux/run-ui.sh
 
 本地 NVIDIA 模型还需要可用的显卡驱动。程序会准备自己的 Python 和依赖，不修改系统 Python。
 
-更完整的系统要求、磁盘估算、下载策略和离线安装方法见
-[安装指南](docs/INSTALLATION.md)。
+更完整的系统要求、磁盘估算、下载策略和离线安装方法见[安装指南](docs/INSTALLATION.md)。
 
 ## 选择安装方案
 
@@ -118,45 +103,62 @@ bash scripts/linux/run-ui.sh
 6. Qwen3 ForcedAligner 0.6B；
 7. IndexTTS2 checkpoints，仅在检测到 NVIDIA GPU 时安装。
 
-没有 NVIDIA GPU 的电脑仍可使用 CPU 识别和外部 TTS（语音合成）API。CPU 处理长音频会慢
-很多；IndexTTS2 不提供 CPU 模式。硬件选择可参考[后端指南](docs/BACKENDS.md)。
+没有 NVIDIA GPU 的电脑仍可使用 CPU 识别和外部 TTS（语音合成）API。CPU 处理长音频会慢很多；IndexTTS2 不提供 CPU 模式。硬件选择可参考[后端指南](docs/BACKENDS.md)。
 
-## 做完第一个项目
+## 单个作品：从音频到成品
 
-1. 在“设置 → 设备与模型”确认所选后端显示为“可用”。
-2. 在“设置 → 翻译”选择服务并保存 API Key；本地翻译接口可按服务实际情况留空密钥。
-3. 如已打开项目，点击“保存并应用到当前项目”。“仅保存为以后新项目默认值”不会改动当前项目。
-4. 在“设置 → ASR（语音识别）”选择新项目的音频语言并保存，然后回到“项目工作台”新建项目。
-5. 点击“运行 ASR（语音识别）”，检查句子表里的文字和时间。已有台本或字幕时，也可以展开
-   “使用已有台本或字幕”。带时间轴的字幕直接导入；无时间轴台本可以按长度估算，也可以先运行
-   ASR/翻译，再让大模型按台本校对文字。
-6. 原文台本和识别结果需要点击“翻译为中文”；中文配音稿可直接编辑并保存校对表格。
-7. 在“统一音色参考”中选择一条清晰的 5–15 秒台词。
-8. 在“音频输出方式”中选择“混音成品和中文克隆音轨”“仅混音成品”或“仅中文克隆音轨”，
-   然后点击“TTS（语音合成）并输出”。结果会显示在页面中，也会保存在项目的 `output` 目录。
+### 1. 设置识别、翻译和配音
 
-每句中文默认从原字幕开始时间向后偏移 500 ms。需要调整时，可在“混音与字幕”中填写其它
-毫秒偏移；中文音频挤到下一句时，程序会在默认 1.8×、最高可选 4× 的上限内自动加速，仍放
-不下则保留上限并允许重叠。这个过程只影响输出排程，不会修改逐句 TTS 缓存。只导出中文轨后，
-把输出方式切回包含混音即可重新加入原音轨。
+先到“设置 → 设备与模型”确认准备使用的后端显示为“可用”。随后在 ASR（语音识别）页选择项目源语言、识别模型、VAD（语音活动检测）和时间戳方式。网页只显示当前模型会用到的参数。
 
-字幕不依赖完整配音流程。识别完成后即可选择字幕内容并点击“生成字幕”。详细操作和常见参数
-取舍见[使用指南](docs/USER_GUIDE.md)。
+![ASR（语音识别）设置](assets/screenshots/settings-asr.png)
+
+在“翻译”中选择服务、模型和接口地址，并保存当前服务的 API Key。日语和英语使用各自的内置 Prompt；切换普通机器翻译服务后，LLM 专属参数会隐藏。
+
+![翻译设置](assets/screenshots/settings-translation.png)
+
+在“TTS（语音合成）”中选择本地 IndexTTS2 或外部 API。IndexTTS2 第一次生成时需要载入模型并初始化 CUDA，等待时间会明显长于后续任务。
+
+![TTS（语音合成）设置](assets/screenshots/settings-tts.png)
+
+设置页底部的“仅保存为以后新项目默认值”不会改变已打开项目；需要让当前项目立即采用新设置时，使用“保存并应用到当前项目”。
+
+### 2. 创建项目并完成 1–5 步
+
+回到“工作台 → 单个作品”，选择一个音频或视频并新建项目。项目会保存输入副本、设置快照、句子表和中间缓存，可以关闭程序后继续。
+
+![单个作品工作台](assets/screenshots/workbench.png)
+
+1. 点击“运行 ASR（语音识别）”，检查句子表里的文字和时间；
+2. 点击“翻译为中文”，再直接校对中文；导入中文字幕或中文配音稿时可以跳过这一步；
+3. 修改完成后保存校对表格。把一行的原文和中文都清空即可删除该句；
+4. 展开“统一音色参考”，选择一条 5–15 秒、单人且背景干净的台词；
+5. 点击“生成中文配音”，确认后再点“混音与输出”。混音参数不满意时只需重新混音。
+
+已有字幕或台本时，可以展开“使用已有台本或字幕”。SRT、VTT、ASS/SSA、LRC 会使用文件中的时间轴；纯文本可以按长度估算，也可以先运行 ASR，再由大模型依据台本校正已有句子。
+
+### 3. 调整中文配音和输出
+
+“混音与字幕”集中控制中文落点、冲突处理、音量、声道路由和字幕可读性。默认让中文从原句开始时间后 500 ms 播放；句子冲突时可在最大倍速内自动加速，也可以选择等上一句播放完再开始下一句。
+
+![混音与字幕设置](assets/screenshots/settings-mix.png)
+
+音频输出可以同时保留混音成品和完整时间轴的中文克隆音轨，也可以只保留其中一种。只调整时间、音量或声道路由不会使逐句 TTS 缓存失效。字幕可以独立生成，支持双语、仅中文和仅原文 SRT/LRC；视频项目还会生成带字幕视频。
+
+详细参数和台本导入方式见[使用指南](docs/USER_GUIDE.md)，每项设置的默认值和作用见[配置参考](docs/CONFIGURATION.md)。
 
 ## 支持的后端
 
 | 环节 | 可选后端 |
 |---|---|
-| ASR（语音识别） | Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语） |
+| ASR（语音识别）| Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语）|
 | 时间戳 | 识别模型自带时间戳、Qwen3 ForcedAligner 0.6B |
-| TTS（语音合成） | IndexTTS2、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
+| TTS（语音合成）| IndexTTS2、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
 | 翻译 | DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
 
-程序不会在任务开始后悄悄换用另一个模型。网页中的模型安装状态来自本地文件和运行环境检测；
-多模型交叉校对也只列出本机完整可用的识别模型。
+程序不会在任务开始后悄悄换用另一个模型。网页中的模型安装状态来自本地文件和运行环境检测；多模型交叉校对也只列出本机完整可用的识别模型。
 
-Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南](docs/BACKENDS.md#使用-large-v3)
-放入程序目录。
+Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南](docs/BACKENDS.md#使用-large-v3)放入程序目录。
 
 ## 数据放在哪里
 
@@ -172,6 +174,7 @@ Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南]
 │   ├── cache/           # 下载与计算缓存
 │   ├── config/          # 设置、密钥和外部参考音频
 │   ├── projects/        # 项目
+│   ├── autoflow/        # 批量任务状态、日志和临时文件
 │   ├── logs/            # Setup 与程序运行日志
 │   └── temp/            # 可清理的临时文件
 ├── model-packs/         # 可选的离线模型包入口
@@ -179,16 +182,34 @@ Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南]
 └── ASMR-Dubber-Setup.exe
 ```
 
-API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`。它不会写入项目文件、
-性能记录或字幕，但任何能读取程序目录的账户都能读取它。不要共享 `.asmr-dubber`，也不要把它
-提交到 Git 或公开网盘。
+API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`。它不会写入项目文件、性能记录或字幕，但任何能读取程序目录的账户都能读取它。不要共享 `.asmr-dubber`，也不要把它提交到 Git 或公开网盘。
 
-停止程序后，可以复制整个文件夹来备份或搬到另一块磁盘；移动后重新运行 Setup，让脚本修复
-运行环境里的绝对路径。要卸载，先关闭程序和相关模型服务，再删除整个程序文件夹。
+停止程序后，可以复制整个文件夹来备份或搬到另一块磁盘；移动后重新运行 Setup，让脚本修复运行环境里的绝对路径。要卸载，先关闭程序和相关模型服务，再删除整个程序文件夹。
 
-## 配套工具
+## 批量处理 DLsite 作品
 
-需要把 DLsite 音声的多个分轨按顺序合并，并整理成便于发布到某些平台的双语音声或视频时，可以配合项目 [asmr-dubber-batch](https://github.com/EveningStudy/asmr-dubber-batch) 使用。
+“工作台 → 批量处理”用于已经解压的作品目录。输入目录并扫描后，程序先选出推荐的音频版本，再列出本次任务中的每条音轨。
+
+![批量处理的音轨与字幕](assets/screenshots/batch-tracks.png)
+
+- 勾选“包含特典、样本和 Free Talk”后，附加音轨会立即加入列表；
+- 拖动卡片或使用上下按钮可以改变音轨顺序；
+- SRT、VTT、ASS/SSA 和 LRC 会按音轨自动匹配，并判断为中文、日语或英语；
+- 每条音轨都可以更换字幕、修改语言或关闭字幕。没有字幕的音轨按正常 ASR 流程处理。
+
+接着选择输出类型和成品组织。纯音频不需要画面；视频任务会直接显示推荐图片的相对路径和预览，也可以改用作品中的其它图片或黑色背景。“每条音轨分别处理并输出”不会生成合并版。
+
+![批量处理的输出方式和画面预览](assets/screenshots/batch-output.png)
+
+确认后加入队列，再继续扫描其它作品。队列支持拖动排序、编辑选项、移除和标记重新处理；修改任务不会影响队列中的其它作品。
+
+![批量处理队列](assets/screenshots/batch-queue.png)
+
+带时间轴的中文字幕覆盖全部所选音轨时，程序直接建立中文时间轴，不再运行 ASR 或翻译；日语或英语字幕跳过 ASR，之后仍会翻译。任务状态、日志和中间文件保存在 `.asmr-dubber/autoflow`，中断后可以继续。
+
+固定规则和新任务默认值位于“设置 → 自动处理”。这里可以决定是否翻译作品文件夹名称和音轨标题；已经加入队列的任务仍保留加入时的选择。
+
+![批量处理默认设置](assets/screenshots/settings-autoflow.png)
 
 ## 项目目录
 
@@ -224,8 +245,7 @@ bash scripts/linux/run-cli.sh doctor --no-network
 bash scripts/linux/run-cli.sh --help
 ```
 
-常用命令有 `create`、`analyze`、`translate`、`synthesize`、`mix`、`subtitles`、
-`set-timing`、`install-backend` 和 `verify-asr`。
+常用命令有 `create`、`analyze`、`translate`、`synthesize`、`mix`、`subtitles`、`set-timing`、`install-backend` 和 `verify-asr`。
 
 ## 文档
 
@@ -242,6 +262,4 @@ bash scripts/linux/run-cli.sh --help
 
 ## 许可与责任
 
-项目代码采用 [MIT License](LICENSE)。模型、运行时和云服务适用各自的许可证或服务条款，
-其中 IndexTTS2 使用独立的 bilibili Model Use License。请确认你有权处理输入作品和参考声音，
-并按适用规则标记合成内容。详见[第三方软件与模型说明](docs/THIRD_PARTY_NOTICES.md)。
+项目代码采用[MIT License](LICENSE)。模型、运行时和云服务适用各自的许可证或服务条款，其中 IndexTTS2 使用独立的 bilibili Model Use License。请确认你有权处理输入作品和参考声音，并按适用规则标记合成内容。详见[第三方软件与模型说明](docs/THIRD_PARTY_NOTICES.md)。

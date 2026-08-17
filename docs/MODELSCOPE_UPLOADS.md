@@ -2,8 +2,7 @@
 
 本文面向发布维护者。普通用户不需要上传任何文件，只需运行 Setup 或使用离线模型包。
 
-ASMR Dubber 默认从 ModelScope 获取引导程序、Python、依赖包、模型包和部分第三方运行时。
-GitHub、Hugging Face、hf-mirror 与海外官方软件源只有在用户显式开启时才进入候选列表。
+ASMR Dubber 默认从 ModelScope 获取引导程序、Python、依赖包、模型包和部分第三方运行时。GitHub、Hugging Face、hf-mirror 与海外官方软件源只有在用户显式开启时才进入候选列表。
 
 ## 仓库布局
 
@@ -16,12 +15,9 @@ GitHub、Hugging Face、hf-mirror 与海外官方软件源只有在用户显式�
 | `EveningStudyW/ASMR-Dubber-Windows-Advanced` | Windows 进阶依赖包、Kotoba、Faster-Whisper、Qwen 对齐和 ASMR VAD 模型包 |
 | `EveningStudyW/ASMR-Dubber-Windows-Portable` | 已装好依赖和模型、解压即可运行的 Windows 核心/推荐/进阶完整包 |
 
-默认 revision 是 `master`。由于 URL 使用可变分支名，每一个已经发布并被代码固定哈希的路径
-都必须视为不可变制品：**不能用不同内容覆盖同名文件**。需要重建时使用新文件名或新目录，
-更新所有合同并发布新的程序版本。
+默认 revision 是 `master`。由于 URL 使用可变分支名，每一个已经发布并被代码固定哈希的路径都必须视为不可变制品：**不能用不同内容覆盖同名文件**。需要重建时使用新文件名或新目录，更新所有合同并发布新的程序版本。
 
-API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、`mirrors.json`、日志、Issue、
-测试夹具或本文。
+API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、`mirrors.json`、日志、Issue、测试夹具或本文。
 
 ## 真相源
 
@@ -33,16 +29,13 @@ API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、
 4. `scripts/windows/recommended-dependencies.ps1`：Windows 推荐/进阶依赖包合同；
 5. IndexTTS2 安装脚本：固定源码 revision 和源码 ZIP SHA-256。
 
-不能只改其中一个。CI 会检查 lock 与镜像配置的一致性，但只有端到端干净安装能证明远端文件、
-依赖包内部结构和安装脚本仍然匹配。
+不能只改其中一个。CI 会检查 lock 与镜像配置的一致性，但只有端到端干净安装能证明远端文件、依赖包内部结构和安装脚本仍然匹配。
 
 ## Portable Mirror 固定制品
 
-仓库：
-[EveningStudyW/ASMR-Dubber-Portable-Mirror](https://www.modelscope.cn/models/EveningStudyW/ASMR-Dubber-Portable-Mirror)
+仓库：[EveningStudyW/ASMR-Dubber-Portable-Mirror](https://www.modelscope.cn/models/EveningStudyW/ASMR-Dubber-Portable-Mirror)
 
-下表由 `modelscope-artifacts.lock.json` 约束。路径区分大小写，`+` 是文件名的一部分；网页可能
-把它显示成 `%2B`，不要因此把实际文件改名。
+下表由 `modelscope-artifacts.lock.json` 约束。路径区分大小写，`+` 是文件名的一部分；网页可能把它显示成 `%2B`，不要因此把实际文件改名。
 
 | 仓库内路径 | 字节数 | SHA-256 |
 |---|---:|---|
@@ -61,8 +54,7 @@ API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、
 | `artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf` | 2,134,533,952 | `34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7` |
 | `artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf` | 1,246,932,800 | `374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584` |
 
-Windows 全新安装首先依赖根目录的 uv 和 Python 3.12 文件。把它们放进子目录或把 `+` 改成
-空格都会导致 Setup 找不到。
+Windows 全新安装首先依赖根目录的 uv 和 Python 3.12 文件。把它们放进子目录或把 `+` 改成空格都会导致 Setup 找不到。
 
 ## Windows 依赖包
 
@@ -78,9 +70,7 @@ EveningStudyW/ASMR-Dubber-Windows-Recommended/
 - 字节数：`4,060,845,976`
 - SHA-256：`a026ea897a36fa7cf22b2c1b5f8069d9b353c02a1e5285e00d0ea984f9a1472b`
 
-它包含 Windows 推荐方案的主应用环境、IndexTTS2 Python/CUDA 环境和共享 FFmpeg 运行文件。
-导入器支持第三方包的深层路径；压缩包内部布局由
-`scripts/import_windows_dependency_pack.py` 校验。
+它包含 Windows 推荐方案的主应用环境、IndexTTS2 Python/CUDA 环境和共享 FFmpeg 运行文件。导入器支持第三方包的深层路径；压缩包内部布局由 `scripts/import_windows_dependency_pack.py` 校验。
 
 ### 进阶方案
 
@@ -94,11 +84,9 @@ EveningStudyW/ASMR-Dubber-Windows-Advanced/
 - 字节数：`2,905,762,138`
 - SHA-256：`bafd2268de9a83bbf391ba8918d1798d24f703b023af70e8f623b2dbffc9a178`
 
-它提供进阶识别、VAD 和对齐所需的主环境依赖，内部布局由
-`scripts/import_windows_advanced_dependency_pack.py` 校验。
+它提供进阶识别、VAD 和对齐所需的主环境依赖，内部布局由 `scripts/import_windows_advanced_dependency_pack.py` 校验。
 
-推荐/进阶依赖 ZIP 也可以原样放入用户的 `model-packs` 目录。Setup 只按固定名称、大小和哈希
-识别，不会接受“内容看起来相同”的重新压缩文件。
+推荐/进阶依赖 ZIP 也可以原样放入用户的 `model-packs` 目录。Setup 只按固定名称、大小和哈希识别，不会接受“内容看起来相同”的重新压缩文件。
 
 ## 大型模型包
 
@@ -113,8 +101,7 @@ EveningStudyW/ASMR-Dubber-Windows-Advanced/
 | `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-qwen3-forced-aligner-v1.0.0.zip` | 1,837,358,823 | `6697b80bfba3a182a86290ba0f7b8adc958d7112bfe6cc9caa73bc7207b74242` |
 | `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-whisper-vad-asmr-onnx-v1.0.0.zip` | 54,692,316 | `f7d4c6ec7c9576d325685ffeaf7a39e5160fa1d3e6fe94ae60ed7dc866e5eaa9` |
 
-文件级哈希只是第一层。导入器还检查 ZIP 内的 `manifest.json`、平台、pack ID、相对路径、
-解压后字节数和每个文件 SHA-256。不能用普通模型目录随手压缩后覆盖这些文件。
+文件级哈希只是第一层。导入器还检查 ZIP 内的 `manifest.json`、平台、pack ID、相对路径、解压后字节数和每个文件 SHA-256。不能用普通模型目录随手压缩后覆盖这些文件。
 
 需要制作模型包时先查看脚本参数：
 
@@ -144,13 +131,11 @@ index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip
 7ed8bc742e2eeeb83f922247ef0e27f96327f418acacb6c63f182cafd66887ba
 ```
 
-源码 ZIP 与 checkpoints 模型包是两件制品，缺一不可。源码中的 `LICENSE`、`LICENSE_ZH.txt`
-和其它 notices 必须保留。
+源码 ZIP 与 checkpoints 模型包是两件制品，缺一不可。源码中的 `LICENSE`、`LICENSE_ZH.txt` 和其它 notices 必须保留。
 
 ## Wheelhouse
 
-下列路径用于不访问 PyPI 的依赖安装。每个归档必须有同路径、同文件名再加 `.sha256` 的旁车
-文件：
+下列路径用于不访问 PyPI 的依赖安装。每个归档必须有同路径、同文件名再加 `.sha256` 的旁车文件：
 
 | 仓库内路径 | 内容 |
 |---|---|
@@ -223,8 +208,7 @@ $file.Length
 9. 用远端 metadata 或小范围请求核对 URL、Content-Length 和 Range 支持；
 10. 从不含 `.asmr-dubber` 的发行包执行一次全新安装。
 
-最后一步必须覆盖至少：Windows PowerShell 5.1、无预装 Python、全空缓存、推荐方案和进阶方案。
-不能用开发机已经存在的模型或依赖缓存代替这个测试。
+最后一步必须覆盖至少：Windows PowerShell 5.1、无预装 Python、全空缓存、推荐方案和进阶方案。不能用开发机已经存在的模型或依赖缓存代替这个测试。
 
 ## 本地只读缓存测试
 
@@ -243,5 +227,4 @@ $env:ASMR_DUBBER_LOCAL_CACHE_ROOTS = 'E:\ASMR-Dubber-Artifact-Cache'
     -LocalCacheRoot 'E:\ASMR-Dubber-Artifact-Cache'
 ```
 
-缓存根目录只读使用。测试结束后检查源目录时间戳和内容未变化，并确认安装日志明确写出“复用”
-而不是网络下载。
+缓存根目录只读使用。测试结束后检查源目录时间戳和内容未变化，并确认安装日志明确写出“复用”而不是网络下载。

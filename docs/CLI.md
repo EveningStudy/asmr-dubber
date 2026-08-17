@@ -1,7 +1,6 @@
 # 命令行参考
 
-网页和命令行调用同一套项目流程。需要批处理、远程终端或精确重跑某个阶段时使用 CLI；日常
-制作仍建议用网页校对表格。
+网页和命令行调用同一套项目流程。需要批处理、远程终端或精确重跑某个阶段时使用 CLI；日常制作仍建议用网页校对表格。
 
 ## 启动方式
 
@@ -17,8 +16,7 @@ Linux：
 bash scripts/linux/run-cli.sh --help
 ```
 
-使用这些脚本能保证便携 Python、FFmpeg、模型目录和隔离 DLL 路径正确。不要直接调用系统
-`python -m asmr_dubber`，除非你正在开发并明确配置了环境。
+使用这些脚本能保证便携 Python、FFmpeg、模型目录和隔离 DLL 路径正确。不要直接调用系统 `python -m asmr_dubber`，除非你正在开发并明确配置了环境。
 
 下面示例用 `<project>` 表示项目目录或其中的 `project.json`。
 
@@ -28,11 +26,9 @@ bash scripts/linux/run-cli.sh --help
 .\scripts\windows\run-cli.ps1 doctor --no-network
 ```
 
-`doctor` 检查操作系统、架构、GPU、PyTorch CUDA、FFmpeg、核心包、当前 ASR（语音识别）后端、
-当前 TTS（语音合成）后端和翻译密钥。去掉 `--no-network` 后还会请求翻译服务基础地址。
+`doctor` 检查操作系统、架构、GPU、PyTorch CUDA、FFmpeg、核心包、当前 ASR（语音识别）后端、当前 TTS（语音合成）后端和翻译密钥。去掉 `--no-network` 后还会请求翻译服务基础地址。
 
-某个当前后端未安装时命令返回非零，即使网页核心环境已经可以启动。脚本自动化应检查退出码，
-不要只搜索输出中的 `OK`。
+某个当前后端未安装时命令返回非零，即使网页核心环境已经可以启动。脚本自动化应检查退出码，不要只搜索输出中的 `OK`。
 
 ## 创建项目
 
@@ -69,11 +65,7 @@ bash scripts/linux/run-cli.sh create /data/input.wav --projects-root /data/proje
 .\scripts\windows\run-cli.ps1 analyze '<project>' --force
 ```
 
-VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。英语项目会
-自动使用 Faster-Whisper，并把识别语言固定为英语；Parakeet、Kotoba-Whisper 和日语 ASMR VAD
-只用于日语。CLI 不接受
-一组临时后端参数，以免运行结果与 `project.json` 记录不一致；先在网页应用设置，或通过受
-验证的代码修改项目设置。
+VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。英语项目会自动使用 Faster-Whisper，并把识别语言固定为英语；Parakeet、Kotoba-Whisper 和日语 ASMR VAD 只用于日语。CLI 不接受一组临时后端参数，以免运行结果与 `project.json` 记录不一致；先在网页应用设置，或通过受验证的代码修改项目设置。
 
 识别完成后输出 `exports/transcript.json` 路径。
 
@@ -89,8 +81,7 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 .\scripts\windows\run-cli.ps1 translate '<project>' --force
 ```
 
-服务、模型、基础地址和 Prompt 来自项目设置。API Key 按以下顺序读取：调用方显式提供的值、
-便携密钥文件、对应环境变量。普通 CLI 没有命令行密钥参数，建议先在网页保存或设置环境变量。
+服务、模型、基础地址和 Prompt 来自项目设置。API Key 按以下顺序读取：调用方显式提供的值、便携密钥文件、对应环境变量。普通 CLI 没有命令行密钥参数，建议先在网页保存或设置环境变量。
 
 ## TTS（语音合成）
 
@@ -120,24 +111,24 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 .\scripts\windows\run-cli.ps1 mix '<project>'
 ```
 
-混音要求所有启用且有中文的句子已经具备有效 TTS 文件。命令按照项目设置的 `mix_output_mode`
-输出混音成品、中文克隆音轨，或两者。只输出中文轨后再切回包含混音的模式，仍可直接加入原音轨，
-不必重做 TTS。视频项目只有在生成混音成品时才会输出封装视频。修改中文整体偏移、自动加速上限、
-响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译或合成。
+混音要求所有启用且有中文的句子已经具备有效 TTS 文件。命令按照项目设置的 `mix_output_mode` 输出混音成品、中文克隆音轨，或两者。只输出中文轨后再切回包含混音的模式，仍可直接加入原音轨，不必重做 TTS。视频项目只有在生成混音成品时才会输出封装视频。修改中文整体偏移、自动加速上限、响度、声道路由或峰值设置后，只需重新 `mix`，不必重做识别、翻译或合成。
 
 ## 修改中文配音排程
 
 ```powershell
-.\scripts\windows\run-cli.ps1 set-timing '<project>' --offset-ms 500 --max-speed 1.8
+.\scripts\windows\run-cli.ps1 set-timing '<project>' `
+    --offset-ms 500 `
+    --mode fit-window `
+    --max-speed 1.8
 ```
 
 至少提供一个参数：
 
 - `--offset-ms`：相对原字幕开始时间的整体偏移，负数提前、正数延后；
-- `--max-speed`：与下一句冲突时的最大自动加速倍速，范围 1.0–4.0。
+- `--mode`：`fit-window` 在冲突时自动加速；`sequential` 等上一句结束后再播放下一句；
+- `--max-speed`：`fit-window` 模式下的最大自动加速倍速，范围 1.0–4.0。
 
-命令会使现有混音和字幕视频失效，但保留逐句 TTS 缓存。没有冲突的句子保持原速；达到速度
-上限后仍放不下的部分允许与下一句重叠。
+命令会使现有混音和字幕视频失效，但保留逐句 TTS 缓存。`fit-window` 达到速度上限后仍放不下的部分允许重叠；`sequential` 不加速，冲突的下一句顺延，输出可能长于原媒体。
 
 ## 字幕
 
@@ -151,7 +142,7 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 |---|---|
 | `bilingual` | 源文 + 中文双语 |
 | `zh` | 仅中文 |
-| `source` | 仅源文（`ja` 仍可作为兼容别名） |
+| `source` | 仅源文（`ja` 仍可作为兼容别名）|
 
 命令生成 SRT 和 LRC；视频项目还尝试生成字幕视频。字幕时间轴和可读性参数从项目设置读取。
 
@@ -164,11 +155,9 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 .\scripts\windows\run-cli.ps1 install-backend indextts2
 ```
 
-后端 ID 是稳定的项目字段，不是网页显示名称。外部 GPT-SoVITS、CosyVoice 和 Fish API 不由
-本程序安装。
+后端 ID 是稳定的项目字段，不是网页显示名称。外部 GPT-SoVITS、CosyVoice 和 Fish API 不由本程序安装。
 
-安装和本地推理互斥。另一个任务占用运行时锁时，命令会等待或明确超时，不应并行启动多个
-安装进程。
+安装和本地推理互斥。另一个任务占用运行时锁时，命令会等待或明确超时，不应并行启动多个安装进程。
 
 ## 离线模型包
 
@@ -211,8 +200,7 @@ qwen3-forced-aligner
 whisper-vad-asmr-onnx
 ```
 
-`download-models --backend 进阶语音识别` 是分档安装使用的组合命令，会准备 Kotoba v2.2、
-Faster-Whisper large-v2、Qwen3 ForcedAligner 和 ASMR VAD。
+`download-models --backend 进阶语音识别` 是分档安装使用的组合命令，会准备 Kotoba v2.2、Faster-Whisper large-v2、Qwen3 ForcedAligner 和 ASMR VAD。
 
 ## 真实验证一个识别器
 
@@ -236,8 +224,7 @@ Parakeet 0.6B 可额外指定 `--decoder tdt` 或 `--decoder ctc`。CPU Faster-W
     --compute-type int8
 ```
 
-先用几秒到几十秒、来源明确的日语或英语测试音频；英语项目指定
-`--source-language en`。该命令不会自动把未安装模型下载下来。
+先用几秒到几十秒、来源明确的日语或英语测试音频；英语项目指定 `--source-language en`。该命令不会自动把未安装模型下载下来。
 
 ## 启动网页
 

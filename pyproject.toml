@@ -4,17 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asmr-dubber"
-version = "0.7.3"
-description = "Japanese ASMR to Chinese voice-cloned sentence dubbing for Windows and Linux"
+version = "1.0.0"
+description = "Japanese or English ASMR to Chinese voice-cloned dubbing for Windows and Linux"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "ASMR Dubber contributors"}]
 maintainers = [{name = "ASMR Dubber maintainers"}]
-keywords = ["ASMR", "Japanese", "Chinese", "voice-cloning", "dubbing", "TTS", "ASR"]
+keywords = ["ASMR", "Japanese", "English", "Chinese", "voice-cloning", "dubbing", "TTS", "ASR"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: GPU :: NVIDIA CUDA",
   "License :: OSI Approved :: MIT License",
   "Operating System :: Microsoft :: Windows :: Windows 10",

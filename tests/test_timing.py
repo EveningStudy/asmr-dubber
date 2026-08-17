@@ -76,6 +76,28 @@ def test_conflict_can_use_more_than_two_times_speed() -> None:
         plan_dubbing_timing([_sentence("s1", 1.0, 1.0)], max_auto_speed=4.1)
 
 
+def test_sequential_mode_delays_the_next_clip_without_speeding_or_overlap() -> None:
+    planned = plan_dubbing_timing(
+        [_sentence("s1", 1.0, 3.0), _sentence("s2", 3.0, 1.5)],
+        max_auto_speed=4.0,
+        mode="sequential",
+    )
+
+    assert [item.start_seconds for item in planned] == [1.0, 4.0]
+    assert [item.speed_factor for item in planned] == [1.0, 1.0]
+    assert [item.remaining_overlap_seconds for item in planned] == [0.0, 0.0]
+
+
+def test_sequential_mode_preserves_a_later_original_start() -> None:
+    planned = plan_dubbing_timing(
+        [_sentence("s1", 1.0, 1.0), _sentence("s2", 4.0, 1.0)],
+        offset_ms=500,
+        mode="sequential",
+    )
+
+    assert [item.start_seconds for item in planned] == [1.5, 4.5]
+
+
 def test_rows_without_available_chinese_tts_do_not_create_a_boundary() -> None:
     planned = plan_dubbing_timing(
         [
@@ -116,6 +138,7 @@ def test_transcript_export_records_effective_schedule_without_legacy_fields(tmp_
         settings=ProjectSettings(
             chinese_dubbing_offset_ms=500,
             chinese_max_auto_speed=1.5,
+            chinese_dubbing_timing_mode="sequential",
         ),
         sentences=[_sentence("s1", 1.0, 3.0), _sentence("s2", 3.0, 1.0)],
     )
@@ -124,7 +147,8 @@ def test_transcript_export_records_effective_schedule_without_legacy_fields(tmp_
 
     rows = json.loads((tmp_path / "exports" / "transcript.json").read_text(encoding="utf-8"))
     assert rows[0]["zh_start_seconds"] == pytest.approx(1.5)
-    assert rows[0]["auto_speed_factor"] == pytest.approx(1.5)
-    assert rows[0]["zh_effective_duration_seconds"] == pytest.approx(2.0)
+    assert rows[0]["auto_speed_factor"] == pytest.approx(1.0)
+    assert rows[0]["zh_effective_duration_seconds"] == pytest.approx(3.0)
     assert rows[0]["remaining_overlap_seconds"] == pytest.approx(0.0)
+    assert rows[1]["zh_start_seconds"] == pytest.approx(4.5)
     assert "overlap_seconds" not in rows[0]

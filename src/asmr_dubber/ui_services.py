@@ -434,7 +434,7 @@ def translate(
     return view(project, directory, "翻译完成。请检查中文后保存表格。")
 
 
-def synthesize_and_mix(
+def synthesize(
     project_path: str,
     table: Any,
     progress: Any | None = None,
@@ -448,13 +448,50 @@ def synthesize_and_mix(
         progress=progress,
         cancel_event=cancel_event,
     )
+    return view(
+        project,
+        directory,
+        "TTS（语音合成）完成。可以直接混音；之后调整混音设置不需要重做配音。",
+    )
+
+
+def mix(
+    project_path: str,
+    table: Any,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    project, directory = pipeline.reload_project(project_path)
+    apply_table(project, table)
     pipeline.mix_project(project, directory, progress=progress, cancel_event=cancel_event)
     mode_label = {
         "mixed": "混音成品",
         "stem": "中文克隆音轨",
         "both": "混音成品和中文克隆音轨",
     }[project.settings.mix_output_mode]
-    return view(project, directory, f"TTS（语音合成）与输出完成：{mode_label}。")
+    return view(project, directory, f"混音完成：{mode_label}。本次没有重新运行 TTS。")
+
+
+def synthesize_and_mix(
+    project_path: str,
+    table: Any,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    """Compatibility helper for older API clients; the WebUI exposes both stages separately."""
+
+    synthesized = synthesize(
+        project_path,
+        table,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    return mix(
+        project_path,
+        synthesized.rows,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
 
 
 def subtitles(

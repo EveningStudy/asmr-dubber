@@ -228,6 +228,11 @@ def test_sentence_events_plan_from_actual_audio_durations(tmp_path: Path) -> Non
     assert events[0].speed_factor == pytest.approx(1.1)
     assert events[0].effective_duration_seconds == pytest.approx(2.0)
 
+    sequential = sentence_events(project_dir, sentences, 500, 4.0, "sequential")
+
+    assert [event.start_seconds for event in sequential] == pytest.approx([1.5, 3.7])
+    assert [event.speed_factor for event in sequential] == [1.0, 1.0]
+
 
 def test_chinese_lines_get_consistent_active_level_without_touching_raw_files(
     tmp_path: Path,

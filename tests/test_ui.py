@@ -38,6 +38,12 @@ from asmr_dubber.ui_services import (
     select_reference,
     stage_for_ui,
 )
+from asmr_dubber.ui_services import (
+    mix as mix_service,
+)
+from asmr_dubber.ui_services import (
+    synthesize as synthesize_service,
+)
 from asmr_dubber.user_settings import UserSettings
 
 
@@ -209,7 +215,7 @@ def test_reference_picker_uses_chinese_text_for_chinese_only_script(
     assert "这是一句足够长而清晰的参考句" in choices[1][0]
 
 
-def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) -> None:
+def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) -> None:
     components = list(app.blocks.values())
     labels = {getattr(component, "label", None) for component in components}
     values = [getattr(component, "value", None) for component in components]
@@ -227,6 +233,7 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "核采样概率（Top P）" in labels
     assert "使用半精度计算（FP16）" in labels
     assert "中文配音整体偏移（毫秒）" in labels
+    assert "中文配音排程方式" in labels
     assert "冲突时最大自动加速倍速" in labels
     assert "音量处理方式" in labels
     assert "中文相对原声音量（dB）" in labels
@@ -235,7 +242,15 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     assert "中文最多提前秒数" not in labels
     assert "提前量最多占日语句长百分比" not in labels
     assert "1 · 运行 ASR（语音识别）" in values
-    assert "4 · TTS（语音合成）并输出" in values
+    assert "4 · 生成中文配音" in values
+    assert "5 · 混音与输出" in values
+    assert "作品文件夹" in labels
+    assert "音频版本" in labels
+    assert "本次将处理的音轨" in labels
+    assert "处理队列" in labels
+    assert "画面预览" in labels
+    assert "已有台本/字幕的处理方式" not in labels
+    assert "默认成品组织" in labels
     assert "打开项目目录" in values
     assert any("实验性，不建议使用" in str(value) for value in values)
     assert "仅保存为以后新项目默认值" in values
@@ -264,6 +279,54 @@ def test_ui_exposes_clear_four_step_workflow_and_only_supported_backends(app) ->
     components_by_label = {getattr(component, "label", None): component for component in components}
     for label in explained_advanced_labels:
         assert getattr(components_by_label[label], "info", "")
+
+
+def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> None:
+    components = list(app.blocks.values())
+    tabs = {
+        getattr(component, "id", None): component
+        for component in components
+        if type(component).__name__ == "Tab"
+    }
+
+    assert tabs["project-workspace"].parent is tabs["autoflow-workspace"].parent
+    assert tabs["project-workspace"].parent.parent is tabs["workspace"]
+    assert tabs["settings"].parent is tabs["workspace"].parent
+
+    values = [str(getattr(component, "value", "") or "") for component in components]
+    assert any("选项只影响刚刚扫描的这个作品" in value for value in values)
+    assert any("固定规则（所有作品共用）" in value for value in values)
+    assert any("新作品默认值（可在批量处理页逐个覆盖）" in value for value in values)
+
+    components_by_label = {getattr(component, "label", None): component for component in components}
+    for label in (
+        "音频版本",
+        "包含特典、样本和 Free Talk",
+        "输出类型",
+        "成品组织",
+        "视频画面",
+        "在视频中内嵌双语字幕",
+        "成品输出文件夹名称",
+        "同一作品多种音频格式时的选择顺序",
+        "原声降低音量（dB）",
+        "原声、配音和字幕整体延后（分钟）",
+        "默认输出类型",
+        "默认成品组织",
+        "默认包含附加音轨",
+        "默认在视频中内嵌字幕",
+        "默认视频画面",
+        "翻译作品文件夹名称",
+        "翻译音轨标题",
+    ):
+        assert getattr(components_by_label[label], "info", "")
+
+    track_list = components_by_label["本次将处理的音轨"]
+    queue_list = components_by_label["处理队列"]
+    assert "'track_reorder'" in track_list.js_on_load
+    assert "'track_subtitle'" in track_list.js_on_load
+    assert "'queue_reorder'" in queue_list.js_on_load
+    assert "'queue_edit'" in queue_list.js_on_load
+    assert "'queue_remove'" in queue_list.js_on_load
 
 
 def test_loudness_modes_map_to_existing_project_fields(monkeypatch) -> None:
@@ -474,6 +537,28 @@ def test_changed_asr_settings_are_used_by_the_next_run(
     }
 
 
+def test_tts_and_mix_services_are_independent(tmp_path: Path, monkeypatch) -> None:
+    _project_value, manifest = _project(tmp_path / "project")
+    calls: list[str] = []
+
+    monkeypatch.setattr("asmr_dubber.ui_services.apply_table", lambda *_args: False)
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.pipeline.synthesize_project",
+        lambda *_args, **_kwargs: calls.append("tts"),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.pipeline.mix_project",
+        lambda *_args, **_kwargs: calls.append("mix"),
+    )
+
+    synthesize_service(str(manifest), [])
+    assert calls == ["tts"]
+
+    calls.clear()
+    mix_service(str(manifest), [])
+    assert calls == ["mix"]
+
+
 def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkeypatch) -> None:
     function = next(
         function for function in app.fns.values() if function.name == "apply_settings_callback"
@@ -489,6 +574,12 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
         if component.label == "启用多 ASR（语音识别）+ 大模型交叉校对"
     )
     values[review_index] = False
+    autoflow_mode_index = next(
+        index
+        for index, component in enumerate(function.inputs)
+        if component.label == "默认输出类型"
+    )
+    values[autoflow_mode_index] = "audio"
 
     captured: dict[str, object] = {}
     monkeypatch.setattr(ui_module, "load_user_settings", UserSettings)
@@ -540,7 +631,14 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
 def test_installation_and_inference_share_one_runtime_queue(app) -> None:
     functions = {function.name: function for function in app.fns.values()}
 
-    for name in ("asr_callback", "translate_callback", "synthesize_callback", "install_callback"):
+    for name in (
+        "asr_callback",
+        "translate_callback",
+        "synthesize_callback",
+        "mix_callback",
+        "autoflow_run_callback",
+        "install_callback",
+    ):
         assert functions[name].concurrency_id == "runtime_mutation"
         assert functions[name].concurrency_limit == 1
 

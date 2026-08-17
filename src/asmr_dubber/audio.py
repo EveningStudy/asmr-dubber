@@ -24,7 +24,7 @@ from .task_control import (
     terminate_process_tree,
     unregister_process,
 )
-from .timing import plan_dubbing_timing
+from .timing import DubbingTimingMode, plan_dubbing_timing
 
 Progress = Callable[[str, int, int], None]
 _SOURCE_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
@@ -59,7 +59,12 @@ def probe_audio(path: str | Path, sha256: str | None = None) -> AudioInfo:
     if not source.is_file():
         raise ProjectError(f"找不到音频：{source}")
     try:
-        with av.open(str(source)) as container:
+        # Text tags are optional for every operation below.  Some MP3 files in
+        # the wild contain truncated or incorrectly declared ID3 text (often
+        # Japanese metadata).  PyAV decodes stream metadata eagerly and its
+        # default ``strict`` policy would otherwise reject an audio stream that
+        # FFmpeg can decode perfectly well.
+        with av.open(str(source), metadata_errors="replace") as container:
             if not container.streams.audio:
                 raise ProjectError(f"文件中没有音轨：{source}")
             stream = container.streams.audio[0]
@@ -342,6 +347,7 @@ def sentence_events(
     sentences: Iterable[Sentence],
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
+    chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
 ) -> list[StemEvent]:
     available: list[Sentence] = []
     audio_paths: dict[str, Path] = {}
@@ -373,6 +379,7 @@ def sentence_events(
         offset_ms=chinese_dubbing_offset_ms,
         max_auto_speed=chinese_max_auto_speed,
         durations=durations,
+        mode=chinese_dubbing_timing_mode,
     )
     return [
         StemEvent(

@@ -233,17 +233,30 @@ def set_timing_command(
             help="与下一句冲突时允许的最大自动加速倍速（1.0–4.0）",
         ),
     ] = None,
+    mode: Annotated[
+        str | None,
+        typer.Option(
+            "--mode",
+            help="fit-window=冲突时自动加速；sequential=上一句结束后再播放下一句",
+        ),
+    ] = None,
 ) -> None:
     """修改中文配音偏移和冲突加速上限；重混即可。"""
     try:
-        if offset_ms is None and max_speed is None:
-            raise ValueError("请至少提供 --offset-ms 或 --max-speed。")
+        if offset_ms is None and max_speed is None and mode is None:
+            raise ValueError("请至少提供 --offset-ms、--max-speed 或 --mode。")
+        if mode is not None and mode not in {"fit-window", "fit_window", "sequential"}:
+            raise ValueError("--mode 只能是 fit-window 或 sequential。")
         project, directory = reload_project(project_path)
         settings = project.settings.model_dump()
         if offset_ms is not None:
             settings["chinese_dubbing_offset_ms"] = offset_ms
         if max_speed is not None:
             settings["chinese_max_auto_speed"] = max_speed
+        if mode is not None:
+            settings["chinese_dubbing_timing_mode"] = (
+                "fit_window" if mode in {"fit-window", "fit_window"} else "sequential"
+            )
         project.settings = ProjectSettings.model_validate(settings)
         project.chinese_stem_file = None
         project.output_file = None
@@ -256,7 +269,11 @@ def set_timing_command(
     console.print(
         "中文配音排程已更新："
         f"整体偏移 {project.settings.chinese_dubbing_offset_ms:+d} ms，"
-        f"最大自动加速 {project.settings.chinese_max_auto_speed:g}×。"
+        + (
+            f"最大自动加速 {project.settings.chinese_max_auto_speed:g}×。"
+            if project.settings.chinese_dubbing_timing_mode == "fit_window"
+            else "上一句结束后再播放下一句，不自动加速。"
+        )
     )
 
 

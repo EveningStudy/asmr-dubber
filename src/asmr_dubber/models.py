@@ -189,6 +189,7 @@ class ProjectSettings(BaseModel):
         ge=1.0,
         le=MAX_CHINESE_AUTO_SPEED,
     )
+    chinese_dubbing_timing_mode: Literal["fit_window", "sequential"] = "fit_window"
     chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
     normalize_chinese_loudness: bool = True
     match_source_loudness: bool = True
@@ -327,7 +328,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "0.7.3"
+    app_version: str = "1.0.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -492,7 +493,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "0.7.3"
+        payload["app_version"] = "1.0.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

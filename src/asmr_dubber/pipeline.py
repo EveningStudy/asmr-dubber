@@ -835,6 +835,7 @@ def _mix_project_impl(
         project.sentences,
         project.settings.chinese_dubbing_offset_ms,
         project.settings.chinese_max_auto_speed,
+        project.settings.chinese_dubbing_timing_mode,
     )
     if not events:
         raise ProjectError("没有可混入的中文配音。")
@@ -985,6 +986,7 @@ def generate_subtitles(
         maximum_cps=project.settings.subtitle_max_cps,
         chinese_dubbing_offset_ms=project.settings.chinese_dubbing_offset_ms,
         chinese_max_auto_speed=project.settings.chinese_max_auto_speed,
+        chinese_dubbing_timing_mode=project.settings.chinese_dubbing_timing_mode,
     )
     check_cancelled(cancel_event)
 
@@ -1035,6 +1037,7 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
             project.sentences,
             offset_ms=project.settings.chinese_dubbing_offset_ms,
             max_auto_speed=project.settings.chinese_max_auto_speed,
+            mode=project.settings.chinese_dubbing_timing_mode,
         )
     }
     rows = [

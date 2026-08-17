@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -135,6 +135,22 @@ class UserSettings(ProjectSettings):
     default_source_language: SpeechSourceLanguage = "ja"
     translation_prompt_ja: str = ""
     translation_prompt_en: str = ""
+    autoflow_output_folder_name: str = "AutoFlow输出"
+    autoflow_default_mode: Literal["audio", "video_normal", "video_harmonized"] = "video_normal"
+    autoflow_default_layout: Literal["merged", "separate", "both"] = "merged"
+    autoflow_include_bonus: bool = False
+    autoflow_background_policy: Literal["auto", "black"] = "auto"
+    autoflow_embed_subtitles: bool = True
+    autoflow_translate_work_title: bool = True
+    autoflow_translate_track_titles: bool = True
+    autoflow_preferred_audio_formats: str = "wav,flac,ape,m4a,mp3"
+    autoflow_harmonized_volume_reduction_db: float = Field(default=10.0, ge=0.0, le=60.0)
+    autoflow_harmonized_delay_minutes: float = Field(default=20.0, ge=0.0, le=1440.0)
+    autoflow_timestamp_footer: str = (
+        "双语音声制作器：BV1f43G6YEov\n"
+        "内嵌字幕和配音为本地 AI 生成，内容仅供参考。\n"
+        "仅供日语学习，有能力请购买正版支持。"
+    )
 
     @model_validator(mode="before")
     @classmethod

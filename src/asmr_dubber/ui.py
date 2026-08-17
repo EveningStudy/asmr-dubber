@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import io
 import ipaddress
 import logging
 import os
@@ -10,7 +11,7 @@ import threading
 import time
 import warnings
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import suppress
+from contextlib import redirect_stderr, redirect_stdout, suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +20,42 @@ from pydantic import ValidationError
 
 from . import __version__
 from .app_logging import application_log_path, configure_logging, recent_log_text
+from .autoflow.ui_components import (
+    QUEUE_LIST_CSS,
+    QUEUE_LIST_JS,
+    QUEUE_LIST_TEMPLATE,
+    TRACK_LIST_CSS,
+    TRACK_LIST_JS,
+    TRACK_LIST_TEMPLATE,
+)
+from .autoflow.ui_services import (
+    LAYOUT_LABELS as AUTOFLOW_LAYOUT_LABELS,
+)
+from .autoflow.ui_services import (
+    MODE_LABELS as AUTOFLOW_MODE_LABELS,
+)
+from .autoflow.ui_services import (
+    add_plan_to_queue,
+    background_preview_path,
+    build_plan_for_ui,
+    edit_plan_for_ui,
+    open_output_directory,
+    preview_edition_for_ui,
+    queue_items_for_ui,
+    remove_plan_from_queue,
+    reorder_queue_for_ui,
+    reorder_tracks_for_ui,
+    replace_plan_in_queue,
+    scan_for_ui,
+    set_track_subtitle_for_ui,
+    toggle_plan_rebuild,
+)
+from .autoflow.ui_services import (
+    recent_log_text as recent_autoflow_log_text,
+)
+from .autoflow.ui_services import (
+    run_queue as run_autoflow_queue,
+)
 from .constants import (
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
     DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY,
@@ -56,6 +93,7 @@ from .ui_services import (
     create_project,
     import_transcript_data,
     load_view,
+    mix,
     open_project_directory,
     preview_reference,
     recent_projects,
@@ -64,7 +102,7 @@ from .ui_services import (
     select_reference,
     stage_for_ui,
     subtitles,
-    synthesize_and_mix,
+    synthesize,
     translate,
     ui_stage_directory,
 )
@@ -144,6 +182,48 @@ APP_CSS = """
 }
 #project-status p { margin: 0 !important; white-space: pre-wrap; }
 #project-status #project-status { border-left: 0 !important; padding: 0 !important; }
+#autoflow-start {
+    border: 1px solid var(--border-color-primary) !important;
+    border-left: 4px solid var(--color-accent) !important;
+    border-radius: 10px !important;
+    padding: clamp(.75rem, 2vw, 1.15rem) !important;
+}
+#autoflow-start #autoflow-start {
+    border: 0 !important;
+    padding: 0 !important;
+}
+#autoflow-status {
+    border-left: 4px solid var(--color-accent) !important;
+    padding: .65rem .85rem !important;
+}
+#autoflow-options {
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 10px !important;
+    padding: clamp(.75rem, 2vw, 1.15rem) !important;
+    margin-top: .75rem !important;
+}
+#autoflow-options #autoflow-options {
+    border: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+#autoflow-options-note,
+#autoflow-settings-note {
+    border-left: 4px solid var(--color-accent) !important;
+    padding: .65rem .85rem !important;
+    background: var(--block-background-fill);
+    border-radius: 6px;
+}
+#autoflow-options-note p,
+#autoflow-settings-note p { margin: 0 !important; }
+#autoflow-options-note #autoflow-options-note,
+#autoflow-settings-note #autoflow-settings-note {
+    border-left: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+}
+.autoflow-section-title { margin-top: .35rem !important; }
+.autoflow-table table { min-width: 720px; }
 .status-panel textarea, .diagnostics-panel textarea { font-family: var(--font); }
 .optional-section { opacity: .96; }
 .sentence-table, .backend-table, .profile-table {
@@ -325,10 +405,11 @@ class DownloadController:
 class ProjectTaskController:
     """Coordinate the one active project operation and its child processes."""
 
-    def __init__(self) -> None:
+    def __init__(self, task_kind: str = "项目任务") -> None:
         self.cancel_event = CancellationToken()
         self._lock = threading.Lock()
         self._active: str | None = None
+        self._task_kind = task_kind
 
     def begin(self, label: str) -> None:
         with self._lock:
@@ -343,10 +424,122 @@ class ProjectTaskController:
     def cancel(self) -> str:
         with self._lock:
             if self._active is None:
-                return "当前没有正在执行的项目任务。"
+                return f"当前没有正在执行的{self._task_kind}。"
             label = self._active
         self.cancel_event.set()
         return f"正在取消“{label}”… 已经完成并保存的内容会保留。"
+
+
+class _AutoFlowLogWriter(io.TextIOBase):
+    def __init__(self, emit: Callable[[str], None]) -> None:
+        super().__init__()
+        self._emit = emit
+
+    def write(self, value: str) -> int:
+        text = str(value or "").replace("\r", "\n")
+        for line in text.splitlines():
+            if line.strip():
+                self._emit(line.rstrip())
+        return len(value)
+
+    def flush(self) -> None:
+        return None
+
+
+def _autoflow_log_events(
+    queue_payload: Any,
+    controller: ProjectTaskController,
+    *,
+    heartbeat_seconds: float = 2.0,
+) -> Iterator[tuple[str, bool, bool, str, list[str]]]:
+    """Run one AutoFlow queue while streaming bounded, cancellable UI logs."""
+
+    events: queue.Queue[tuple[str, Any]] = queue.Queue()
+    lines: list[str] = []
+    started = time.monotonic()
+
+    def emit(message: str) -> None:
+        events.put(("log", message))
+
+    def append(message: str) -> None:
+        lines.extend(line.rstrip() for line in str(message or "").splitlines() if line.strip())
+        if len(lines) > 500:
+            lines[:] = ["…较早的日志已省略…", *lines[-499:]]
+
+    def run() -> None:
+        writer = _AutoFlowLogWriter(emit)
+        try:
+            with (
+                cancellation_scope(controller.cancel_event),
+                redirect_stdout(writer),
+                redirect_stderr(writer),
+            ):
+                result, outputs = run_autoflow_queue(
+                    queue_payload,
+                    cancel_event=controller.cancel_event,
+                )
+        except OperationCancelledError as exc:
+            events.put(("cancelled", str(exc)))
+        except Exception as exc:
+            logger.exception("批量任务失败")
+            events.put(("error", _safe_error(exc)))
+        else:
+            events.put(("done" if result == 0 else "partial", outputs))
+        finally:
+            controller.finish("自动处理队列")
+
+    controller.begin("自动处理队列")
+    threading.Thread(target=run, name="asmr-dubber-autoflow", daemon=True).start()
+    append("开始处理队列。")
+    yield "\n".join(lines), False, True, "自动处理已开始。", []
+
+    heartbeat = max(0.1, heartbeat_seconds)
+    while True:
+        try:
+            kind, payload = events.get(timeout=heartbeat)
+        except queue.Empty:
+            elapsed = int(time.monotonic() - started)
+            yield (
+                "\n".join(lines),
+                False,
+                True,
+                f"仍在处理（已运行 {elapsed} 秒）。可以随时取消，已完成状态会保留。",
+                [],
+            )
+            continue
+        if kind == "log":
+            append(str(payload))
+            yield "\n".join(lines), False, True, "正在处理队列…", []
+            continue
+        if kind == "done":
+            outputs = [str(item) for item in payload]
+            append("队列处理完成。")
+            yield "\n".join(lines), True, True, "队列处理完成。", outputs
+            return
+        if kind == "partial":
+            outputs = [str(item) for item in payload]
+            append("队列已结束，其中至少一个作品处理失败；其余作品继续完成。")
+            yield (
+                "\n".join(lines),
+                True,
+                False,
+                "队列已结束，但有作品失败。已有状态和成品均已保留，请查看日志。",
+                outputs,
+            )
+            return
+        if kind == "cancelled":
+            append(str(payload))
+            yield "\n".join(lines), True, False, str(payload), []
+            return
+        append(f"自动处理失败：{payload}")
+        yield (
+            "\n".join(lines),
+            True,
+            False,
+            f"自动处理失败：{payload}\n详细信息已写入日志。",
+            [],
+        )
+        return
 
 
 def _install_backend_log_events(
@@ -993,6 +1186,7 @@ def build_app() -> Any:
     )
     controller = DownloadController()
     task_controller = ProjectTaskController()
+    autoflow_controller = ProjectTaskController("批量任务")
     asr_spec = ASR_BACKENDS[asr_stored.asr_backend]
     tts_spec = TTS_BACKENDS[stored.tts_backend]
     provider = PROVIDER_PRESETS.get(stored.translation_provider, PROVIDER_PRESETS["deepseek"])
@@ -1027,202 +1221,389 @@ def build_app() -> Any:
         )
 
         with gr.Tabs():
-            with gr.Tab("项目工作台", id="project-workspace"):
+            with gr.Tab("工作台", id="workspace"):
                 gr.Markdown(
-                    "新建或打开项目后，按下面的 1–4 步处理。每一步都会自动保存。",
-                    elem_id="workflow-hint",
+                    "选择一种工作方式：单个作品适合逐句校对；批量处理适合按作品扫描、选择并排队。",
+                    elem_classes=["workspace-intro"],
                 )
-                with gr.Group(elem_id="project-start"):
-                    gr.Markdown("### 新建或打开项目")
-                    with gr.Row(elem_classes=["mobile-stack"]):
-                        source_input = gr.File(
-                            label="原始音频或视频",
-                            file_types=["audio", "video"],
-                            type="filepath",
-                            scale=3,
+                with gr.Tabs():
+                    with gr.Tab("单个作品", id="project-workspace"):
+                        gr.Markdown(
+                            "新建或打开项目后，按下面的 1–5 步处理。每一步都会自动保存。",
+                            elem_id="workflow-hint",
                         )
-                        with gr.Column(scale=1):
-                            create_button = gr.Button("新建项目", variant="primary")
-                            refresh_projects_button = gr.Button("刷新项目列表")
-                    with gr.Row(elem_classes=["mobile-stack"]):
-                        recent_project = gr.Dropdown(
-                            label="最近项目",
-                            choices=recent,
-                            value=initial_recent,
-                            allow_custom_value=True,
-                            info="也可以粘贴 project.json 的完整路径。",
-                            scale=3,
+                        with gr.Group(elem_id="project-start"):
+                            gr.Markdown("### 新建或打开项目")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                source_input = gr.File(
+                                    label="原始音频或视频",
+                                    file_types=["audio", "video"],
+                                    type="filepath",
+                                    scale=3,
+                                )
+                                with gr.Column(scale=1):
+                                    create_button = gr.Button("新建项目", variant="primary")
+                                    refresh_projects_button = gr.Button("刷新项目列表")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                recent_project = gr.Dropdown(
+                                    label="最近项目",
+                                    choices=recent,
+                                    value=initial_recent,
+                                    allow_custom_value=True,
+                                    info="也可以粘贴 project.json 的完整路径。",
+                                    scale=3,
+                                )
+                                open_project_button = gr.Button("打开项目", scale=1)
+                                open_project_directory_button = gr.Button("打开项目目录", scale=1)
+                            project_path = gr.Textbox(
+                                label="当前项目文件",
+                                interactive=False,
+                                visible=False,
+                            )
+                            project_summary = gr.Markdown(
+                                "尚未打开项目。新建项目的音频语言在“设置 → "
+                                "ASR（语音识别）”中选择。",
+                                elem_id="project-summary",
+                            )
+
+                        with gr.Accordion(
+                            "使用已有台本或字幕（可选）",
+                            open=False,
+                            elem_classes=["optional-section"],
+                        ):
+                            gr.Markdown(
+                                "先新建或打开项目。带时间轴的字幕会直接导入；"
+                                "TXT 和粘贴文本可以按长度估算，"
+                                "也可以先运行识别/翻译，再让大模型按台本校对文字。导入会替换当前句子表，"
+                                "原始音频不会改变。"
+                            )
+                            transcript_kind = gr.Radio(
+                                label="导入内容",
+                                choices=[
+                                    ("原文台本或字幕（沿用当前项目语言，之后翻译）", "source"),
+                                    ("中文配音稿或中文字幕（直接配音）", "zh"),
+                                ],
+                                value="source",
+                            )
+                            transcript_file = gr.File(
+                                label="台本或字幕文件",
+                                file_types=[".srt", ".vtt", ".ass", ".ssa", ".lrc", ".txt"],
+                                type="filepath",
+                            )
+                            transcript_text = gr.Textbox(
+                                label="粘贴纯文本",
+                                placeholder="每个非空行作为一句；选择文件时，粘贴内容优先。",
+                                lines=6,
+                            )
+                            plain_timing = gr.Radio(
+                                label="纯文本台本的处理方式",
+                                choices=_TRANSCRIPT_TIMING_CHOICES,
+                                value="estimate",
+                            )
+                            gr.Markdown(
+                                "智能台本校对会使用当前翻译设置中的大模型；"
+                                "DeepL、Google Cloud Translation、Microsoft Translator 等"
+                                "机器翻译服务不支持此方式。"
+                            )
+                            import_transcript_button = gr.Button(
+                                "导入并建立句子时间轴",
+                                variant="primary",
+                            )
+
+                        gr.Markdown("## 制作流程")
+                        with gr.Row(
+                            equal_height=True,
+                            elem_classes=["workflow-actions", "mobile-stack"],
+                        ):
+                            asr_button = gr.Button("1 · 运行 ASR（语音识别）", variant="primary")
+                            translate_button = gr.Button("2 · 翻译为中文")
+                            save_table_button = gr.Button("3 · 保存校对表格")
+                            synthesize_button = gr.Button(
+                                "4 · 生成中文配音",
+                                variant="primary",
+                            )
+                            mix_button = gr.Button("5 · 混音与输出")
+                        cancel_task_button = gr.Button("取消当前执行", variant="stop")
+                        status = gr.Markdown(
+                            "请选择原始文件新建项目，或从最近项目中继续。",
+                            elem_id="project-status",
                         )
-                        open_project_button = gr.Button("打开项目", scale=1)
-                        open_project_directory_button = gr.Button("打开项目目录", scale=1)
-                    project_path = gr.Textbox(
-                        label="当前项目文件",
-                        interactive=False,
-                        visible=False,
-                    )
-                    project_summary = gr.Markdown(
-                        "尚未打开项目。新建项目的音频语言在“设置 → ASR（语音识别）”中选择。",
-                        elem_id="project-summary",
-                    )
 
-                with gr.Accordion(
-                    "使用已有台本或字幕（可选）",
-                    open=False,
-                    elem_classes=["optional-section"],
-                ):
-                    gr.Markdown(
-                        "先新建或打开项目。带时间轴的字幕会直接导入；TXT 和粘贴文本可以按长度估算，"
-                        "也可以先运行识别/翻译，再让大模型按台本校对文字。导入会替换当前句子表，"
-                        "原始音频不会改变。"
-                    )
-                    transcript_kind = gr.Radio(
-                        label="导入内容",
-                        choices=[
-                            ("原文台本或字幕（沿用当前项目语言，之后翻译）", "source"),
-                            ("中文配音稿或中文字幕（直接配音）", "zh"),
-                        ],
-                        value="source",
-                    )
-                    transcript_file = gr.File(
-                        label="台本或字幕文件",
-                        file_types=[".srt", ".vtt", ".ass", ".ssa", ".lrc", ".txt"],
-                        type="filepath",
-                    )
-                    transcript_text = gr.Textbox(
-                        label="粘贴纯文本",
-                        placeholder="每个非空行作为一句；选择文件时，粘贴内容优先。",
-                        lines=6,
-                    )
-                    plain_timing = gr.Radio(
-                        label="纯文本台本的处理方式",
-                        choices=_TRANSCRIPT_TIMING_CHOICES,
-                        value="estimate",
-                    )
-                    gr.Markdown(
-                        "智能台本校对会使用当前翻译设置中的大模型；"
-                        "DeepL、Google Cloud Translation、Microsoft Translator 等"
-                        "机器翻译服务不支持此方式。"
-                    )
-                    import_transcript_button = gr.Button(
-                        "导入并建立句子时间轴",
-                        variant="primary",
-                    )
-
-                gr.Markdown("## 制作流程")
-                with gr.Row(
-                    equal_height=True,
-                    elem_classes=["workflow-actions", "mobile-stack"],
-                ):
-                    asr_button = gr.Button("1 · 运行 ASR（语音识别）", variant="primary")
-                    translate_button = gr.Button("2 · 翻译为中文")
-                    save_table_button = gr.Button("3 · 保存校对表格")
-                    synthesize_button = gr.Button(
-                        "4 · TTS（语音合成）并输出",
-                        variant="primary",
-                    )
-                cancel_task_button = gr.Button("取消当前执行", variant="stop")
-                status = gr.Markdown(
-                    "请选择原始文件新建项目，或从最近项目中继续。",
-                    elem_id="project-status",
-                )
-
-                sentence_table = gr.Dataframe(
-                    headers=TABLE_HEADERS,
-                    datatype=cast(Any, TABLE_TYPES),
-                    value=[],
-                    interactive=True,
-                    wrap=True,
-                    column_count=len(TABLE_HEADERS),
-                    label="句子校对表格",
-                    elem_classes=["sentence-table"],
-                )
-                gr.Markdown(
-                    "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
-                    "保存后会删除该句。"
-                )
-
-                with gr.Accordion(
-                    "统一音色参考（可选）",
-                    open=False,
-                    elem_classes=["optional-section"],
-                ):
-                    gr.Markdown("建议选择一段 5–15 秒、声音清楚且台词完整的片段。")
-                    with gr.Row(elem_classes=["mobile-stack"]):
-                        reference_sentence = gr.Dropdown(
-                            label="项目参考句",
-                            choices=[],
-                            allow_custom_value=False,
-                            scale=3,
+                        sentence_table = gr.Dataframe(
+                            headers=TABLE_HEADERS,
+                            datatype=cast(Any, TABLE_TYPES),
+                            value=[],
+                            interactive=True,
+                            wrap=True,
+                            column_count=len(TABLE_HEADERS),
+                            label="句子校对表格",
+                            elem_classes=["sentence-table"],
                         )
-                        save_reference_button = gr.Button("设为项目音色参考", scale=1)
-                    reference_audio = gr.Audio(
-                        label="参考句试听",
-                        type="filepath",
-                        interactive=False,
-                    )
+                        gr.Markdown(
+                            "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
+                            "保存后会删除该句。"
+                        )
 
-                with (
-                    gr.Accordion(
-                        "生成字幕（可选）",
-                        open=False,
-                        elem_classes=["optional-section"],
-                    ),
-                    gr.Row(elem_classes=["mobile-stack"]),
-                ):
-                    subtitle_language = gr.Radio(
-                        label="字幕内容",
-                        choices=[
-                            ("原文 + 中文", "bilingual"),
-                            ("仅中文", "zh"),
-                            ("仅原文", "source"),
-                        ],
-                        value="bilingual",
-                    )
-                    subtitle_button = gr.Button("生成字幕")
+                        with gr.Accordion(
+                            "统一音色参考（可选）",
+                            open=False,
+                            elem_classes=["optional-section"],
+                        ):
+                            gr.Markdown("建议选择一段 5–15 秒、声音清楚且台词完整的片段。")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                reference_sentence = gr.Dropdown(
+                                    label="项目参考句",
+                                    choices=[],
+                                    allow_custom_value=False,
+                                    scale=3,
+                                )
+                                save_reference_button = gr.Button("设为项目音色参考", scale=1)
+                            reference_audio = gr.Audio(
+                                label="参考句试听",
+                                type="filepath",
+                                interactive=False,
+                            )
 
-                gr.Markdown("## 输出文件")
-                with gr.Row(elem_classes=["mobile-stack"]):
-                    output_audio = gr.Audio(
-                        label="混音成品",
-                        type="filepath",
-                        interactive=False,
-                        visible=False,
-                    )
-                    stem_audio = gr.Audio(
-                        label="中文克隆音轨",
-                        type="filepath",
-                        interactive=False,
-                        visible=False,
-                    )
-                with gr.Row(elem_classes=["mobile-stack"]):
-                    output_video = gr.Video(
-                        label="完成视频",
-                        interactive=False,
-                        visible=False,
-                    )
-                with gr.Row(elem_classes=["mobile-stack"]):
-                    subtitle_files = gr.File(
-                        label="字幕文件（SRT / LRC）",
-                        file_count="multiple",
-                        interactive=False,
-                        visible=False,
-                    )
-                    subtitle_video = gr.Video(
-                        label="带字幕视频",
-                        interactive=False,
-                        visible=False,
-                    )
-                with gr.Accordion(
-                    "项目详情与诊断",
-                    open=False,
-                    elem_classes=["optional-section"],
-                ):
-                    diagnostics = gr.Textbox(
-                        label="诊断信息",
-                        lines=6,
-                        interactive=False,
-                        elem_classes=["diagnostics-panel"],
-                    )
+                        with (
+                            gr.Accordion(
+                                "生成字幕（可选）",
+                                open=False,
+                                elem_classes=["optional-section"],
+                            ),
+                            gr.Row(elem_classes=["mobile-stack"]),
+                        ):
+                            subtitle_language = gr.Radio(
+                                label="字幕内容",
+                                choices=[
+                                    ("原文 + 中文", "bilingual"),
+                                    ("仅中文", "zh"),
+                                    ("仅原文", "source"),
+                                ],
+                                value="bilingual",
+                            )
+                            subtitle_button = gr.Button("生成字幕")
+
+                        gr.Markdown("## 输出文件")
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            output_audio = gr.Audio(
+                                label="混音成品",
+                                type="filepath",
+                                interactive=False,
+                                visible=False,
+                            )
+                            stem_audio = gr.Audio(
+                                label="中文克隆音轨",
+                                type="filepath",
+                                interactive=False,
+                                visible=False,
+                            )
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            output_video = gr.Video(
+                                label="完成视频",
+                                interactive=False,
+                                visible=False,
+                            )
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            subtitle_files = gr.File(
+                                label="字幕文件（SRT / LRC）",
+                                file_count="multiple",
+                                interactive=False,
+                                visible=False,
+                            )
+                            subtitle_video = gr.Video(
+                                label="带字幕视频",
+                                interactive=False,
+                                visible=False,
+                            )
+                        with gr.Accordion(
+                            "项目详情与诊断",
+                            open=False,
+                            elem_classes=["optional-section"],
+                        ):
+                            diagnostics = gr.Textbox(
+                                label="诊断信息",
+                                lines=6,
+                                interactive=False,
+                                elem_classes=["diagnostics-panel"],
+                            )
+
+                    with gr.Tab("批量处理", id="autoflow-workspace"):
+                        gr.Markdown(
+                            "批量处理适合一次处理一个 DLsite 作品目录中的多条音轨。"
+                            "扫描后先确认本作品的选项，再加入队列；程序会按队列完成识别、翻译、"
+                            "配音、混音、字幕和成品整理。"
+                        )
+                        autoflow_queue_state = gr.State([])
+                        autoflow_track_state = gr.State([])
+                        autoflow_edit_plan_state = gr.State("")
+                        with gr.Group(elem_id="autoflow-start"):
+                            gr.Markdown("### 1 · 扫描作品")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_folder = gr.Textbox(
+                                    label="作品文件夹",
+                                    placeholder=r"例如 D:\DLsite\RJxxxxxx",
+                                    scale=4,
+                                )
+                                autoflow_scan_button = gr.Button(
+                                    "扫描作品", variant="primary", scale=1
+                                )
+                            autoflow_scan_summary = gr.Markdown("尚未扫描作品。")
+
+                        gr.Markdown("### 2 · 为当前作品选择处理方式")
+                        gr.Markdown(
+                            "下面的选项只影响刚刚扫描的这个作品。点击“加入处理队列”后，"
+                            "选项会随任务一起保存；设置页里的 AutoFlow 默认值"
+                            "只负责填充下一次任务。",
+                            elem_id="autoflow-options-note",
+                        )
+                        with gr.Group(elem_id="autoflow-options"):
+                            gr.Markdown(
+                                "#### 音轨范围",
+                                elem_classes=["autoflow-section-title"],
+                            )
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_edition = gr.Dropdown(
+                                    label="音频版本",
+                                    choices=[],
+                                    interactive=True,
+                                    info="同一作品可能有无损、压缩或不同语言版本；先选要处理的一组。",
+                                    scale=3,
+                                )
+                                autoflow_include_bonus = gr.Checkbox(
+                                    label="包含特典、样本和 Free Talk",
+                                    value=stored.autoflow_include_bonus,
+                                    info="勾选后把附加音轨也加入本次任务；不勾选只处理主要音轨。",
+                                    scale=1,
+                                )
+                            gr.Markdown(
+                                "拖动音轨卡片可以调整顺序；触屏或键盘操作时也可以使用右侧的上下按钮。"
+                                "字幕会自动匹配并判断语言，也可以在每条音轨中更换或关闭。"
+                            )
+                            autoflow_tracks = gr.HTML(
+                                value=[],
+                                label="本次将处理的音轨",
+                                html_template=TRACK_LIST_TEMPLATE,
+                                css_template=TRACK_LIST_CSS,
+                                js_on_load=TRACK_LIST_JS,
+                                elem_id="autoflow-track-list",
+                            )
+                            autoflow_selection_summary = gr.Markdown("扫描后会在这里列出音轨。")
+
+                            gr.Markdown(
+                                "#### 成品类型与组织",
+                                elem_classes=["autoflow-section-title"],
+                            )
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_mode = gr.Radio(
+                                    label="输出类型",
+                                    choices=[
+                                        (label, value)
+                                        for value, label in AUTOFLOW_MODE_LABELS.items()
+                                    ],
+                                    value=stored.autoflow_default_mode,
+                                    info=(
+                                        "纯音频=只生成音频；普通静态视频=原声从 0 秒开始；"
+                                        "和谐静态视频=按设置降低并延后原声。"
+                                    ),
+                                )
+                                autoflow_layout = gr.Radio(
+                                    label="成品组织",
+                                    choices=[
+                                        (label, value)
+                                        for value, label in AUTOFLOW_LAYOUT_LABELS.items()
+                                    ],
+                                    value=stored.autoflow_default_layout,
+                                    info=(
+                                        "合并成一部=适合直接发布；分别处理并输出=每条音轨独立处理，"
+                                        "不生成合并版；"
+                                        "分轨输出 + 合并版=两者都保留。"
+                                    ),
+                                )
+                            with (
+                                gr.Group(
+                                    visible=stored.autoflow_default_mode != "audio"
+                                ) as autoflow_video_group,
+                                gr.Row(elem_classes=["mobile-stack"]),
+                            ):
+                                autoflow_background = gr.Dropdown(
+                                    label="视频画面",
+                                    choices=[("黑色背景", "black")],
+                                    value="black",
+                                    allow_custom_value=False,
+                                    info="扫描后会直接选中推荐图片；也可以改选其它图片或黑色背景。",
+                                    scale=2,
+                                )
+                                autoflow_background_preview = gr.Image(
+                                    label="画面预览",
+                                    type="filepath",
+                                    interactive=False,
+                                    height=220,
+                                    buttons=[],
+                                    scale=1,
+                                )
+                                autoflow_embed_subtitles = gr.Checkbox(
+                                    label="在视频中内嵌双语字幕",
+                                    value=stored.autoflow_embed_subtitles,
+                                    info=(
+                                        "勾选后字幕直接显示在视频里；无论是否内嵌，"
+                                        "都会另外保留 SRT 和 LRC。"
+                                    ),
+                                )
+
+                            with gr.Accordion("重做选项（通常不需要）", open=False):
+                                autoflow_rebuild = gr.Checkbox(
+                                    label="重做并替换本工具生成的旧结果",
+                                    value=False,
+                                    info=(
+                                        "只清理所选作品输出目录里的 AutoFlow 成品和状态；"
+                                        "不会修改原作品文件。普通续跑不要勾选。"
+                                    ),
+                                )
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_add_button = gr.Button(
+                                    "加入处理队列",
+                                    variant="primary",
+                                )
+                                autoflow_cancel_edit_button = gr.Button(
+                                    "取消编辑",
+                                    visible="hidden",
+                                )
+
+                        gr.Markdown("### 3 · 处理队列")
+                        gr.Markdown(
+                            "拖动任务可以调整执行顺序。每个任务都可以重新编辑、移除，"
+                            "也可以标记为重新处理。"
+                        )
+                        autoflow_queue_list = gr.HTML(
+                            value=[],
+                            label="处理队列",
+                            html_template=QUEUE_LIST_TEMPLATE,
+                            css_template=QUEUE_LIST_CSS,
+                            js_on_load=QUEUE_LIST_JS,
+                            elem_id="autoflow-queue-list",
+                        )
+                        autoflow_clear_button = gr.Button("清空队列")
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            autoflow_run_button = gr.Button("开始处理队列", variant="primary")
+                            autoflow_cancel_button = gr.Button("取消当前批量任务", variant="stop")
+                        autoflow_status = gr.Markdown(
+                            "队列为空。完成的作品会写入各自的输出目录。",
+                            elem_id="autoflow-status",
+                        )
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            autoflow_output_selection = gr.Dropdown(
+                                label="本次任务输出目录",
+                                choices=[],
+                                scale=3,
+                            )
+                            autoflow_open_output_button = gr.Button("打开输出目录", scale=1)
+                        with gr.Accordion("运行日志", open=False):
+                            autoflow_log = gr.Textbox(
+                                label="自动处理日志",
+                                value=recent_autoflow_log_text(),
+                                lines=18,
+                                interactive=False,
+                            )
 
             with gr.Tab("设置", id="settings"):
                 gr.Markdown(
@@ -1851,6 +2232,21 @@ def build_app() -> Any:
                                 precision=0,
                                 info="0 表示从原字幕开始；负数提前，正数延后。",
                             )
+                            settings_components["chinese_dubbing_timing_mode"] = gr.Radio(
+                                label="中文配音排程方式",
+                                choices=[
+                                    ("保持原时间点，冲突时自动加速", "fit_window"),
+                                    ("上一句结束后再播放下一句", "sequential"),
+                                ],
+                                value=stored.chinese_dubbing_timing_mode,
+                                info=(
+                                    "顺延模式不自动加速，也不会让两句中文互相叠加；"
+                                    "连续长句可能逐渐晚于原字幕。"
+                                ),
+                            )
+                        with gr.Group(
+                            visible=stored.chinese_dubbing_timing_mode == "fit_window"
+                        ) as auto_speed_group:
                             settings_components["chinese_max_auto_speed"] = gr.Slider(
                                 label="冲突时最大自动加速倍速",
                                 minimum=1.0,
@@ -2035,6 +2431,107 @@ def build_app() -> Any:
                                 label="最大每秒字符数", value=stored.subtitle_max_cps
                             )
 
+                    with gr.Tab("自动处理", id="autoflow-settings"):
+                        gr.Markdown(
+                            "这里分成两类设置：固定规则会对所有作品生效；新作品默认值只负责"
+                            "填充批量处理页，加入队列前仍可以按作品单独修改。识别、翻译、配音和混音"
+                            "使用前面各页保存的主程序设置。",
+                            elem_id="autoflow-settings-note",
+                        )
+
+                        gr.Markdown("### 固定规则（所有作品共用）")
+                        settings_components["autoflow_output_folder_name"] = gr.Textbox(
+                            label="成品输出文件夹名称",
+                            value=stored.autoflow_output_folder_name,
+                            info=(
+                                "每个源作品目录下都会建立这个子文件夹，"
+                                "用来保存 AutoFlow 成品和状态。"
+                            ),
+                        )
+                        settings_components["autoflow_preferred_audio_formats"] = gr.Textbox(
+                            label="同一作品多种音频格式时的选择顺序",
+                            value=stored.autoflow_preferred_audio_formats,
+                            info=(
+                                "从左到右填写优先级，例如 wav,flac,ape,m4a,mp3；"
+                                "只会选其中存在的一种。"
+                            ),
+                        )
+                        gr.Markdown("#### 和谐静态视频")
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            settings_components["autoflow_harmonized_volume_reduction_db"] = (
+                                gr.Number(
+                                    label="原声降低音量（dB）",
+                                    value=stored.autoflow_harmonized_volume_reduction_db,
+                                    info="填写正数；只影响选择“和谐静态视频”的任务。",
+                                )
+                            )
+                            settings_components["autoflow_harmonized_delay_minutes"] = gr.Number(
+                                label="原声、配音和字幕整体延后（分钟）",
+                                value=stored.autoflow_harmonized_delay_minutes,
+                                info="在成品开头加入相同长度的空档，让作品内容整体后移。",
+                            )
+                        settings_components["autoflow_timestamp_footer"] = gr.Textbox(
+                            label="时间戳文档页脚",
+                            value=stored.autoflow_timestamp_footer,
+                            lines=5,
+                            info="会写在总时间戳和分轨时间戳文档末尾；留空则不添加。所有作品共用。",
+                        )
+                        gr.Markdown("#### 标题文字")
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            settings_components["autoflow_translate_work_title"] = gr.Checkbox(
+                                label="翻译作品文件夹名称",
+                                value=stored.autoflow_translate_work_title,
+                                info="用于成品标题和时间戳文档；关闭后保留原文件夹名称。",
+                            )
+                            settings_components["autoflow_translate_track_titles"] = gr.Checkbox(
+                                label="翻译音轨标题",
+                                value=stored.autoflow_translate_track_titles,
+                                info="用于分轨文件名和曲目清单；关闭后保留原音轨标题。",
+                            )
+
+                        gr.Markdown("### 新作品默认值（可在批量处理页逐个覆盖）")
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            settings_components["autoflow_default_mode"] = gr.Radio(
+                                label="默认输出类型",
+                                choices=[
+                                    (label, value) for value, label in AUTOFLOW_MODE_LABELS.items()
+                                ],
+                                value=stored.autoflow_default_mode,
+                                info="打开批量处理页时填入；不会锁定每个作品的选择。",
+                            )
+                            settings_components["autoflow_default_layout"] = gr.Radio(
+                                label="默认成品组织",
+                                choices=[
+                                    (label, value)
+                                    for value, label in AUTOFLOW_LAYOUT_LABELS.items()
+                                ],
+                                value=stored.autoflow_default_layout,
+                                info="只作为下一次批量任务的初始值。",
+                            )
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            settings_components["autoflow_include_bonus"] = gr.Checkbox(
+                                label="默认包含附加音轨",
+                                value=stored.autoflow_include_bonus,
+                                info=(
+                                    "包括特典、样本、Free Talk 和闹钟等附加内容；批量页可按作品改。"
+                                ),
+                            )
+                            settings_components["autoflow_embed_subtitles"] = gr.Checkbox(
+                                label="默认在视频中内嵌字幕",
+                                value=stored.autoflow_embed_subtitles,
+                                info="只影响默认值；批量页可按作品关闭。",
+                            )
+                        with gr.Row(elem_classes=["mobile-stack"]):
+                            settings_components["autoflow_background_policy"] = gr.Radio(
+                                label="默认视频画面",
+                                choices=[
+                                    ("扫描后预选作品推荐图", "auto"),
+                                    ("默认使用黑色背景", "black"),
+                                ],
+                                value=stored.autoflow_background_policy,
+                                info="只作为视频任务的初始值；批量页扫描后可以改选作品图片。",
+                            )
+
                 with gr.Row():
                     save_defaults_button = gr.Button(
                         "仅保存为以后新项目默认值", variant="secondary"
@@ -2175,8 +2672,21 @@ def build_app() -> Any:
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[Any, ...]:
             return run_project_task(
-                "TTS（语音合成）与输出",
-                synthesize_and_mix,
+                "TTS（语音合成）",
+                synthesize,
+                manifest,
+                table,
+                _StageProgress(progress),
+            )
+
+        def mix_callback(
+            manifest: str,
+            table: Any,
+            progress: gr.Progress = gr.Progress(),
+        ) -> tuple[Any, ...]:
+            return run_project_task(
+                "混音与输出",
+                mix,
                 manifest,
                 table,
                 _StageProgress(progress),
@@ -2214,6 +2724,284 @@ def build_app() -> Any:
             current = load_user_settings()
             choices = recent_projects(current.projects_root or None)
             return gr.update(choices=choices, value=choices[0][1] if choices else None)
+
+        def _stage_autoflow_background(path: str | None) -> str | None:
+            return stage_for_ui(Path(path), category="autoflow-backgrounds") if path else None
+
+        def autoflow_scan_callback(folder: Any, include_bonus: bool) -> tuple[Any, ...]:
+            try:
+                scanned = scan_for_ui(folder, include_bonus)
+                return (
+                    gr.update(value=scanned.folder),
+                    gr.update(
+                        choices=scanned.edition_choices,
+                        value=scanned.selected_edition,
+                    ),
+                    gr.update(
+                        choices=scanned.background_choices,
+                        value=scanned.selected_background,
+                    ),
+                    _stage_autoflow_background(scanned.selected_background_preview),
+                    scanned.source_payloads,
+                    scanned.track_items,
+                    scanned.summary,
+                    "已载入推荐版本；可以调整选项后加入队列。",
+                    "",
+                    gr.update(value="加入处理队列"),
+                    gr.update(visible="hidden"),
+                )
+            except Exception as exc:
+                logger.exception("扫描自动处理作品失败")
+                message = f"扫描失败：{_safe_error(exc)}"
+                return (
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    message,
+                    message,
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                )
+
+        def autoflow_preview_callback(
+            folder: Any,
+            edition: Any,
+            include_bonus: bool,
+        ) -> tuple[Any, ...]:
+            if not str(folder or "").strip() or not str(edition or "").strip():
+                return gr.update(), gr.update(), "请先扫描作品。"
+            try:
+                view = preview_edition_for_ui(folder, edition, include_bonus)
+                return view.source_payloads, view.track_items, view.summary
+            except Exception as exc:
+                logger.exception("更新自动处理音轨预览失败")
+                return gr.update(), gr.update(), f"无法更新音轨预览：{_safe_error(exc)}"
+
+        def _with_event_data(function: Callable[..., Any]) -> Callable[..., Any]:
+            function.__annotations__["evt"] = gr.EventData
+            return function
+
+        @_with_event_data
+        def autoflow_track_reorder_callback(
+            source_payloads: Any,
+            folder: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            try:
+                view = reorder_tracks_for_ui(
+                    folder,
+                    source_payloads,
+                    getattr(evt, "order", []),
+                )
+                return view.source_payloads, view.track_items, view.summary
+            except Exception as exc:
+                logger.exception("调整自动处理音轨顺序失败")
+                return gr.update(), gr.update(), f"无法调整音轨顺序：{_safe_error(exc)}"
+
+        @_with_event_data
+        def autoflow_track_subtitle_callback(
+            source_payloads: Any,
+            folder: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            try:
+                view = set_track_subtitle_for_ui(
+                    folder,
+                    source_payloads,
+                    getattr(evt, "track_id", ""),
+                    getattr(evt, "transcript", ""),
+                    getattr(evt, "language", ""),
+                )
+                return view.source_payloads, view.track_items, view.summary
+            except Exception as exc:
+                logger.exception("更新自动处理字幕选择失败")
+                return gr.update(), gr.update(), f"无法更新字幕选择：{_safe_error(exc)}"
+
+        def autoflow_background_callback(folder: Any, background: Any) -> str | None:
+            try:
+                path = background_preview_path(folder, background)
+                return _stage_autoflow_background(str(path) if path else None)
+            except Exception:
+                logger.exception("更新自动处理画面预览失败")
+                return None
+
+        def _autoflow_queue_updates(
+            items: list[dict[str, Any]],
+            message: str,
+        ) -> tuple[Any, ...]:
+            return items, queue_items_for_ui(items), message
+
+        def autoflow_add_callback(
+            queue_payload: Any,
+            editing_plan_id: Any,
+            folder: Any,
+            edition: Any,
+            source_payloads: Any,
+            mode: Any,
+            layout: Any,
+            background: Any,
+            embed_subtitles: bool,
+            rebuild: bool,
+        ) -> tuple[Any, ...]:
+            try:
+                plan = build_plan_for_ui(
+                    folder,
+                    edition,
+                    source_payloads,
+                    mode,
+                    layout,
+                    background,
+                    embed_subtitles,
+                    rebuild,
+                )
+                selected = str(editing_plan_id or "").strip()
+                items = (
+                    replace_plan_in_queue(queue_payload, selected, plan)
+                    if selected
+                    else add_plan_to_queue(queue_payload, plan)
+                )
+                action = "已更新队列任务" if selected else "已加入队列"
+                queue_values = _autoflow_queue_updates(
+                    items, f"{action}：{Path(str(plan['folder'])).name}。"
+                )
+                return (
+                    *queue_values,
+                    "",
+                    gr.update(value="加入处理队列"),
+                    gr.update(visible="hidden"),
+                )
+            except Exception as exc:
+                logger.exception("加入自动处理队列失败")
+                items = [dict(item) for item in (queue_payload or []) if isinstance(item, dict)]
+                return (
+                    *_autoflow_queue_updates(items, f"无法保存队列任务：{_safe_error(exc)}"),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                )
+
+        @_with_event_data
+        def autoflow_queue_reorder_callback(
+            queue_payload: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            try:
+                items = reorder_queue_for_ui(queue_payload, getattr(evt, "order", []))
+                return _autoflow_queue_updates(items, "已更新队列顺序。")
+            except Exception as exc:
+                logger.exception("调整自动处理队列顺序失败")
+                items = [dict(item) for item in (queue_payload or []) if isinstance(item, dict)]
+                return _autoflow_queue_updates(items, f"无法调整队列顺序：{_safe_error(exc)}")
+
+        @_with_event_data
+        def autoflow_queue_restart_callback(
+            queue_payload: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            try:
+                items = toggle_plan_rebuild(queue_payload, getattr(evt, "plan_id", ""))
+                return _autoflow_queue_updates(items, "已更新这个任务的重新处理状态。")
+            except Exception as exc:
+                logger.exception("更新自动处理重做状态失败")
+                items = [dict(item) for item in (queue_payload or []) if isinstance(item, dict)]
+                return _autoflow_queue_updates(items, f"无法更新任务：{_safe_error(exc)}")
+
+        @_with_event_data
+        def autoflow_queue_remove_callback(
+            queue_payload: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            items = remove_plan_from_queue(queue_payload, getattr(evt, "plan_id", ""))
+            return (
+                *_autoflow_queue_updates(items, "已从队列移除这个作品。"),
+                "",
+                gr.update(value="加入处理队列"),
+                gr.update(visible="hidden"),
+            )
+
+        @_with_event_data
+        def autoflow_queue_edit_callback(
+            queue_payload: Any,
+            evt: gr.EventData,
+        ) -> tuple[Any, ...]:
+            try:
+                view = edit_plan_for_ui(queue_payload, getattr(evt, "plan_id", ""))
+                return (
+                    view.plan_id,
+                    gr.update(value=view.folder),
+                    gr.update(
+                        choices=view.edition_choices,
+                        value=view.selected_edition,
+                    ),
+                    gr.update(value=view.include_bonus),
+                    view.source_payloads,
+                    view.track_items,
+                    view.scan_summary,
+                    view.selection_summary,
+                    gr.update(value=view.mode),
+                    gr.update(value=view.layout),
+                    gr.update(
+                        choices=view.background_choices,
+                        value=view.selected_background,
+                    ),
+                    _stage_autoflow_background(view.selected_background_preview),
+                    gr.update(value=view.embed_subtitles),
+                    gr.update(visible=view.mode != "audio"),
+                    gr.update(value=view.rebuild),
+                    gr.update(value="保存队列修改"),
+                    gr.update(visible=True),
+                    f"正在编辑队列中的“{Path(view.folder).name}”。修改后点击“保存队列修改”。",
+                )
+            except Exception as exc:
+                logger.exception("载入自动处理队列任务失败")
+                return (
+                    *(gr.update() for _index in range(17)),
+                    f"无法编辑队列任务：{_safe_error(exc)}",
+                )
+
+        def autoflow_cancel_edit_callback() -> tuple[Any, ...]:
+            return (
+                "",
+                gr.update(value="加入处理队列"),
+                gr.update(visible="hidden"),
+                "已取消编辑；队列中的原任务没有改变。",
+            )
+
+        def autoflow_clear_callback() -> tuple[Any, ...]:
+            return (
+                *_autoflow_queue_updates([], "队列已清空。"),
+                "",
+                gr.update(value="加入处理队列"),
+                gr.update(visible="hidden"),
+            )
+
+        def autoflow_run_callback(queue_payload: Any) -> Iterator[tuple[Any, ...]]:
+            for logs, _done, _success, message, outputs in _autoflow_log_events(
+                queue_payload,
+                autoflow_controller,
+            ):
+                choices = [(Path(path).name, path) for path in outputs]
+                yield (
+                    logs,
+                    message,
+                    gr.update(
+                        choices=choices,
+                        value=choices[0][1] if choices else None,
+                    ),
+                )
+
+        def autoflow_open_output_callback(path: Any) -> str:
+            try:
+                if not str(path or "").strip():
+                    return "还没有可打开的输出目录。"
+                return open_output_directory(path)
+            except Exception as exc:
+                logger.exception("打开自动处理输出目录失败")
+                return f"无法打开输出目录：{_safe_error(exc)}"
 
         def pick_reference_callback(manifest: str, sentence_id: str) -> tuple[Any, Any]:
             try:
@@ -2293,7 +3081,14 @@ def build_app() -> Any:
             synthesize_callback,
             inputs=[project_path, sentence_table],
             outputs=common_outputs,
-            api_name="synthesize_and_mix",
+            api_name="synthesize_project",
+            **runtime_options,
+        )
+        mix_button.click(
+            mix_callback,
+            inputs=[project_path, sentence_table],
+            outputs=common_outputs,
+            api_name="mix_project",
             **runtime_options,
         )
         subtitle_button.click(
@@ -2322,6 +3117,198 @@ def build_app() -> Any:
             outputs=[status, reference_audio],
             api_name=_PRIVATE_API,
             **runtime_options,
+        )
+        autoflow_scan_button.click(
+            autoflow_scan_callback,
+            inputs=[autoflow_folder, autoflow_include_bonus],
+            outputs=[
+                autoflow_folder,
+                autoflow_edition,
+                autoflow_background,
+                autoflow_background_preview,
+                autoflow_track_state,
+                autoflow_tracks,
+                autoflow_scan_summary,
+                autoflow_selection_summary,
+                autoflow_edit_plan_state,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+            ],
+            api_name="scan_autoflow_work",
+            queue=False,
+        )
+        autoflow_edition.change(
+            autoflow_preview_callback,
+            inputs=[autoflow_folder, autoflow_edition, autoflow_include_bonus],
+            outputs=[autoflow_track_state, autoflow_tracks, autoflow_selection_summary],
+            api_name=_PRIVATE_API,
+            queue=False,
+            trigger_mode="always_last",
+        )
+        autoflow_include_bonus.change(
+            autoflow_preview_callback,
+            inputs=[autoflow_folder, autoflow_edition, autoflow_include_bonus],
+            outputs=[autoflow_track_state, autoflow_tracks, autoflow_selection_summary],
+            api_name=_PRIVATE_API,
+            queue=False,
+            trigger_mode="always_last",
+        )
+        autoflow_tracks.track_reorder(
+            autoflow_track_reorder_callback,
+            inputs=[autoflow_track_state, autoflow_folder],
+            outputs=[autoflow_track_state, autoflow_tracks, autoflow_selection_summary],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_tracks.track_subtitle(
+            autoflow_track_subtitle_callback,
+            inputs=[autoflow_track_state, autoflow_folder],
+            outputs=[autoflow_track_state, autoflow_tracks, autoflow_selection_summary],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_background.change(
+            autoflow_background_callback,
+            inputs=[autoflow_folder, autoflow_background],
+            outputs=[autoflow_background_preview],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_mode.change(
+            lambda mode: gr.update(visible=str(mode or "audio") != "audio"),
+            inputs=[autoflow_mode],
+            outputs=[autoflow_video_group],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_add_button.click(
+            autoflow_add_callback,
+            inputs=[
+                autoflow_queue_state,
+                autoflow_edit_plan_state,
+                autoflow_folder,
+                autoflow_edition,
+                autoflow_track_state,
+                autoflow_mode,
+                autoflow_layout,
+                autoflow_background,
+                autoflow_embed_subtitles,
+                autoflow_rebuild,
+            ],
+            outputs=[
+                autoflow_queue_state,
+                autoflow_queue_list,
+                autoflow_status,
+                autoflow_edit_plan_state,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+            ],
+            api_name="add_autoflow_work",
+            queue=False,
+        )
+        autoflow_cancel_edit_button.click(
+            autoflow_cancel_edit_callback,
+            outputs=[
+                autoflow_edit_plan_state,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+                autoflow_status,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_queue_list.queue_reorder(
+            autoflow_queue_reorder_callback,
+            inputs=[autoflow_queue_state],
+            outputs=[
+                autoflow_queue_state,
+                autoflow_queue_list,
+                autoflow_status,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_queue_list.queue_restart(
+            autoflow_queue_restart_callback,
+            inputs=[autoflow_queue_state],
+            outputs=[autoflow_queue_state, autoflow_queue_list, autoflow_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_queue_list.queue_remove(
+            autoflow_queue_remove_callback,
+            inputs=[autoflow_queue_state],
+            outputs=[
+                autoflow_queue_state,
+                autoflow_queue_list,
+                autoflow_status,
+                autoflow_edit_plan_state,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_queue_list.queue_edit(
+            autoflow_queue_edit_callback,
+            inputs=[autoflow_queue_state],
+            outputs=[
+                autoflow_edit_plan_state,
+                autoflow_folder,
+                autoflow_edition,
+                autoflow_include_bonus,
+                autoflow_track_state,
+                autoflow_tracks,
+                autoflow_scan_summary,
+                autoflow_selection_summary,
+                autoflow_mode,
+                autoflow_layout,
+                autoflow_background,
+                autoflow_background_preview,
+                autoflow_embed_subtitles,
+                autoflow_video_group,
+                autoflow_rebuild,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+                autoflow_status,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_clear_button.click(
+            autoflow_clear_callback,
+            outputs=[
+                autoflow_queue_state,
+                autoflow_queue_list,
+                autoflow_status,
+                autoflow_edit_plan_state,
+                autoflow_add_button,
+                autoflow_cancel_edit_button,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_run_button.click(
+            autoflow_run_callback,
+            inputs=[autoflow_queue_state],
+            outputs=[autoflow_log, autoflow_status, autoflow_output_selection],
+            api_name="run_autoflow_queue",
+            concurrency_id="runtime_mutation",
+            concurrency_limit=1,
+            show_progress="minimal",
+        )
+        autoflow_cancel_button.click(
+            autoflow_controller.cancel,
+            outputs=[autoflow_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_open_output_button.click(
+            autoflow_open_output_callback,
+            inputs=[autoflow_output_selection],
+            outputs=[autoflow_status],
+            api_name=_PRIVATE_API,
+            queue=False,
         )
         refresh_log_button.click(
             refresh_log_callback,
@@ -2580,6 +3567,13 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+        settings_components["chinese_dubbing_timing_mode"].change(
+            lambda mode: gr.update(visible=str(mode or "fit_window") == "fit_window"),
+            inputs=[settings_components["chinese_dubbing_timing_mode"]],
+            outputs=[auto_speed_group],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         settings_components["loudness_mode"].change(
             _loudness_mode_update,
             inputs=[settings_components["loudness_mode"]],
@@ -2649,7 +3643,8 @@ def build_app() -> Any:
                 path = save_user_settings(settings)
                 return (
                     f"新项目默认值已保存：{path}\n"
-                    "当前已打开的项目没有改变；需要时请点击“保存并应用到当前项目”。"
+                    "当前已打开的项目和已经扫描的批量任务没有改变；"
+                    "需要时请点击“保存并应用到当前项目”。"
                 )
             except Exception as exc:
                 return f"保存设置失败：{_safe_error(exc)}"
@@ -2671,17 +3666,26 @@ def build_app() -> Any:
                 message = (
                     f"新项目默认值已保存：{path}\n当前没有打开项目，因此没有可应用的当前项目。"
                 )
-                return message, *_empty_project_updates("默认设置已保存；当前没有打开项目。")
+                return (
+                    message,
+                    *_empty_project_updates("默认设置已保存；当前没有打开项目。"),
+                )
 
             try:
                 project_view = apply_global_settings(normalized_manifest, settings)
             except Exception as exc:
                 project_message = f"新项目默认值已经保存，但应用到当前项目失败：{_safe_error(exc)}"
                 settings_message = f"新项目默认值已保存：{path}\n{project_message}"
-                return settings_message, *_empty_project_updates(project_message)
+                return (
+                    settings_message,
+                    *_empty_project_updates(project_message),
+                )
 
             settings_message = f"新项目默认值已保存：{path}\n{project_view.status}"
-            return settings_message, *_view_values(project_view)
+            return (
+                settings_message,
+                *_view_values(project_view),
+            )
 
         save_defaults_button.click(
             save_defaults_callback,
@@ -2693,7 +3697,10 @@ def build_app() -> Any:
         apply_project_settings_button.click(
             apply_settings_callback,
             inputs=[project_path, *form_inputs],
-            outputs=[settings_status, *common_outputs],
+            outputs=[
+                settings_status,
+                *common_outputs,
+            ],
             api_name="apply_settings_to_project",
             **runtime_options,
         )

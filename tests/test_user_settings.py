@@ -73,6 +73,38 @@ def test_portable_paths_are_saved_relative_to_application_home(
     assert load_user_settings().projects_root == str(home / "projects")
 
 
+def test_autoflow_defaults_round_trip_with_portable_settings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "config"))
+    settings = UserSettings(
+        autoflow_output_folder_name="批量成品",
+        autoflow_default_mode="audio",
+        autoflow_default_layout="both",
+        autoflow_include_bonus=True,
+        autoflow_background_policy="black",
+        autoflow_embed_subtitles=False,
+        autoflow_translate_work_title=False,
+        autoflow_translate_track_titles=True,
+        autoflow_preferred_audio_formats="flac,wav,mp3",
+    )
+
+    save_user_settings(settings)
+    restored = load_user_settings()
+
+    assert restored.autoflow_output_folder_name == "批量成品"
+    assert restored.autoflow_default_mode == "audio"
+    assert restored.autoflow_default_layout == "both"
+    assert restored.autoflow_include_bonus is True
+    assert restored.autoflow_background_policy == "black"
+    assert restored.autoflow_embed_subtitles is False
+    assert restored.autoflow_translate_work_title is False
+    assert restored.autoflow_translate_track_titles is True
+    assert restored.autoflow_preferred_audio_formats == "flac,wav,mp3"
+    assert "autoflow_transcript_policy" not in restored.model_fields_set
+
+
 def test_user_settings_copy_all_material_options_to_project() -> None:
     settings = UserSettings(
         chinese_dubbing_offset_ms=-400,

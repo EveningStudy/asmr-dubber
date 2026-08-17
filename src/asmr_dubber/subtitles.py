@@ -9,7 +9,7 @@ from typing import Literal
 from .errors import ProjectError
 from .models import Sentence
 from .storage import atomic_write_text
-from .timing import DubbingTiming, plan_dubbing_timing
+from .timing import DubbingTiming, DubbingTimingMode, plan_dubbing_timing
 
 SubtitleLanguage = Literal["bilingual", "zh", "source"]
 SubtitleTimeline = Literal["source", "dubbing"]
@@ -97,6 +97,7 @@ def write_subtitle_files(
     maximum_cps: float = 18.0,
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
+    chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
 ) -> tuple[Path, Path]:
     """Write readable, atomic UTF-8 SRT and LRC subtitle files."""
 
@@ -113,6 +114,7 @@ def write_subtitle_files(
             included,
             offset_ms=chinese_dubbing_offset_ms,
             max_auto_speed=chinese_max_auto_speed,
+            mode=chinese_dubbing_timing_mode,
         )
     }
 
