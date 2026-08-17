@@ -143,6 +143,8 @@ class UserSettings(ProjectSettings):
     autoflow_embed_subtitles: bool = True
     autoflow_translate_work_title: bool = True
     autoflow_translate_track_titles: bool = True
+    autoflow_reference_wait_enabled: bool = True
+    autoflow_reference_wait_seconds: int = Field(default=60, ge=1, le=3600)
     autoflow_preferred_audio_formats: str = "wav,flac,ape,m4a,mp3"
     autoflow_harmonized_volume_reduction_db: float = Field(default=10.0, ge=0.0, le=60.0)
     autoflow_harmonized_delay_minutes: float = Field(default=20.0, ge=0.0, le=1440.0)

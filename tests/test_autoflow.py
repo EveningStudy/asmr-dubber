@@ -95,6 +95,70 @@ def test_autoflow_scan_prefers_configured_format_and_previews_bonus(tmp_path: Pa
     assert "3 条音轨" in view.summary
 
 
+def test_autoflow_reference_wait_defaults_to_one_minute_and_can_be_disabled() -> None:
+    default_config = config_from_settings(UserSettings())
+    custom_config = config_from_settings(
+        UserSettings(autoflow_reference_wait_seconds=180)
+    )
+    disabled_config = config_from_settings(
+        UserSettings(
+            autoflow_reference_wait_enabled=False,
+            autoflow_reference_wait_seconds=180,
+        )
+    )
+
+    assert default_config.reference_wait_seconds == 60
+    assert custom_config.reference_wait_seconds == 180
+    assert disabled_config.reference_wait_seconds == 0
+
+
+def test_reference_wait_emits_best_effort_ui_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_json = tmp_path / "project.json"
+    project_json.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(engine, "project_reference_id", lambda _path: "s000007")
+    monkeypatch.setattr(engine, "project_has_external_reference", lambda _path: False)
+    events: list[dict[str, object]] = []
+
+    assert engine.wait_for_reference(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        project_json,
+        timeout_seconds=60,
+        event_callback=events.append,
+        event_context={"plan_id": "plan-1", "work": "测试作品"},
+        launch_ui=False,
+    )
+
+    assert [event["kind"] for event in events] == ["ready", "selected"]
+    assert events[0]["request_id"] == events[1]["request_id"]
+    assert events[0]["plan_id"] == "plan-1"
+    assert events[1]["sentence_id"] == "s000007"
+
+
+def test_reference_notification_failure_never_stops_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_json = tmp_path / "project.json"
+    project_json.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(engine, "project_reference_id", lambda _path: "s000001")
+    monkeypatch.setattr(engine, "project_has_external_reference", lambda _path: False)
+    monkeypatch.setattr(engine, "log_event", lambda _message: None)
+
+    def broken_notification(_payload: dict[str, object]) -> None:
+        raise RuntimeError("browser closed")
+
+    assert engine.wait_for_reference(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        project_json,
+        timeout_seconds=60,
+        event_callback=broken_notification,
+        launch_ui=False,
+    )
+
+
 def test_autoflow_plan_preserves_track_order_and_per_track_subtitles(tmp_path: Path) -> None:
     work = _work(tmp_path)
     settings = UserSettings(
@@ -243,6 +307,21 @@ def test_autoflow_queue_can_reorder_edit_remove_and_restart(tmp_path: Path) -> N
 
     queue = reorder_queue_for_ui(queue, [second_id, first_id])
     assert [item["id"] for item in queue_items_for_ui(queue)] == [second_id, first_id]
+
+    runtime_items = queue_items_for_ui(
+        queue,
+        runtime={
+            second_id: {
+                "reference_ready": True,
+                "request_id": "request-1",
+                "status": "等待参考音频",
+            }
+        },
+    )
+    assert runtime_items[0]["reference_ready"] is True
+    assert runtime_items[0]["reference_request_id"] == "request-1"
+    assert runtime_items[0]["reference_status"] == "等待参考音频"
+    assert runtime_items[1]["reference_ready"] is False
 
     queue = toggle_plan_rebuild(queue, second_id)
     assert queue_items_for_ui(queue)[0]["rebuild"] is True

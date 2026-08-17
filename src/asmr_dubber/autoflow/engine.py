@@ -82,6 +82,8 @@ AUDIO_EXTENSIONS = {
     ".m4b",
     ".ape",
 }
+
+ReferenceEventCallback = Callable[[dict[str, Any]], None]
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
 NUMBERED_NAME = re.compile(r"^\s*(\d+)(?:[\s._\-、]+)?(.*)$")
 
@@ -2109,17 +2111,48 @@ def wait_for_reference(
     project_json: Path,
     *,
     timeout_seconds: int = REFERENCE_SELECTION_TIMEOUT_SECONDS,
+    event_callback: ReferenceEventCallback | None = None,
+    event_context: dict[str, Any] | None = None,
+    launch_ui: bool = True,
 ) -> bool:
     if timeout_seconds <= 0:
         print("\n  未指定统一参考音频，将使用主程序自动推荐的清晰片段。")
         return True
+
+    request_id = uuid.uuid4().hex
+    deadline_epoch = time.time() + timeout_seconds
+
+    def emit(kind: str, **details: Any) -> None:
+        if event_callback is None:
+            return
+        payload = {
+            **(event_context or {}),
+            "kind": kind,
+            "request_id": request_id,
+            "project_json": str(project_json.resolve()),
+            "timeout_seconds": timeout_seconds,
+            "deadline_epoch": deadline_epoch,
+            **details,
+        }
+        try:
+            event_callback(payload)
+        except Exception as exc:
+            # Browser/UI notifications are optional. A broken or closed page
+            # must never stop the actual AutoFlow task.
+            with suppress(Exception):
+                log_event(f"参考音频页面通知失败，任务继续：{type(exc).__name__}: {exc}")
+
+    emit("ready")
     print("\n[4/5] 等你在网页中选择统一音色参考")
     print(f"  项目：{project_json}")
-    print("  项目路径已复制到剪贴板。网页会预选最近项目；请点击“打开项目”。")
-    print("  选择清晰片段后，必须点击“设为项目音色参考”。")
-    print("  如果还修改了表格，请同时点击“保存校对表格”。")
-    print("  保存参考后程序会自动继续；5 分钟内未选择则使用默认参考音频。")
-    launch_asmr_ui(paths, project_json)
+    if launch_ui:
+        print("  项目路径已复制到剪贴板。网页会预选最近项目；请点击“打开项目”。")
+        print("  选择清晰片段后，必须点击“设为项目音色参考”。")
+        print("  如果还修改了表格，请同时点击“保存校对表格”。")
+        launch_asmr_ui(paths, project_json)
+    else:
+        print("  可在批量处理页展开当前任务下方的参考音频选择器。")
+    print(f"  {timeout_seconds} 秒内未选择则使用自动推荐的参考音频。")
 
     deadline = time.monotonic() + timeout_seconds
     next_notice = time.monotonic() + 60
@@ -2127,14 +2160,17 @@ def wait_for_reference(
         reference_id = project_reference_id(project_json)
         if reference_id:
             print(f"已检测到统一参考：{reference_id}")
+            emit("selected", source="project_sentence", sentence_id=reference_id)
             return True
         if project_has_external_reference(project_json):
             print("已检测到 ASMR Dubber 设置中的外部参考音频。")
+            emit("selected", source="external")
             return True
         now = time.monotonic()
         remaining = deadline - now
         if remaining <= 0:
-            print("5 分钟内未检测到手动选择，将使用 ASMR Dubber 推荐的默认参考音频。")
+            print("等待时间结束，将使用 ASMR Dubber 自动推荐的参考音频。")
+            emit("timeout", source="automatic")
             return True
         if now >= next_notice:
             print(f"  仍在等待参考音频，剩余约 {max(1, int(remaining // 60) + 1)} 分钟……")
@@ -3418,6 +3454,7 @@ def execute_planned_job(
     rebuild: bool,
     shared_reference: dict[str, str] | None = None,
     capture_reference_path: Path | None = None,
+    reference_event_callback: ReferenceEventCallback | None = None,
 ) -> dict[str, Any]:
     output_folder.mkdir(parents=True, exist_ok=True)
     state_file = planned_state_path(source_folder, plan_id, job_id)
@@ -3475,6 +3512,11 @@ def execute_planned_job(
             embed_subtitles=embed_subtitles,
         )
         save_state(state_file, state)
+    elif not status_at_least(state, "synthesized"):
+        # Waiting is a current run preference rather than an immutable media
+        # setting. This also lets older resumable jobs adopt the WebUI default.
+        state["reference_wait_seconds"] = max(0, int(config.reference_wait_seconds))
+        save_state(state_file, state)
 
     execute_task(
         paths,
@@ -3484,6 +3526,7 @@ def execute_planned_job(
         sources,
         shared_reference=shared_reference,
         capture_reference_path=capture_reference_path,
+        reference_event_callback=reference_event_callback,
     )
     return load_state(state_file) or state
 
@@ -4371,6 +4414,8 @@ def execute_prepared_smart_plan(
     paths: ToolPaths,
     config: AppConfig,
     plan: SmartTaskPlan,
+    *,
+    reference_event_callback: ReferenceEventCallback | None = None,
 ) -> None:
     """Execute a previously configured smart task without asking plan questions."""
 
@@ -4477,6 +4522,7 @@ def execute_prepared_smart_plan(
             title_translations=title_translations,
             embed_subtitles=embed_subtitles,
             rebuild=rebuild,
+            reference_event_callback=reference_event_callback,
         )
         states_by_index = {index: state for index in range(1, len(sources) + 1)}
         states = [state]
@@ -4511,6 +4557,7 @@ def execute_prepared_smart_plan(
                 rebuild=rebuild,
                 shared_reference=shared_reference,
                 capture_reference_path=capture,
+                reference_event_callback=reference_event_callback,
             )
             states_by_index[index] = state
             if shared_reference is None:
@@ -4772,6 +4819,7 @@ def execute_task(
     *,
     shared_reference: dict[str, str] | None = None,
     capture_reference_path: Path | None = None,
+    reference_event_callback: ReferenceEventCallback | None = None,
 ) -> None:
     if not status_at_least(state, "media_ready"):
         prepare_media_phase(paths, folder, state, sources)
@@ -4855,12 +4903,22 @@ def execute_task(
             reference_id = project_reference_id(project_json)
             if reference_id:
                 print(f"\n复用已保存的统一音色参考：{reference_id}")
+            elif project_has_external_reference(project_json):
+                print("\n复用当前项目已经保存的外部参考音频。")
             elif not wait_for_reference(
                 paths,
                 project_json,
                 timeout_seconds=int(
                     state.get("reference_wait_seconds", REFERENCE_SELECTION_TIMEOUT_SECONDS)
                 ),
+                event_callback=reference_event_callback,
+                event_context={
+                    "plan_id": str(state.get("plan_id") or ""),
+                    "job_id": str(state.get("job_id") or ""),
+                    "work": Path(str(state.get("source_folder") or folder)).name,
+                    "output_folder": str(folder.resolve()),
+                },
+                launch_ui=reference_event_callback is None,
             ):
                 return
         if capture_reference_path is not None and not state.get("shared_reference"):
@@ -6106,18 +6164,26 @@ def execute_smart_queue(
     plans: Sequence[SmartTaskPlan],
     *,
     executor: Callable[[ToolPaths, AppConfig, SmartTaskPlan], None] | None = None,
+    reference_event_callback: ReferenceEventCallback | None = None,
 ) -> int:
     """Run configured works in order, retaining failures and continuing the queue."""
 
     print(f"\n全部 {len(plans)} 个作品已经配置完成，现在按顺序开始处理。")
-    run_plan = executor or execute_prepared_smart_plan
     failures: list[tuple[SmartTaskPlan, str]] = []
     for index, plan in enumerate(plans, start=1):
         print("\n" + "=" * 68)
         print(f"  队列 {index}/{len(plans)} · {plan.folder.name}")
         print("=" * 68)
         try:
-            run_plan(paths, config, plan)
+            if executor is None:
+                execute_prepared_smart_plan(
+                    paths,
+                    config,
+                    plan,
+                    reference_event_callback=reference_event_callback,
+                )
+            else:
+                executor(paths, config, plan)
             remove_failed_task(plan.plan_id)
             remove_failed_task(plan.retry_of)
         except (KeyboardInterrupt, OperationCancelledError):

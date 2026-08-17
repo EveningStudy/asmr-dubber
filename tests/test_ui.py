@@ -14,6 +14,8 @@ from asmr_dubber.translation import SYSTEM_PROMPT, default_translation_prompt
 from asmr_dubber.ui import (
     APP_CSS,
     DownloadController,
+    ProjectTaskController,
+    _autoflow_log_events,
     _install_backend_log_events,
     _loudness_mode,
     _loudness_mode_update,
@@ -35,6 +37,8 @@ from asmr_dubber.ui_services import (
     import_transcript_data,
     open_project_directory,
     reference_picker,
+    select_autoflow_external_reference,
+    select_autoflow_project_reference,
     select_reference,
     stage_for_ui,
 )
@@ -248,6 +252,10 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) ->
     assert "音频版本" in labels
     assert "本次将处理的音轨" in labels
     assert "处理队列" in labels
+    assert "项目内参考片段" in labels
+    assert "外部参考音频" in labels
+    assert "处理到参考音频时等待手动选择" in labels
+    assert "每个作品最多等待（秒）" in labels
     assert "画面预览" in labels
     assert "已有台本/字幕的处理方式" not in labels
     assert "默认成品组织" in labels
@@ -317,6 +325,8 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> N
         "默认视频画面",
         "翻译作品文件夹名称",
         "翻译音轨标题",
+        "处理到参考音频时等待手动选择",
+        "每个作品最多等待（秒）",
     ):
         assert getattr(components_by_label[label], "info", "")
 
@@ -327,6 +337,90 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> N
     assert "'queue_reorder'" in queue_list.js_on_load
     assert "'queue_edit'" in queue_list.js_on_load
     assert "'queue_remove'" in queue_list.js_on_load
+    assert "autoflow-reference-dialog" in queue_list.js_on_load
+
+
+def test_autoflow_reference_events_are_streamed_without_blocking_ui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run_queue(_payload, *, cancel_event, reference_event_callback):
+        assert cancel_event is not None
+        reference_event_callback(
+            {
+                "kind": "ready",
+                "request_id": "request-1",
+                "plan_id": "plan-1",
+                "work": "测试作品",
+                "project_json": "project.json",
+                "timeout_seconds": 60,
+            }
+        )
+        reference_event_callback(
+            {
+                "kind": "timeout",
+                "request_id": "request-1",
+                "plan_id": "plan-1",
+                "work": "测试作品",
+                "project_json": "project.json",
+                "timeout_seconds": 60,
+            }
+        )
+        return 0, []
+
+    monkeypatch.setattr(ui_module, "run_autoflow_queue", fake_run_queue)
+    events = list(
+        _autoflow_log_events(
+            [],
+            ProjectTaskController("测试批量任务"),
+            heartbeat_seconds=0.01,
+        )
+    )
+
+    reference_kinds = [
+        event[5]["kind"]
+        for event in events
+        if event[5] is not None
+    ]
+    assert reference_kinds == ["ready", "timeout"]
+
+
+def test_autoflow_can_select_project_or_external_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, manifest = _project(tmp_path / "project")
+    project.settings.tts_reference_source = "external"
+    project.settings.tts_index_speaker_source = "external"
+    save_project(project, manifest.parent)
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.reference_preview",
+        lambda _project, _directory, sentence_id: f"preview-{sentence_id}.wav",
+    )
+
+    message, preview = select_autoflow_project_reference(str(manifest), "s000002")
+    loaded, _ = load_project(manifest)
+    assert "s000002" in message
+    assert preview == "preview-s000002.wav"
+    assert loaded.settings.tts_reference_source == "project_sentence"
+    assert loaded.settings.tts_index_speaker_source == "project_reference"
+    assert loaded.settings.tts_reference_sentence_id == "s000002"
+
+    monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "config"))
+    upload = tmp_path / "external.wav"
+    sf.write(upload, np.zeros(16_000, dtype=np.float32), 16_000, subtype="FLOAT")
+    message, stored = select_autoflow_external_reference(
+        str(manifest),
+        upload,
+        text="参考音频",
+        language="zh",
+    )
+    loaded, _ = load_project(manifest)
+    assert "external.wav" not in message
+    assert Path(stored).is_file()
+    assert loaded.settings.tts_reference_source == "external"
+    assert loaded.settings.tts_index_speaker_source == "external"
+    assert loaded.settings.tts_external_reference_text == "参考音频"
+    assert loaded.settings.tts_external_reference_language == "zh"
 
 
 def test_loudness_modes_map_to_existing_project_fields(monkeypatch) -> None:

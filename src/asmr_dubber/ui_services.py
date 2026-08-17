@@ -24,7 +24,7 @@ from .models import (
 from .platforms import open_directory, portable_home
 from .subtitles import SubtitleLanguage
 from .task_control import CancellationSignal
-from .user_settings import UserSettings, load_user_settings, resolve_api_key
+from .user_settings import UserSettings, load_user_settings, resolve_api_key, store_reference_audio
 from .voice_reference import shared_reference_sentence
 
 TABLE_HEADERS = [
@@ -667,3 +667,47 @@ def select_reference(project_path: str, sentence_id: str) -> tuple[str, str | No
         f"已把 {sentence_id} 设为项目统一音色参考。",
         reference_preview(project, directory, sentence_id),
     )
+
+
+def select_autoflow_project_reference(
+    project_path: str,
+    sentence_id: str,
+) -> tuple[str, str | None]:
+    """Use one analyzed project sentence for the active AutoFlow task."""
+
+    project, directory = pipeline.reload_project(project_path)
+    if not any(item.id == sentence_id for item in project.sentences):
+        raise ProjectError(f"项目中找不到参考句：{sentence_id}")
+    project.settings.tts_reference_source = "project_sentence"
+    project.settings.tts_reference_sentence_id = sentence_id
+    if project.settings.tts_backend == "indextts2":
+        project.settings.tts_index_speaker_source = "project_reference"
+    save_project(project, directory)
+    return (
+        f"已为当前批量任务选择项目片段 {sentence_id}。",
+        reference_preview(project, directory, sentence_id),
+    )
+
+
+def select_autoflow_external_reference(
+    project_path: str,
+    audio_path: str | os.PathLike[str],
+    *,
+    text: str = "",
+    language: str = "auto",
+) -> tuple[str, str]:
+    """Store and use an external voice reference for the active AutoFlow task."""
+
+    if language not in {"auto", "ja", "en", "zh"}:
+        raise ProjectError(f"未知外部参考音频语言：{language}")
+    stored = store_reference_audio(audio_path)
+    project, directory = pipeline.reload_project(project_path)
+    project.settings.tts_reference_source = "external"
+    project.settings.tts_external_reference_audio = str(stored)
+    project.settings.tts_external_reference_text = str(text or "").strip()
+    project.settings.tts_external_reference_language = cast(Any, language)
+    project.settings.tts_reference_sentence_id = None
+    if project.settings.tts_backend == "indextts2":
+        project.settings.tts_index_speaker_source = "external"
+    save_project(project, directory)
+    return f"已为当前批量任务导入外部参考音频：{stored.name}", str(stored)

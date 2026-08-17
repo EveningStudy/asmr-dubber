@@ -132,7 +132,11 @@ def config_from_settings(settings: UserSettings | None = None) -> engine.AppConf
         preferred_audio_formats=_preferred_formats(current.autoflow_preferred_audio_formats),
         bonus_policy="include" if current.autoflow_include_bonus else "exclude",
         background_policy=current.autoflow_background_policy,
-        reference_wait_seconds=0,
+        reference_wait_seconds=(
+            current.autoflow_reference_wait_seconds
+            if current.autoflow_reference_wait_enabled
+            else 0
+        ),
     )
 
 
@@ -751,12 +755,18 @@ def queue_rows(queue_payload: Any) -> list[list[Any]]:
     return rows
 
 
-def queue_items_for_ui(queue_payload: Any) -> list[dict[str, Any]]:
+def queue_items_for_ui(
+    queue_payload: Any,
+    *,
+    runtime: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     queue = list(queue_payload or [])
     total = len(queue)
+    runtime_by_plan = runtime or {}
     for index, payload in enumerate(queue, start=1):
         plan = deserialize_plan(payload)
+        task_runtime = runtime_by_plan.get(plan.plan_id, {})
         items.append(
             {
                 "id": plan.plan_id,
@@ -779,6 +789,9 @@ def queue_items_for_ui(queue_payload: Any) -> list[dict[str, Any]]:
                 "rebuild_label": "取消重新处理" if plan.rebuild else "重新处理",
                 "can_move_up": index > 1,
                 "can_move_down": index < total,
+                "reference_ready": bool(task_runtime.get("reference_ready")),
+                "reference_request_id": str(task_runtime.get("request_id") or ""),
+                "reference_status": str(task_runtime.get("status") or ""),
             }
         )
     return items
@@ -864,6 +877,7 @@ def run_queue(
     queue_payload: Any,
     *,
     cancel_event: CancellationSignal | None = None,
+    reference_event_callback: engine.ReferenceEventCallback | None = None,
 ) -> tuple[int, list[str]]:
     plans = [deserialize_plan(payload) for payload in (queue_payload or [])]
     if not plans:
@@ -872,7 +886,12 @@ def run_queue(
     config = config_from_settings()
     paths = engine.find_tool_paths(config)
     engine.validate_asmr_version()
-    result = engine.execute_smart_queue(paths, config, plans)
+    result = engine.execute_smart_queue(
+        paths,
+        config,
+        plans,
+        reference_event_callback=reference_event_callback,
+    )
     check_cancelled(cancel_event)
     return result, [str(plan.output_root) for plan in plans]
 

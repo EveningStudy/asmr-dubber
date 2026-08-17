@@ -180,15 +180,17 @@ watch('value', bindTrackList);
 QUEUE_LIST_TEMPLATE = r"""
 <div class="af-queue-list" role="list" aria-label="处理队列">
   {{#each value}}
-  <article class="af-queue-item" draggable="true" data-plan-id="{{id}}" role="listitem">
+  <article class="af-queue-item {{#if reference_ready}}af-awaiting-reference{{/if}}" draggable="true" data-plan-id="{{id}}" data-reference-request-id="{{reference_request_id}}" role="listitem">
     <div class="af-drag-handle" title="拖动调整顺序" aria-hidden="true">⠿</div>
     <div class="af-queue-body">
       <div class="af-queue-heading">
         <strong><span class="af-position">{{position}}</span>. {{work}}</strong>
         {{#if rebuild}}<span class="af-warning-badge">将重新处理</span>{{/if}}
+        {{#if reference_ready}}<span class="af-reference-badge">等待参考音频</span>{{/if}}
       </div>
       <div class="af-queue-meta">{{tracks}} 条音轨 · {{mode}} · {{layout}} · {{titles}}</div>
       <div class="af-path">{{output}}</div>
+      {{#if reference_status}}<div class="af-reference-status">{{reference_status}}</div>{{/if}}
       <div class="af-queue-actions">
         <button type="button" data-action="edit">编辑选项</button>
         <button type="button" data-action="restart">{{rebuild_label}}</button>
@@ -228,6 +230,16 @@ QUEUE_LIST_CSS = (
 .af-queue-heading { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .af-queue-meta { margin-top: .25rem; color: var(--body-text-color-subdued); }
 .af-warning-badge { padding: .1rem .45rem; border-radius: 999px; background: #fff0d6; color: #8a4b00; font-size: .78rem; }
+.af-reference-badge { padding: .1rem .45rem; border-radius: 999px; background: #e8f2ff; color: #175cd3; font-size: .78rem; }
+.af-queue-item.af-awaiting-reference { border-color: color-mix(in srgb, var(--color-accent) 65%, var(--border-color-primary)); }
+.af-reference-status { margin-top: .55rem; padding: .55rem .65rem; border-radius: 7px; background: var(--background-fill-secondary); color: var(--body-text-color); }
+.af-reference-dialog { max-width: min(30rem, calc(100vw - 2rem)); border: 1px solid var(--border-color-primary); border-radius: 12px; padding: 1.1rem; background: var(--block-background-fill); color: var(--body-text-color); box-shadow: 0 18px 60px rgba(0,0,0,.24); }
+.af-reference-dialog::backdrop { background: rgba(0,0,0,.36); }
+.af-reference-dialog h3 { margin: 0 0 .45rem; font-size: 1.05rem; }
+.af-reference-dialog p { margin: 0; color: var(--body-text-color-subdued); line-height: 1.55; }
+.af-reference-dialog-actions { display: flex; justify-content: flex-end; gap: .55rem; margin-top: 1rem; }
+.af-reference-dialog-actions button { min-height: 2.2rem; padding: .35rem .8rem; border: 1px solid var(--border-color-primary); border-radius: 7px; }
+.af-reference-dialog-actions .af-reference-primary { background: var(--button-primary-background-fill); color: var(--button-primary-text-color); }
 .af-queue-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .65rem; }
 .af-queue-actions button {
   min-height: 2.1rem;
@@ -247,6 +259,7 @@ QUEUE_LIST_CSS = (
 
 QUEUE_LIST_JS = r"""
 let draggedQueueItem = null;
+let lastReferenceNotice = '';
 const queueItemSelector = '.af-queue-item';
 const emitQueueOrder = (list) => {
   const order = Array.from(list.querySelectorAll(queueItemSelector)).map((item) => item.dataset.planId);
@@ -303,6 +316,55 @@ const bindQueueList = () => {
       trigger('queue_remove', {plan_id: item.dataset.planId});
     }
   };
+  try {
+    const pending = Array.from(list.querySelectorAll(queueItemSelector)).find(
+      (item) => Boolean(item.dataset.referenceRequestId)
+    );
+    const requestId = pending?.dataset.referenceRequestId || '';
+    if (requestId && requestId !== lastReferenceNotice) {
+      lastReferenceNotice = requestId;
+      const doc = element.ownerDocument;
+      let dialog = doc.getElementById('autoflow-reference-dialog');
+      if (!dialog) {
+        dialog = doc.createElement('dialog');
+        dialog.id = 'autoflow-reference-dialog';
+        dialog.className = 'af-reference-dialog';
+        doc.body.appendChild(dialog);
+      }
+      const heading = doc.createElement('h3');
+      heading.textContent = '可以选择参考音频了';
+      const message = doc.createElement('p');
+      const work = pending.querySelector('.af-queue-heading strong')?.textContent?.trim() || '当前作品';
+      message.textContent = `${work} 已完成识别和翻译。你可以选择项目片段或导入外部音频；不操作会按设置自动继续。`;
+      const actions = doc.createElement('div');
+      actions.className = 'af-reference-dialog-actions';
+      const later = doc.createElement('button');
+      later.type = 'button';
+      later.textContent = '暂不选择';
+      later.onclick = () => dialog.close();
+      const choose = doc.createElement('button');
+      choose.type = 'button';
+      choose.className = 'af-reference-primary';
+      choose.textContent = '前往选择';
+      choose.onclick = () => {
+        dialog.close();
+        const panel = doc.querySelector('#autoflow-reference-panel');
+        panel?.scrollIntoView({behavior: 'smooth', block: 'center'});
+        const toggle = panel?.querySelector('button[aria-expanded="false"]');
+        try { toggle?.click(); } catch (_error) { /* visible queue state remains available */ }
+      };
+      actions.append(later, choose);
+      dialog.replaceChildren(heading, message, actions);
+      try {
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+      } catch (_error) {
+        // Browser dialogs are best-effort. The queue card and selector remain
+        // visible, and the backend timeout continues independently.
+      }
+    }
+  } catch (_error) {
+    // UI notification failures must never affect the running task.
+  }
 };
 bindQueueList();
 watch('value', bindQueueList);

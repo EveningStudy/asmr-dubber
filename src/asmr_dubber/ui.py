@@ -99,6 +99,8 @@ from .ui_services import (
     recent_projects,
     reference_picker,
     save_table,
+    select_autoflow_external_reference,
+    select_autoflow_project_reference,
     select_reference,
     stage_for_ui,
     subtitles,
@@ -451,7 +453,7 @@ def _autoflow_log_events(
     controller: ProjectTaskController,
     *,
     heartbeat_seconds: float = 2.0,
-) -> Iterator[tuple[str, bool, bool, str, list[str]]]:
+) -> Iterator[tuple[str, bool, bool, str, list[str], dict[str, Any] | None]]:
     """Run one AutoFlow queue while streaming bounded, cancellable UI logs."""
 
     events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -477,6 +479,9 @@ def _autoflow_log_events(
                 result, outputs = run_autoflow_queue(
                     queue_payload,
                     cancel_event=controller.cancel_event,
+                    reference_event_callback=lambda payload: events.put(
+                        ("reference", dict(payload))
+                    ),
                 )
         except OperationCancelledError as exc:
             events.put(("cancelled", str(exc)))
@@ -491,7 +496,7 @@ def _autoflow_log_events(
     controller.begin("自动处理队列")
     threading.Thread(target=run, name="asmr-dubber-autoflow", daemon=True).start()
     append("开始处理队列。")
-    yield "\n".join(lines), False, True, "自动处理已开始。", []
+    yield "\n".join(lines), False, True, "自动处理已开始。", [], None
 
     heartbeat = max(0.1, heartbeat_seconds)
     while True:
@@ -505,16 +510,32 @@ def _autoflow_log_events(
                 True,
                 f"仍在处理（已运行 {elapsed} 秒）。可以随时取消，已完成状态会保留。",
                 [],
+                None,
             )
             continue
         if kind == "log":
             append(str(payload))
-            yield "\n".join(lines), False, True, "正在处理队列…", []
+            yield "\n".join(lines), False, True, "正在处理队列…", [], None
+            continue
+        if kind == "reference":
+            reference_event = dict(payload) if isinstance(payload, dict) else {}
+            event_kind = str(reference_event.get("kind") or "")
+            work = str(reference_event.get("work") or "当前作品")
+            if event_kind == "ready":
+                append(f"{work} 可以选择参考音频；等待期间不操作会使用自动推荐。")
+                message = f"“{work}”正在等待参考音频选择。"
+            elif event_kind == "selected":
+                append(f"{work} 已保存参考音频，任务继续。")
+                message = f"“{work}”已保存参考音频，正在继续处理。"
+            else:
+                append(f"{work} 的等待时间结束，使用自动推荐的参考音频。")
+                message = f"“{work}”未手动选择，已使用自动推荐。"
+            yield "\n".join(lines), False, True, message, [], reference_event
             continue
         if kind == "done":
             outputs = [str(item) for item in payload]
             append("队列处理完成。")
-            yield "\n".join(lines), True, True, "队列处理完成。", outputs
+            yield "\n".join(lines), True, True, "队列处理完成。", outputs, None
             return
         if kind == "partial":
             outputs = [str(item) for item in payload]
@@ -525,11 +546,12 @@ def _autoflow_log_events(
                 False,
                 "队列已结束，但有作品失败。已有状态和成品均已保留，请查看日志。",
                 outputs,
+                None,
             )
             return
         if kind == "cancelled":
             append(str(payload))
-            yield "\n".join(lines), True, False, str(payload), []
+            yield "\n".join(lines), True, False, str(payload), [], None
             return
         append(f"自动处理失败：{payload}")
         yield (
@@ -538,6 +560,7 @@ def _autoflow_log_events(
             False,
             f"自动处理失败：{payload}\n详细信息已写入日志。",
             [],
+            None,
         )
         return
 
@@ -1582,6 +1605,61 @@ def build_app() -> Any:
                             js_on_load=QUEUE_LIST_JS,
                             elem_id="autoflow-queue-list",
                         )
+                        autoflow_reference_state = gr.State({})
+                        with gr.Accordion(
+                            "当前作品的参考音频（可选）",
+                            open=False,
+                            visible=False,
+                            elem_id="autoflow-reference-panel",
+                            elem_classes=["optional-section"],
+                        ) as autoflow_reference_panel:
+                            autoflow_reference_info = gr.Markdown(
+                                "到达参考音频步骤后，这里会显示当前作品。"
+                            )
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_reference_sentence = gr.Dropdown(
+                                    label="项目内参考片段",
+                                    choices=[],
+                                    interactive=True,
+                                    scale=3,
+                                )
+                                autoflow_reference_apply_button = gr.Button(
+                                    "使用这个片段",
+                                    variant="primary",
+                                    scale=1,
+                                )
+                            autoflow_reference_audio = gr.Audio(
+                                label="参考片段试听",
+                                interactive=False,
+                            )
+                            gr.Markdown("也可以只为当前作品导入一段外部参考音频。")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                autoflow_reference_upload = gr.File(
+                                    label="外部参考音频",
+                                    file_types=["audio"],
+                                    type="filepath",
+                                    scale=2,
+                                )
+                                autoflow_reference_external_text = gr.Textbox(
+                                    label="音频对应原文（部分外部 TTS 需要）",
+                                    placeholder="IndexTTS2 可以留空",
+                                    scale=2,
+                                )
+                                autoflow_reference_external_language = gr.Dropdown(
+                                    label="原文语言",
+                                    choices=[
+                                        ("跟随项目", "auto"),
+                                        ("日语", "ja"),
+                                        ("英语", "en"),
+                                        ("中文", "zh"),
+                                    ],
+                                    value="auto",
+                                    scale=1,
+                                )
+                            autoflow_reference_external_button = gr.Button("使用外部音频")
+                            autoflow_reference_status = gr.Markdown(
+                                "不做选择时，等待结束后会使用自动推荐的项目片段。"
+                            )
                         autoflow_clear_button = gr.Button("清空队列")
                         with gr.Row(elem_classes=["mobile-stack"]):
                             autoflow_run_button = gr.Button("开始处理队列", variant="primary")
@@ -2456,6 +2534,26 @@ def build_app() -> Any:
                                 "只会选其中存在的一种。"
                             ),
                         )
+                        gr.Markdown("#### 参考音频选择")
+                        settings_components["autoflow_reference_wait_enabled"] = gr.Checkbox(
+                            label="处理到参考音频时等待手动选择",
+                            value=stored.autoflow_reference_wait_enabled,
+                            info=(
+                                "开启后，批量队列会显示选择器并提醒；关闭后直接使用"
+                                "自动推荐的项目片段。"
+                            ),
+                        )
+                        with gr.Group(
+                            visible=stored.autoflow_reference_wait_enabled
+                        ) as autoflow_reference_wait_group:
+                            settings_components["autoflow_reference_wait_seconds"] = gr.Number(
+                                label="每个作品最多等待（秒）",
+                                value=stored.autoflow_reference_wait_seconds,
+                                minimum=1,
+                                maximum=3600,
+                                precision=0,
+                                info="默认 60 秒。到时未选择会自动继续，不会把队列判为失败。",
+                            )
                         gr.Markdown("#### 和谐静态视频")
                         with gr.Row(elem_classes=["mobile-stack"]):
                             settings_components["autoflow_harmonized_volume_reduction_db"] = (
@@ -2980,11 +3078,94 @@ def build_app() -> Any:
             )
 
         def autoflow_run_callback(queue_payload: Any) -> Iterator[tuple[Any, ...]]:
-            for logs, _done, _success, message, outputs in _autoflow_log_events(
+            runtime_by_plan: dict[str, dict[str, Any]] = {}
+            for logs, done, _success, message, outputs, reference_event in _autoflow_log_events(
                 queue_payload,
                 autoflow_controller,
             ):
                 choices = [(Path(path).name, path) for path in outputs]
+                queue_update: Any = gr.update()
+                reference_updates: tuple[Any, ...] = tuple(gr.update() for _ in range(9))
+                if reference_event:
+                    event_kind = str(reference_event.get("kind") or "")
+                    plan_id = str(reference_event.get("plan_id") or "")
+                    work = str(reference_event.get("work") or "当前作品")
+                    timeout_seconds = int(reference_event.get("timeout_seconds") or 0)
+                    if event_kind == "ready":
+                        runtime_by_plan[plan_id] = {
+                            "reference_ready": True,
+                            "request_id": str(reference_event.get("request_id") or ""),
+                            "status": (
+                                f"可以自选参考音频；最多等待 {timeout_seconds} 秒。"
+                                "不操作会使用自动推荐。"
+                            ),
+                        }
+                        project_json = str(reference_event.get("project_json") or "")
+                        try:
+                            sentence_choices, selected, preview = reference_picker(project_json)
+                            picker_note = (
+                                f"**{work}** 已完成识别和翻译。请选择一个项目片段，"
+                                "或在下面导入外部音频。"
+                            )
+                        except Exception as exc:
+                            logger.exception("载入批量任务参考音频选择器失败")
+                            sentence_choices, selected, preview = [], None, None
+                            picker_note = (
+                                f"**{work}** 已进入参考音频步骤，但选择器载入失败："
+                                f"{_safe_error(exc)}。不操作仍会按时使用自动推荐。"
+                            )
+                        reference_updates = (
+                            dict(reference_event),
+                            gr.update(
+                                visible=True,
+                                label=f"{work} · 自选参考音频（可选）",
+                            ),
+                            picker_note,
+                            gr.update(choices=sentence_choices, value=selected),
+                            gr.update(value=preview),
+                            gr.update(value=None),
+                            gr.update(value=""),
+                            gr.update(value="auto"),
+                            (
+                                f"等待 {timeout_seconds} 秒；不做选择时，"
+                                "程序会使用上方带“推荐”标记的项目片段。"
+                            ),
+                        )
+                    else:
+                        selected_by_user = event_kind == "selected"
+                        source = str(reference_event.get("source") or "")
+                        runtime_by_plan[plan_id] = {
+                            "reference_ready": False,
+                            "request_id": "",
+                            "status": (
+                                "已使用外部参考音频，任务继续。"
+                                if selected_by_user and source == "external"
+                                else "已使用所选项目片段，任务继续。"
+                                if selected_by_user
+                                else "等待时间结束，已使用自动推荐的项目片段。"
+                            ),
+                        }
+                        reference_updates = (
+                            {},
+                            gr.update(visible=False),
+                            gr.update(),
+                            gr.update(),
+                            gr.update(),
+                            gr.update(value=None),
+                            gr.update(value=""),
+                            gr.update(value="auto"),
+                            gr.update(),
+                        )
+                    queue_update = queue_items_for_ui(
+                        queue_payload,
+                        runtime=runtime_by_plan,
+                    )
+                elif done:
+                    reference_updates = (
+                        {},
+                        gr.update(visible=False),
+                        *(gr.update() for _ in range(7)),
+                    )
                 yield (
                     logs,
                     message,
@@ -2992,7 +3173,61 @@ def build_app() -> Any:
                         choices=choices,
                         value=choices[0][1] if choices else None,
                     ),
+                    queue_update,
+                    *reference_updates,
                 )
+
+        def _active_autoflow_reference_project(request: Any) -> str:
+            if not isinstance(request, dict):
+                raise ValueError("当前没有正在等待选择参考音频的作品。")
+            project_json = str(request.get("project_json") or "").strip()
+            if not project_json or not Path(project_json).is_file():
+                raise ValueError("当前参考音频项目已经不存在。")
+            deadline = float(request.get("deadline_epoch") or 0)
+            if deadline and time.time() >= deadline:
+                raise ValueError("这个作品的选择时间已经结束，程序将使用自动推荐。")
+            return project_json
+
+        def autoflow_reference_preview_callback(request: Any, sentence_id: Any) -> Any:
+            try:
+                project_json = _active_autoflow_reference_project(request)
+                return preview_reference(project_json, str(sentence_id or ""))
+            except Exception:
+                logger.exception("更新批量任务参考音频试听失败")
+                return gr.update()
+
+        def autoflow_reference_apply_callback(
+            request: Any,
+            sentence_id: Any,
+        ) -> tuple[Any, Any]:
+            try:
+                project_json = _active_autoflow_reference_project(request)
+                if not str(sentence_id or "").strip():
+                    raise ValueError("请先选择一个项目片段。")
+                return select_autoflow_project_reference(project_json, str(sentence_id))
+            except Exception as exc:
+                logger.exception("保存批量任务项目参考音频失败")
+                return f"无法保存参考音频：{_safe_error(exc)}", gr.update()
+
+        def autoflow_reference_external_callback(
+            request: Any,
+            upload: Any,
+            text: Any,
+            language: Any,
+        ) -> tuple[Any, Any]:
+            try:
+                project_json = _active_autoflow_reference_project(request)
+                if not upload:
+                    raise ValueError("请先选择要导入的外部音频。")
+                return select_autoflow_external_reference(
+                    project_json,
+                    str(upload),
+                    text=str(text or ""),
+                    language=str(language or "auto"),
+                )
+            except Exception as exc:
+                logger.exception("保存批量任务外部参考音频失败")
+                return f"无法导入外部参考音频：{_safe_error(exc)}", gr.update()
 
         def autoflow_open_output_callback(path: Any) -> str:
             try:
@@ -3291,11 +3526,58 @@ def build_app() -> Any:
         autoflow_run_button.click(
             autoflow_run_callback,
             inputs=[autoflow_queue_state],
-            outputs=[autoflow_log, autoflow_status, autoflow_output_selection],
+            outputs=[
+                autoflow_log,
+                autoflow_status,
+                autoflow_output_selection,
+                autoflow_queue_list,
+                autoflow_reference_state,
+                autoflow_reference_panel,
+                autoflow_reference_info,
+                autoflow_reference_sentence,
+                autoflow_reference_audio,
+                autoflow_reference_upload,
+                autoflow_reference_external_text,
+                autoflow_reference_external_language,
+                autoflow_reference_status,
+            ],
             api_name="run_autoflow_queue",
             concurrency_id="runtime_mutation",
             concurrency_limit=1,
             show_progress="minimal",
+        )
+        autoflow_reference_sentence.change(
+            autoflow_reference_preview_callback,
+            inputs=[autoflow_reference_state, autoflow_reference_sentence],
+            outputs=[autoflow_reference_audio],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_reference_apply_button.click(
+            autoflow_reference_apply_callback,
+            inputs=[autoflow_reference_state, autoflow_reference_sentence],
+            outputs=[autoflow_reference_status, autoflow_reference_audio],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_reference_upload.change(
+            lambda path: gr.update(value=path) if path else gr.update(),
+            inputs=[autoflow_reference_upload],
+            outputs=[autoflow_reference_audio],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_reference_external_button.click(
+            autoflow_reference_external_callback,
+            inputs=[
+                autoflow_reference_state,
+                autoflow_reference_upload,
+                autoflow_reference_external_text,
+                autoflow_reference_external_language,
+            ],
+            outputs=[autoflow_reference_status, autoflow_reference_audio],
+            api_name=_PRIVATE_API,
+            queue=False,
         )
         autoflow_cancel_button.click(
             autoflow_controller.cancel,
@@ -3621,6 +3903,13 @@ def build_app() -> Any:
             lambda mode: gr.update(visible=str(mode or "both") != "stem"),
             inputs=[settings_components["mix_output_mode"]],
             outputs=[final_mix_group],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["autoflow_reference_wait_enabled"].change(
+            lambda enabled: gr.update(visible=bool(enabled)),
+            inputs=[settings_components["autoflow_reference_wait_enabled"]],
+            outputs=[autoflow_reference_wait_group],
             api_name=_PRIVATE_API,
             queue=False,
         )
