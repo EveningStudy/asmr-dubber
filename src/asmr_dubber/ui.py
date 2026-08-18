@@ -268,6 +268,31 @@ Windows 双击 `ASMR-Dubber-Setup.exe`；Linux 运行
 
 _INSTALLABLE = set(installable_backend_ids())
 _PRIVATE_API: Any = False
+_NATIVE_OUTPUT_AUDIO_JS = """
+() => {
+    const syncOutputAudio = () => {
+        for (const id of ["output-audio-preview", "output-stem-preview"]) {
+            const root = document.getElementById(id);
+            const audio = root?.querySelector("audio");
+            const download = root?.querySelector('a[data-testid="download-link"]');
+            if (audio && download && audio.src !== download.href) {
+                audio.src = download.href;
+                audio.load();
+            }
+        }
+    };
+    globalThis.__asmrDubberAudioObserver?.disconnect();
+    const observer = new MutationObserver(syncOutputAudio);
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["href"],
+    });
+    globalThis.__asmrDubberAudioObserver = observer;
+    syncOutputAudio();
+}
+"""
 _LLM_TRANSLATION_PROVIDERS = frozenset(
     {
         "deepseek",
@@ -1240,6 +1265,10 @@ def _remote_auth(host: str) -> tuple[str, str] | None:
 
 
 def build_app() -> Any:
+    # Gradio otherwise copies every output to the system temporary directory.
+    # Long WAV/video results can be several GiB, so keep its cache in the same
+    # controlled directory that stage_for_ui() already uses and serves.
+    os.environ["GRADIO_TEMP_DIR"] = str(ui_stage_directory().resolve())
     import gradio as gr
 
     stored = load_user_settings()
@@ -1454,12 +1483,16 @@ def build_app() -> Any:
                                 type="filepath",
                                 interactive=False,
                                 visible=False,
+                                elem_id="output-audio-preview",
+                                waveform_options=gr.WaveformOptions(show_recording_waveform=False),
                             )
                             stem_audio = gr.Audio(
                                 label="中文克隆音轨",
                                 type="filepath",
                                 interactive=False,
                                 visible=False,
+                                elem_id="output-stem-preview",
+                                waveform_options=gr.WaveformOptions(show_recording_waveform=False),
                             )
                         with gr.Row(elem_classes=["mobile-stack"]):
                             output_video = gr.Video(
@@ -4426,6 +4459,12 @@ def build_app() -> Any:
             **runtime_options,
         )
 
+        app.load(
+            fn=None,
+            js=_NATIVE_OUTPUT_AUDIO_JS,
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
     return app
 
 

@@ -52,6 +52,10 @@ https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
 
 ![Windows“启用长路径”开关位置](assets/windows-enable-long-paths.png)
 
+首次运行未签名的启动器时，Windows 可能显示 SmartScreen 提示。确认文件来自本项目的 GitHub Release 后，先点击“更多信息”，再点击“仍要运行”；来源不明的文件不要继续运行。
+
+![SmartScreen 中“更多信息”和“仍要运行”的位置](assets/windows-smartscreen-run-anyway.png)
+
 Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新架构。主环境使用 CUDA 13，不支持 Maxwell、Pascal 和 Volta；这些旧卡即使显存较大，也不属于完整本地 GPU 支持范围。
 
 ## 快速开始

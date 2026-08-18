@@ -157,6 +157,68 @@ def test_index_default_uses_shared_speaker_and_current_sentence_emotion(
     assert emotion.path != speaker.path
 
 
+@pytest.mark.parametrize(
+    ("start_seconds", "end_seconds"),
+    [
+        (0.01, 0.06),
+        (11.94, 11.99),
+    ],
+)
+def test_index_short_sentence_reference_is_expanded_inside_source(
+    tmp_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+) -> None:
+    project = _project()
+    target = project.sentences[0]
+    target.start_seconds = start_seconds
+    target.end_seconds = end_seconds
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(16_000 * 12, dtype=np.float32), 16_000, subtype="FLOAT")
+
+    speaker = prepare_index_speaker_reference(project, tmp_path, source, target)
+    emotion = prepare_index_emotion_reference(project, tmp_path, source, target, speaker)
+
+    assert emotion is not None
+    assert sf.info(emotion.path).duration == pytest.approx(1.0, abs=0.01)
+
+
+def test_index_short_cached_reference_is_rebuilt(tmp_path: Path) -> None:
+    project = _project()
+    target = project.sentences[0]
+    target.start_seconds = 0.01
+    target.end_seconds = 0.06
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(16_000 * 12, dtype=np.float32), 16_000, subtype="FLOAT")
+
+    speaker = prepare_index_speaker_reference(project, tmp_path, source, target)
+    first = prepare_index_emotion_reference(project, tmp_path, source, target, speaker)
+    assert first is not None
+    sf.write(first.path, np.zeros(800, dtype=np.float32), 16_000, subtype="FLOAT")
+
+    rebuilt = prepare_index_emotion_reference(project, tmp_path, source, target, speaker)
+
+    assert rebuilt is not None
+    assert rebuilt.path == first.path
+    assert sf.info(rebuilt.path).duration == pytest.approx(1.0, abs=0.01)
+
+
+def test_index_external_reference_rejects_unsafe_short_audio(tmp_path: Path) -> None:
+    project = _project()
+    external = tmp_path / "short.wav"
+    sf.write(external, np.zeros(800, dtype=np.float32), 16_000, subtype="FLOAT")
+    project.settings.tts_index_speaker_source = "external"
+    project.settings.tts_external_reference_audio = str(external)
+
+    with pytest.raises(SynthesisError, match="至少 1 秒"):
+        prepare_index_speaker_reference(
+            project,
+            tmp_path,
+            tmp_path / "source.wav",
+            project.sentences[0],
+        )
+
+
 def test_index_cache_tracks_independent_emotion_reference() -> None:
     project = _project()
     sentence = project.sentences[0]

@@ -5,7 +5,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .audio import extract_reference
+import soundfile as sf
+
+from .audio import extract_reference, probe_audio
 from .errors import SynthesisError
 from .hashing import cached_sha256_file
 from .languages import SourceLanguage
@@ -14,6 +16,10 @@ from .models import DubProject, Sentence
 STABLE_CLONE_MODES = {
     "stable_reference",
 }
+
+_INDEX_REFERENCE_MIN_SECONDS = 1.0
+_INDEX_REFERENCE_CACHE_VERSION = "index-reference-v2-min-1s"
+_INDEX_REFERENCE_DURATION_TOLERANCE = 0.01
 
 
 @dataclass(frozen=True)
@@ -149,12 +155,65 @@ def _index_external_reference(path_text: str, *, role: str) -> VoiceReference:
     if not path.is_file():
         raise SynthesisError(f"找不到 IndexTTS2 外部{role}参考音频：{path}")
     identity = cached_sha256_file(path)
+    try:
+        duration = probe_audio(path, sha256=identity).duration_seconds
+    except Exception as exc:
+        raise SynthesisError(f"无法读取 IndexTTS2 外部{role}参考音频：{path}: {exc}") from exc
+    if duration + _INDEX_REFERENCE_DURATION_TOLERANCE < _INDEX_REFERENCE_MIN_SECONDS:
+        raise SynthesisError(
+            f"IndexTTS2 外部{role}参考音频只有 {duration:.2f} 秒；"
+            f"请使用至少 {_INDEX_REFERENCE_MIN_SECONDS:g} 秒的音频。"
+        )
     return VoiceReference(
         path=path,
         text="",
         identity=f"index-external-{role}:{identity}",
         language="zh",
     )
+
+
+def _index_reference_bounds(
+    project: DubProject,
+    reference_sentence: Sentence,
+) -> tuple[float, float]:
+    """Expand an IndexTTS2 reference inside the source without changing the sentence."""
+
+    source_duration = float(project.source.duration_seconds)
+    if source_duration + _INDEX_REFERENCE_DURATION_TOLERANCE < _INDEX_REFERENCE_MIN_SECONDS:
+        raise SynthesisError(
+            f"源音频只有 {source_duration:.2f} 秒，无法准备 IndexTTS2 参考音频；"
+            f"至少需要 {_INDEX_REFERENCE_MIN_SECONDS:g} 秒。"
+        )
+
+    padding = project.settings.reference_padding_seconds
+    start = max(0.0, min(source_duration, reference_sentence.start_seconds - padding))
+    end = max(start, min(source_duration, reference_sentence.end_seconds + padding))
+    if end - start + _INDEX_REFERENCE_DURATION_TOLERANCE >= _INDEX_REFERENCE_MIN_SECONDS:
+        return start, end
+
+    missing = _INDEX_REFERENCE_MIN_SECONDS - (end - start)
+    start -= missing / 2
+    end += missing / 2
+    if start < 0:
+        end = min(source_duration, end - start)
+        start = 0.0
+    if end > source_duration:
+        start = max(0.0, start - (end - source_duration))
+        end = source_duration
+
+    if end - start + _INDEX_REFERENCE_DURATION_TOLERANCE < _INDEX_REFERENCE_MIN_SECONDS:
+        raise SynthesisError(f"{reference_sentence.id} 附近没有足够长的音频可作为 IndexTTS2 参考。")
+    return start, end
+
+
+def _valid_cached_index_reference(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        duration = float(sf.info(path).duration)
+    except (OSError, RuntimeError):
+        return False
+    return duration + _INDEX_REFERENCE_DURATION_TOLERANCE >= _INDEX_REFERENCE_MIN_SECONDS
 
 
 def _index_sentence_reference(
@@ -166,24 +225,30 @@ def _index_sentence_reference(
     role: str,
     shared: bool,
 ) -> VoiceReference:
+    start_seconds, end_seconds = _index_reference_bounds(project, reference_sentence)
     payload = (
-        f"{project.source.sha256}|index-{role}|{reference_sentence.id}|"
-        f"{reference_sentence.start_seconds:.6f}|{reference_sentence.end_seconds:.6f}|"
-        f"{reference_sentence.source_text}|{project.settings.reference_padding_seconds:.6f}"
+        f"{_INDEX_REFERENCE_CACHE_VERSION}|{project.source.sha256}|index-{role}|"
+        f"{reference_sentence.id}|{start_seconds:.6f}|{end_seconds:.6f}|"
+        f"{reference_sentence.source_text}"
     )
     identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     prefix = f"index_{role}_anchor" if shared else f"index_{role}_{reference_sentence.id}"
     destination = project_dir / "references" / f"{prefix}_{identity[:16]}.wav"
-    if not destination.is_file():
+    if not _valid_cached_index_reference(destination):
+        destination.unlink(missing_ok=True)
         temporary = destination.with_name(f".{destination.stem}.tmp.wav")
         try:
             extract_reference(
                 source=source,
                 destination=temporary,
-                start_seconds=reference_sentence.start_seconds,
-                end_seconds=reference_sentence.end_seconds,
-                padding_seconds=project.settings.reference_padding_seconds,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
             )
+            if not _valid_cached_index_reference(temporary):
+                raise SynthesisError(
+                    f"{reference_sentence.id} 的 IndexTTS2 {role}参考音频不足 "
+                    f"{_INDEX_REFERENCE_MIN_SECONDS:g} 秒。"
+                )
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)

@@ -173,6 +173,27 @@ def test_media_preview_staging_uses_browser_safe_filename(tmp_path: Path, monkey
     assert staged.read_bytes() == b"audio"
 
 
+def test_output_media_reuses_portable_cache_and_native_audio_player(app) -> None:
+    stage = str(ui_module.ui_stage_directory().resolve())
+    output_audio = next(
+        block for block in app.blocks.values() if getattr(block, "label", None) == "混音成品"
+    )
+    stem_audio = next(
+        block for block in app.blocks.values() if getattr(block, "label", None) == "中文克隆音轨"
+    )
+    output_video = next(
+        block for block in app.blocks.values() if getattr(block, "label", None) == "完成视频"
+    )
+
+    assert stage == output_audio.GRADIO_CACHE
+    assert stage == stem_audio.GRADIO_CACHE
+    assert stage == output_video.GRADIO_CACHE
+    assert output_audio.elem_id == "output-audio-preview"
+    assert stem_audio.elem_id == "output-stem-preview"
+    assert output_audio.waveform_options.show_recording_waveform is False
+    assert stem_audio.waveform_options.show_recording_waveform is False
+
+
 def test_edge_tts_voice_preview_is_cached_and_browser_safe(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "portable"
     calls: list[tuple[str, str]] = []
