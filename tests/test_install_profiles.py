@@ -142,7 +142,7 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
 
     api_install = windows.index('"edge-tts==7.2.8"')
     application_install = windows.index('Write-Host "正在安装应用依赖')
-    assert api_install < application_install
+    assert application_install < api_install
     assert f'"edge-tts=={edge_version}"' in windows
     assert "Test-ASMRDubberApiClientRuntime" in runtime_checks
     assert "Test-ASMRDubberApplicationRuntime" in runtime_checks
@@ -157,6 +157,32 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
     assert "import asmr_dubber.ui, av, edge_tts, gradio, httpx" in linux
     assert "国内软件源补齐应用依赖" in windows
     assert "国内软件源补齐应用依赖" in linux
+
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "uv export --frozen --no-dev --extra ui" in release
+    assert "vendor\\windows-core-wheelhouse" in release
+    assert "--only-binary=:all:" in release
+    assert "windows-core-wheelhouse-smoke" in release
+    assert "--offline --find-links $coreWheelhouse" in release
+    assert "import asmr_dubber.ui, edge_tts, gradio, httpx, setuptools" in release
+    for required_wheel in ("edge_tts", "editables", "gradio", "httpx", "hatchling"):
+        assert f'"{required_wheel}-*.whl"' in release
+
+
+def test_windows_setup_installs_application_before_validating_api_clients() -> None:
+    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
+    application_install = windows.index(
+        "$ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime"
+    )
+    api_validation = windows.index(
+        "$ApiClientsReady = Test-ASMRDubberApiClientRuntime", application_install
+    )
+    final_validation = windows.index(
+        "Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot", api_validation
+    )
+
+    assert application_install < api_validation < final_validation
+    assert "$BundledCoreWheelhouse" in windows[application_install:api_validation]
 
 
 def test_model_packs_are_imported_before_profile_downloads() -> None:
@@ -373,8 +399,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.1.0.0")' in source
-        assert 'AssemblyFileVersion("1.1.0.0")' in source
+        assert 'AssemblyVersion("1.1.1.0")' in source
+        assert 'AssemblyFileVersion("1.1.1.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

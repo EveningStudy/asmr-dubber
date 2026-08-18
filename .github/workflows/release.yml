@@ -15,6 +15,9 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.30"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
       - name: Build Windows launcher
         shell: pwsh
         run: ./launcher/windows/build.ps1
@@ -29,8 +32,22 @@ jobs:
           $portable = Join-Path $staging ".asmr-dubber"
           $uvDir = Join-Path $portable "bootstrap\windows\uv"
           $pythonDir = Join-Path $portable "runtimes\python"
-          New-Item -ItemType Directory -Force $uvDir, $pythonDir | Out-Null
+          $coreWheelhouse = Join-Path $staging "vendor\windows-core-wheelhouse"
+          $coreRequirements = Join-Path $env:RUNNER_TEMP "windows-core-requirements.txt"
+          New-Item -ItemType Directory -Force $uvDir, $pythonDir, $coreWheelhouse | Out-Null
           Copy-Item (Get-Command uv.exe).Source (Join-Path $uvDir "uv.exe") -Force
+          uv export --frozen --no-dev --extra ui --no-emit-project --no-hashes `
+            --format requirements.txt --output-file $coreRequirements
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to export locked Windows core requirements."
+          }
+          python -m pip download --disable-pip-version-check `
+            --only-binary=:all: --dest $coreWheelhouse `
+            --requirement $coreRequirements hatchling "editables~=0.3" `
+            "setuptools>=78.1.1,<82"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to prepare bundled Windows core wheels."
+          }
           $env:UV_PYTHON_INSTALL_DIR = $pythonDir
           $env:UV_CACHE_DIR = Join-Path $env:RUNNER_TEMP "uv-python-cache"
           uv python install 3.12 --managed-python --no-bin
@@ -39,6 +56,30 @@ jobs:
           }
           if (-not (Get-ChildItem $pythonDir -Filter "python.exe" -File -Recurse)) {
             throw "Portable archive is missing Python 3.12."
+          }
+          $requiredWheels = @(
+            "edge_tts-*.whl",
+            "editables-*.whl",
+            "gradio-*.whl",
+            "httpx-*.whl",
+            "hatchling-*.whl"
+          )
+          foreach ($pattern in $requiredWheels) {
+            if (-not (Get-ChildItem $coreWheelhouse -Filter $pattern -File)) {
+              throw "Portable archive is missing required wheel: $pattern"
+            }
+          }
+          $smokeVenv = Join-Path $env:RUNNER_TEMP "windows-core-wheelhouse-smoke"
+          $smokePython = Join-Path $smokeVenv "Scripts\python.exe"
+          uv venv --python 3.12 $smokeVenv
+          uv pip install --python $smokePython --offline --find-links $coreWheelhouse `
+            --editable "${staging}[ui]" "setuptools>=78.1.1,<82"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled Windows core wheelhouse failed its offline install smoke test."
+          }
+          & $smokePython -c "import asmr_dubber.ui, edge_tts, gradio, httpx, setuptools"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled Windows core wheelhouse failed its runtime import smoke test."
           }
           Compress-Archive -Path $staging `
             -DestinationPath "ASMR-Dubber-windows-portable.zip"
