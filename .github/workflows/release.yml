@@ -83,7 +83,7 @@ jobs:
           }
           Compress-Archive -Path $staging `
             -DestinationPath "ASMR-Dubber-windows-portable.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-release
           path: ASMR-Dubber-windows-portable.zip
