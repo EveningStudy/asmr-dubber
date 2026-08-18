@@ -194,7 +194,7 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 
 “工作台 → 批量处理”用于已经解压的作品目录。输入目录并扫描后，程序先选出推荐的音频版本，再列出本次任务中的每条音轨。
 
-![批量处理的音轨与字幕](assets/screenshots/batch-tracks.png)
+![批量处理流程](assets/screenshots/batch-workflow.png)
 
 - 勾选“包含特典、样本和 Free Talk”后，附加音轨会立即加入列表；
 - 拖动卡片或使用上下按钮可以改变音轨顺序；
@@ -203,11 +203,7 @@ API Key 按便携设计以**明文**保存在 `.asmr-dubber/config/secrets.json`
 
 接着选择输出类型和成品组织。纯音频不需要画面；视频任务会直接显示推荐图片的相对路径和预览，也可以改用作品中的其它图片或黑色背景。“每条音轨分别处理并输出”不会生成合并版。
 
-![批量处理的输出方式和画面预览](assets/screenshots/batch-output.png)
-
 确认后加入队列，再继续扫描其它作品。队列支持拖动排序、编辑选项、移除和标记重新处理；修改任务不会影响队列中的其它作品。
-
-![批量处理队列](assets/screenshots/batch-queue.png)
 
 带时间轴的中文字幕覆盖全部所选音轨时，程序直接建立中文时间轴，不再运行 ASR 或翻译；日语或英语字幕跳过 ASR，之后仍会翻译。任务状态、日志和中间文件保存在 `.asmr-dubber/autoflow`，中断后可以继续。
 
