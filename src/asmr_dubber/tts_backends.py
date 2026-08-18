@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import gc
 import json
+import mimetypes
 import queue
 import subprocess
 import threading
@@ -91,6 +93,16 @@ def _require_reference_text(project: DubProject, reference: VoiceReference) -> N
             f"{spec.label} 的高质量克隆需要参考音频对应文本。"
             "请在设置 → TTS（语音合成）→ 外部参考文本中填写，或改用项目内参考句。"
         )
+
+
+def _uses_reference_audio(project: DubProject) -> bool:
+    if project.settings.tts_backend == "mimo_tts":
+        return project.settings.tts_model == "mimo-v2.5-tts-voiceclone"
+    return TTS_BACKENDS[project.settings.tts_backend].reference_audio
+
+
+def _empty_reference() -> VoiceReference:
+    return VoiceReference(path=Path(), text="", identity="unused", language="zh")
 
 
 def _load_indextts(project: DubProject) -> tuple[Any, Callable[[], None]]:
@@ -463,6 +475,185 @@ def _fish_runner(
     return run, cleanup
 
 
+def _edge_tts_runner(
+    project: DubProject,
+) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
+    try:
+        import edge_tts
+    except ImportError as exc:
+        raise SynthesisError("Edge TTS 运行依赖缺失；请重新运行 setup 修复基础依赖。") from exc
+
+    from .audio import _run_ffmpeg
+
+    voice = project.settings.tts_voice.strip() or TTS_BACKENDS["edge_tts"].default_voice
+    speed_percent = round((project.settings.tts_speed - 1.0) * 100)
+    rate = f"{speed_percent:+d}%"
+
+    def run(sentence: Sentence, _reference: VoiceReference, output: Path) -> None:
+        encoded = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.edge.mp3")
+
+        async def synthesize() -> None:
+            communicator = edge_tts.Communicate(sentence.zh_text, voice=voice, rate=rate)
+            await communicator.save(str(encoded))
+
+        try:
+            asyncio.run(synthesize())
+            _run_ffmpeg(
+                [
+                    "-y",
+                    "-i",
+                    str(encoded),
+                    "-map",
+                    "0:a:0",
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_f32le",
+                    str(output),
+                ]
+            )
+        except SynthesisError:
+            raise
+        except Exception as exc:
+            raise SynthesisError(f"Edge TTS 生成失败：{exc}") from exc
+        finally:
+            encoded.unlink(missing_ok=True)
+
+    return run, lambda: None
+
+
+def _mimo_runner(
+    project: DubProject,
+) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
+    import httpx
+
+    base = project.settings.tts_api_base_url.rstrip("/")
+    url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+    key = saved_service_key("tts:mimo_tts")
+    if not key:
+        raise SynthesisError("小米 MiMo TTS 尚未保存 API Key。")
+    client = httpx.Client(
+        headers={"api-key": key, "Content-Type": "application/json"},
+        timeout=project.settings.tts_timeout_seconds,
+    )
+    encoded_references: dict[str, str] = {}
+    payload_lock = threading.Lock()
+
+    def reference_data_uri(reference: VoiceReference) -> str:
+        resolved = str(reference.path.resolve())
+        with payload_lock:
+            cached = encoded_references.get(resolved)
+            if cached is not None:
+                return cached
+            mime = mimetypes.guess_type(reference.path.name)[0] or "audio/wav"
+            encoded = base64.b64encode(reference.path.read_bytes()).decode("ascii")
+            value = f"data:{mime};base64,{encoded}"
+            encoded_references[resolved] = value
+            return value
+
+    def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
+        model = project.settings.tts_model.strip() or TTS_BACKENDS["mimo_tts"].default_model
+        style = project.settings.tts_style_prompt.strip()
+        messages = [
+            {"role": "user", "content": style},
+            {"role": "assistant", "content": sentence.zh_text},
+        ]
+        audio: dict[str, object] = {"format": "wav"}
+        if model == "mimo-v2.5-tts-voiceclone":
+            audio["voice"] = reference_data_uri(reference)
+        elif model == "mimo-v2.5-tts-voicedesign":
+            if not style:
+                messages[0]["content"] = "温柔自然的中文女声，语速平稳。"
+            audio["optimize_text_preview"] = True
+        else:
+            audio["voice"] = (
+                project.settings.tts_voice.strip() or TTS_BACKENDS["mimo_tts"].default_voice
+            )
+        response = client.post(
+            url,
+            json={"model": model, "messages": messages, "audio": audio, "stream": False},
+        )
+        if response.is_error:
+            raise SynthesisError(f"小米 MiMo TTS API {response.status_code}: {response.text[:500]}")
+        try:
+            encoded_audio = response.json()["choices"][0]["message"]["audio"]["data"]
+            audio_bytes = base64.b64decode(encoded_audio, validate=True)
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SynthesisError("小米 MiMo TTS 返回格式无效，未找到可解码的音频。") from exc
+        if not audio_bytes:
+            raise SynthesisError("小米 MiMo TTS 返回了空音频。")
+        output.write_bytes(audio_bytes)
+
+    def cleanup() -> None:
+        encoded_references.clear()
+        client.close()
+
+    return run, cleanup
+
+
+def _minimax_runner(
+    project: DubProject,
+) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
+    import httpx
+
+    base = project.settings.tts_api_base_url.rstrip("/")
+    url = base if base.endswith("/v1/t2a_v2") else f"{base}/v1/t2a_v2"
+    key = saved_service_key("tts:minimax")
+    if not key:
+        raise SynthesisError("MiniMax TTS 尚未保存 API Key。")
+    client = httpx.Client(
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        timeout=project.settings.tts_timeout_seconds,
+    )
+
+    def run(sentence: Sentence, _reference: VoiceReference, output: Path) -> None:
+        voice_setting: dict[str, object] = {
+            "voice_id": project.settings.tts_voice.strip() or TTS_BACKENDS["minimax"].default_voice,
+            "speed": project.settings.tts_speed,
+            "vol": project.settings.tts_volume,
+            "pitch": project.settings.tts_pitch,
+        }
+        emotion = project.settings.tts_emotion.strip()
+        if emotion and emotion != "auto":
+            voice_setting["emotion"] = emotion
+        payload = {
+            "model": project.settings.tts_model or TTS_BACKENDS["minimax"].default_model,
+            "text": sentence.zh_text,
+            "stream": False,
+            "voice_setting": voice_setting,
+            "audio_setting": {
+                "sample_rate": 32_000,
+                "bitrate": 128_000,
+                "format": "wav",
+                "channel": 1,
+            },
+            "language_boost": "Chinese",
+            "output_format": "hex",
+            "subtitle_enable": False,
+        }
+        response = client.post(url, json=payload)
+        if response.is_error:
+            raise SynthesisError(f"MiniMax TTS API {response.status_code}: {response.text[:500]}")
+        try:
+            data = response.json()
+            base_response = data.get("base_resp") or {}
+            if base_response.get("status_code", 0) != 0:
+                raise SynthesisError(
+                    "MiniMax TTS 拒绝请求：" + str(base_response.get("status_msg", "未知错误"))
+                )
+            audio_bytes = bytes.fromhex(data["data"]["audio"])
+        except SynthesisError:
+            raise
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SynthesisError("MiniMax TTS 返回格式无效，未找到可解码的音频。") from exc
+        if not audio_bytes:
+            raise SynthesisError("MiniMax TTS 返回了空音频。")
+        output.write_bytes(audio_bytes)
+
+    return run, client.close
+
+
 def _runner(project: DubProject) -> tuple[Any, Callable[[], None]]:
     backend = project.settings.tts_backend
     if backend == "indextts2":
@@ -473,6 +664,12 @@ def _runner(project: DubProject) -> tuple[Any, Callable[[], None]]:
         return _cosyvoice_runner(project)
     if backend == "fish_speech":
         return _fish_runner(project)
+    if backend == "edge_tts":
+        return _edge_tts_runner(project)
+    if backend == "mimo_tts":
+        return _mimo_runner(project)
+    if backend == "minimax":
+        return _minimax_runner(project)
     raise SynthesisError(f"未知 TTS（语音合成）模型后端：{backend}")
 
 
@@ -550,7 +747,11 @@ def synthesize_with_selected_backend(
         for sentence in pending:
             check_cancelled(cancel_event)
             try:
-                reference = prepare_voice_reference(project, project_dir, source, sentence)
+                reference = (
+                    prepare_voice_reference(project, project_dir, source, sentence)
+                    if _uses_reference_audio(project)
+                    else _empty_reference()
+                )
                 _require_reference_text(project, reference)
                 prepared.append((sentence, reference, tts_dir / f"{sentence.id}.wav"))
             except OperationCancelledError:
@@ -595,7 +796,9 @@ def synthesize_with_selected_backend(
                     sentence, reference, output = futures[future]
                     try:
                         frame_count, sample_rate = future.result()
-                        sentence.reference_file = str(reference.path)
+                        sentence.reference_file = (
+                            str(reference.path) if _uses_reference_audio(project) else None
+                        )
                         sentence.tts_file = str(output.relative_to(project_dir))
                         sentence.tts_duration_seconds = frame_count / sample_rate
                         sentence.tts_cache_key = tts_cache_key(project, sentence)

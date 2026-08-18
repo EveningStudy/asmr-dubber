@@ -82,6 +82,11 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "clone_mode": settings.tts_clone_mode,
         "device": settings.tts_device,
         "speed": settings.tts_speed,
+        "voice": settings.tts_voice,
+        "volume": settings.tts_volume,
+        "pitch": settings.tts_pitch,
+        "emotion": settings.tts_emotion,
+        "style_prompt": settings.tts_style_prompt,
         "temperature": settings.tts_temperature,
         "top_p": settings.tts_top_p,
         "api_base_url": settings.tts_api_base_url,
@@ -99,11 +104,15 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "cosyvoice_mode": settings.tts_cosyvoice_mode,
         "zh": sentence.zh_text,
         "sentence_id": sentence.id,
-        "implementation": "supported-backends-v3",
+        "implementation": "supported-backends-v4",
     }
     if settings.tts_backend == "indextts2":
         payload["index_references"] = _index_reference_payload(project, sentence)
         payload["reference_padding"] = settings.reference_padding_seconds
+    elif settings.tts_backend in {"edge_tts", "minimax"} or (
+        settings.tts_backend == "mimo_tts" and settings.tts_model != "mimo-v2.5-tts-voiceclone"
+    ):
+        payload["reference_plan"] = "unused"
     elif (
         settings.tts_reference_source == "external"
         or settings.tts_clone_mode in _STABLE_CLONE_MODES

@@ -106,7 +106,15 @@ _DEEPSEEK_STRUCTURE_PROMPT = _load_prompt("translation-structure.md")
 _SCRIPT_RECONCILIATION_PROMPT = _load_prompt("script-reconciliation.md")
 
 LLM_RECONCILIATION_PROVIDERS = frozenset(
-    {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
+    {
+        "deepseek",
+        "bailian",
+        "doubao",
+        "openai",
+        "anthropic",
+        "gemini",
+        "openai_compatible",
+    }
 )
 
 _SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str, str]] = {
@@ -514,7 +522,13 @@ class LLMTranslator:
         return messages
 
     def _request(self, messages: list[dict[str, str]], job_id: str) -> tuple[str, bool]:
-        if self.provider in {"deepseek", "openai", "openai_compatible"}:
+        if self.provider in {
+            "deepseek",
+            "bailian",
+            "doubao",
+            "openai",
+            "openai_compatible",
+        }:
             token_field = "max_completion_tokens" if self.provider == "openai" else "max_tokens"
             payload: dict[str, object] = {
                 "model": self.model,
@@ -765,8 +779,8 @@ def reconcile_script_sentences(
 
     if provider not in LLM_RECONCILIATION_PROVIDERS:
         raise TranslationError(
-            "台本校对需要大模型翻译服务；请选择 DeepSeek、OpenAI、Claude、Gemini "
-            "或本地/自定义 OpenAI-compatible。"
+            "台本校对需要大模型翻译服务；请选择 DeepSeek、百炼、豆包、OpenAI、Claude、"
+            "Gemini 或本地/自定义 OpenAI-compatible。"
         )
     batches = _script_reconciliation_batches(recognized, script_lines)
     translator = LLMTranslator(
@@ -1008,7 +1022,14 @@ def translate_sentences(
             minimum_output_tokens=max_output_tokens,
             source_language=source_language,
         )
-    elif provider in {"openai", "anthropic", "gemini", "openai_compatible"}:
+    elif provider in {
+        "bailian",
+        "doubao",
+        "openai",
+        "anthropic",
+        "gemini",
+        "openai_compatible",
+    }:
         translator = LLMTranslator(
             provider=provider,
             api_key=api_key,

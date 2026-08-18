@@ -1,8 +1,8 @@
 # 后端指南
 
-ASMR Dubber 的本地语音范围刻意保持精简：ASR（语音识别）只接入 Parakeet、Kotoba-Whisper 和 Faster-Whisper 三个系列；TTS（语音合成）只接入 IndexTTS2 以及三类外部 API。界面、项目校验、安装器和任务分发使用同一份白名单。
+ASR（语音识别）接入 Parakeet、Kotoba-Whisper 和 Faster-Whisper 三个系列。TTS（语音合成）可使用本地 IndexTTS2、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
 
-任务失败时程序会报告当前后端，不会悄悄改用另一个模型。这样同一项目的结果和资源需求才可复现。
+程序启动时会检查 IndexTTS2 是否完整；未安装时，新项目默认使用 Edge TTS。项目开始执行后不会再静默切换后端。
 
 ## 一览
 
@@ -21,11 +21,14 @@ Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较�
 | 后端 | 运行位置 | 参考文字 | API Key |
 |---|---|---|---|
 | IndexTTS2 | 本机 NVIDIA CUDA | 不需要 | 不需要 |
+| Edge TTS | Microsoft 在线服务 | 不使用参考音频 | 不需要 |
+| MiMo TTS | 小米 MiMo 云服务 | 音色克隆不需要 | 需要 |
+| MiniMax TTS | MiniMax 云服务 | 不使用参考音频 | 需要 |
 | GPT-SoVITS API | 用户管理的本机、容器或远程服务 | 需要准确源文 | 取决于服务端 |
 | CosyVoice API | 用户管理的 FastAPI 服务 | 零样本需要；跨语言不需要 | 取决于服务端 |
 | Fish Speech / Fish Audio API | 自建或云端服务 | 需要 | 云服务通常需要 |
 
-IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。其它三种后端只在本程序中运行 HTTP 客户端，服务端硬件和模型由用户自行管理。
+IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。Edge、MiMo 和 MiniMax 由在线服务完成合成；GPT-SoVITS、CosyVoice 和 Fish Speech 的服务端由用户自行管理。
 
 ## 安装方案中的固定模型
 
@@ -134,7 +137,7 @@ analysis/asr_candidates.json
 analysis/asr_review.json
 ```
 
-DeepSeek、OpenAI、Anthropic Claude、Google Gemini 和 OpenAI-compatible LLM 可以校对。DeepL、Google Cloud Translation 和 Microsoft Azure Translator 只能翻译，不能做这一步。
+DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic Claude、Google Gemini 和 OpenAI-compatible LLM 可以校对。DeepL、Google Cloud Translation 和 Microsoft Azure Translator 只能翻译，不能做这一步。
 
 ## IndexTTS2
 
@@ -158,6 +161,44 @@ bash scripts/linux/install-indextts2.sh
 统一音色参考更适合单角色长项目。逐句参考会跟随场景变化，但短句、气声、音效和背景音乐也更容易造成音色漂移。推荐选 5–15 秒、单一说话人、清晰且包含实义语音的参考。
 
 IndexTTS2 使用独立的 bilibili Model Use License，不属于本项目 MIT License。安装和使用前请阅读上游条款。
+
+## Edge TTS
+
+Edge TTS 使用 Microsoft Edge 在线语音服务，不需要 API Key，也不需要下载语音模型。基础环境已经包含客户端，设置页可以试听中文音色；默认音色是 `zh-CN-XiaoxiaoNeural`。它不做音色克隆，也不会使用项目参考音频。
+
+如果全局默认后端仍是 IndexTTS2，但程序启动时发现独立运行环境或 checkpoints 不完整，设置页和之后新建的项目会默认选择 Edge TTS。已经保存到旧项目中的 TTS 后端不会自动改写。
+
+Edge TTS 必须联网。服务不可访问、音色 ID 失效或网络中断时会直接报告失败，不会切换到另一个声音。
+
+## 小米 MiMo TTS
+
+默认地址：
+
+```text
+https://api.xiaomimimo.com/v1
+```
+
+在设置页保存 MiMo API Key 后，可选择三种模型：
+
+| 模型 | 音色来源 | 参考音频 |
+|---|---|---|
+| `mimo-v2.5-tts-voiceclone` | 项目参考句或外部音频 | 需要，不需要参考文字 |
+| `mimo-v2.5-tts` | 预置音色 ID | 不使用 |
+| `mimo-v2.5-tts-voicedesign` | “语气与风格说明”中的文字描述 | 不使用 |
+
+音色克隆会把参考音频随请求上传。文字设计音色留空说明时，程序使用温柔、自然、语速平稳的中文女声描述。
+
+## MiniMax TTS
+
+默认地址：
+
+```text
+https://api.minimaxi.com
+```
+
+程序调用同步 `/v1/t2a_v2` 接口，支持 `speech-2.8-hd`、`speech-2.8-turbo`、`speech-2.6-hd` 和 `speech-2.6-turbo`。可设置音色 ID、语速、音量、音调和情绪。音色 ID 可以使用平台预置音色，也可以填写账号中已经创建的复刻或设计音色；ASMR Dubber 本身不负责创建 MiniMax 音色。
+
+MiniMax 不读取项目参考音频。需要克隆声音时，先在 MiniMax 平台完成音色创建，再把得到的音色 ID 填入设置。
 
 ## GPT-SoVITS API
 
@@ -202,10 +243,18 @@ LLM 服务使用有界滑动上下文和翻译记忆，并要求每个输入句�
 
 | 服务 | 典型用途 |
 |---|---|
-| DeepSeek、OpenAI、Claude、Gemini | 上下文翻译和多 ASR 校对 |
+| DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini | 上下文翻译、台本校对和多 ASR 校对 |
 | OpenAI-compatible | Ollama、LM Studio、vLLM 或自建兼容接口 |
 | DeepL | 专业机器翻译 API |
 | Google Cloud Translation | Basic v2 逐句翻译 |
 | Microsoft Azure Translator | Translator Text v3 逐句翻译 |
+
+### 阿里云百炼
+
+默认使用 OpenAI 兼容地址 `https://dashscope.aliyuncs.com/compatible-mode/v1` 和模型 `qwen3.6-flash`。API Key、地域和基础地址必须属于同一百炼服务区域；国际站或其它地域的 Key 应按控制台给出的兼容地址修改。模型输入框可以填写当前账号实际开通的模型 ID。
+
+### 豆包（火山方舟）
+
+默认地址是 `https://ark.cn-beijing.volces.com/api/v3`，默认模型是 `doubao-seed-2-0-lite-260215`。也可以填写火山方舟控制台提供的模型或推理接入点 ID。出现“模型不存在”或“无权限”时，应先核对接入点所在地域、模型 ID 和 API Key，而不是更换翻译 Prompt。
 
 云端会收到完成任务所需的文字；外部 TTS 还可能收到参考音频。是否适合发送由用户根据作品、隐私和供应商条款判断。许可证和服务边界见[第三方软件与模型说明](THIRD_PARTY_NOTICES.md)。

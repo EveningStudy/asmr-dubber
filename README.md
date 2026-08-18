@@ -1,6 +1,6 @@
 # ASMR Dubber
 
-ASMR Dubber 用于制作日语、英语音视频的中文配音和字幕。识别结果会整理成可编辑的句子表，之后可以逐步完成翻译、音色克隆和混音，也可以单独导出原文或中文字幕。程序通过本机网页操作，项目、模型、设置和缓存默认都留在程序文件夹中。
+ASMR Dubber 用于把日语、英语音视频制作成中文配音和字幕。识别结果会整理成可编辑的句子表，可分步完成翻译、配音、混音和字幕导出。
 
 ## 能做什么
 
@@ -9,8 +9,8 @@ ASMR Dubber 用于制作日语、英语音视频的中文配音和字幕。识�
 - 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，直接进入校对和配音；
 - 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
 - 使用多个已安装的识别模型交叉校对源文；
-- 通过 DeepSeek、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
-- 使用本地 IndexTTS2，或连接 GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
+- 通过 DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
+- 使用本地 IndexTTS2、无需 API Key 的 Edge TTS，或连接 MiMo、MiniMax、GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
 - 逐句调整源文、中文、起止时间和是否配音；
 - 输出混音后的 WAV、视频，以及双语/中文/源文 SRT 和 LRC 字幕；
 - 可以只导出完整时间轴的中文克隆音轨，之后再把它加入原音轨，不必重新生成 TTS；
@@ -66,7 +66,7 @@ Windows 包要让进阶组件全部使用 GPU，需要 NVIDIA Turing 或更新�
 4. 浏览器打开后，先到“设置”确认识别、翻译和合成方式，再回到“单个作品”。
 5. 保留启动终端。要停止程序，按 `Ctrl+C` 或关闭终端。
 
-IndexTTS2 第一次生成语音时需要加载模型并初始化 CUDA，等待时间可能明显长于后续任务。
+Edge TTS 已直接适配，无需 API Key。未安装或无法使用 IndexTTS2 时，新项目默认使用 Edge TTS。IndexTTS2 第一次生成语音时需要加载模型并初始化 CUDA，等待时间可能明显长于后续任务。
 
 不需要预装 Python、uv、Git、FFmpeg 或 CUDA Toolkit。启动器优先使用 PowerShell 7；电脑上没有 PowerShell 7 时会使用 Windows 自带的 PowerShell 5.1。下载阶段需要系统中的 `curl.exe`。
 
@@ -89,7 +89,7 @@ bash scripts/linux/run-ui.sh
 
 | 方案 | 安装内容 | 安装后约占用 | 安装前建议可用空间 |
 |---|---|---:|---:|
-| 基础 | 程序、网页、音频工具和外部 API 客户端；不含本地识别模型 | 约 2 GB | 至少 5 GB |
+| 基础 | 程序、网页、音频工具、Edge TTS 和云端 API 客户端；不含本地识别模型 | 约 2 GB | 至少 5 GB |
 | 推荐 | 基础 + 两个 Parakeet 日语模型；NVIDIA 电脑再装 IndexTTS2 | 约 24–28 GB | 至少 35 GB |
 | 进阶 | 基础 + 下列固定分析模型；NVIDIA 电脑再装 IndexTTS2 | 约 33–39 GB | 至少 50 GB |
 
@@ -103,21 +103,21 @@ bash scripts/linux/run-ui.sh
 6. Qwen3 ForcedAligner 0.6B；
 7. IndexTTS2 checkpoints，仅在检测到 NVIDIA GPU 时安装。
 
-没有 NVIDIA GPU 的电脑仍可使用 CPU 识别和外部 TTS（语音合成）API。CPU 处理长音频会慢很多；IndexTTS2 不提供 CPU 模式。硬件选择可参考[后端指南](docs/BACKENDS.md)。
+没有 NVIDIA GPU 的电脑仍可使用 CPU 识别、Edge TTS 和云端 TTS。CPU 处理长音频会慢很多；IndexTTS2 不提供 CPU 模式。硬件选择可参考[后端指南](docs/BACKENDS.md)。
 
 ## 单个作品：从音频到成品
 
 ### 1. 设置识别、翻译和配音
 
-先到“设置 → 设备与模型”确认准备使用的后端显示为“可用”。随后在 ASR（语音识别）页选择项目源语言、识别模型、VAD（语音活动检测）和时间戳方式。网页只显示当前模型会用到的参数。
+先到“设置 → 设备与模型”确认准备使用的后端显示为“可用”。随后在 ASR（语音识别）页选择项目源语言、识别模型、VAD（语音活动检测）和时间戳方式。
 
 ![ASR（语音识别）设置](assets/screenshots/settings-asr.png)
 
-在“翻译”中选择服务、模型和接口地址，并保存当前服务的 API Key。日语和英语使用各自的内置 Prompt；切换普通机器翻译服务后，LLM 专属参数会隐藏。
+在“翻译”中选择服务、模型和接口地址，并保存当前服务的 API Key。日语和英语分别使用各自的翻译 Prompt。
 
 ![翻译设置](assets/screenshots/settings-translation.png)
 
-在“TTS（语音合成）”中选择本地 IndexTTS2 或外部 API。IndexTTS2 第一次生成时需要载入模型并初始化 CUDA，等待时间会明显长于后续任务。
+在“TTS（语音合成）”中选择本地 IndexTTS2、Edge TTS 或云端服务。
 
 ![TTS（语音合成）设置](assets/screenshots/settings-tts.png)
 
@@ -153,10 +153,10 @@ bash scripts/linux/run-ui.sh
 |---|---|
 | ASR（语音识别）| Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语）|
 | 时间戳 | 识别模型自带时间戳、Qwen3 ForcedAligner 0.6B |
-| TTS（语音合成）| IndexTTS2、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
-| 翻译 | DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
+| TTS（语音合成）| IndexTTS2、Edge TTS、MiMo TTS、MiniMax TTS、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
+| 翻译 | DeepSeek、阿里云百炼、豆包（火山方舟）、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
 
-程序不会在任务开始后悄悄换用另一个模型。网页中的模型安装状态来自本地文件和运行环境检测；多模型交叉校对也只列出本机完整可用的识别模型。
+多模型交叉校对只列出本机完整可用的识别模型。
 
 Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南](docs/BACKENDS.md#使用-large-v3)放入程序目录。
 

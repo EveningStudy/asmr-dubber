@@ -155,7 +155,7 @@ VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳�
 .\scripts\windows\run-cli.ps1 install-backend indextts2
 ```
 
-后端 ID 是稳定的项目字段，不是网页显示名称。外部 GPT-SoVITS、CosyVoice 和 Fish API 不由本程序安装。
+后端 ID 是稳定的项目字段，不是网页显示名称。Edge TTS 随基础依赖安装；MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish API 不通过此命令安装。
 
 安装和本地推理互斥。另一个任务占用运行时锁时，命令会等待或明确超时，不应并行启动多个安装进程。
 

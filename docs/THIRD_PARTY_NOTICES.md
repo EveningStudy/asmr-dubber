@@ -36,6 +36,7 @@ IndexTTS2 来自[index-tts/index-tts](https://github.com/index-tts/index-tts)。
 - [CPython](https://www.python.org/)；
 - [FFmpeg](https://ffmpeg.org/)与 BtbN 的 Windows shared 构建；
 - [PyTorch](https://pytorch.org/)、TorchAudio、Transformers、ONNX Runtime、CTranslate2；
+- [edge-tts](https://github.com/rany2/edge-tts)；
 - `pyproject.toml` 和 `uv.lock` 中列出的 Python 直接与传递依赖。
 
 这些组件分别适用自己的许可证。FFmpeg 的义务取决于实际构建配置；本项目选择的 Windows 归档名称标示为 LGPL shared 构建，但重新分发者仍应以归档内许可证、构建信息和实际链接库为准。不要删除 DLL、wheel、Python 发行包或源码归档随附的许可证。
@@ -46,6 +47,9 @@ IndexTTS2 来自[index-tts/index-tts](https://github.com/index-tts/index-tts)。
 
 ASMR Dubber 只实现以下服务的客户端适配，不分发或启动它们的服务端代码和模型：
 
+- Microsoft Edge 在线语音服务，通过 [edge-tts](https://github.com/rany2/edge-tts) 调用；
+- [小米 MiMo TTS](https://mimo.mi.com/docs/usage-guide/speech-synthesis)；
+- [MiniMax TTS](https://platform.minimaxi.com/docs/api-reference/speech-t2a-http)；
 - [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)；
 - [CosyVoice](https://github.com/FunAudioLLM/CosyVoice)；
 - [Fish Speech](https://github.com/fishaudio/fish-speech)与兼容的 Fish Audio 云服务。
@@ -54,7 +58,7 @@ ASMR Dubber 只实现以下服务的客户端适配，不分发或启动它们�
 
 ## 翻译和云 API
 
-DeepSeek、OpenAI、Anthropic、Google、Microsoft、DeepL 和 Fish Audio 等 API 由相应供应商提供。ASMR Dubber 不转售这些服务，也不授予调用权限。用户自行承担：
+DeepSeek、阿里云百炼、豆包/火山方舟、OpenAI、Anthropic、Google、Microsoft、DeepL、小米 MiMo、MiniMax 和 Fish Audio 等 API 由相应供应商提供。ASMR Dubber 不转售这些服务，也不授予调用权限。用户自行承担：
 
 - 账户、地区、配额和费用；
 - 输入文字或音频是否允许发送给该供应商；

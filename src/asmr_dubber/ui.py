@@ -95,6 +95,7 @@ from .ui_services import (
     load_view,
     mix,
     open_project_directory,
+    preview_edge_tts_voice,
     preview_reference,
     recent_projects,
     reference_picker,
@@ -268,7 +269,15 @@ Windows 双击 `ASMR-Dubber-Setup.exe`；Linux 运行
 _INSTALLABLE = set(installable_backend_ids())
 _PRIVATE_API: Any = False
 _LLM_TRANSLATION_PROVIDERS = frozenset(
-    {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
+    {
+        "deepseek",
+        "bailian",
+        "doubao",
+        "openai",
+        "anthropic",
+        "gemini",
+        "openai_compatible",
+    }
 )
 _LOUDNESS_MODE_CHOICES = [
     ("跟随对应原声（推荐）", "source"),
@@ -1109,7 +1118,31 @@ _TTS_DEFAULT_URLS = {
     "gpt_sovits": "http://127.0.0.1:9880",
     "cosyvoice": "http://127.0.0.1:50000",
     "fish_speech": "http://127.0.0.1:8080",
+    "mimo_tts": "https://api.xiaomimimo.com/v1",
+    "minimax": "https://api.minimaxi.com",
 }
+
+
+def _tts_model_uses_reference(backend: Any, model: Any) -> bool:
+    backend_id = str(backend or "")
+    if backend_id == "mimo_tts":
+        return str(model or "") == "mimo-v2.5-tts-voiceclone"
+    spec = TTS_BACKENDS.get(backend_id)
+    return bool(spec and spec.reference_audio)
+
+
+def _tts_model_controls_update(backend: Any, model: Any) -> tuple[Any, ...]:
+    backend_id = str(backend or "")
+    model_id = str(model or "")
+    return (
+        _gr_update(visible=_tts_model_uses_reference(backend_id, model_id)),
+        _gr_update(
+            visible=backend_id in {"edge_tts", "minimax"}
+            or (backend_id == "mimo_tts" and model_id == "mimo-v2.5-tts")
+        ),
+        _gr_update(visible=backend_id == "minimax"),
+        _gr_update(visible=backend_id == "mimo_tts"),
+    )
 
 
 def _tts_backend_update(backend: Any) -> tuple[Any, ...]:
@@ -1122,21 +1155,24 @@ def _tts_backend_update(backend: Any) -> tuple[Any, ...]:
         f"{spec.help}\n\n{spec.setup}",
         service_key_status(f"tts:{backend_id}", spec.api_key),
         _gr_update(visible=backend_id == "indextts2"),
-        _gr_update(visible=backend_id != "indextts2"),
+        _gr_update(visible=_tts_model_uses_reference(backend_id, spec.default_model)),
         _gr_update(visible=backend_id == "gpt_sovits"),
         _gr_update(visible=backend_id == "cosyvoice"),
         _gr_update(visible=backend_id == "indextts2"),
         _gr_update(visible=backend_id != "indextts2"),
         _gr_update(visible=backend_id == "gpt_sovits"),
+        _gr_update(visible=backend_id in {"gpt_sovits", "edge_tts", "minimax"}),
+        _gr_update(choices=list(spec.voices), value=spec.default_voice),
+        *_tts_model_controls_update(backend_id, spec.default_model)[1:],
     )
 
 
 def _tts_service_visibility(backend: Any) -> tuple[Any, ...]:
     backend_id = str(backend or "")
     spec = TTS_BACKENDS.get(backend_id, TTS_BACKENDS["indextts2"])
-    external = backend_id != "indextts2"
+    configurable_url = backend_id not in {"indextts2", "edge_tts"}
     return (
-        _gr_update(visible=external),
+        _gr_update(visible=configurable_url),
         _gr_update(visible=spec.api_key),
         _gr_update(visible=spec.api_key),
         _gr_update(visible=spec.api_key),
@@ -1145,6 +1181,7 @@ def _tts_service_visibility(backend: Any) -> tuple[Any, ...]:
 
 def _tts_detail_visibility(
     backend: Any,
+    model: Any,
     reference_source: Any,
     index_speaker_source: Any,
     index_emotion_source: Any,
@@ -1154,13 +1191,17 @@ def _tts_detail_visibility(
 
     backend_id = str(backend or "")
     is_index = backend_id == "indextts2"
+    uses_reference = _tts_model_uses_reference(backend_id, model)
     external_speaker = (
         str(index_speaker_source or "") == "external"
         if is_index
-        else str(reference_source or "") == "external"
+        else uses_reference and str(reference_source or "") == "external"
     )
+    spec = TTS_BACKENDS.get(backend_id, TTS_BACKENDS["indextts2"])
     external_reference_text = (
         not is_index
+        and uses_reference
+        and spec.reference_text != "unused"
         and str(reference_source or "") == "external"
         and not (backend_id == "cosyvoice" and str(cosyvoice_mode or "") == "cross_lingual")
     )
@@ -2109,6 +2150,75 @@ def build_app() -> Any:
                             allow_custom_value=True,
                         )
                         tts_help = gr.Markdown(f"{tts_spec.help}\n\n{tts_spec.setup}")
+                        with gr.Group(
+                            visible=(
+                                stored.tts_backend in {"edge_tts", "minimax"}
+                                or (
+                                    stored.tts_backend == "mimo_tts"
+                                    and stored.tts_model == "mimo-v2.5-tts"
+                                )
+                            )
+                        ) as tts_voice_group:
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                settings_components["tts_voice"] = gr.Dropdown(
+                                    label="音色 ID",
+                                    choices=list(tts_spec.voices),
+                                    value=stored.tts_voice or tts_spec.default_voice,
+                                    allow_custom_value=True,
+                                    info="可以直接填写服务商提供或账号中已创建的音色 ID。",
+                                    scale=3,
+                                )
+                                edge_tts_preview_button = gr.Button(
+                                    "试听音色",
+                                    visible=stored.tts_backend == "edge_tts",
+                                    scale=1,
+                                )
+                            edge_tts_preview_audio = gr.Audio(
+                                label="Edge TTS 音色试听",
+                                type="filepath",
+                                interactive=False,
+                                visible=False,
+                            )
+                            edge_tts_preview_status = gr.Markdown()
+                        with gr.Group(visible=stored.tts_backend == "minimax") as minimax_group:
+                            gr.Markdown("### MiniMax 参数")
+                            with gr.Row():
+                                settings_components["tts_volume"] = gr.Number(
+                                    label="音量", value=stored.tts_volume
+                                )
+                                settings_components["tts_pitch"] = gr.Slider(
+                                    label="音调",
+                                    minimum=-12,
+                                    maximum=12,
+                                    step=1,
+                                    value=stored.tts_pitch,
+                                )
+                                settings_components["tts_emotion"] = gr.Dropdown(
+                                    label="情绪",
+                                    choices=[
+                                        ("自动", "auto"),
+                                        ("平静", "calm"),
+                                        ("开心", "happy"),
+                                        ("悲伤", "sad"),
+                                        ("愤怒", "angry"),
+                                        ("恐惧", "fearful"),
+                                        ("厌恶", "disgusted"),
+                                        ("惊讶", "surprised"),
+                                        ("耳语", "whipser"),
+                                    ],
+                                    value=stored.tts_emotion,
+                                    allow_custom_value=True,
+                                )
+                        with gr.Group(visible=stored.tts_backend == "mimo_tts") as mimo_group:
+                            settings_components["tts_style_prompt"] = gr.Textbox(
+                                label="MiMo 语气与风格说明（可选）",
+                                value=stored.tts_style_prompt,
+                                lines=3,
+                                info=(
+                                    "用于控制语气、情绪和表达风格；文字设计音色模型留空时"
+                                    "使用温柔自然的中文女声。"
+                                ),
+                            )
                         with gr.Row():
                             settings_components["tts_device"] = gr.Dropdown(
                                 label="合成设备",
@@ -2127,15 +2237,14 @@ def build_app() -> Any:
                                 value=stored.tts_request_concurrency,
                                 visible=stored.tts_backend != "indextts2",
                             )
-                        with (
-                            gr.Group(
-                                visible=stored.tts_backend == "gpt_sovits"
-                            ) as tts_sampling_group,
-                            gr.Row(),
-                        ):
-                            settings_components["tts_speed"] = gr.Number(
-                                label="语速", value=stored.tts_speed
-                            )
+                        settings_components["tts_speed"] = gr.Number(
+                            label="语速",
+                            value=stored.tts_speed,
+                            visible=stored.tts_backend in {"gpt_sovits", "edge_tts", "minimax"},
+                        )
+                        with gr.Row(
+                            visible=stored.tts_backend == "gpt_sovits"
+                        ) as tts_sampling_group:
                             settings_components["tts_temperature"] = gr.Number(
                                 label="随机度（Temperature）",
                                 value=stored.tts_temperature,
@@ -2145,7 +2254,9 @@ def build_app() -> Any:
                             )
 
                         saved_speaker = stored.tts_external_reference_audio or "无"
-                        external_speaker_visible = (
+                        external_speaker_visible = _tts_model_uses_reference(
+                            stored.tts_backend, stored.tts_model
+                        ) and (
                             stored.tts_index_speaker_source == "external"
                             if stored.tts_backend == "indextts2"
                             else stored.tts_reference_source == "external"
@@ -2158,7 +2269,10 @@ def build_app() -> Any:
                             )
                             gr.Markdown(f"当前已保存音色参考：`{saved_speaker}`")
                         with gr.Group(
-                            visible=stored.tts_backend != "indextts2"
+                            visible=(
+                                stored.tts_backend != "indextts2"
+                                and _tts_model_uses_reference(stored.tts_backend, stored.tts_model)
+                            )
                         ) as generic_tts_group:
                             settings_components["tts_reference_source"] = gr.Radio(
                                 label="参考音频来源",
@@ -2178,7 +2292,8 @@ def build_app() -> Any:
                                 value=stored.tts_external_reference_text,
                                 lines=3,
                                 visible=(
-                                    stored.tts_reference_source == "external"
+                                    tts_spec.reference_text != "unused"
+                                    and stored.tts_reference_source == "external"
                                     and not (
                                         stored.tts_backend == "cosyvoice"
                                         and stored.tts_cosyvoice_mode == "cross_lingual"
@@ -2203,7 +2318,7 @@ def build_app() -> Any:
                         settings_components["tts_api_base_url"] = gr.Textbox(
                             label="TTS（语音合成）API（接口）基础地址",
                             value=stored.tts_api_base_url,
-                            visible=stored.tts_backend != "indextts2",
+                            visible=stored.tts_backend not in {"indextts2", "edge_tts"},
                         )
                         tts_key = gr.Textbox(
                             label="TTS（语音合成）服务 API 密钥",
@@ -2817,6 +2932,14 @@ def build_app() -> Any:
                 recent_log_text(),
                 stage_for_ui(application_log_path(), category="logs"),
             )
+
+        def edge_tts_preview_callback(voice: Any) -> tuple[Any, str]:
+            try:
+                preview = preview_edge_tts_voice(str(voice or ""))
+                return gr.update(value=preview, visible=True), "试听已生成。"
+            except Exception as exc:
+                logger.exception("Edge TTS 音色试听失败")
+                return gr.update(value=None, visible=False), f"试听失败：{_safe_error(exc)}"
 
         def refresh_projects_callback() -> Any:
             current = load_user_settings()
@@ -3791,6 +3914,11 @@ def build_app() -> Any:
                     settings_components["tts_device"],
                     settings_components["tts_request_concurrency"],
                     tts_sampling_group,
+                    settings_components["tts_speed"],
+                    settings_components["tts_voice"],
+                    tts_voice_group,
+                    minimax_group,
+                    mimo_group,
                 ],
                 api_name=_PRIVATE_API,
                 queue=False,
@@ -3810,6 +3938,7 @@ def build_app() -> Any:
         )
         tts_detail_inputs = [
             settings_components["tts_backend"],
+            settings_components["tts_model"],
             settings_components["tts_reference_source"],
             settings_components["tts_index_speaker_source"],
             settings_components["tts_index_emotion_source"],
@@ -3829,7 +3958,40 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+        tts_backend_event.then(
+            lambda backend: (
+                gr.update(visible=str(backend or "") == "edge_tts"),
+                gr.update(value=None, visible=False),
+                "",
+            ),
+            inputs=[settings_components["tts_backend"]],
+            outputs=[edge_tts_preview_button, edge_tts_preview_audio, edge_tts_preview_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["tts_voice"].change(
+            lambda: (gr.update(value=None, visible=False), ""),
+            outputs=[edge_tts_preview_audio, edge_tts_preview_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        edge_tts_preview_button.click(
+            edge_tts_preview_callback,
+            inputs=[settings_components["tts_voice"]],
+            outputs=[edge_tts_preview_audio, edge_tts_preview_status],
+            api_name="preview_edge_tts_voice",
+            concurrency_limit=1,
+            show_progress="full",
+        )
+        settings_components["tts_model"].change(
+            _tts_model_controls_update,
+            inputs=[settings_components["tts_backend"], settings_components["tts_model"]],
+            outputs=[generic_tts_group, tts_voice_group, minimax_group, mimo_group],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         for detail_component in (
+            settings_components["tts_model"],
             settings_components["tts_reference_source"],
             settings_components["tts_index_speaker_source"],
             settings_components["tts_index_emotion_source"],

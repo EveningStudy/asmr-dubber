@@ -1,3 +1,4 @@
+import json
 import sys
 import threading
 import time
@@ -10,17 +11,20 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from asmr_dubber.errors import OperationCancelledError
+from asmr_dubber.errors import OperationCancelledError, SynthesisError
 from asmr_dubber.languages import SourceLanguage
 from asmr_dubber.models import AudioInfo, DubProject, Sentence
 from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.tts import shared_reference_sentence, tts_cache_key
 from asmr_dubber.tts_backends import (
     _cosyvoice_runner,
+    _edge_tts_runner,
     _fish_runner,
     _gpt_sovits_runner,
     _indextts_command,
     _load_indextts,
+    _mimo_runner,
+    _minimax_runner,
     _synthesize_indextts_cli_batch,
     synthesize_with_selected_backend,
 )
@@ -74,6 +78,9 @@ def test_tts_cache_tracks_synthesis_inputs_but_not_mix_only_settings() -> None:
     project.settings.tts_speed = 1.1
     assert tts_cache_key(project, sentence) != original
     project.settings.tts_speed = 1.0
+    project.settings.tts_voice = "another-voice"
+    assert tts_cache_key(project, sentence) != original
+    project.settings.tts_voice = ""
     sentence.zh_text = "现在开始吧。"
     assert tts_cache_key(project, sentence) != original
 
@@ -342,6 +349,30 @@ def test_external_tts_cancel_closes_active_client_without_waiting_for_timeout(
     assert not list((tmp_path / "chinese").glob("*.tmp.wav"))
 
 
+def test_edge_tts_does_not_prepare_or_record_reference_audio(tmp_path: Path, monkeypatch) -> None:
+    project = _project()
+    project.settings.tts_backend = "edge_tts"
+    project.settings.tts_model = "edge-tts"
+    source = tmp_path / "source.wav"
+    source.touch()
+
+    def run(_sentence, reference, output):
+        assert reference.identity == "unused"
+        sf.write(output, np.zeros(800, dtype=np.float32), 8_000, subtype="FLOAT")
+
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends._runner",
+        lambda _project: (run, lambda: None),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.tts_backends.prepare_voice_reference",
+        lambda *_args: pytest.fail("Edge TTS must not prepare reference audio"),
+    )
+
+    assert synthesize_with_selected_backend(project, tmp_path, source) == []
+    assert all(sentence.reference_file is None for sentence in project.sentences)
+
+
 class _Response:
     is_error = False
     status_code = 200
@@ -463,6 +494,148 @@ def test_fish_speech_http_contract_and_authorization(tmp_path: Path, monkeypatch
     assert call["json"]["references"][0]["text"] == "参考です。"
     assert output.read_bytes() == b"mock-wave"
     assert client.closed is True
+
+
+def _mock_httpx_client(monkeypatch, handler):
+    real_client = httpx.Client
+    clients = []
+
+    def factory(**kwargs):
+        client = real_client(transport=httpx.MockTransport(handler), **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(httpx, "Client", factory)
+    return clients
+
+
+def test_edge_tts_contract_and_wav_conversion(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    class FakeCommunicate:
+        def __init__(self, text, *, voice, rate):
+            calls.append((text, voice, rate))
+
+        async def save(self, path):
+            Path(path).write_bytes(b"mock-mp3")
+
+    monkeypatch.setitem(sys.modules, "edge_tts", SimpleNamespace(Communicate=FakeCommunicate))
+
+    def fake_ffmpeg(arguments, **_kwargs):
+        assert Path(arguments[2]).read_bytes() == b"mock-mp3"
+        sf.write(Path(arguments[-1]), np.zeros(2400, dtype=np.float32), 24_000)
+
+    monkeypatch.setattr("asmr_dubber.audio._run_ffmpeg", fake_ffmpeg)
+    project = _project()
+    project.settings.tts_backend = "edge_tts"
+    project.settings.tts_voice = "zh-CN-XiaoyiNeural"
+    project.settings.tts_speed = 1.15
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _edge_tts_runner(project)
+    run(project.sentences[0], VoiceReference(Path(), "", "unused"), output)
+    cleanup()
+
+    assert calls == [("让我们开始吧。", "zh-CN-XiaoyiNeural", "+15%")]
+    assert sf.info(output).frames == 2400
+
+
+def test_mimo_voice_clone_http_contract(tmp_path: Path, monkeypatch) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"audio": {"data": "bW9jay13YXZl"}}}]},
+        )
+
+    clients = _mock_httpx_client(monkeypatch, handler)
+    monkeypatch.setattr("asmr_dubber.tts_backends.saved_service_key", lambda _name: "mimo-key")
+    project = _project()
+    project.settings.tts_backend = "mimo_tts"
+    project.settings.tts_model = "mimo-v2.5-tts-voiceclone"
+    project.settings.tts_api_base_url = "https://api.xiaomimimo.com/v1"
+    project.settings.tts_style_prompt = "轻声耳语"
+    reference_path = tmp_path / "reference.wav"
+    reference_path.write_bytes(b"reference-audio")
+    reference = VoiceReference(reference_path, "", "shared")
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _mimo_runner(project)
+    run(project.sentences[0], reference, output)
+    cleanup()
+
+    request = requests[0]
+    payload = json.loads(request.content)
+    assert str(request.url) == "https://api.xiaomimimo.com/v1/chat/completions"
+    assert request.headers["api-key"] == "mimo-key"
+    assert payload["messages"][0] == {"role": "user", "content": "轻声耳语"}
+    assert payload["messages"][1]["content"] == "让我们开始吧。"
+    assert payload["audio"]["voice"].startswith("data:audio/wav;base64,")
+    assert output.read_bytes() == b"mock-wave"
+    assert clients[0].is_closed is True
+
+
+def test_minimax_http_contract_and_hex_audio(tmp_path: Path, monkeypatch) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "data": {"audio": b"mock-wave".hex(), "status": 2},
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+            },
+        )
+
+    clients = _mock_httpx_client(monkeypatch, handler)
+    monkeypatch.setattr("asmr_dubber.tts_backends.saved_service_key", lambda _name: "minimax-key")
+    project = _project()
+    project.settings.tts_backend = "minimax"
+    project.settings.tts_model = "speech-2.8-hd"
+    project.settings.tts_api_base_url = "https://api.minimaxi.com"
+    project.settings.tts_voice = "female-shaonv"
+    project.settings.tts_speed = 0.9
+    project.settings.tts_volume = 1.2
+    project.settings.tts_pitch = -2
+    project.settings.tts_emotion = "calm"
+    output = tmp_path / "output.wav"
+
+    run, cleanup = _minimax_runner(project)
+    run(project.sentences[0], VoiceReference(Path(), "", "unused"), output)
+    cleanup()
+
+    request = requests[0]
+    payload = json.loads(request.content)
+    assert str(request.url) == "https://api.minimaxi.com/v1/t2a_v2"
+    assert request.headers["Authorization"] == "Bearer minimax-key"
+    assert payload["voice_setting"] == {
+        "voice_id": "female-shaonv",
+        "speed": 0.9,
+        "vol": 1.2,
+        "pitch": -2,
+        "emotion": "calm",
+    }
+    assert payload["audio_setting"]["format"] == "wav"
+    assert payload["output_format"] == "hex"
+    assert output.read_bytes() == b"mock-wave"
+    assert clients[0].is_closed is True
+
+
+@pytest.mark.parametrize(
+    "runner,backend",
+    [(_mimo_runner, "mimo_tts"), (_minimax_runner, "minimax")],
+)
+def test_cloud_tts_requires_saved_key(runner, backend, monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.tts_backends.saved_service_key", lambda _name: "")
+    project = _project()
+    project.settings.tts_backend = backend
+    project.settings.tts_api_base_url = "https://example.test"
+
+    with pytest.raises(SynthesisError, match="API Key"):
+        runner(project)
 
 
 def test_indextts_cancel_after_child_exit_is_not_reported_as_failure(

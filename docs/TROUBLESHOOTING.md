@@ -284,10 +284,15 @@ DeepL、Google Cloud Translation 和 Microsoft Translator 不会出现在校对�
 4. 上下文句数和最大输出 Token 是否过大；
 5. 代理或服务端是否返回 HTML 错误页。
 
+阿里云百炼还要确认 API Key 与基础地址属于同一地域。豆包需要确认模型或推理接入点 ID 已在当前火山方舟账号和地域开通；这两类权限错误与翻译 Prompt 无关。
+
 恢复默认 Prompt、降低上下文句数后重试。已经保存的成功中文不会因为后续批次失败而丢失。
 
-## 外部 TTS API 连接失败
+## Edge TTS 或外部 TTS 连接失败
 
+- Edge TTS 不需要 API Key，但必须能访问 Microsoft 在线语音服务；先检查网络、代理和音色 ID；
+- MiMo 默认地址是 `https://api.xiaomimimo.com/v1`，需要单独保存 MiMo API Key；只有 `voiceclone` 模型需要参考音频；
+- MiniMax 默认地址是 `https://api.minimaxi.com`，需要 Bearer API Key；音色 ID 必须属于预置音色或当前账号已有音色；
 - GPT-SoVITS 常用端口 9880；
 - CosyVoice 常用端口 50000；
 - Fish 接口必须兼容 `/v1/tts` 的 references 请求；
@@ -296,7 +301,7 @@ DeepL、Google Cloud Translation 和 Microsoft Translator 不会出现在校对�
 - 把并发数设为 1，排除服务端限流或显存并发问题；
 - 确认响应是有效音频，而不是 JSON/HTML 错误正文。
 
-先用服务端自己的示例请求验证接口，再从 ASMR Dubber 调用。不同上游发行版的 API 可能不兼容，仅端口能连接不代表请求格式匹配。
+MiMo 或 MiniMax 返回“未找到可解码的音频”时，保留日志中的状态码和响应摘要，核对账号当前使用的模型是否仍采用对应接口。自建服务先用服务端自己的示例请求验证接口，再从 ASMR Dubber 调用。不同上游发行版的 API 可能不兼容，仅端口能连接不代表请求格式匹配。
 
 ## IndexTTS2 未就绪或合成失败
 
@@ -311,6 +316,8 @@ bash scripts/linux/install-indextts2.sh
 IndexTTS2 必须在 `.asmr-dubber/runtimes/index-tts` 的隔离环境中，并具有完整 checkpoints 和配套 `config.yaml`。不要把它装到主 venv。
 
 合成显存不足时关闭其它 GPU 程序、保持 FP16、减少同时运行的服务。6 GB 显存接近最低条件，10 GB 以上更稳妥。
+
+不需要本地音色克隆时，可以在设置中改用 Edge TTS。程序启动时如果发现全局默认的 IndexTTS2 不完整，也会让之后的新项目默认使用 Edge TTS；已有项目仍保留原后端，需要在设置中“保存并应用到当前项目”。
 
 ## 中文音色不稳定
 

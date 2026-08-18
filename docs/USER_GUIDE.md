@@ -10,7 +10,9 @@ ASMR Dubber 把一次配音工作保存成项目。识别、翻译、校对、�
 
 1. 在“ASR（语音识别）”中选择新项目的音频语言和识别方式；
 2. 在“翻译”中选择服务、模型和接口地址，保存当前服务的 API Key；
-3. 在“TTS（语音合成）”中选择本地 IndexTTS2 或已经启动的外部 API。
+3. 在“TTS（语音合成）”中选择本地 IndexTTS2、Edge TTS 或云端服务。
+
+Edge TTS 不需要 API Key。IndexTTS2 未安装、独立运行环境损坏或 checkpoints 不完整时，程序会把 Edge TTS 作为新项目的默认后端；已经保存的项目设置不会被自动改写。
 
 设置页底部有两个保存按钮：
 
@@ -88,7 +90,7 @@ VAD 能减少长静音和部分幻觉，但阈值太高会删掉耳语、呼吸�
 
 - 各识别器串行运行，总耗时大致相加；
 - 每个模型仍需单独满足内存和显存条件；
-- 交叉校对需要 DeepSeek、OpenAI、Claude、Gemini 或 OpenAI-compatible LLM；
+- 交叉校对需要 DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini 或 OpenAI-compatible LLM；
 - DeepL、Google Cloud Translation 和 Microsoft Translator 不能承担候选校对；
 - “作品、人物与场景背景”只用于专名和消歧，不能成为补写台词的依据；
 - 候选和裁决记录保存在 `analysis/asr_candidates.json` 与 `analysis/asr_review.json`，便于复查。
@@ -121,6 +123,15 @@ VAD 能减少长静音和部分幻觉，但阈值太高会删掉耳语、呼吸�
 
 LLM 服务能使用相邻句上下文、自定义 Prompt 和翻译记忆，更适合口语、代词和连续场景。普通机器翻译服务按句处理，更直接，也不会显示无关的 Temperature、Top P 或 Prompt 设置。
 
+| 服务 | 适合场景 | 配置要点 |
+|---|---|---|
+| DeepSeek | 默认选择 | 默认模型 `deepseek-v4-flash` |
+| 阿里云百炼 | 使用百炼中的 Qwen 或其它兼容模型 | API Key、地域和基础地址必须匹配 |
+| 豆包（火山方舟）| 使用豆包模型或方舟推理接入点 | 填写控制台可用的模型或接入点 ID |
+| OpenAI、Claude、Gemini | 使用各自官方 API | 保存对应服务的 API Key |
+| OpenAI-compatible | 本地或自建兼容接口 | 填写实际地址和模型 ID |
+| DeepL、Google Cloud、Microsoft Azure | 普通机器翻译 | 不参与台本或多 ASR 校对 |
+
 
 ## 4. 选择音色参考
 
@@ -133,7 +144,7 @@ LLM 服务能使用相邻句上下文、自定义 Prompt 和翻译记忆，更�
 
 点击“设为项目音色参考”后可以试听截取结果。这个选择属于当前项目，不会因应用全局设置而被清空。
 
-如果使用外部参考音频，文件会复制到 `.asmr-dubber/config/references`。GPT-SoVITS、Fish Speech 等需要参考文字的服务必须填写与音频准确对应的原文；文字错位会明显影响结果。英语项目请选择“英语”作为外部参考音频语言，或保持“跟随当前项目源语言”。
+如果使用外部参考音频，文件会复制到 `.asmr-dubber/config/references`。GPT-SoVITS、Fish Speech 等需要参考文字的服务必须填写与音频准确对应的原文；MiMo 音色克隆和 IndexTTS2 不需要参考文字。Edge TTS、MiniMax 和 MiMo 的预置/文字设计音色不使用参考音频。英语项目请选择“英语”作为外部参考音频语言，或保持“跟随当前项目源语言”。
 
 ## 5. TTS（语音合成）与混音
 
@@ -150,7 +161,25 @@ IndexTTS2 把音色和情绪分开：
 - 同一角色建议保持统一音色参考，多角色项目再考虑逐句参考；
 - 参考过短、只有呼吸声或背景音乐太强时，音色更容易漂移。
 
-### 外部 TTS API
+### Edge TTS
+
+Edge TTS 已包含在基础环境中，不需要 API Key 或本地模型。选择中文音色后可以先试听，再设置语速并生成。它适合没有 NVIDIA GPU、未安装 IndexTTS2，或不需要音色克隆的项目；断网时无法工作。
+
+### MiMo TTS
+
+保存小米 MiMo API Key 后，根据需要选择模型：
+
+- `mimo-v2.5-tts-voiceclone` 使用项目参考句或外部参考音频克隆声音，不需要参考文字；
+- `mimo-v2.5-tts` 使用音色 ID；
+- `mimo-v2.5-tts-voicedesign` 根据“语气与风格说明”设计声音。
+
+只有音色克隆模型会显示参考音频设置。参考音频会随请求发送到 MiMo。
+
+### MiniMax TTS
+
+保存 MiniMax API Key 后，选择模型和音色 ID，再按需调整语速、音量、音调和情绪。可以填写系统音色，也可以填写账号中已经创建的复刻或设计音色 ID。MiniMax 不直接使用项目参考音频；声音复刻需要先在平台完成。
+
+### 其它 TTS API
 
 程序只调用服务，不会替你启动 GPT-SoVITS、CosyVoice 或 Fish Speech。先确认服务端能独立生成音频，再填写接口地址。GPT-SoVITS 请求会传参考文件路径；Docker 或远程服务必须能通过挂载或路径映射访问该文件。外部并发默认是 2，服务不稳定时先降到 1。
 

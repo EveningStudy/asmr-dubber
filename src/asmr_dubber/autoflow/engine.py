@@ -2219,8 +2219,9 @@ def apply_shared_reference(project_json: Path, reference: dict[str, str]) -> Non
         project.settings.tts_external_reference_audio = str(audio)
         project.settings.tts_external_reference_text = str(reference.get("text") or "")
         language = str(reference.get("language") or "auto")
-        project.settings.tts_external_reference_language = (
-            language if language in {"ja", "en", "zh"} else "auto"
+        project.settings.tts_external_reference_language = cast(
+            Literal["auto", "ja", "en", "zh"],
+            language if language in {"ja", "en", "zh"} else "auto",
         )
         # IndexTTS2 有独立的音色参考选择；情绪仍可跟随当前句。
         project.settings.tts_index_speaker_source = "external"
@@ -3093,7 +3094,7 @@ def translate_titles(
         id="folder0000",
         start_seconds=0.0,
         end_seconds=1.0,
-        ja_text=folder_name_original,
+        source_text=folder_name_original,
         zh_text=existing_folder_translation,
     )
     sentences = [folder_sentence]
@@ -3104,7 +3105,7 @@ def translate_titles(
                 id=f"title{index:04d}",
                 start_seconds=float(index),
                 end_seconds=float(index + 1),
-                ja_text=str(item["title_ja"]),
+                source_text=str(item["title_ja"]),
                 zh_text=cached.get(filename, ""),
             )
         )

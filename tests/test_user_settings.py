@@ -3,6 +3,7 @@ import stat
 from pathlib import Path
 
 from asmr_dubber.user_settings import (
+    PROVIDER_PRESETS,
     UserSettings,
     api_key_status,
     clear_api_key,
@@ -212,3 +213,41 @@ def test_applying_global_defaults_preserves_project_reference_sentence() -> None
 
     assert updated.tts_reference_sentence_id == "s000042"
     assert updated.chinese_dubbing_offset_ms == 250
+
+
+def test_default_translation_uses_deepseek_flash() -> None:
+    settings = UserSettings()
+
+    assert settings.translation_provider == "deepseek"
+    assert settings.translation_model == "deepseek-v4-flash"
+    assert PROVIDER_PRESETS["deepseek"]["default_model"] == "deepseek-v4-flash"
+    assert PROVIDER_PRESETS["bailian"]["env"] == "DASHSCOPE_API_KEY"
+    assert PROVIDER_PRESETS["doubao"]["env"] == "ARK_API_KEY"
+
+
+def test_missing_indextts_defaults_to_edge_tts(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(
+        "asmr_dubber.user_settings.runtime_executable_candidates",
+        lambda *_args, **_kwargs: (),
+    )
+
+    settings = load_user_settings()
+
+    assert settings.tts_backend == "edge_tts"
+    assert settings.tts_model == "edge-tts"
+    assert settings.tts_voice == "zh-CN-XiaoxiaoNeural"
+
+
+def test_ready_indextts_remains_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "config"))
+    executable = tmp_path / "indextts2.exe"
+    executable.touch()
+    monkeypatch.setattr(
+        "asmr_dubber.user_settings.runtime_executable_candidates",
+        lambda *_args, **_kwargs: (executable,),
+    )
+    monkeypatch.setattr("asmr_dubber.user_settings.INDEXTTS_REQUIRED_FILES", frozenset())
+    monkeypatch.setattr("asmr_dubber.user_settings.INDEXTTS_REQUIRED_DIRS", frozenset())
+
+    assert load_user_settings().tts_backend == "indextts2"

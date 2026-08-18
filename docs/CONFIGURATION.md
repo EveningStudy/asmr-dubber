@@ -122,7 +122,7 @@ Faster-Whisper：
 | 作品、人物与场景背景 | 帮助专名和上下文消歧，不允许据此补写台词 |
 | 校对 Prompt | 约束 LLM 输出证据 ID 和严格 JSON；不确定时保留默认值 |
 
-校对只支持 DeepSeek、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 必须保留 `window_id`、`evidence_ids` 和结果 JSON 合同，否则程序会拒绝无法审计的输出。
+校对只支持 DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 必须保留 `window_id`、`evidence_ids` 和结果 JSON 合同，否则程序会拒绝无法审计的输出。
 
 ## 翻译
 
@@ -130,10 +130,10 @@ Faster-Whisper：
 
 | 类型 | 服务 | 是否可做多 ASR 校对 |
 |---|---|---|
-| LLM | DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible | 可以 |
+| LLM | DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible | 可以 |
 | 机器翻译 | DeepL、Google Cloud Translation、Microsoft Azure Translator | 不可以 |
 
-选择服务后，模型、基础地址、说明和密钥状态会一起刷新。模型框允许填写账户实际可用的模型 ID；默认列表只是经过适配的常用值。
+默认翻译服务是 DeepSeek，模型为 `deepseek-v4-flash`。选择服务后，模型、基础地址、说明和密钥状态会一起刷新。模型框允许填写账户实际可用的模型 ID。
 
 ### LLM 参数
 
@@ -154,6 +154,8 @@ Faster-Whisper：
 - DeepL 的“正式程度”只在 DeepL 下显示；Free 账户通常要把地址设为 `https://api-free.deepl.com`；
 - Microsoft Azure Translator 的区域字段只在该服务下显示；
 - Google Cloud Translation 使用 Basic v2 API Key；
+- 阿里云百炼默认使用 `https://dashscope.aliyuncs.com/compatible-mode/v1`；API Key、地域和地址必须匹配；
+- 豆包默认使用火山方舟北京地址；模型框也可填写控制台中的推理接入点 ID；
 - OpenAI-compatible 适用于本地或自建接口，密钥可选，默认地址示例是 `http://127.0.0.1:11434/v1`。
 
 ## TTS（语音合成）
@@ -162,14 +164,15 @@ Faster-Whisper：
 
 | 设置 | 默认 | 说明 |
 |---|---:|---|
-| TTS 后端 | IndexTTS2 | 可改为 GPT-SoVITS、CosyVoice 或 Fish API |
-| 模型 | 随后端变化 | 外部服务允许填写服务端实际模型 ID |
+| TTS 后端 | IndexTTS2；未就绪时为 Edge TTS | 可选择 Edge、MiMo、MiniMax、GPT-SoVITS、CosyVoice 或 Fish API |
+| 模型 | 随后端变化 | 云服务允许填写账号实际可用的模型 ID |
 | 单句超时 | 600 秒 | 本地任务和外部请求的失败上限 |
-| 外部 API 并发 | 2 | 只对 HTTP 后端显示，范围 1–8 |
-| 参考来源 | 项目参考句 | 外部后端也可使用保存到便携配置目录的音频 |
-| 参考策略 | 统一声纹 | 多角色项目可改为逐句参考 |
+| 在线/API 并发 | 2 | 只对 HTTP 后端显示，范围 1–8；限流时设为 1 |
+| 音色 ID | 随后端变化 | Edge、MiMo 预置音色和 MiniMax 使用 |
+| 参考来源 | 项目参考句 | 只在当前模型需要参考音频时显示 |
+| 参考策略 | 统一声纹 | 支持逐句参考的克隆后端可按句切换 |
 
-外部 API 地址只保存连接信息，程序不会启动服务器。每个响应先写到唯一临时文件，通过音频校验后再替换句子缓存。
+程序不会启动第三方服务端。每个响应先写到唯一临时文件，通过音频校验后再替换句子缓存。
 
 ### IndexTTS2
 
@@ -183,6 +186,30 @@ Faster-Whisper：
 | 情绪参考 | 当前句 | 也可用项目参考、音色参考、外部音频或文字描述 |
 
 IndexTTS2 使用独立 Python 环境，不要把它手工安装进主程序 venv。它只支持 NVIDIA CUDA。
+
+### Edge TTS
+
+| 设置 | 默认 | 说明 |
+|---|---:|---|
+| 模型 | `edge-tts` | 固定客户端类型 |
+| 音色 ID | `zh-CN-XiaoxiaoNeural` | 可从下拉列表选择，也可填写有效的 Edge 音色 ID；旁边可以试听 |
+| 语速 | 1.0 | 1.0 为原速，范围 0.25–4.0 |
+
+Edge TTS 无需 API Key，不使用参考音频，也不支持音色克隆。它需要联网；基础依赖由 Setup 一并安装。全局默认仍指向 IndexTTS2 但本地运行环境或 checkpoints 不完整时，程序会为新项目选择 Edge TTS。
+
+### 小米 MiMo TTS
+
+| 模型 | 使用的设置 |
+|---|---|
+| `mimo-v2.5-tts-voiceclone` | 项目或外部参考音频；不需要参考文字 |
+| `mimo-v2.5-tts` | 音色 ID，可使用预置音色或账号支持的 ID |
+| `mimo-v2.5-tts-voicedesign` | MiMo 语气与风格说明 |
+
+默认地址是 `https://api.xiaomimimo.com/v1`。三种模型都可填写语气与风格说明；文字设计音色留空时使用程序提供的温柔自然女声描述。API Key 单独保存在 MiMo TTS 服务项下。
+
+### MiniMax TTS
+
+默认地址是 `https://api.minimaxi.com`，默认模型是 `speech-2.8-hd`。设置项包括音色 ID、语速、音量、音调和情绪。音量范围 0.1–10，音调范围 -12–12；情绪设为“自动”时不向接口发送固定情绪。MiniMax 不使用项目参考音频，复刻音色需要先在 MiniMax 平台创建，再填写对应音色 ID。
 
 ### GPT-SoVITS
 

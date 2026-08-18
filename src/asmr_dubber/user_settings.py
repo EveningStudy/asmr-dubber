@@ -10,20 +10,46 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .audio import probe_audio, sha256_file
+from .constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
 from .errors import ProjectError
 from .languages import SourceLanguage, SpeechSourceLanguage
 from .models import ProjectSettings
-from .platforms import current_platform, portable_home, user_config_dir
+from .platforms import (
+    current_platform,
+    portable_home,
+    runtime_executable_candidates,
+    user_config_dir,
+)
 from .storage import atomic_write_text, exclusive_file_lock
 
 PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "label": "DeepSeek（推荐默认）",
         "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-v4-pro",
-        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "default_model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
         "env": "DEEPSEEK_API_KEY",
-        "help": "OpenAI 兼容接口。默认 V4 Pro，保留完整上下文并强制逐句 JSON 输出。",
+        "help": "OpenAI 兼容接口。默认使用 DeepSeek V4 Flash，并强制逐句 JSON 输出。",
+    },
+    "bailian": {
+        "label": "阿里云百炼",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen3.6-flash",
+        "models": ["qwen3.6-flash", "qwen3.6-plus", "deepseek-v4-flash"],
+        "env": "DASHSCOPE_API_KEY",
+        "help": "使用百炼 OpenAI 兼容接口。API Key 必须与所选地域和基础地址一致。",
+    },
+    "doubao": {
+        "label": "豆包（火山方舟）",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "default_model": "doubao-seed-2-0-lite-260215",
+        "models": [
+            "doubao-seed-2-0-lite-260215",
+            "doubao-seed-2-0-pro-260215",
+            "doubao-seed-2-0-mini-260215",
+        ],
+        "env": "ARK_API_KEY",
+        "help": "使用火山方舟 OpenAI 兼容接口；也可以填写控制台中自己的推理接入点 ID。",
     },
     "openai": {
         "label": "OpenAI",
@@ -187,6 +213,9 @@ class UserSettings(ProjectSettings):
                 "gpt_sovits",
                 "cosyvoice",
                 "fish_speech",
+                "edge_tts",
+                "mimo_tts",
+                "minimax",
             }:
                 value["tts_backend"] = "indextts2"
                 value["tts_model"] = "IndexTTS2"
@@ -296,6 +325,30 @@ def load_user_settings() -> UserSettings:
         settings = UserSettings.model_validate(_read_json(path))
     except ValidationError as exc:
         raise ProjectError(f"本地设置校验失败 {path}: {exc}") from exc
+    if settings.tts_backend == "indextts2":
+        # Keep IndexTTS2 as the preferred local backend when it is usable, but
+        # do not leave a fresh/core installation pointing at a missing runtime.
+        from .model_registry import TTS_BACKENDS
+
+        model_dir = Path(settings.tts_model_path).expanduser().resolve()
+        runtime_ready = any(
+            candidate.is_file()
+            for candidate in runtime_executable_candidates(model_dir.parent, "indextts2")
+        )
+        resources_ready = all(
+            (model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES
+        ) and all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
+        if not (runtime_ready and resources_ready):
+            edge = TTS_BACKENDS["edge_tts"]
+            settings = settings.model_copy(
+                update={
+                    "tts_backend": edge.id,
+                    "tts_model": edge.default_model,
+                    "tts_voice": edge.default_voice,
+                    "tts_api_base_url": "",
+                    "tts_device": "cpu",
+                }
+            )
     if settings.huggingface_endpoint:
         os.environ["HF_ENDPOINT"] = settings.huggingface_endpoint
     if settings.pypi_index_url:

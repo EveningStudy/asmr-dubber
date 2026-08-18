@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
+import threading
 import time
 from collections import Counter
 from contextlib import suppress
@@ -14,6 +16,7 @@ from . import pipeline
 from .audio import extract_reference, verify_source
 from .errors import ProjectError
 from .languages import SourceLanguage, SpeechSourceLanguage, source_language_label
+from .model_registry import TTS_BACKENDS
 from .models import (
     DubProject,
     ProjectSettings,
@@ -43,6 +46,9 @@ _ASR_AFFECTING_SETTINGS = frozenset(
     if name.startswith(("asr_", "translation_"))
     or name in {"pause_split_seconds", "max_sentence_seconds", "skip_japanese_fillers"}
 )
+
+_EDGE_TTS_PREVIEW_TEXT = "你好，欢迎使用 ASMR Dubber。"
+_EDGE_TTS_PREVIEW_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -204,7 +210,12 @@ def ui_stage_directory() -> Path:
     return destination
 
 
-def stage_for_ui(path: Path | None, *, category: str = "exports") -> str | None:
+def stage_for_ui(
+    path: Path | None,
+    *,
+    category: str = "exports",
+    preserve_name: bool = True,
+) -> str | None:
     if path is None or not path.is_file():
         return None
     try:
@@ -216,7 +227,10 @@ def stage_for_ui(path: Path | None, *, category: str = "exports") -> str | None:
     ]
     directory = ui_stage_directory() / category
     directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / f"{identity}_{path.name}"
+    suffix = path.suffix.casefold() or ".bin"
+    destination = directory / (
+        f"{identity}_{path.name}" if preserve_name else f"{identity}{suffix}"
+    )
     if destination.is_file() and destination.stat().st_size == stat.st_size:
         return str(destination.resolve())
     try:
@@ -228,6 +242,55 @@ def stage_for_ui(path: Path | None, *, category: str = "exports") -> str | None:
         try:
             shutil.copy2(path, temporary)
             temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return str(destination.resolve())
+
+
+def preview_edge_tts_voice(voice: str) -> str:
+    """Create a small cached Edge TTS sample for the settings-page player."""
+
+    voice_id = str(voice or "").strip()
+    if not voice_id:
+        raise ProjectError("请先选择 Edge TTS 音色。")
+    if not all(character.isalnum() or character == "-" for character in voice_id):
+        raise ProjectError("Edge TTS 音色 ID 格式无效。")
+
+    spec = TTS_BACKENDS["edge_tts"]
+    identity = sha256(
+        f"{spec.default_model}|{voice_id}|{_EDGE_TTS_PREVIEW_TEXT}".encode()
+    ).hexdigest()[:20]
+    destination = ui_stage_directory() / "edge-tts-previews" / f"{identity}.mp3"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    with _EDGE_TTS_PREVIEW_LOCK:
+        if destination.is_file() and destination.stat().st_size > 0:
+            return str(destination.resolve())
+        temporary = destination.with_name(f".{destination.name}.tmp.mp3")
+        temporary.unlink(missing_ok=True)
+        try:
+            try:
+                import edge_tts
+            except ImportError as exc:
+                raise ProjectError(
+                    "Edge TTS 运行依赖缺失；请重新运行 setup 修复基础依赖。"
+                ) from exc
+
+            async def save_preview() -> None:
+                communicator = edge_tts.Communicate(
+                    _EDGE_TTS_PREVIEW_TEXT,
+                    voice=voice_id,
+                )
+                await communicator.save(str(temporary))
+
+            asyncio.run(save_preview())
+            if not temporary.is_file() or temporary.stat().st_size <= 0:
+                raise ProjectError("Edge TTS 没有生成试听音频。")
+            temporary.replace(destination)
+        except ProjectError:
+            raise
+        except Exception as exc:
+            raise ProjectError(f"Edge TTS 试听失败：{exc}") from exc
         finally:
             temporary.unlink(missing_ok=True)
     return str(destination.resolve())
@@ -275,11 +338,19 @@ def view(project: DubProject, project_dir: Path, status: str) -> ProjectView:
         manifest=str((project_dir / "project.json").resolve()),
         source_language=project.source_language,
         rows=project_rows(project),
-        output_audio=stage_for_ui(_project_asset(project_dir, project.output_file)),
-        stem_audio=stage_for_ui(_project_asset(project_dir, project.chinese_stem_file)),
-        output_video=stage_for_ui(_project_asset(project_dir, project.output_video_file)),
+        output_audio=stage_for_ui(
+            _project_asset(project_dir, project.output_file), preserve_name=False
+        ),
+        stem_audio=stage_for_ui(
+            _project_asset(project_dir, project.chinese_stem_file), preserve_name=False
+        ),
+        output_video=stage_for_ui(
+            _project_asset(project_dir, project.output_video_file), preserve_name=False
+        ),
         subtitle_files=[path for path in subtitle_paths if path],
-        subtitle_video=stage_for_ui(_project_asset(project_dir, project.subtitle_video_file)),
+        subtitle_video=stage_for_ui(
+            _project_asset(project_dir, project.subtitle_video_file), preserve_name=False
+        ),
         diagnostics=diagnostics(project),
         status=status,
     )

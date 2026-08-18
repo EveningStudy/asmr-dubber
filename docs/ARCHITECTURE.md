@@ -223,4 +223,4 @@ API Key 在 `.asmr-dubber/config/secrets.json` 明文保存，这是产品的便
 7. 单元测试、无网络安装测试和真实短音频烟雾测试；
 8. 第三方许可证、模型卡和服务数据边界说明。
 
-当前产品范围只接受 Parakeet、Kotoba-Whisper、Faster-Whisper 系列和既有四个 TTS 适配器。扩大范围前应先讨论持续维护、安装体积、硬件验证和用户界面成本。
+当前产品范围只接受 Parakeet、Kotoba-Whisper、Faster-Whisper 系列，以及注册表中已有的 TTS 适配器。扩大范围前应先讨论持续维护、安装体积、硬件验证和用户界面成本。

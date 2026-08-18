@@ -46,6 +46,8 @@ class ModelBackend:
     models: tuple[str, ...]
     help: str
     setup: str
+    default_voice: str = ""
+    voices: tuple[str, ...] = ()
     reference_audio: bool = False
     reference_text: Literal["unused", "optional", "required"] = "unused"
     style_reference: bool = False
@@ -275,6 +277,88 @@ TTS_BACKENDS: dict[str, ModelBackend] = {
             batch_strategy="request_concurrency",
             reusable_reference_conditioning=True,
         ),
+    ),
+    "edge_tts": ModelBackend(
+        id="edge_tts",
+        label="Edge TTS 在线语音（免费）",
+        kind="tts",
+        runtime="http",
+        default_model="edge-tts",
+        models=("edge-tts",),
+        default_voice="zh-CN-XiaoxiaoNeural",
+        voices=(
+            "zh-CN-XiaoxiaoNeural",
+            "zh-CN-XiaoyiNeural",
+            "zh-CN-YunjianNeural",
+            "zh-CN-YunxiNeural",
+            "zh-CN-YunxiaNeural",
+            "zh-CN-YunyangNeural",
+        ),
+        help="无需 API Key，使用 Microsoft Edge 在线朗读服务；不支持音色克隆。",
+        setup="基础依赖已包含 Edge TTS，无需另行安装模型。需要联网使用。",
+        tested_default=True,
+        support_level="verified",
+        devices=("cpu",),
+        homepage="https://github.com/rany2/edge-tts",
+        execution=ExecutionCapabilities(batch_strategy="request_concurrency"),
+    ),
+    "mimo_tts": ModelBackend(
+        id="mimo_tts",
+        label="小米 MiMo TTS 云服务 API",
+        kind="tts",
+        runtime="http",
+        default_model="mimo-v2.5-tts-voiceclone",
+        models=(
+            "mimo-v2.5-tts-voiceclone",
+            "mimo-v2.5-tts",
+            "mimo-v2.5-tts-voicedesign",
+        ),
+        default_voice="mimo_default",
+        voices=("mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"),
+        help=(
+            "MiMo-V2.5-TTS 支持预置音色、文字设计音色和参考音频克隆。"
+            "选择 voiceclone 时使用项目或外部参考音频，不需要参考文本。"
+        ),
+        setup="在小米 MiMo 开放平台创建 API Key；默认地址已填写。",
+        reference_audio=True,
+        reference_text="unused",
+        api_key=True,
+        support_level="supported",
+        devices=("cpu",),
+        homepage="https://mimo.mi.com/docs/usage-guide/speech-synthesis",
+        execution=ExecutionCapabilities(
+            batch_strategy="request_concurrency",
+            reusable_reference_conditioning=True,
+        ),
+    ),
+    "minimax": ModelBackend(
+        id="minimax",
+        label="MiniMax TTS 云服务 API",
+        kind="tts",
+        runtime="http",
+        default_model="speech-2.8-hd",
+        models=("speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"),
+        default_voice="female-shaonv",
+        voices=(
+            "female-shaonv",
+            "female-yujie",
+            "female-chengshu",
+            "female-tianmei",
+            "male-qn-qingse",
+            "male-qn-jingying",
+            "male-qn-badao",
+            "male-qn-daxuesheng",
+        ),
+        help=(
+            "使用 MiniMax 同步语音合成接口。音色 ID 可填写系统音色，"
+            "也可填写账号中已经创建的复刻或设计音色 ID。"
+        ),
+        setup="在 MiniMax 开放平台创建 API Key；默认地址已填写。",
+        api_key=True,
+        support_level="supported",
+        devices=("cpu",),
+        homepage="https://platform.minimaxi.com/docs/api-reference/speech-t2a-http",
+        execution=ExecutionCapabilities(batch_strategy="request_concurrency"),
     ),
 }
 

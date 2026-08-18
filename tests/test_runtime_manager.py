@@ -127,6 +127,25 @@ def test_http_backend_is_external_service(monkeypatch) -> None:
     assert status.state == "external"
 
 
+def test_edge_tts_status_reflects_bundled_client(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.current_platform",
+        lambda: PlatformInfo("Linux", "x86_64", False, True, False),
+    )
+    monkeypatch.setattr("asmr_dubber.runtime_manager._imports_available", lambda _backend: True)
+
+    ready = backend_status(TTS_BACKENDS["edge_tts"])
+
+    assert ready.state == "ready"
+    assert ready.label == "可用"
+    assert "无需 API Key" in ready.detail
+
+    monkeypatch.setattr("asmr_dubber.runtime_manager._imports_available", lambda _backend: False)
+    missing = backend_status(TTS_BACKENDS["edge_tts"])
+    assert missing.state == "missing"
+    assert "Setup" in missing.detail
+
+
 def test_windows_kotoba_reports_missing_cuda_runtime(monkeypatch) -> None:
     monkeypatch.setattr(
         "asmr_dubber.runtime_manager.current_platform",

@@ -52,7 +52,7 @@ command -v bash curl tar getconf
 | Qwen3 ForcedAligner | CPU 或 CUDA，实际速度取决于 PyTorch | 与识别模型共用时留足显存 |
 | IndexTTS2 | NVIDIA CUDA，约 6 GB 显存起 | 10 GB 以上显存 |
 
-显存下限表示模型有机会装入，不代表长任务一定稳定。显示器、浏览器和其它程序也会占显存。6 GB 显存的电脑建议一次只运行一个模型、保持批大小为 1，并关闭其它 GPU 程序。AMD/Intel 显卡不会用于这些 CUDA 后端，可改用 CPU 识别和外部 TTS（语音合成）API。
+显存下限表示模型有机会装入，不代表长任务一定稳定。显示器、浏览器和其它程序也会占显存。6 GB 显存的电脑建议一次只运行一个模型、保持批大小为 1，并关闭其它 GPU 程序。AMD/Intel 显卡不会用于这些 CUDA 后端，可改用 CPU 识别、Edge TTS 或云端 TTS。
 
 Windows 完整本地 GPU 环境以 NVIDIA Turing 或更新架构为支持范围。当前主 PyTorch 环境使用 CUDA 13；NVIDIA 已从 CUDA 13 移除 Maxwell、Pascal 和 Volta 的离线编译及库支持。旧卡即使显存够大，也不能按“显存够就一定兼容”判断，可改用 CPU 识别/对齐和外部 TTS。详见[CUDA 13 发布说明](https://docs.nvidia.com/cuda/archive/13.0.1/cuda-toolkit-release-notes/index.html#deprecated-architectures)。
 
@@ -66,13 +66,13 @@ Windows 用户从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/r
 
 安装后约占 2 GB，建议安装前至少留出 5 GB。
 
-包含程序、网页界面、便携 Python、音频处理依赖以及翻译/TTS 外部 API 客户端，不下载大型识别或语音合成模型。基础方案可以打开网页、配置云服务和管理项目，但在安装至少一个 ASR （语音识别）模型前不能完成本地识别。
+包含程序、网页界面、便携 Python、音频处理依赖、Edge TTS 以及翻译/TTS API 客户端，不下载大型识别或语音合成模型。基础方案可以打开网页、配置云服务和管理项目，但在安装至少一个 ASR（语音识别）模型前不能完成本地识别。
 
 适合以下情况：
 
 - 先检查界面和服务配置；
 - 只准备基础环境，稍后从“设备与模型”按需安装；
-- 使用外部 TTS 服务，不需要本地 IndexTTS2。
+- 使用 Edge TTS 或云端 TTS，不需要本地 IndexTTS2。
 
 ### 推荐
 
@@ -83,7 +83,7 @@ Windows 用户从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/r
 - Parakeet CTC 1.1B JA GAL，默认质量优先；
 - Parakeet TDT/CTC 0.6B JA，资源占用较低，也可用于对照。
 
-检测到 NVIDIA GPU 时还会安装 IndexTTS2 的隔离运行环境和 checkpoints。没有 NVIDIA GPU 时会跳过 IndexTTS2，实际占用较小；此时可用 Parakeet CPU 识别和外部 TTS API。
+检测到 NVIDIA GPU 时还会安装 IndexTTS2 的隔离运行环境和 checkpoints。没有 NVIDIA GPU 时会跳过 IndexTTS2，实际占用较小；此时可用 Parakeet CPU 识别和 Edge TTS，或自行配置云端 TTS。IndexTTS2 未就绪时，新项目默认选择 Edge TTS。
 
 推荐方案适合只需要一套稳定识别模型、不开多模型交叉校对的用户。
 

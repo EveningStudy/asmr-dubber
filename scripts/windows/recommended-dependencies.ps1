@@ -11,7 +11,7 @@ $script:AdvancedDependencyPackSha256 = `
     "bafd2268de9a83bbf391ba8918d1798d24f703b023af70e8f623b2dbffc9a178"
 $script:AdvancedDependencyPackSize = 2905762138
 
-function Test-ASMRDubberCoreRuntime {
+function Test-ASMRDubberApplicationRuntime {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
 
     $Python = Join-Path $PortableRoot "venv\Scripts\python.exe"
@@ -26,6 +26,32 @@ except Exception:
     $ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
         -ArgumentList @("-c", $Code) -WorkingDirectory $PortableRoot
     return $ExitCode -eq 0
+}
+
+function Test-ASMRDubberApiClientRuntime {
+    param([Parameter(Mandatory = $true)][string]$PortableRoot)
+
+    $Python = Join-Path $PortableRoot "venv\Scripts\python.exe"
+    if (-not (Test-Path $Python)) { return $false }
+    $Code = @"
+import sys
+try:
+    import edge_tts, httpx
+except Exception:
+    sys.exit(1)
+"@
+    $ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
+        -ArgumentList @("-c", $Code) -WorkingDirectory $PortableRoot
+    return $ExitCode -eq 0
+}
+
+function Test-ASMRDubberCoreRuntime {
+    param([Parameter(Mandatory = $true)][string]$PortableRoot)
+
+    return (
+        (Test-ASMRDubberApplicationRuntime -PortableRoot $PortableRoot) -and
+        (Test-ASMRDubberApiClientRuntime -PortableRoot $PortableRoot)
+    )
 }
 
 function Test-ASMRDubberIndexRuntimeDependencies {
@@ -50,7 +76,9 @@ except Exception:
 function Test-ASMRDubberRecommendedDependencies {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
 
-    if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $PortableRoot)) { return $false }
+    # The large pack owns the application and local runtimes. Setup repairs
+    # small online/API clients separately so older verified packs remain usable.
+    if (-not (Test-ASMRDubberApplicationRuntime -PortableRoot $PortableRoot)) { return $false }
     if (-not (Test-ASMRDubberIndexRuntimeDependencies -PortableRoot $PortableRoot)) {
         return $false
     }

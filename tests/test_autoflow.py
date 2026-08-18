@@ -97,9 +97,7 @@ def test_autoflow_scan_prefers_configured_format_and_previews_bonus(tmp_path: Pa
 
 def test_autoflow_reference_wait_defaults_to_one_minute_and_can_be_disabled() -> None:
     default_config = config_from_settings(UserSettings())
-    custom_config = config_from_settings(
-        UserSettings(autoflow_reference_wait_seconds=180)
-    )
+    custom_config = config_from_settings(UserSettings(autoflow_reference_wait_seconds=180))
     disabled_config = config_from_settings(
         UserSettings(
             autoflow_reference_wait_enabled=False,
@@ -375,6 +373,67 @@ def test_autoflow_can_keep_original_work_and_track_titles(
     assert folder_title == work.name
     assert list(track_titles.values()) == [source.title_ja for source in sources]
     assert saved["title_translation_policy"] == {"work": False, "tracks": False}
+
+
+def test_autoflow_title_translation_uses_language_neutral_sentence_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = tmp_path / "日语作品"
+    work.mkdir()
+    captured: list[str] = []
+
+    def fake_translate(sentences, **_kwargs) -> None:
+        captured.extend(sentence.source_text for sentence in sentences)
+        sentences[0].zh_text = "中文作品"
+        sentences[1].zh_text = "第一轨"
+
+    monkeypatch.setattr("asmr_dubber.translation.translate_sentences", fake_translate)
+    monkeypatch.setattr("asmr_dubber.user_settings.load_user_settings", UserSettings)
+    monkeypatch.setattr("asmr_dubber.user_settings.resolve_api_key", lambda _provider: "key")
+    state = {
+        "source_folder": str(work),
+        "folder_name_original": work.name,
+        "timeline": [
+            {
+                "filename": "01.wav",
+                "relative_path": "01.wav",
+                "title_ja": "一番目",
+                "source_language": "ja",
+            }
+        ],
+    }
+
+    translated = engine.translate_titles(state, SimpleNamespace())
+
+    assert captured == ["日语作品", "一番目"]
+    assert state["folder_name_translation"] == "中文作品"
+    assert translated == {"01.wav": "第一轨"}
+
+
+@pytest.mark.parametrize(("language", "expected"), [("zh", "zh"), ("invalid", "auto")])
+def test_autoflow_shared_reference_normalizes_language(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    language: str,
+    expected: str,
+) -> None:
+    from asmr_dubber import models
+
+    audio = tmp_path / "reference.wav"
+    audio.write_bytes(b"reference")
+    project = SimpleNamespace(settings=ProjectSettings())
+    saved: list[object] = []
+    monkeypatch.setattr(models, "load_project", lambda _path: (project, tmp_path))
+    monkeypatch.setattr(models, "save_project", lambda value, _directory: saved.append(value))
+
+    engine.apply_shared_reference(
+        tmp_path / "project.json",
+        {"audio": str(audio), "text": "参考", "language": language},
+    )
+
+    assert project.settings.tts_external_reference_language == expected
+    assert saved == [project]
 
 
 def test_autoflow_settings_reject_unsafe_output_folder_name() -> None:

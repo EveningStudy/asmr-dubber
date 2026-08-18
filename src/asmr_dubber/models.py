@@ -134,9 +134,15 @@ class ProjectSettings(BaseModel):
     translation_memory_sentences: int = Field(default=50, ge=0, le=500)
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
-    tts_backend: Literal["indextts2", "gpt_sovits", "cosyvoice", "fish_speech"] = (
-        RECOMMENDED_TTS_BACKEND
-    )
+    tts_backend: Literal[
+        "indextts2",
+        "gpt_sovits",
+        "cosyvoice",
+        "fish_speech",
+        "edge_tts",
+        "mimo_tts",
+        "minimax",
+    ] = RECOMMENDED_TTS_BACKEND
     tts_model: str = RECOMMENDED_TTS_MODEL
     tts_device: str = "cuda"
     tts_reference_source: Literal["project_sentence", "external"] = "project_sentence"
@@ -150,6 +156,11 @@ class ProjectSettings(BaseModel):
     tts_config_path: str = str(DEFAULT_INDEXTTS_CONFIG)
     tts_executable: str = ""
     tts_speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    tts_voice: str = ""
+    tts_volume: float = Field(default=1.0, ge=0.1, le=10.0)
+    tts_pitch: int = Field(default=0, ge=-12, le=12)
+    tts_emotion: str = "auto"
+    tts_style_prompt: str = ""
     tts_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     tts_top_p: float = Field(default=0.9, gt=0.0, le=1.0)
     tts_index_use_fp16: bool = True
@@ -222,7 +233,15 @@ class ProjectSettings(BaseModel):
         if isinstance(value, dict):
             value = dict(value)
             supported_asr = {"parakeet_nemo", "kotoba_whisper", "faster_whisper"}
-            supported_tts = {"indextts2", "gpt_sovits", "cosyvoice", "fish_speech"}
+            supported_tts = {
+                "indextts2",
+                "gpt_sovits",
+                "cosyvoice",
+                "fish_speech",
+                "edge_tts",
+                "mimo_tts",
+                "minimax",
+            }
             if "asr_backend" in value and value.get("asr_backend") not in supported_asr:
                 value["asr_backend"] = RECOMMENDED_ASR_BACKEND
                 value["asr_model"] = RECOMMENDED_ASR_MODEL
@@ -328,7 +347,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.0.1"
+    app_version: str = "1.1.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -462,7 +481,15 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
     if version == 1:
         settings = dict(payload.get("settings") or {})
         supported_asr = {"parakeet_nemo", "kotoba_whisper", "faster_whisper"}
-        supported_tts = {"indextts2", "gpt_sovits", "cosyvoice", "fish_speech"}
+        supported_tts = {
+            "indextts2",
+            "gpt_sovits",
+            "cosyvoice",
+            "fish_speech",
+            "edge_tts",
+            "mimo_tts",
+            "minimax",
+        }
         if settings.get("asr_backend") not in supported_asr:
             old = settings.get("asr_backend", "未知")
             settings["asr_backend"] = RECOMMENDED_ASR_BACKEND
@@ -493,7 +520,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.0.1"
+        payload["app_version"] = "1.1.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

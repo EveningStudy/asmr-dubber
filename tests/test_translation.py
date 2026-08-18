@@ -561,11 +561,14 @@ def test_deepseek_auth_error_is_not_retried() -> None:
     assert calls == 1
 
 
-@pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "openai_compatible"])
+@pytest.mark.parametrize(
+    "provider",
+    ["bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible"],
+)
 def test_llm_provider_adapters_keep_strict_sentence_ids(provider: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        if provider in {"openai", "openai_compatible"}:
+        if provider in {"bailian", "doubao", "openai", "openai_compatible"}:
             assert request.headers.get("Authorization") == "Bearer provider-key"
             assert payload["response_format"] == {"type": "json_object"}
             return httpx.Response(
@@ -615,6 +618,8 @@ def test_llm_provider_adapters_keep_strict_sentence_ids(provider: str) -> None:
 
     sentence = Sentence(id="s000001", start_seconds=0.0, end_seconds=1.0, ja_text="こんにちは。")
     base_urls = {
+        "bailian": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "doubao": "https://ark.cn-beijing.volces.com/api/v3",
         "openai": "https://api.openai.com/v1",
         "anthropic": "https://api.anthropic.com",
         "gemini": "https://generativelanguage.googleapis.com/v1beta",

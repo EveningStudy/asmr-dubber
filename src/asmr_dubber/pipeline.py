@@ -169,8 +169,8 @@ def _reconcile_untimed_script(
     provider = project.settings.translation_provider
     if provider not in LLM_RECONCILIATION_PROVIDERS:
         raise ProjectError(
-            "无时间轴台本的智能校对需要大模型翻译服务；请先在设置中选择 DeepSeek、OpenAI、"
-            "Claude、Gemini 或本地/自定义 OpenAI-compatible。"
+            "无时间轴台本的智能校对需要大模型翻译服务；请先在设置中选择 DeepSeek、百炼、"
+            "豆包、OpenAI、Claude、Gemini 或本地/自定义 OpenAI-compatible。"
         )
     preset = PROVIDER_PRESETS.get(provider)
     if preset is None:

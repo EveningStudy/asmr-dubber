@@ -322,6 +322,7 @@ def doctor_command(
         ("numpy", "numpy"),
         ("soundfile", "soundfile"),
         ("httpx", "httpx"),
+        ("edge-tts", "edge_tts"),
         ("gradio", "gradio"),
     ):
         try:

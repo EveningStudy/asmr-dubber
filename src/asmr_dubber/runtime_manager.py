@@ -197,6 +197,7 @@ def _run_streaming_process(
 
 
 _IMPORTS: dict[str, tuple[str, ...]] = {
+    "edge_tts": ("edge_tts",),
     "faster_whisper": ("faster_whisper",),
     "kotoba_whisper": ("transformers",),
 }
@@ -439,6 +440,10 @@ def backend_status(
     platform_id = current_platform().id
     if platform_id not in backend.platforms:
         return BackendStatus("incompatible", "当前系统不支持")
+    if backend.id == "edge_tts":
+        if not _imports_available(backend.id):
+            return BackendStatus("missing", "运行依赖缺失", "请重新运行 Setup 修复基础依赖")
+        return BackendStatus("ready", "可用", "无需 API Key；需要联网")
     if backend.runtime == "http":
         return BackendStatus("external", "外部服务", "保存服务地址后请先用短音频试运行")
     if backend.id == "parakeet_nemo":

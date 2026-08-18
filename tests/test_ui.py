@@ -1,5 +1,7 @@
+import sys
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -36,6 +38,7 @@ from asmr_dubber.ui_services import (
     apply_table,
     import_transcript_data,
     open_project_directory,
+    preview_edge_tts_voice,
     reference_picker,
     select_autoflow_external_reference,
     select_autoflow_project_reference,
@@ -153,6 +156,45 @@ def test_ui_staging_is_deterministic_and_below_one_allowlist(tmp_path: Path, mon
     assert first == second
     assert first.is_relative_to(home / "temp" / "ui")
     assert first.read_bytes() == b"audio"
+
+
+def test_media_preview_staging_uses_browser_safe_filename(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "portable"
+    monkeypatch.setattr("asmr_dubber.ui_services.portable_home", lambda: home)
+    output = tmp_path / "outside" / "#1.中文试听.wav"
+    output.parent.mkdir()
+    output.write_bytes(b"audio")
+
+    staged = Path(stage_for_ui(output, preserve_name=False))
+
+    assert staged.name.endswith(".wav")
+    assert staged.stem.isascii()
+    assert all(character.isalnum() for character in staged.stem)
+    assert staged.read_bytes() == b"audio"
+
+
+def test_edge_tts_voice_preview_is_cached_and_browser_safe(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "portable"
+    calls: list[tuple[str, str]] = []
+
+    class FakeCommunicate:
+        def __init__(self, text: str, *, voice: str):
+            calls.append((text, voice))
+
+        async def save(self, path: str) -> None:
+            Path(path).write_bytes(b"edge-preview")
+
+    monkeypatch.setattr("asmr_dubber.ui_services.portable_home", lambda: home)
+    monkeypatch.setitem(sys.modules, "edge_tts", SimpleNamespace(Communicate=FakeCommunicate))
+
+    first = Path(preview_edge_tts_voice("zh-CN-XiaoxiaoNeural"))
+    second = Path(preview_edge_tts_voice("zh-CN-XiaoxiaoNeural"))
+
+    assert first == second
+    assert first.name.endswith(".mp3")
+    assert first.stem.isascii()
+    assert first.read_bytes() == b"edge-preview"
+    assert calls == [("你好，欢迎使用 ASMR Dubber。", "zh-CN-XiaoxiaoNeural")]
 
 
 def test_open_project_directory_uses_loaded_project_path(tmp_path: Path, monkeypatch) -> None:
@@ -376,11 +418,7 @@ def test_autoflow_reference_events_are_streamed_without_blocking_ui(
         )
     )
 
-    reference_kinds = [
-        event[5]["kind"]
-        for event in events
-        if event[5] is not None
-    ]
+    reference_kinds = [event[5]["kind"] for event in events if event[5] is not None]
     assert reference_kinds == ["ready", "timeout"]
 
 
@@ -842,16 +880,36 @@ def test_asr_backend_hides_parameters_owned_by_other_backends(monkeypatch) -> No
 
 def test_tts_detail_visibility_tracks_active_reference_mode() -> None:
     gpt_external = ui_module._tts_detail_visibility(
-        "gpt_sovits", "external", "project_reference", "sentence_reference", "zero_shot"
+        "gpt_sovits",
+        "GPT-SoVITS-v4",
+        "external",
+        "project_reference",
+        "sentence_reference",
+        "zero_shot",
     )
     cosy_cross_lingual = ui_module._tts_detail_visibility(
-        "cosyvoice", "external", "project_reference", "sentence_reference", "cross_lingual"
+        "cosyvoice",
+        "Fun-CosyVoice3-0.5B",
+        "external",
+        "project_reference",
+        "sentence_reference",
+        "cross_lingual",
     )
     index_external = ui_module._tts_detail_visibility(
-        "indextts2", "project_sentence", "external", "external", "zero_shot"
+        "indextts2",
+        "IndexTTS2",
+        "project_sentence",
+        "external",
+        "external",
+        "zero_shot",
     )
     index_text = ui_module._tts_detail_visibility(
-        "indextts2", "project_sentence", "project_reference", "text", "zero_shot"
+        "indextts2",
+        "IndexTTS2",
+        "project_sentence",
+        "project_reference",
+        "text",
+        "zero_shot",
     )
 
     assert [update["visible"] for update in gpt_external] == [True, True, True, False, False]
@@ -864,6 +922,57 @@ def test_tts_detail_visibility_tracks_active_reference_mode() -> None:
     ]
     assert [update["visible"] for update in index_external] == [True, False, False, True, False]
     assert [update["visible"] for update in index_text] == [False, False, False, False, True]
+
+    mimo_clone = ui_module._tts_detail_visibility(
+        "mimo_tts",
+        "mimo-v2.5-tts-voiceclone",
+        "external",
+        "project_reference",
+        "sentence_reference",
+        "zero_shot",
+    )
+    mimo_preset = ui_module._tts_detail_visibility(
+        "mimo_tts",
+        "mimo-v2.5-tts",
+        "external",
+        "project_reference",
+        "sentence_reference",
+        "zero_shot",
+    )
+    assert [update["visible"] for update in mimo_clone] == [True, False, False, False, False]
+    assert [update["visible"] for update in mimo_preset] == [False] * 5
+
+
+def test_new_tts_backend_controls_only_show_relevant_options(monkeypatch) -> None:
+    monkeypatch.setattr(ui_module, "service_key_status", lambda *_args: "status")
+
+    edge = ui_module._tts_backend_update("edge_tts")
+    mimo = ui_module._tts_backend_update("mimo_tts")
+    minimax = ui_module._tts_backend_update("minimax")
+
+    assert edge[0]["value"] == "edge-tts"
+    assert edge[1]["value"] == ""
+    assert edge[5]["visible"] is False
+    assert edge[11]["visible"] is True
+    assert edge[12]["value"] == "zh-CN-XiaoxiaoNeural"
+    assert edge[13]["visible"] is True
+    assert edge[14]["visible"] is False
+    assert edge[15]["visible"] is False
+
+    assert mimo[0]["value"] == "mimo-v2.5-tts-voiceclone"
+    assert mimo[5]["visible"] is True
+    assert mimo[13]["visible"] is False
+    assert mimo[15]["visible"] is True
+
+    assert minimax[0]["value"] == "speech-2.8-hd"
+    assert minimax[12]["value"] == "female-shaonv"
+    assert minimax[13]["visible"] is True
+    assert minimax[14]["visible"] is True
+
+    mimo_preset = ui_module._tts_model_controls_update("mimo_tts", "mimo-v2.5-tts")
+    mimo_clone = ui_module._tts_model_controls_update("mimo_tts", "mimo-v2.5-tts-voiceclone")
+    assert [item["visible"] for item in mimo_preset] == [False, True, False, True]
+    assert [item["visible"] for item in mimo_clone] == [True, False, False, True]
 
 
 def test_download_controller_pauses_only_active_download() -> None:

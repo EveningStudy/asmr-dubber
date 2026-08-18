@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,39 @@ def test_linux_setup_exposes_same_three_chinese_profiles() -> None:
     assert "asr-kotoba-whisper" in advanced
     assert "asr-forced-aligner" in advanced
     assert "asr-asmr-vad" in advanced
+
+
+def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
+    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
+    runtime_checks = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    dependency_builder = (
+        ROOT / "scripts/windows/create-recommended-dependency-pack.ps1"
+    ).read_text(encoding="utf-8-sig")
+    linux = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    edge_version = next(
+        package["version"] for package in lock["package"] if package["name"] == "edge-tts"
+    )
+
+    api_install = windows.index('"edge-tts==7.2.8"')
+    application_install = windows.index('Write-Host "正在安装应用依赖')
+    assert api_install < application_install
+    assert f'"edge-tts=={edge_version}"' in windows
+    assert "Test-ASMRDubberApiClientRuntime" in runtime_checks
+    assert "Test-ASMRDubberApplicationRuntime" in runtime_checks
+    assert "import edge_tts, httpx" in runtime_checks
+    assert '("edge-tts", "edge_tts")' in (ROOT / "src/asmr_dubber/cli.py").read_text(
+        encoding="utf-8"
+    )
+    assert "$ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime" in windows
+    assert "Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot" in windows
+    assert "edge_tts" in dependency_builder
+    assert "httpx" in dependency_builder
+    assert "import asmr_dubber.ui, av, edge_tts, gradio, httpx" in linux
+    assert "国内软件源补齐应用依赖" in windows
+    assert "国内软件源补齐应用依赖" in linux
 
 
 def test_model_packs_are_imported_before_profile_downloads() -> None:
@@ -339,8 +373,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.0.1.0")' in source
-        assert 'AssemblyFileVersion("1.0.1.0")' in source
+        assert 'AssemblyVersion("1.1.0.0")' in source
+        assert 'AssemblyFileVersion("1.1.0.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

@@ -22,7 +22,15 @@ from .translation import LLMTranslator
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
 
 Progress = Callable[[str, int, int], None]
-_LLM_PROVIDERS = {"deepseek", "openai", "anthropic", "gemini", "openai_compatible"}
+_LLM_PROVIDERS = {
+    "deepseek",
+    "bailian",
+    "doubao",
+    "openai",
+    "anthropic",
+    "gemini",
+    "openai_compatible",
+}
 
 
 @dataclass(frozen=True)
@@ -180,7 +188,7 @@ def _request_json(
     if provider not in _LLM_PROVIDERS:
         raise AsmrDubberError(
             "多 ASR（语音识别）校对需要大模型；当前翻译供应商不是 LLM。"
-            "请改用 DeepSeek/OpenAI/Claude/Gemini/本地兼容接口。"
+            "请改用 DeepSeek、百炼、豆包、OpenAI、Claude、Gemini 或本地兼容接口。"
         )
     key = resolve_api_key(provider)
     preset = PROVIDER_PRESETS[provider]

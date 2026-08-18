@@ -170,8 +170,12 @@ if asmr_prepare_wheelhouse \
   "linux_application_wheelhouse_archives" \
   "linux_application_wheelhouse_checksums"; then
   echo "使用 ModelScope 应用依赖 wheelhouse：$ASMR_WHEELHOUSE_RESULT"
-  "$UV" pip install --python "$VENV/bin/python" --editable "$EXTRA" \
-    "setuptools>=78.1.1,<82" --offline --find-links "$ASMR_WHEELHOUSE_RESULT"
+  if ! "$UV" pip install --python "$VENV/bin/python" --editable "$EXTRA" \
+    "setuptools>=78.1.1,<82" --offline --find-links "$ASMR_WHEELHOUSE_RESULT"; then
+    echo "ModelScope wheelhouse 早于当前依赖定义，使用配置中的国内软件源补齐应用依赖。"
+    install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
+    install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
+  fi
 else
   WHEELHOUSE_STATUS=$?
   if [[ "$WHEELHOUSE_STATUS" == 2 ]]; then
@@ -183,6 +187,11 @@ else
   # release so older package-discovery vulnerabilities are not retained by an
   # in-place upgrade.
   install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
+fi
+if ! "$VENV/bin/python" -c \
+  "import asmr_dubber.ui, av, edge_tts, gradio, httpx, soundfile, setuptools"; then
+  echo "错误：基础应用或在线/API 客户端安装后仍不完整。" >&2
+  exit 1
 fi
 "$VENV/bin/python" -m compileall -q -f "$ROOT/src/asmr_dubber"
 

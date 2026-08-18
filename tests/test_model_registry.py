@@ -29,10 +29,16 @@ def test_only_supported_asr_and_tts_backends_are_registered() -> None:
         "gpt_sovits",
         "cosyvoice",
         "fish_speech",
+        "edge_tts",
+        "mimo_tts",
+        "minimax",
     }
     assert TTS_BACKENDS["indextts2"].reference_text == "unused"
     assert TTS_BACKENDS["gpt_sovits"].reference_text == "required"
     assert TTS_BACKENDS["fish_speech"].api_key is True
+    assert TTS_BACKENDS["edge_tts"].api_key is False
+    assert TTS_BACKENDS["mimo_tts"].default_model == "mimo-v2.5-tts-voiceclone"
+    assert TTS_BACKENDS["minimax"].default_voice == "female-shaonv"
 
 
 def test_installable_backends_come_from_registry_capabilities() -> None:

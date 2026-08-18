@@ -355,10 +355,18 @@ if ($InstallAdvancedModels -and $NvidiaSmi -and -not $AdvancedDependenciesReady)
     }
 }
 
-$ApplicationDependenciesReady = (
-    $AdvancedDependenciesReady -or
-    ($Profile -eq "推荐" -and (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot))
-)
+$ApiClientsReady = Test-ASMRDubberApiClientRuntime -PortableRoot $DataRoot
+if (-not $ApiClientsReady) {
+    Write-Host "正在安装在线翻译与 TTS（语音合成）API 客户端..." -ForegroundColor Cyan
+    Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+        -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+        -Arguments @("pip", "install", "--python", $Python, "edge-tts==7.2.8")
+    if (-not (Test-ASMRDubberApiClientRuntime -PortableRoot $DataRoot)) {
+        throw "在线/API 客户端安装后仍不完整。"
+    }
+}
+
+$ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime -PortableRoot $DataRoot
 if (-not $ApplicationDependenciesReady) {
     Write-Host "正在安装应用依赖：$Extra" -ForegroundColor Cyan
     $ApplicationWheelhouse = Get-ASMRDubberWheelhouse `
@@ -368,11 +376,21 @@ if (-not $ApplicationDependenciesReady) {
         -ChecksumMirrorName "windows_application_wheelhouse_checksums"
     if ($ApplicationWheelhouse) {
         Write-Host "使用 ModelScope 应用依赖 wheelhouse。" -ForegroundColor Green
-        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
-            -Wheelhouse $ApplicationWheelhouse -Arguments @(
-                "pip", "install", "--python", $Python, "--editable", $Extra,
-                "setuptools>=78.1.1,<82"
-            ) -FailureMessage "应用依赖 wheelhouse 安装失败"
+        try {
+            Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
+                -Wheelhouse $ApplicationWheelhouse -Arguments @(
+                    "pip", "install", "--python", $Python, "--editable", $Extra,
+                    "setuptools>=78.1.1,<82"
+                ) -FailureMessage "应用依赖 wheelhouse 安装失败"
+        } catch {
+            Write-Warning (
+                "ModelScope 应用 wheelhouse 早于当前依赖定义，将使用配置中的" +
+                "国内软件源补齐应用依赖：$($_.Exception.Message)"
+            )
+            Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+                -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
+                -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
+        }
     } else {
         Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
             -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
@@ -387,6 +405,9 @@ if (-not $ApplicationDependenciesReady) {
     }
 } else {
     Write-Host "应用依赖已由 Windows 依赖包提供。" -ForegroundColor Green
+}
+if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot)) {
+    throw "基础应用或在线/API 客户端安装后仍不完整。"
 }
 Invoke-Checked -FilePath $Python `
     -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
