@@ -56,6 +56,44 @@ if (-not $result.StartsWith("existing:")) {{ throw "existing file was not reused
     assert not partial.exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell behavior")
+def test_windows_downloader_adapts_to_legacy_curl(tmp_path: Path) -> None:
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    assert powershell is not None
+    legacy_curl = tmp_path / "legacy-curl.cmd"
+    modern_curl = tmp_path / "modern-curl.cmd"
+    legacy_curl.write_text(
+        '@echo off\nif "%~1"=="--retry-all-errors" exit /b 2\nexit /b 0\n',
+        encoding="ascii",
+    )
+    modern_curl.write_text("@exit /b 0\n", encoding="ascii")
+
+    def quote(value: Path) -> str:
+        return str(value).replace("'", "''")
+
+    script = f"""
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+. '{quote(ROOT / "scripts/mirrors.ps1")}'
+$legacy = @(Get-ASMRDubberCurlCommonArguments -CurlPath '{quote(legacy_curl)}')
+$modern = @(Get-ASMRDubberCurlCommonArguments -CurlPath '{quote(modern_curl)}')
+[pscustomobject]@{{ legacy = $legacy; modern = $modern }} |
+    ConvertTo-Json -Compress
+"""
+    completed = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert "--retry-all-errors" not in result["legacy"]
+    assert "--retry-all-errors" in result["modern"]
+    assert "--retry" in result["legacy"]
+
+
 def test_windows_setup_exposes_three_chinese_monotonic_profiles() -> None:
     setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
 
@@ -144,6 +182,7 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
     application_install = windows.index('Write-Host "正在安装应用依赖')
     assert application_install < api_install
     assert f'"edge-tts=={edge_version}"' in windows
+    assert '"httpx>=0.28.0"' in windows
     assert "Test-ASMRDubberApiClientRuntime" in runtime_checks
     assert "Test-ASMRDubberApplicationRuntime" in runtime_checks
     assert "import edge_tts, httpx" in runtime_checks
@@ -399,8 +438,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.1.2.0")' in source
-        assert 'AssemblyFileVersion("1.1.2.0")' in source
+        assert 'AssemblyVersion("1.1.3.0")' in source
+        assert 'AssemblyFileVersion("1.1.3.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 from pathlib import Path
@@ -251,3 +252,41 @@ def test_ready_indextts_remains_default(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("asmr_dubber.user_settings.INDEXTTS_REQUIRED_DIRS", frozenset())
 
     assert load_user_settings().tts_backend == "indextts2"
+
+
+def test_ready_indextts_repairs_legacy_cpu_value_once(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "config"))
+    executable = tmp_path / "indextts2.exe"
+    executable.touch()
+    monkeypatch.setattr(
+        "asmr_dubber.user_settings.runtime_executable_candidates",
+        lambda *_args, **_kwargs: (executable,),
+    )
+    monkeypatch.setattr("asmr_dubber.user_settings.INDEXTTS_REQUIRED_FILES", frozenset())
+    monkeypatch.setattr("asmr_dubber.user_settings.INDEXTTS_REQUIRED_DIRS", frozenset())
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.detect_hardware",
+        lambda: type("Hardware", (), {"recommended_device": "cuda"})(),
+    )
+    config = tmp_path / "config" / "settings.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps({"tts_backend": "indextts2", "tts_device": "cpu"}),
+        encoding="utf-8",
+    )
+
+    migrated = load_user_settings()
+    assert migrated.tts_device == "cuda"
+    assert migrated.tts_device_selection_version == 1
+
+    config.write_text(
+        json.dumps(
+            {
+                "tts_backend": "indextts2",
+                "tts_device": "cpu",
+                "tts_device_selection_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_user_settings().tts_device == "cpu"

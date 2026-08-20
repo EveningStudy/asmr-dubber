@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "1.1.2",
+  "release": "1.1.3",
   "repository": "EveningStudyW/ASMR-Dubber-Portable-Mirror",
   "revision": "master",
   "artifacts": [
@@ -67,8 +67,8 @@
     {
       "id": "ffmpeg-windows-shared",
       "path": "artifacts/runtimes/ffmpeg/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip",
-      "size": 70506235,
-      "sha256": "34db93b66a56125ec10547b12a7996e2dbca8eba6a1aa14b00b8a281bc87cd02"
+      "size": 70830663,
+      "sha256": "96d669b9e33133fba1365c74a8b1d79b26b7245e88fe7d6d3ec198dfab649b4a"
     },
     {
       "id": "ffmpeg-windows-checksums",
@@ -89,11 +89,5 @@
       "sha256": "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
     }
   ],
-  "sidecar_verified_archives": [
-    "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip",
-    "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip",
-    "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip",
-    "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz",
-    "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz"
-  ]
+  "sidecar_verified_archives": []
 }

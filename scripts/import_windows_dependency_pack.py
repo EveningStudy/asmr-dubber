@@ -188,7 +188,13 @@ def _install_component(
     os.replace(source, destination)
 
 
-def import_pack(archive: Path, portable: Path, sha256: str) -> None:
+def import_pack(
+    archive: Path,
+    portable: Path,
+    sha256: str,
+    *,
+    runtime_only: bool = False,
+) -> None:
     if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
         raise DependencyPackError("dependency pack SHA-256 is invalid")
     portable.mkdir(parents=True, exist_ok=True)
@@ -207,10 +213,18 @@ def import_pack(archive: Path, portable: Path, sha256: str) -> None:
             _extract(handle, staging)
         _validate_staging(staging)
         components = (
-            "venv",
-            "runtimes/python/cpython-3.11.13-windows-x86_64-none",
-            "runtimes/index-tts/.venv",
-            "runtimes/ffmpeg-shared",
+            (
+                "runtimes/python/cpython-3.11.13-windows-x86_64-none",
+                "runtimes/index-tts/.venv",
+                "runtimes/ffmpeg-shared",
+            )
+            if runtime_only
+            else (
+                "venv",
+                "runtimes/python/cpython-3.11.13-windows-x86_64-none",
+                "runtimes/index-tts/.venv",
+                "runtimes/ffmpeg-shared",
+            )
         )
         for relative in components:
             _install_component(staging, portable, relative, backups)
@@ -251,8 +265,14 @@ def main() -> None:
     parser.add_argument("archive", type=Path)
     parser.add_argument("portable", type=Path)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--runtime-only", action="store_true")
     args = parser.parse_args()
-    import_pack(args.archive.resolve(), args.portable.resolve(), args.sha256.lower())
+    import_pack(
+        args.archive.resolve(),
+        args.portable.resolve(),
+        args.sha256.lower(),
+        runtime_only=args.runtime_only,
+    )
 
 
 if __name__ == "__main__":

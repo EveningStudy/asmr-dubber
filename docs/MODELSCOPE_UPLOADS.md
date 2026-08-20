@@ -49,7 +49,7 @@ API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、
 | `artifacts/runtimes/crispasr/v0.8.21/crispasr-windows-x86_64-cuda.zip` | 691,366,170 | `d7db946f4b73fa0fbf3a3e27d63a994eee51a90138384813d35f7863a59aeba3` |
 | `artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64.tar.gz` | 23,042,489 | `55d48357052c6d9376ad6548c877f9fb1e0a79728ae5e24dfc84b29405d22434` |
 | `artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz` | 212,863,648 | `883edc02ed3666af9e76b26ca29e2fc5db0ce48f97e4b0ef575d482a3619c74d` |
-| `artifacts/runtimes/ffmpeg/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip` | 70,506,235 | `34db93b66a56125ec10547b12a7996e2dbca8eba6a1aa14b00b8a281bc87cd02` |
+| `artifacts/runtimes/ffmpeg/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip` | 70,830,663 | `96d669b9e33133fba1365c74a8b1d79b26b7245e88fe7d6d3ec198dfab649b4a` |
 | `artifacts/runtimes/ffmpeg/btbn-checksums.sha256` | 5,296 | `1305cfe1375c3a54e3bff0383db0a305373aa89771ca1cb74db22f4712d68a9e` |
 | `artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf` | 2,134,533,952 | `34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7` |
 | `artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf` | 1,246,932,800 | `374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584` |
@@ -135,7 +135,7 @@ index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip
 
 ## Wheelhouse
 
-下列路径用于不访问 PyPI 的依赖安装。每个归档必须有同路径、同文件名再加 `.sha256` 的旁车文件：
+如果要发布完全离线的依赖包，可使用下列路径。当前发行配置没有把这些可选 wheelhouse 声明为下载源；推荐/进阶档直接使用已验证的依赖包，基础档使用配置中的国内 PyPI 镜像补齐小型依赖。每个发布的归档必须有同路径、同文件名再加 `.sha256` 的旁车文件：
 
 | 仓库内路径 | 内容 |
 |---|---|
@@ -153,7 +153,7 @@ index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip
 
 安装器先取旁车再决定是否下载大包：
 
-- 旁车不存在：认为该 wheelhouse 没有发布，可以尝试配置中的国内 PyPI 镜像；
+- 旁车不存在：认为该 wheelhouse 没有发布，可以使用配置中的国内 PyPI 镜像；
 - 旁车存在但归档缺失、大小不完整或哈希错误：立即停止，不静默切换；
 - 归档与旁车一致：离线安装，并拒绝从网络补缺 wheel。
 

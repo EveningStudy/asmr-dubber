@@ -178,26 +178,44 @@ if ($IndexRuntimeReady) {
     Write-Host "IndexTTS2 Python/CUDA 依赖已由“推荐”依赖包提供。" `
         -ForegroundColor Green
 } else {
-    Write-Host "正在安装 IndexTTS2 独立 Python/CUDA 环境..." -ForegroundColor Cyan
-    Install-ASMRDubberManagedPythonArchive `
-        -Root $Root -Paths $Paths -MirrorConfiguration $MirrorConfiguration `
-        -Version "3.11.13" -BuildDate "20251007" `
-        -Sha256 "cde5153f59a67d9e108f2ed964526e9aed100eba180f54bee0496b4fd73a8b29" `
-        -MirrorName "python311_windows_archives" | Out-Null
-    $IndexWheelhouse = Get-ASMRDubberWheelhouse `
-        -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
-        -ArchiveName "ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip" `
-        -ArchiveMirrorName "indextts2_wheelhouse_archives_windows" `
-        -ChecksumMirrorName "indextts2_wheelhouse_checksums_windows"
-    if ($IndexWheelhouse) {
-        Write-Host "使用 ModelScope IndexTTS2 wheelhouse。" -ForegroundColor Green
-        Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $RuntimeRoot `
-            -Wheelhouse $IndexWheelhouse -Arguments @("sync") `
-            -FailureMessage "IndexTTS2 wheelhouse 安装失败"
-    } else {
-        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-            -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-            -Arguments @("sync")
+    Write-Host "正在通过与 Setup 相同的推荐依赖包修复 IndexTTS2 环境..." `
+        -ForegroundColor Cyan
+    $RecommendedReady = Import-ASMRDubberRecommendedDependencies `
+        -Root $Root -PortableRoot $DataRoot -Python $Paths.Python `
+        -MirrorConfiguration $MirrorConfiguration -RuntimeOnly
+    if ($RecommendedReady) {
+        $IndexPython = Join-Path $RuntimeRoot ".venv\Scripts\python.exe"
+        $IndexRuntimeReady = Test-ASMRDubberIndexRuntimeDependencies -PortableRoot $DataRoot
+        if ($IndexRuntimeReady) {
+            $ImportCheck = Invoke-ASMRDubberProcess -FilePath $IndexPython `
+                -ArgumentList @("-c", "import indextts.cli_v2") `
+                -WorkingDirectory $RuntimeRoot
+            $IndexRuntimeReady = $ImportCheck -eq 0
+        }
+    }
+    if (-not $IndexRuntimeReady) {
+        Write-Host "推荐依赖包不可用，改为单独安装 IndexTTS2 独立环境..." `
+            -ForegroundColor Cyan
+        Install-ASMRDubberManagedPythonArchive `
+            -Root $Root -Paths $Paths -MirrorConfiguration $MirrorConfiguration `
+            -Version "3.11.13" -BuildDate "20251007" `
+            -Sha256 "cde5153f59a67d9e108f2ed964526e9aed100eba180f54bee0496b4fd73a8b29" `
+            -MirrorName "python311_windows_archives" | Out-Null
+        $IndexWheelhouse = Get-ASMRDubberWheelhouse `
+            -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
+            -ArchiveName "ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip" `
+            -ArchiveMirrorName "indextts2_wheelhouse_archives_windows" `
+            -ChecksumMirrorName "indextts2_wheelhouse_checksums_windows"
+        if ($IndexWheelhouse) {
+            Write-Host "使用 ModelScope IndexTTS2 wheelhouse。" -ForegroundColor Green
+            Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $RuntimeRoot `
+                -Wheelhouse $IndexWheelhouse -Arguments @("sync") `
+                -FailureMessage "IndexTTS2 wheelhouse 安装失败"
+        } else {
+            Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
+                -Uv $Uv -Root $RuntimeRoot -MirrorName "pypi_indexes" `
+                -Preferred $PreferredIndex -Arguments @("sync")
+        }
     }
 }
 

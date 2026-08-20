@@ -36,36 +36,16 @@
     "windows_advanced_dependency_archives": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-Windows-Advanced-Dependencies-v1.0.0.zip"
     ],
-    "windows_application_wheelhouse_archives": [
-      "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip"
-    ],
-    "windows_application_wheelhouse_checksums": [
-      "artifacts/dependencies/windows/ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip.sha256"
-    ],
-    "linux_application_wheelhouse_archives": [
-      "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz"
-    ],
-    "linux_application_wheelhouse_checksums": [
-      "artifacts/dependencies/linux/ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz.sha256"
-    ],
-    "windows_cuda_wheelhouse_archives": [
-      "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip"
-    ],
-    "windows_cuda_wheelhouse_checksums": [
-      "artifacts/dependencies/windows/ASMR-Dubber-Windows-CUDA130-Wheelhouse-v0.4.0.zip.sha256"
-    ],
-    "indextts2_wheelhouse_archives_windows": [
-      "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip"
-    ],
-    "indextts2_wheelhouse_checksums_windows": [
-      "artifacts/dependencies/windows/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.zip.sha256"
-    ],
-    "indextts2_wheelhouse_archives_linux": [
-      "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz"
-    ],
-    "indextts2_wheelhouse_checksums_linux": [
-      "artifacts/dependencies/linux/ASMR-Dubber-IndexTTS2-Wheelhouse-v0.4.0.tar.gz.sha256"
-    ],
+    "windows_application_wheelhouse_archives": [],
+    "windows_application_wheelhouse_checksums": [],
+    "windows_cuda_wheelhouse_archives": [],
+    "windows_cuda_wheelhouse_checksums": [],
+    "indextts2_wheelhouse_archives_windows": [],
+    "indextts2_wheelhouse_checksums_windows": [],
+    "linux_application_wheelhouse_archives": [],
+    "linux_application_wheelhouse_checksums": [],
+    "indextts2_wheelhouse_archives_linux": [],
+    "indextts2_wheelhouse_checksums_linux": [],
     "indextts2_source_archives": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS2/resolve/master/index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip"
     ],

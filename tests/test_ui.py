@@ -966,11 +966,21 @@ def test_tts_detail_visibility_tracks_active_reference_mode() -> None:
 
 def test_new_tts_backend_controls_only_show_relevant_options(monkeypatch) -> None:
     monkeypatch.setattr(ui_module, "service_key_status", lambda *_args: "status")
+    monkeypatch.setattr(
+        ui_module,
+        "detect_hardware",
+        lambda: type("Hardware", (), {"recommended_device": "cuda"})(),
+    )
 
+    index = ui_module._tts_backend_update("indextts2")
     edge = ui_module._tts_backend_update("edge_tts")
     mimo = ui_module._tts_backend_update("mimo_tts")
     minimax = ui_module._tts_backend_update("minimax")
 
+    assert index[8]["value"] == "cuda"
+    assert index[8]["visible"] is True
+    assert edge[8]["value"] == "cpu"
+    assert edge[8]["visible"] is False
     assert edge[0]["value"] == "edge-tts"
     assert edge[1]["value"] == ""
     assert edge[5]["visible"] is False

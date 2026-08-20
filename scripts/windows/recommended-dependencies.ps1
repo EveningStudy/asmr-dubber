@@ -91,7 +91,8 @@ function Import-ASMRDubberRecommendedDependencies {
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$PortableRoot,
         [Parameter(Mandatory = $true)][string]$Python,
-        [Parameter(Mandatory = $true)][object]$MirrorConfiguration
+        [Parameter(Mandatory = $true)][object]$MirrorConfiguration,
+        [switch]$RuntimeOnly
     )
 
     if (Test-ASMRDubberRecommendedDependencies -PortableRoot $PortableRoot) {
@@ -151,14 +152,16 @@ function Import-ASMRDubberRecommendedDependencies {
             throw "依赖包 SHA-256 校验失败：$ActualHash"
         }
         Write-Host "正在导入 Windows 推荐档依赖包..." -ForegroundColor Cyan
+        $ImportArguments = @(
+            (Join-Path $Root "scripts\import_windows_dependency_pack.py"),
+            $Archive,
+            $PortableRoot,
+            "--sha256",
+            $script:RecommendedDependencyPackSha256
+        )
+        if ($RuntimeOnly) { $ImportArguments += "--runtime-only" }
         $ExitCode = Invoke-ASMRDubberProcess -FilePath $Python `
-            -ArgumentList @(
-                (Join-Path $Root "scripts\import_windows_dependency_pack.py"),
-                $Archive,
-                $PortableRoot,
-                "--sha256",
-                $script:RecommendedDependencyPackSha256
-            ) -WorkingDirectory $Root
+            -ArgumentList $ImportArguments -WorkingDirectory $Root
         if ($ExitCode -ne 0) {
             throw "依赖包导入进程退出码 $ExitCode"
         }

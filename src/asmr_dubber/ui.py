@@ -76,6 +76,7 @@ from .runtime_manager import (
     available_backend_models_markdown,
     available_timestamp_review_choices,
     backend_catalog_rows,
+    detect_hardware,
     hardware_markdown,
     install_backend,
     installable_backend_ids,
@@ -1174,6 +1175,7 @@ def _tts_backend_update(backend: Any) -> tuple[Any, ...]:
     backend_id = str(backend or "")
     spec = TTS_BACKENDS.get(backend_id, TTS_BACKENDS["indextts2"])
     url = _TTS_DEFAULT_URLS.get(backend_id, "")
+    device = detect_hardware().recommended_device if backend_id == "indextts2" else "cpu"
     return (
         _gr_update(choices=list(spec.models), value=spec.default_model),
         _gr_update(value=url),
@@ -1183,7 +1185,11 @@ def _tts_backend_update(backend: Any) -> tuple[Any, ...]:
         _gr_update(visible=_tts_model_uses_reference(backend_id, spec.default_model)),
         _gr_update(visible=backend_id == "gpt_sovits"),
         _gr_update(visible=backend_id == "cosyvoice"),
-        _gr_update(visible=backend_id == "indextts2"),
+        _gr_update(
+            choices=[("NVIDIA CUDA（推荐）", "cuda"), ("CPU（非常慢）", "cpu")],
+            value=device,
+            visible=backend_id == "indextts2",
+        ),
         _gr_update(visible=backend_id != "indextts2"),
         _gr_update(visible=backend_id == "gpt_sovits"),
         _gr_update(visible=backend_id in {"gpt_sovits", "edge_tts", "minimax"}),
@@ -2255,9 +2261,16 @@ def build_app() -> Any:
                         with gr.Row():
                             settings_components["tts_device"] = gr.Dropdown(
                                 label="合成设备",
-                                choices=[("NVIDIA CUDA", "cuda"), ("CPU/外部服务", "cpu")],
+                                choices=[
+                                    ("NVIDIA CUDA（推荐）", "cuda"),
+                                    ("CPU（非常慢）", "cpu"),
+                                ],
                                 value=stored.tts_device,
                                 visible=stored.tts_backend == "indextts2",
+                                info=(
+                                    "IndexTTS2 可以使用 CPU，但通常比 CUDA 慢很多；"
+                                    "Edge TTS 和云端 API 不使用这里的设备设置。"
+                                ),
                             )
                             settings_components["tts_timeout_seconds"] = gr.Number(
                                 label="单句超时秒数", value=stored.tts_timeout_seconds

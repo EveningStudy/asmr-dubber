@@ -303,6 +303,38 @@ function Get-ASMRDubberFileSha256 {
     }
 }
 
+function Test-ASMRDubberCurlRetryAllErrors {
+    param([Parameter(Mandatory = $true)][string]$CurlPath)
+
+    # Windows 10 ships several curl versions. Older builds reject
+    # --retry-all-errors before making any network request, so probe the local
+    # executable with --version and add the option only when it is understood.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $CurlPath "--retry-all-errors" "--version" 1>$null 2>$null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+}
+
+function Get-ASMRDubberCurlCommonArguments {
+    param([Parameter(Mandatory = $true)][string]$CurlPath)
+
+    $Arguments = @("-L", "--fail", "--retry", "4")
+    if (Test-ASMRDubberCurlRetryAllErrors -CurlPath $CurlPath) {
+        $Arguments += "--retry-all-errors"
+    }
+    $Arguments += @(
+        "--retry-delay", "1", "--connect-timeout", "20",
+        "--header", "Accept-Encoding: identity"
+    )
+    return $Arguments
+}
+
 function Invoke-ASMRDubberDownload {
     param(
         [Parameter(Mandatory = $true)][object]$Configuration,
@@ -363,11 +395,7 @@ function Invoke-ASMRDubberDownload {
     $Errors = New-Object System.Collections.Generic.List[string]
     foreach ($Candidate in $Candidates) {
         Write-Host "尝试下载：$Candidate" -ForegroundColor Cyan
-        $CommonArguments = @(
-            "-L", "--fail", "--retry", "4", "--retry-all-errors",
-            "--retry-delay", "1", "--connect-timeout", "20",
-            "--header", "Accept-Encoding: identity"
-        )
+        $CommonArguments = @(Get-ASMRDubberCurlCommonArguments -CurlPath $Curl.Source)
         if (Test-ASMRDubberModelScopeUrl -Url $Candidate) {
             $CommonArguments += @(
                 "--header", "User-Agent: curl/8.0",

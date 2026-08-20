@@ -41,7 +41,7 @@ command -v bash curl tar getconf
 
 ## 硬件怎么选
 
-本地识别既能用 CPU，也能用 NVIDIA CUDA。CPU 适合短音频、验证流程或没有独立显卡的电脑；处理长音频时通常慢得多。本地 IndexTTS2 只支持 NVIDIA GPU。
+本地识别既能用 CPU，也能用 NVIDIA CUDA。CPU 适合短音频、验证流程或没有独立显卡的电脑；处理长音频时通常慢得多。IndexTTS2 支持 CPU 和 NVIDIA CUDA，但 CPU 模式通常会慢很多，建议优先使用 CUDA。
 
 | 组件 | 最低条件 | 更合适的配置 |
 |---|---|---|
@@ -137,6 +137,8 @@ NVIDIA 电脑如果不打算使用本地 IndexTTS2，可以跳过它：
 ```
 
 ## Linux 安装
+
+Linux 版本已较长时间未维护，当前发布不保证安装脚本、GPU 环境和全部功能可用。以下内容仅供已有环境参考；新用户建议使用 Windows 版。
 
 在项目根目录执行：
 

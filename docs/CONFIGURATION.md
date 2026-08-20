@@ -185,7 +185,7 @@ Faster-Whisper：
 | 音色参考 | 项目统一参考句 | 也可选择当前句或外部音频 |
 | 情绪参考 | 当前句 | 也可用项目参考、音色参考、外部音频或文字描述 |
 
-IndexTTS2 使用独立 Python 环境，不要把它手工安装进主程序 venv。它只支持 NVIDIA CUDA。
+IndexTTS2 使用独立 Python 环境，不要把它手工安装进主程序 venv。它支持 NVIDIA CUDA 和 CPU；CPU 模式通常会慢很多，建议优先使用 CUDA。
 
 ### Edge TTS
 

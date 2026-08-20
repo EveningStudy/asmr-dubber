@@ -42,7 +42,7 @@ function Install-ASMRDubberSharedFFmpeg {
         [string]$AssetUrl = "",
         [string]$ChecksumsUrl = "",
         [string]$ExpectedSha256 = `
-            "34db93b66a56125ec10547b12a7996e2dbca8eba6a1aa14b00b8a281bc87cd02"
+            "96d669b9e33133fba1365c74a8b1d79b26b7245e88fe7d6d3ec198dfab649b4a"
     )
 
     if (-not (Get-Command Get-ASMRDubberMirrorConfiguration -ErrorAction SilentlyContinue)) {

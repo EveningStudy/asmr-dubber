@@ -4,6 +4,7 @@ import asyncio
 import base64
 import gc
 import json
+import logging
 import mimetypes
 import queue
 import subprocess
@@ -43,6 +44,7 @@ from .voice_reference import (
 )
 
 Progress = Callable[[str, int, int], None]
+logger = logging.getLogger(__name__)
 
 
 def _selected_sentences(project: DubProject, sentence_ids: Iterable[str] | None) -> list[Sentence]:
@@ -248,6 +250,12 @@ def _synthesize_indextts_cli_batch(
         "--fp16" if project.settings.tts_index_use_fp16 else "--no-fp16",
         "--force",
     ]
+    logger.info(
+        "IndexTTS2 开始：device=%s fp16=%s sentences=%d",
+        project.settings.tts_device,
+        project.settings.tts_index_use_fp16,
+        len(tasks),
+    )
     if progress:
         progress(f"IndexTTS2 独立环境批量生成 {len(tasks)} 句", 0, len(tasks))
     output_tail: deque[str] = deque(maxlen=200)
@@ -369,6 +377,12 @@ def _synthesize_indextts_cli_batch(
         raise cancelled
     if return_code != 0 and not failures:
         raise SynthesisError(f"IndexTTS2 批处理失败（{return_code}）：{detail}")
+    logger.info(
+        "IndexTTS2 完成：device=%s sentences=%d failures=%d",
+        project.settings.tts_device,
+        len(tasks),
+        len(failures),
+    )
     return failures
 
 

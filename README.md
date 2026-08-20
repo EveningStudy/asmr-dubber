@@ -78,7 +78,9 @@ Edge TTS 已直接适配，无需 API Key。未安装或无法使用 IndexTTS2 �
 
 ### Linux
 
-适用于 64 位 x86_64 Linux。安装前确认系统有 `bash`、`curl`、`tar` 和 `getconf`：
+> Linux 版本已较长时间未维护，当前发布不保证可用。以下命令仅供已有环境参考；新用户建议使用 Windows 版。
+
+安装前确认系统有 `bash`、`curl`、`tar` 和 `getconf`：
 
 ```bash
 bash scripts/linux/setup.sh 推荐
@@ -107,7 +109,7 @@ bash scripts/linux/run-ui.sh
 6. Qwen3 ForcedAligner 0.6B；
 7. IndexTTS2 checkpoints，仅在检测到 NVIDIA GPU 时安装。
 
-没有 NVIDIA GPU 的电脑仍可使用 CPU 识别、Edge TTS 和云端 TTS。CPU 处理长音频会慢很多；IndexTTS2 不提供 CPU 模式。硬件选择可参考[后端指南](docs/BACKENDS.md)。
+没有 NVIDIA GPU 的电脑仍可使用 CPU 识别、Edge TTS 和云端 TTS。CPU 处理长音频会慢很多；IndexTTS2 也支持 CPU，但速度通常明显慢于 CUDA。硬件选择可参考[后端指南](docs/BACKENDS.md)。
 
 ## 单个作品：从音频到成品
 

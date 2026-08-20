@@ -159,6 +159,9 @@ class UserSettings(ProjectSettings):
     huggingface_endpoint: str = ""
     pypi_index_url: str = ""
     default_source_language: SpeechSourceLanguage = "ja"
+    # Version 1 repairs the old UI behavior that could leave IndexTTS2 on the
+    # hidden CPU value after Edge TTS had been selected automatically.
+    tts_device_selection_version: int = Field(default=0, ge=0)
     translation_prompt_ja: str = ""
     translation_prompt_en: str = ""
     autoflow_output_folder_name: str = "AutoFlow输出"
@@ -347,6 +350,19 @@ def load_user_settings() -> UserSettings:
                     "tts_voice": edge.default_voice,
                     "tts_api_base_url": "",
                     "tts_device": "cpu",
+                }
+            )
+        elif settings.tts_device_selection_version < 1:
+            # Releases before 1.1.2 could save ``cpu`` merely because the
+            # missing-runtime fallback had shown Edge TTS. Repair that stale
+            # value once on NVIDIA systems, while preserving an explicit CPU
+            # choice after the user next saves settings.
+            from .runtime_manager import detect_hardware
+
+            settings = settings.model_copy(
+                update={
+                    "tts_device": detect_hardware().recommended_device,
+                    "tts_device_selection_version": 1,
                 }
             )
     if settings.huggingface_endpoint:

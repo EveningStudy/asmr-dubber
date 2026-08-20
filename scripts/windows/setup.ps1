@@ -431,7 +431,12 @@ $ApiClientsReady = Test-ASMRDubberApiClientRuntime -PortableRoot $DataRoot
 if (-not $ApiClientsReady) {
     Write-Host "正在安装在线翻译与 TTS（语音合成）API 客户端..." -ForegroundColor Cyan
     $ApiClientArguments = @(
-        "pip", "install", "--python", $Python, "edge-tts==7.2.8"
+        # Keep both direct imports explicit.  edge-tts does not own the
+        # project's HTTP client requirement, so installing only edge-tts can
+        # leave a fresh basic profile with a misleading "Checked 1 package"
+        # result and a failed post-install check.
+        "pip", "install", "--python", $Python,
+        "edge-tts==7.2.8", "httpx>=0.28.0"
     )
     $InstalledBundledApiClient = $false
     if ($BundledCoreWheelsReady) {

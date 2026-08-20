@@ -98,6 +98,21 @@ def test_dependency_pack_imports_components_and_replaces_incomplete_runtime(
     }
 
 
+def test_dependency_pack_runtime_only_preserves_running_application(tmp_path: Path) -> None:
+    archive = tmp_path / "pack.zip"
+    _write_pack(archive)
+    portable = tmp_path / "portable"
+    application = portable / "venv"
+    application.mkdir(parents=True)
+    (application / "running.txt").write_text("keep", encoding="utf-8")
+
+    MODULE.import_pack(archive, portable, "f" * 64, runtime_only=True)
+
+    assert (application / "running.txt").read_text(encoding="utf-8") == "keep"
+    assert not (application / "Scripts/python.exe").exists()
+    assert (portable / "runtimes/index-tts/.venv/Scripts/python.exe").is_file()
+
+
 def test_dependency_pack_rejects_path_traversal(tmp_path: Path) -> None:
     archive = tmp_path / "unsafe.zip"
     _write_pack(archive, unsafe=True)

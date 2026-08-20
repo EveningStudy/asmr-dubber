@@ -170,3 +170,7 @@ uv run --no-sync python scripts/smoke_models.py --help
 
 不要提交 `.asmr-dubber`、模型、媒体、下载缓存、构建目录、日志、API Key 或个人配置。改动
 依赖时修改 `pyproject.toml` 后运行 `uv lock`，不要手工编辑生成的锁文件。
+
+## 发布记录
+
+实现和验收完成后再更新 `docs/RELEASE.md`。每个版本都要保留 Linux 长期未维护、当前发布不保证可用的提示；没有重新完成 Linux 安装与功能验证时，不得删除这条提示。
