@@ -194,7 +194,8 @@ def runtime_executable_candidates(runtime_root: Path, name: str) -> tuple[Path, 
 
 def configure_windows_dll_directories() -> tuple[str, ...]:
     """Expose private native runtimes to Python's secure Windows DLL loader."""
-    if not current_platform().is_windows or not hasattr(os, "add_dll_directory"):
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if not current_platform().is_windows or add_dll_directory is None:
         return ()
     candidates: list[Path] = []
     ffmpeg = os.getenv("ASMR_DUBBER_FFMPEG", "").strip()
@@ -219,7 +220,7 @@ def configure_windows_dll_directories() -> tuple[str, ...]:
             continue
         # Python 3.8+ requires an explicit directory for dependencies of
         # extension modules. Keep the handle alive for the process lifetime.
-        handle = os.add_dll_directory(directory)
+        handle = add_dll_directory(directory)
         _WINDOWS_DLL_DIRECTORY_HANDLES.append(handle)
         _WINDOWS_DLL_DIRECTORIES.add(directory)
         # CTranslate2 resolves CUDA libraries with its own native loader, which
