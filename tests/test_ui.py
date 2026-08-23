@@ -23,6 +23,7 @@ from asmr_dubber.ui import (
     _loudness_mode_update,
     _provider_update,
     _remote_auth,
+    _run_project_action,
     _settings_from_form,
     _source_language_backend_update,
     _transcript_kind_update,
@@ -91,6 +92,12 @@ def _project(tmp_path: Path) -> tuple[DubProject, Path]:
     )
     save_project(project, tmp_path)
     return project, tmp_path / "project.json"
+
+
+def test_project_actions_prompt_before_pipeline_when_manifest_is_empty() -> None:
+    updates = _run_project_action(analyze, "")
+
+    assert updates[9] == "请先新建或打开项目。"
 
 
 def test_indextts_status_checks_runtime_and_all_resources(tmp_path: Path) -> None:
@@ -777,8 +784,8 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
     without_project = function.fn(*values)
 
     assert captured == {"saved": False}
-    assert "当前没有打开项目" in without_project[0]
-    assert "默认设置已保存；当前没有打开项目" in without_project[10]
+    assert "请先新建或打开项目" in without_project[0]
+    assert "请先新建或打开项目" in without_project[10]
 
 
 def test_installation_and_inference_share_one_runtime_queue(app) -> None:

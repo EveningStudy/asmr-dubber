@@ -37,7 +37,9 @@ asmr_install_python_runtime() {
   rm -rf "$staging"
   mkdir -p "$staging"
   tar -xzf "$archive" -C "$staging"
-  staged_python="$(find "$staging" -type f -path '*/bin/python3' -perm -u+x | head -n 1)"
+  # python-build-standalone exposes bin/python3 as a symlink.  Looking only
+  # for regular files rejects every valid Linux runtime archive.
+  staged_python="$(find "$staging" \( -type f -o -type l \) -path '*/bin/python3' -perm -u+x | head -n 1)"
   if [[ -z "$staged_python" ]]; then
     echo "Python $version 压缩包结构无效：找不到 bin/python3。" >&2
     return 1

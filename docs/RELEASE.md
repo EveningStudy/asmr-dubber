@@ -1,4 +1,11 @@
-# ASMR Dubber 1.1.3
+# ASMR Dubber 1.2.0
+
+## 相比 1.1.3
+
+- Linux/WSL 的安装、CLI 和 AutoFlow 流程已补齐，并覆盖无头服务器使用方式；
+- Linux Parakeet 所需的 OpenBLAS、CrispASR 标点模型和 VAD 模型已加入 Portable Mirror；
+- 没有打开项目时，网页操作会直接提示“请先新建或打开项目”；
+- 测试改为以真实项目流程、媒体输出、CLI 和 Linux 脚本为主要验收内容。
 
 ## 修复
 
@@ -25,13 +32,13 @@
 
 Windows 10/11 不要求预装 Python、Git、FFmpeg、CUDA Toolkit 或 PowerShell 7。
 
-### 从 1.1.2 升级
+### 从 1.1.3 升级
 
-关闭 ASMR Dubber 和正在执行的任务，把 1.1.3 压缩包解压并覆盖旧程序文件，保留原有 `.asmr-dubber` 文件夹。原本运行正常的环境通常不需要重新安装；遇到下载中断、IndexTTS2 缺失或 Parakeet 运行时不完整时，重新运行 Setup 的推荐档即可修复。
+关闭 ASMR Dubber 和正在执行的任务，把 1.2.0 压缩包解压并覆盖旧程序文件，保留原有 `.asmr-dubber` 文件夹。原本运行正常的环境通常不需要重新安装；Linux 用户建议重新运行一次对应档位的安装脚本，让新增的 OpenBLAS 和 CrispASR 文件完成检查。
 
 ### Linux
 
-Linux 版本已较长时间未维护，当前发布不保证可用。以下命令仅供已有环境参考；新用户建议使用 Windows 版。
+支持 64 位 x86_64 Linux；Ubuntu 24.04 和 WSL2 是当前验证过的环境。安装脚本、网页界面和无头命令行都使用程序目录内的运行时；ARM64、macOS 和其它架构不在支持范围内。
 
 下载本 Release 的源码压缩包并解压，然后运行：
 
@@ -39,5 +46,14 @@ Linux 版本已较长时间未维护，当前发布不保证可用。以下命�
 bash scripts/linux/setup.sh 推荐
 bash scripts/linux/run-ui.sh
 ```
+
+无桌面服务器可使用：
+
+```bash
+bash scripts/linux/run-cli.sh doctor --no-network
+bash scripts/linux/run-cli.sh --help
+```
+
+Parakeet 和 IndexTTS2 已在 Ubuntu 24.04/WSL2 的 NVIDIA 环境验证；其它模型请以安装后的后端检测结果为准。
 
 项目、模型、缓存、设置和密钥默认保存在程序目录中。API Key 以明文位于 `.asmr-dubber/config/secrets.json`。

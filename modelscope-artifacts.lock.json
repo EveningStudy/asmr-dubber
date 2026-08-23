@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "1.1.3",
+  "release": "1.2.0",
   "repository": "EveningStudyW/ASMR-Dubber-Portable-Mirror",
   "revision": "master",
   "artifacts": [
@@ -87,6 +87,24 @@
       "path": "artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf",
       "size": 1246932800,
       "sha256": "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
+    },
+    {
+      "id": "crispasr-firered-punctuation",
+      "path": "artifacts/models/crispasr/fireredpunc-q4_k.gguf",
+      "size": 57886944,
+      "sha256": "faf4a43e3135bc307a66194685af00f756e6f4c28c7d9e2dd8f3517cddca5c45"
+    },
+    {
+      "id": "crispasr-silero-vad",
+      "path": "artifacts/models/crispasr/ggml-silero-v6.2.0.bin",
+      "size": 885098,
+      "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
+    },
+    {
+      "id": "openblas-linux-x86_64",
+      "path": "artifacts/runtimes/openblas/0.3.26/libopenblas0-pthread_0.3.26+ds-1ubuntu0.1_amd64.deb",
+      "size": 7183128,
+      "sha256": "7dc3b4384c02aecb87eb8b70fa26c5843a08af242f4638aa4b36922bdc4f5b04"
     }
   ],
   "sidecar_verified_archives": []

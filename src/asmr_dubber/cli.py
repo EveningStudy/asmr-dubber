@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import json
 import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Annotated, NoReturn, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 from dotenv import load_dotenv
@@ -35,6 +36,7 @@ from .pipeline import (
     default_projects_dir,
     export_transcript,
     generate_subtitles,
+    import_project_transcript,
     mix_project,
     reload_project,
     synthesize_project,
@@ -48,7 +50,17 @@ from .runtime_manager import (
     install_backend,
 )
 from .subtitles import SubtitleLanguage
-from .user_settings import PROVIDER_PRESETS, load_user_settings, resolve_api_key
+from .user_settings import (
+    PROVIDER_PRESETS,
+    UserSettings,
+    clear_api_key,
+    clear_service_key,
+    load_user_settings,
+    resolve_api_key,
+    save_api_key,
+    save_service_key,
+    save_user_settings,
+)
 
 
 def _make_windows_stdio_loss_tolerant() -> None:
@@ -72,6 +84,12 @@ app = typer.Typer(
     help="日语/英语音声 → 逐句同音色中文复述（Windows / Linux）",
 )
 console = Console()
+settings_app = typer.Typer(
+    name="settings",
+    no_args_is_help=True,
+    help="读取或修改便携设置和 API 密钥。",
+)
+app.add_typer(settings_app, name="settings")
 
 
 class ConsoleProgress:
@@ -88,6 +106,101 @@ class ConsoleProgress:
 def _fail(exc: Exception) -> NoReturn:
     console.print(f"[bold red]错误：[/bold red]{exc}")
     raise typer.Exit(code=1) from exc
+
+
+def _parse_setting_value(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+@settings_app.command("show")
+def settings_show_command() -> None:
+    """以 JSON 显示当前全局设置；不会显示密钥。"""
+
+    console.print_json(data=load_user_settings().model_dump(mode="json"), ensure_ascii=False)
+
+
+@settings_app.command("set")
+def settings_set_command(
+    field: Annotated[str, typer.Argument(help="settings show 中的字段名")],
+    value: Annotated[str, typer.Argument(help="新值；布尔值和数字可直接填写 JSON 字面量")],
+) -> None:
+    """修改一个全局设置，并用与网页相同的模型完整校验。"""
+
+    try:
+        current = load_user_settings()
+        if field not in UserSettings.model_fields:
+            raise ValueError(f"未知设置项：{field}")
+        payload = current.model_dump()
+        payload[field] = _parse_setting_value(value)
+        settings = UserSettings.model_validate(payload)
+        destination = save_user_settings(settings)
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[green]已保存 {field}：[/green]{destination}")
+
+
+@settings_app.command("set-translation-key")
+def settings_set_translation_key_command(
+    provider: Annotated[str, typer.Argument(help="deepseek、bailian、doubao 等服务 ID")],
+    key: Annotated[
+        str | None,
+        typer.Option("--key", help="省略时安全提示输入；自动化部署也可使用服务环境变量"),
+    ] = None,
+) -> None:
+    """保存翻译服务密钥到程序目录。"""
+
+    try:
+        secret = key if key is not None else typer.prompt("API Key", hide_input=True)
+        destination = save_api_key(provider, secret)
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[green]翻译密钥已保存：[/green]{destination}")
+
+
+@settings_app.command("clear-translation-key")
+def settings_clear_translation_key_command(
+    provider: Annotated[str, typer.Argument(help="要清除的翻译服务 ID")],
+) -> None:
+    """清除一个已保存的翻译服务密钥。"""
+
+    try:
+        clear_api_key(provider)
+    except AsmrDubberError as exc:
+        _fail(exc)
+    console.print("[green]翻译密钥已清除。[/green]")
+
+
+@settings_app.command("set-tts-key")
+def settings_set_tts_key_command(
+    backend: Annotated[str, typer.Argument(help="mimo_tts、minimax、gpt_sovits 等后端 ID")],
+    key: Annotated[
+        str | None,
+        typer.Option("--key", help="省略时安全提示输入"),
+    ] = None,
+) -> None:
+    """保存外部 TTS 服务密钥到程序目录。"""
+
+    try:
+        if backend not in TTS_BACKENDS:
+            raise ValueError(f"未知 TTS 后端：{backend}")
+        secret = key if key is not None else typer.prompt("API Key", hide_input=True)
+        destination = save_service_key(f"tts:{backend}", secret)
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[green]TTS 密钥已保存：[/green]{destination}")
+
+
+@settings_app.command("clear-tts-key")
+def settings_clear_tts_key_command(
+    backend: Annotated[str, typer.Argument(help="要清除的 TTS 后端 ID")],
+) -> None:
+    """清除一个已保存的外部 TTS 密钥。"""
+
+    clear_service_key(f"tts:{backend}")
+    console.print("[green]TTS 密钥已清除。[/green]")
 
 
 @app.command("create")
@@ -119,6 +232,43 @@ def create_command(
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
     console.print(directory / "project.json")
+
+
+@app.command("import-transcript")
+def import_transcript_command(
+    project_path: Annotated[Path, typer.Argument(exists=True)],
+    transcript: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
+    kind: Annotated[str, typer.Option("--kind", help="source=原文；zh=中文配音稿")] = "source",
+    timing: Annotated[
+        str,
+        typer.Option(
+            "--timing",
+            help="无时间轴纯文本的处理方式：estimate、qwen 或 script-review",
+        ),
+    ] = "estimate",
+) -> None:
+    """导入 SRT/VTT/ASS/LRC 或纯文本台本，替换当前句子表。"""
+
+    try:
+        if kind not in {"source", "zh"}:
+            raise ValueError("--kind 只能是 source 或 zh。")
+        timing_value = timing.replace("-", "_")
+        if timing_value not in {"estimate", "qwen", "script_review"}:
+            raise ValueError("--timing 只能是 estimate、qwen 或 script-review。")
+        project, directory = reload_project(project_path)
+        language = "zh" if kind == "zh" else project.source_language
+        result = import_project_transcript(
+            project,
+            directory,
+            transcript_path=transcript,
+            plain_timing=timing_value,
+            script_language=language,
+            progress=ConsoleProgress(),
+        )
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print_json(data=result, ensure_ascii=False)
+    console.print(f"[green]{directory / 'exports' / 'transcript.json'}[/green]")
 
 
 @app.command("analyze")
@@ -214,6 +364,119 @@ def subtitles_command(
     console.print(f"[bold green]{lrc}[/bold green]")
     if video is not None:
         console.print(f"[bold green]{video}[/bold green]")
+
+
+@app.command("run")
+def run_command(
+    project_path: Annotated[Path, typer.Argument(exists=True)],
+    start: Annotated[
+        str,
+        typer.Option("--start", help="从 analyze、translate、synthesize、mix 或 subtitles 开始"),
+    ] = "analyze",
+    stop: Annotated[
+        str,
+        typer.Option("--stop", help="在 analyze、translate、synthesize、mix 或 subtitles 结束"),
+    ] = "subtitles",
+    force: Annotated[bool, typer.Option("--force", help="重做范围内可缓存的阶段")] = False,
+    subtitle_language: Annotated[
+        str,
+        typer.Option("--subtitle-language", help="bilingual、zh 或 source"),
+    ] = "bilingual",
+) -> None:
+    """按顺序运行一个项目的多个阶段，适合无界面服务器任务。"""
+
+    stages = ("analyze", "translate", "synthesize", "mix", "subtitles")
+    try:
+        if start not in stages or stop not in stages:
+            raise ValueError(
+                "--start/--stop 必须是 analyze、translate、synthesize、mix 或 subtitles。"
+            )
+        first = stages.index(start)
+        last = stages.index(stop)
+        if first > last:
+            raise ValueError("--start 不能位于 --stop 之后。")
+        if subtitle_language not in {"bilingual", "zh", "source"}:
+            raise ValueError("--subtitle-language 只能是 bilingual、zh 或 source。")
+        project, directory = reload_project(project_path)
+        selected = stages[first : last + 1]
+        for stage in selected:
+            if stage == "analyze":
+                if project.source_language == "zh":
+                    console.print("[dim]中文台本项目：跳过 ASR（语音识别）。[/dim]")
+                else:
+                    analyze_project(project, directory, force=force, progress=ConsoleProgress())
+            elif stage == "translate":
+                if project.source_language == "zh":
+                    console.print("[dim]中文台本项目：跳过翻译。[/dim]")
+                else:
+                    translate_project(project, directory, force=force, progress=ConsoleProgress())
+            elif stage == "synthesize":
+                synthesize_project(project, directory, force=force, progress=ConsoleProgress())
+            elif stage == "mix":
+                mix_project(project, directory, progress=ConsoleProgress())
+            else:
+                generate_subtitles(
+                    project,
+                    directory,
+                    language=cast(SubtitleLanguage, subtitle_language),
+                    progress=ConsoleProgress(),
+                )
+    except (AsmrDubberError, ValueError) as exc:
+        _fail(exc)
+    console.print(f"[bold green]流程完成：{directory / 'project.json'}[/bold green]")
+
+
+@app.command("batch")
+def batch_command(
+    folder: Annotated[
+        Path | None, typer.Argument(help="DLsite 作品文件夹；省略则进入交互队列")
+    ] = None,
+    mode: Annotated[
+        str | None,
+        typer.Option("--mode", help="audio、video-normal 或 video-harmonized"),
+    ] = None,
+    layout: Annotated[
+        str | None,
+        typer.Option("--layout", help="merged、separate 或 both"),
+    ] = None,
+    edition: Annotated[str | None, typer.Option("--edition")] = None,
+    include_bonus: Annotated[bool, typer.Option("--include-bonus")] = False,
+    output_root: Annotated[Path | None, typer.Option("--output-root")] = None,
+    background: Annotated[str | None, typer.Option("--background")] = None,
+    embed_subtitles: Annotated[
+        str | None,
+        typer.Option("--embed-subtitles", help="yes 或 no"),
+    ] = None,
+    rebuild: Annotated[bool, typer.Option("--rebuild")] = False,
+    force: Annotated[bool, typer.Option("--force")] = False,
+    self_test: Annotated[bool, typer.Option("--self-test")] = False,
+) -> None:
+    """运行集成的 AutoFlow 批量音频/静态视频工作流。"""
+
+    from .autoflow.engine import main as autoflow_main
+
+    arguments: list[str] = []
+    if folder is not None:
+        arguments.append(str(folder))
+    for option, value in (
+        ("--mode", mode),
+        ("--layout", layout),
+        ("--edition", edition),
+        ("--output-root", str(output_root) if output_root is not None else None),
+        ("--background", background),
+        ("--embed-subtitles", embed_subtitles),
+    ):
+        if value is not None:
+            arguments.extend((option, value))
+    if include_bonus:
+        arguments.append("--include-bonus")
+    if rebuild:
+        arguments.append("--rebuild")
+    if force:
+        arguments.append("--force")
+    if self_test:
+        arguments.append("--self-test")
+    raise typer.Exit(code=autoflow_main(arguments))
 
 
 @app.command("set-timing")

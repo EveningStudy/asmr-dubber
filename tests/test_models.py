@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from asmr_dubber.errors import ProjectConflictError
+from asmr_dubber.errors import ProjectConflictError, ProjectError
 from asmr_dubber.models import (
     AudioInfo,
     DubProject,
@@ -75,6 +75,12 @@ def test_project_path_accepts_nested_clipboard_quotes(tmp_path: Path) -> None:
     _loaded, loaded_directory = load_project(f"'“{manifest}”'")
 
     assert loaded_directory == directory.resolve()
+
+
+@pytest.mark.parametrize("path", [None, "", " \ufeff\u200b "])
+def test_project_path_rejects_missing_current_project_with_actionable_message(path) -> None:
+    with pytest.raises(ProjectError, match="请先新建或打开项目"):
+        load_project(path)
 
 
 def test_concurrent_project_save_detects_stale_revision(tmp_path: Path) -> None:

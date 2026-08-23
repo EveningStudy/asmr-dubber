@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+from ..environment import ffmpeg_executable
 from ..errors import OperationCancelledError, ProjectError
-from ..platforms import portable_home
+from ..platforms import current_platform, portable_home
 from ..task_control import (
     check_cancelled,
     register_process,
@@ -159,11 +160,10 @@ class ToolPaths:
     asmr_root: Path
     asmr_home: Path
     python: Path
-    cli_script: Path
-    launcher: Path
     ffmpeg: Path
-    ffprobe: Path
-    powershell: str
+    cli_command: tuple[str, ...]
+    ui_command: tuple[str, ...]
+    powershell: str | None
     video_encoder_options: tuple[str, ...]
 
 
@@ -548,19 +548,25 @@ def find_tool_paths(config: AppConfig) -> ToolPaths:
         )
 
     asmr_home = asmr_root / ".asmr-dubber"
-    python_candidates = (
-        asmr_home / "venv" / "Scripts" / "python.exe",
-        asmr_root / ".venv" / "Scripts" / "python.exe",
-    )
+    platform_info = current_platform()
+    if platform_info.is_windows:
+        python_candidates = (
+            asmr_home / "venv" / "Scripts" / "python.exe",
+            asmr_root / ".venv" / "Scripts" / "python.exe",
+        )
+    else:
+        python_candidates = (
+            asmr_home / "venv" / "bin" / "python",
+            asmr_root / ".venv" / "bin" / "python",
+        )
     python = next((path for path in python_candidates if path.is_file()), None)
     if python is None:
         raise VideoPreparerError("ASMR Dubber 尚未安装完整运行环境，找不到便携 Python。")
 
-    ffmpeg_root = asmr_home / "runtimes" / "ffmpeg-shared"
-    ffmpeg = next(iter(sorted(ffmpeg_root.rglob("ffmpeg.exe"))), None)
-    ffprobe = next(iter(sorted(ffmpeg_root.rglob("ffprobe.exe"))), None)
-    if ffmpeg is None or ffprobe is None:
-        raise VideoPreparerError("ASMR Dubber 的 FFmpeg/FFprobe 不完整，请先修复其安装。")
+    try:
+        ffmpeg = Path(ffmpeg_executable()).expanduser().resolve()
+    except Exception as exc:
+        raise VideoPreparerError(f"ASMR Dubber 的 FFmpeg 不可用，请先修复其安装：{exc}") from exc
 
     # AutoFlow calls a few supported ASMR Dubber Python APIs directly (script
     # import and voice-reference extraction). The normal launcher sets these
@@ -575,14 +581,9 @@ def find_tool_paths(config: AppConfig) -> ToolPaths:
     }:
         os.environ["PATH"] = ffmpeg_bin + os.pathsep + current_path
 
-    cli_script = asmr_root / "scripts" / "windows" / "run-cli.ps1"
-    launcher = asmr_root / "ASMR-Dubber.exe"
-    if not cli_script.is_file() or not launcher.is_file():
-        raise VideoPreparerError("ASMR Dubber 缺少命令行脚本或启动程序。")
-
-    powershell_path = shutil.which("pwsh") or shutil.which("powershell")
-    if not powershell_path:
-        raise VideoPreparerError("找不到 PowerShell。Windows 自带的 PowerShell 5.1 即可。")
+    powershell_path = None
+    if platform_info.is_windows:
+        powershell_path = shutil.which("pwsh") or shutil.which("powershell")
 
     encoder_result = subprocess.run(
         [str(ffmpeg), "-hide_banner", "-encoders"],
@@ -614,10 +615,9 @@ def find_tool_paths(config: AppConfig) -> ToolPaths:
         asmr_root=asmr_root,
         asmr_home=asmr_home,
         python=python,
-        cli_script=cli_script,
-        launcher=launcher,
         ffmpeg=ffmpeg,
-        ffprobe=ffprobe,
+        cli_command=(str(python), "-m", "asmr_dubber.cli"),
+        ui_command=(str(python), "-m", "asmr_dubber.cli", "ui"),
         powershell=powershell_path,
         video_encoder_options=video_encoder_options,
     )
@@ -1567,68 +1567,29 @@ def run_ffmpeg(paths: ToolPaths, arguments: list[str], *, cwd: Path | None = Non
     run_process(command, cwd=cwd)
 
 
-def ffprobe_json(paths: ToolPaths, media: Path, entries: str) -> dict[str, Any]:
-    command = [
-        str(paths.ffprobe),
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        entries,
-        "-of",
-        "json",
-        str(media),
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except OSError as exc:
-        raise VideoPreparerError(f"无法运行 FFprobe：{exc}") from exc
-    if result.returncode != 0:
-        raise VideoPreparerError(f"FFprobe 无法读取 {media.name}：{result.stderr.strip()}")
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise VideoPreparerError(f"FFprobe 返回了无效结果：{media}") from exc
-
-
 def audio_duration_samples(paths: ToolPaths, media: Path) -> int:
-    payload = ffprobe_json(
-        paths,
-        media,
-        "stream=sample_rate,duration_ts,time_base:format=duration",
-    )
-    streams = payload.get("streams") or []
-    if not streams:
-        raise VideoPreparerError(f"文件没有可用音轨：{media}")
-    stream = streams[0]
+    del paths
     try:
-        sample_rate = int(stream["sample_rate"])
-        duration_ts = int(stream["duration_ts"])
-        time_base = Fraction(str(stream["time_base"]))
-        duration = Fraction(duration_ts) * time_base
-        samples = duration * SAMPLE_RATE
-        if samples.denominator != 1:
-            samples = Fraction(round(float(samples)), 1)
-        if sample_rate <= 0 or samples <= 0:
-            raise ValueError
-        return int(samples)
-    except (KeyError, TypeError, ValueError, ZeroDivisionError):
-        try:
-            duration = Fraction(str(payload["format"]["duration"]))
+        import av
+
+        with av.open(str(media)) as container:
+            stream = next((item for item in container.streams if item.type == "audio"), None)
+            if stream is None:
+                raise VideoPreparerError(f"文件没有可用音轨：{media}")
+            if stream.duration is not None and stream.time_base is not None:
+                duration = Fraction(stream.duration) * Fraction(stream.time_base)
+            elif container.duration is not None:
+                duration = Fraction(container.duration, av.time_base)
+            else:
+                raise VideoPreparerError(f"无法取得准确音频时长：{media}")
             samples = round(float(duration) * SAMPLE_RATE)
             if samples <= 0:
-                raise ValueError
+                raise VideoPreparerError(f"音频长度无效：{media}")
             return samples
-        except (KeyError, TypeError, ValueError) as fallback_exc:
-            raise VideoPreparerError(f"无法取得准确音频时长：{media}") from fallback_exc
+    except VideoPreparerError:
+        raise
+    except Exception as exc:
+        raise VideoPreparerError(f"无法读取音频长度 {media.name}：{exc}") from exc
 
 
 def normalize_and_concat(
@@ -1744,14 +1705,14 @@ def partial_output_path(destination: Path) -> Path:
     )
 
 
-def background_input(background: Path | None) -> list[str]:
+def background_input(background: Path | None, duration_seconds: str) -> list[str]:
     if background is not None:
         return ["-i", str(background)]
     return [
         "-f",
         "lavfi",
         "-i",
-        f"color=c=black:s={VIDEO_SIZE}:r=1:d=1",
+        f"color=c=black:s={VIDEO_SIZE}:r=1:d={duration_seconds}",
     ]
 
 
@@ -1780,13 +1741,21 @@ def render_static_video(
 
     # Scale the source picture once, then loop that prepared 1080p frame in
     # memory. This avoids decoding an 8K JPEG again for every video frame.
-    video_filter = (
-        f"[0:v:0]scale={VIDEO_FILTER_SIZE}:force_original_aspect_ratio=decrease:"
+    visual_filters = (
+        f"scale={VIDEO_FILTER_SIZE}:force_original_aspect_ratio=decrease:"
         f"flags=lanczos,pad={VIDEO_FILTER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"setsar=1,format=yuv420p,loop=loop=-1:size=1:start=0,"
-        f"setpts=N/{VIDEO_FPS}/TB,trim=duration={duration_text}[v];"
-        f"[1:a:0]{','.join(audio_filters)}[a]"
+        "setsar=1,format=yuv420p,"
     )
+    if background is None:
+        # The lavfi color source already has the exact target duration.  The
+        # single-frame loop used for still images truncates this generated
+        # stream on Linux FFmpeg builds.
+        visual_filters += f"fps={VIDEO_FPS},setpts=PTS-STARTPTS,trim=duration={duration_text}"
+    else:
+        visual_filters += (
+            f"loop=loop=-1:size=1:start=0,setpts=N/{VIDEO_FPS}/TB,trim=duration={duration_text}"
+        )
+    video_filter = f"[0:v:0]{visual_filters}[v];[1:a:0]{','.join(audio_filters)}[a]"
     try:
         run_ffmpeg(
             paths,
@@ -1796,7 +1765,7 @@ def render_static_video(
                 "-stats",
                 "-stats_period",
                 "5",
-                *background_input(background),
+                *background_input(background, duration_text),
                 "-i",
                 str(audio_source),
                 "-filter_complex",
@@ -1847,6 +1816,13 @@ def render_delayed_existing_video(
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = partial_output_path(destination)
+    target_duration = (
+        max(
+            media_duration_seconds(paths, source),
+            media_duration_seconds(paths, audio_source) if audio_source is not None else 0.0,
+        )
+        + lead_seconds
+    )
     audio_filters = [
         f"aresample={SAMPLE_RATE}:async=0",
         f"aformat=sample_rates={SAMPLE_RATE}:channel_layouts=stereo",
@@ -1913,6 +1889,8 @@ def render_delayed_existing_video(
                 "2",
                 "-pix_fmt",
                 "yuv420p",
+                "-t",
+                f"{target_duration:.6f}",
                 "-movflags",
                 "+faststart",
                 "-metadata",
@@ -1937,28 +1915,12 @@ def atomic_copy(source: Path, destination: Path) -> None:
 
 
 def run_asmr_cli(paths: ToolPaths, *arguments: str) -> None:
-    command = [
-        paths.powershell,
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(paths.cli_script),
-        *arguments,
-    ]
+    command = [*paths.cli_command, *arguments]
     run_process(command, cwd=paths.asmr_root)
 
 
 def run_asmr_cli_captured(paths: ToolPaths, *arguments: str) -> str:
-    command = [
-        paths.powershell,
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(paths.cli_script),
-        *arguments,
-    ]
+    command = [*paths.cli_command, *arguments]
     return run_process_captured(command, cwd=paths.asmr_root)
 
 
@@ -2065,22 +2027,23 @@ def ensure_autoflow_project_outputs(project_json: Path) -> None:
 
 
 def launch_asmr_ui(paths: ToolPaths, project_json: Path) -> None:
-    with suppress(OSError):
-        subprocess.run(
-            [
-                paths.powershell,
-                "-NoProfile",
-                "-Command",
-                "Set-Clipboard -Value $args[0]",
-                str(project_json),
-            ],
-            check=False,
-            capture_output=True,
-        )
+    if paths.powershell:
+        with suppress(OSError):
+            subprocess.run(
+                [
+                    paths.powershell,
+                    "-NoProfile",
+                    "-Command",
+                    "Set-Clipboard -Value $args[0]",
+                    str(project_json),
+                ],
+                check=False,
+                capture_output=True,
+            )
     creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
     try:
         subprocess.Popen(
-            [str(paths.launcher)],
+            list(paths.ui_command),
             cwd=paths.asmr_root,
             creationflags=creationflags,
         )
@@ -5109,88 +5072,53 @@ def prepare_or_resume(
 
 
 def media_duration_seconds(paths: ToolPaths, media: Path) -> float:
-    command = [
-        str(paths.ffprobe),
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(media),
-    ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise VideoPreparerError(f"无法取得媒体时长：{media}")
-    return float(result.stdout.strip())
+    del paths
+    try:
+        import av
+
+        with av.open(str(media)) as container:
+            durations: list[float] = []
+            if container.duration is not None:
+                durations.append(float(Fraction(container.duration, av.time_base)))
+            durations.extend(
+                float(Fraction(stream.duration) * Fraction(stream.time_base))
+                for stream in container.streams
+                if stream.duration is not None and stream.time_base is not None
+            )
+            if durations:
+                return max(durations)
+    except Exception as exc:
+        raise VideoPreparerError(f"无法取得媒体时长 {media.name}：{exc}") from exc
+    raise VideoPreparerError(f"无法取得媒体时长：{media}")
 
 
 def video_keyframe_times(paths: ToolPaths, media: Path) -> list[float]:
-    command = [
-        str(paths.ffprobe),
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_packets",
-        "-show_entries",
-        "packet=pts_time,flags",
-        "-of",
-        "json",
-        str(media),
-    ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise VideoPreparerError(f"无法检查视频关键帧：{media}")
+    del paths
     try:
-        packets = json.loads(result.stdout).get("packets") or []
-        return [
-            float(packet["pts_time"]) for packet in packets if "K" in str(packet.get("flags") or "")
-        ]
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise VideoPreparerError(f"关键帧信息无效：{media}") from exc
+        import av
+
+        with av.open(str(media)) as container:
+            stream = next((item for item in container.streams if item.type == "video"), None)
+            if stream is None:
+                return []
+            return [
+                float(Fraction(packet.pts) * Fraction(packet.time_base))
+                for packet in container.demux(stream)
+                if packet.is_keyframe and packet.pts is not None and packet.time_base is not None
+            ]
+    except Exception as exc:
+        raise VideoPreparerError(f"无法检查视频关键帧 {media.name}：{exc}") from exc
 
 
 def media_stream_types(paths: ToolPaths, media: Path) -> list[str]:
-    command = [
-        str(paths.ffprobe),
-        "-v",
-        "error",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "json",
-        str(media),
-    ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise VideoPreparerError(f"无法检查媒体流：{media}")
+    del paths
     try:
-        streams = json.loads(result.stdout).get("streams") or []
-        return [str(item["codec_type"]) for item in streams]
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise VideoPreparerError(f"媒体流信息无效：{media}") from exc
+        import av
+
+        with av.open(str(media)) as container:
+            return [str(stream.type) for stream in container.streams]
+    except Exception as exc:
+        raise VideoPreparerError(f"无法检查媒体流 {media.name}：{exc}") from exc
 
 
 def self_test(paths: ToolPaths) -> None:
@@ -6238,9 +6166,9 @@ def validate_interactive_queue_arguments(args: argparse.Namespace) -> None:
         )
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     print_header()
     try:
         config = load_app_config()

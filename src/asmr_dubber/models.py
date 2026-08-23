@@ -347,7 +347,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.1.3"
+    app_version: str = "1.2.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -379,7 +379,9 @@ class DubProject(BaseModel):
         self.updated_at = datetime.now(UTC).isoformat()
 
 
-def manifest_path(path: str | os.PathLike[str]) -> Path:
+def manifest_path(path: str | os.PathLike[str] | None) -> Path:
+    if path is None:
+        raise ProjectError("请先新建或打开项目。")
     raw = os.fspath(path)
     if isinstance(raw, str):
         value = raw.strip(" \t\r\n\ufeff\u200b")
@@ -398,7 +400,7 @@ def manifest_path(path: str | os.PathLike[str]) -> Path:
                 break
             value = value[1:-1].strip(" \t\r\n\ufeff\u200b")
         if not value:
-            raise ProjectError("项目路径不能为空。")
+            raise ProjectError("请先新建或打开项目。")
         raw = value
     candidate = Path(raw).expanduser().resolve()
     if candidate.is_dir():
@@ -406,7 +408,7 @@ def manifest_path(path: str | os.PathLike[str]) -> Path:
     return candidate
 
 
-def load_project(path: str | os.PathLike[str]) -> tuple[DubProject, Path]:
+def load_project(path: str | os.PathLike[str] | None) -> tuple[DubProject, Path]:
     manifest = manifest_path(path)
     if not manifest.is_file():
         raise ProjectError(f"找不到项目文件：{manifest}")
@@ -520,7 +522,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.1.3"
+        payload["app_version"] = "1.2.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

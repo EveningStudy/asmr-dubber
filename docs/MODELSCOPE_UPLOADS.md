@@ -53,6 +53,11 @@ API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、
 | `artifacts/runtimes/ffmpeg/btbn-checksums.sha256` | 5,296 | `1305cfe1375c3a54e3bff0383db0a305373aa89771ca1cb74db22f4712d68a9e` |
 | `artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf` | 2,134,533,952 | `34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7` |
 | `artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf` | 1,246,932,800 | `374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584` |
+| `artifacts/models/crispasr/fireredpunc-q4_k.gguf` | 57,886,944 | `faf4a43e3135bc307a66194685af00f756e6f4c28c7d9e2dd8f3517cddca5c45` |
+| `artifacts/models/crispasr/ggml-silero-v6.2.0.bin` | 885,098 | `2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987` |
+| `artifacts/runtimes/openblas/0.3.26/libopenblas0-pthread_0.3.26+ds-1ubuntu0.1_amd64.deb` | 7,183,128 | `7dc3b4384c02aecb87eb8b70fa26c5843a08af242f4638aa4b36922bdc4f5b04` |
+
+Linux Parakeet 还需要上述 OpenBLAS、标点和 VAD 文件。它们已经上传到同一个 Portable Mirror 仓库；安装器会在下载后按大小和 SHA-256 校验，不会静默使用系统目录或临时下载到用户目录。
 
 Windows 全新安装首先依赖根目录的 uv 和 Python 3.12 文件。把它们放进子目录或把 `+` 改成空格都会导致 Setup 找不到。
 

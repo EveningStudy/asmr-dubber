@@ -78,7 +78,7 @@ Edge TTS 已直接适配，无需 API Key。未安装或无法使用 IndexTTS2 �
 
 ### Linux
 
-> Linux 版本已较长时间未维护，当前发布不保证可用。以下命令仅供已有环境参考；新用户建议使用 Windows 版。
+支持 64 位 x86_64 Linux；Ubuntu 24.04 和 WSL2 是当前验证过的环境。安装器、网页界面和无头命令行共用同一套项目目录与缓存。ARM64、macOS 和其它架构不在支持范围内。
 
 安装前确认系统有 `bash`、`curl`、`tar` 和 `getconf`：
 
@@ -88,6 +88,15 @@ bash scripts/linux/run-ui.sh
 ```
 
 本地 NVIDIA 模型还需要可用的显卡驱动。程序会准备自己的 Python 和依赖，不修改系统 Python。
+
+没有图形界面的服务器可以只使用命令行：
+
+```bash
+bash scripts/linux/run-cli.sh doctor --no-network
+bash scripts/linux/run-cli.sh --help
+```
+
+Parakeet 和 IndexTTS2 已在 Ubuntu 24.04/WSL2 的 NVIDIA 环境验证；其它本地模型请先在“设备与模型”确认运行库和模型状态。Edge TTS、翻译 API 和其它外部 TTS 仍取决于服务器能否访问相应服务。
 
 更完整的系统要求、磁盘估算、下载策略和离线安装方法见[安装指南](docs/INSTALLATION.md)。
 

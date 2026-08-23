@@ -14,7 +14,13 @@ fi
 DATA_ROOT="$ASMR_DUBBER_HOME"
 RUNTIME_LIBS="$DATA_ROOT/runtimes/ffmpeg-libs:$DATA_ROOT/runtimes/python-libs"
 PYAV_LIBS="$ASMR_DUBBER_VENV/lib/python3.12/site-packages/av.libs"
-export LD_LIBRARY_PATH="$RUNTIME_LIBS:$PYAV_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+OPENBLAS_LIBS="$DATA_ROOT/runtimes/openblas/usr/lib/x86_64-linux-gnu/openblas-pthread"
+NVIDIA_LIBS="$ASMR_DUBBER_VENV/lib/python3.12/site-packages/nvidia/cu13/lib"
+WSL_DRIVER_LIBS=""
+if [[ -d /usr/lib/wsl/lib ]]; then
+  WSL_DRIVER_LIBS=":/usr/lib/wsl/lib"
+fi
+export LD_LIBRARY_PATH="$RUNTIME_LIBS:$PYAV_LIBS:$OPENBLAS_LIBS:$NVIDIA_LIBS$WSL_DRIVER_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 cd "$ROOT"
 source "$ROOT/scripts/network-bridge.sh"

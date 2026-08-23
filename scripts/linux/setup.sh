@@ -253,6 +253,14 @@ fi
 
 if [[ "$INSTALL_PARAKEET" == 1 ]]; then
   echo "正在安装推荐 ASR（语音识别）：Parakeet 日语..."
+  if [[ "$HAS_NVIDIA" == 1 ]]; then
+    echo "正在准备 Parakeet 的便携 CUDA 13 运行库..."
+    if ! install_from_pypi pip install --python "$VENV/bin/python" \
+      "nvidia-cuda-runtime>=13,<14" "nvidia-cublas>=13,<14"; then
+      echo "CUDA 运行库安装失败；Parakeet 将使用 CPU 运行时。" >&2
+      export ASMR_DUBBER_PARAKEET_FORCE_CPU=1
+    fi
+  fi
   bash "$ROOT/scripts/linux/install-parakeet.sh"
 fi
 

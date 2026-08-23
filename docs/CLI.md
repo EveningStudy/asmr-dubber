@@ -226,6 +226,30 @@ Parakeet 0.6B 可额外指定 `--decoder tdt` 或 `--decoder ctc`。CPU Faster-W
 
 先用几秒到几十秒、来源明确的日语或英语测试音频；英语项目指定 `--source-language en`。该命令不会自动把未安装模型下载下来。
 
+## 无界面服务器流程
+
+Linux 和 WSL 使用同一套 CLI，不依赖 PowerShell：
+
+```bash
+bash scripts/linux/run-cli.sh doctor --no-network
+bash scripts/linux/run-cli.sh create /data/input.wav --projects-root /data/projects
+bash scripts/linux/run-cli.sh import-transcript /data/projects/<project>/project.json /data/script.srt --kind zh
+bash scripts/linux/run-cli.sh run /data/projects/<project>/project.json \
+  --start synthesize --stop subtitles
+```
+
+`run` 会按顺序执行指定阶段；中文台本项目会自动跳过 ASR（语音识别）和翻译。可用阶段为 `analyze`、`translate`、`synthesize`、`mix` 和 `subtitles`。
+
+Linux 还提供设置命令，适合远程部署时不打开网页：
+
+```bash
+bash scripts/linux/run-cli.sh settings show
+bash scripts/linux/run-cli.sh settings set tts_backend edge_tts
+bash scripts/linux/run-cli.sh settings set-translation-key deepseek --key 'YOUR_KEY'
+```
+
+不要把 API Key 写进 shell 历史或提交到服务器镜像；推荐通过交互式输入或服务器密钥管理器注入。
+
 ## 启动网页
 
 ```powershell
@@ -241,6 +265,16 @@ $env:ASMR_DUBBER_UI_PASSWORD = '使用你自己的强密码'
 ```
 
 这仍是开发型本地网页，不建议直接暴露到公网。详细边界见[安全策略](../SECURITY.md)。
+
+Linux/WSL 远程服务器：
+
+```bash
+export ASMR_DUBBER_UI_USERNAME=asmr
+export ASMR_DUBBER_UI_PASSWORD='使用你自己的强密码'
+bash scripts/linux/run-ui.sh --host 0.0.0.0 --port 7860
+```
+
+服务器部署建议优先使用 CLI；网页只监听内网地址，并通过 SSH 隧道、反向代理或 VPN 访问。程序不会自动把 WebUI 暴露到公网。
 
 ## 退出码和错误
 

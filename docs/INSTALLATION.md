@@ -138,7 +138,7 @@ NVIDIA 电脑如果不打算使用本地 IndexTTS2，可以跳过它：
 
 ## Linux 安装
 
-Linux 版本已较长时间未维护，当前发布不保证安装脚本、GPU 环境和全部功能可用。以下内容仅供已有环境参考；新用户建议使用 Windows 版。
+支持 64 位 x86_64 Linux；Ubuntu 24.04 和 WSL2 是当前验证过的环境。安装脚本、网页界面和命令行使用项目目录内的运行时，不修改系统 Python。ARM64、macOS 和其它架构不在支持范围内。
 
 在项目根目录执行：
 
@@ -153,6 +153,15 @@ bash scripts/linux/setup.sh 进阶
 ```bash
 bash scripts/linux/run-ui.sh
 ```
+
+服务器没有桌面环境时，可以直接使用命令行：
+
+```bash
+bash scripts/linux/run-cli.sh doctor --no-network
+bash scripts/linux/run-cli.sh --help
+```
+
+Parakeet 和 IndexTTS2 已在 Ubuntu 24.04/WSL2 的 NVIDIA 环境完成验证。其它本地模型的运行库和模型状态，需以 `doctor` 及网页“设备与模型”页面的检测结果为准。Edge TTS、翻译 API 和外部 TTS 需要服务器能够访问对应服务。
 
 不安装 IndexTTS2：
 

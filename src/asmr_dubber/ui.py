@@ -783,6 +783,22 @@ def _run_project_action(
     cancel_event: CancellationToken | None = None,
 ) -> tuple[Any, ...]:
     action_name = getattr(action, "__name__", action.__class__.__name__)
+    # All actions that operate on an existing project receive its manifest as
+    # their first argument.  Gradio sends an empty string when no project has
+    # been created or opened yet; fail before touching the pipeline so the
+    # user gets the actionable message instead of a low-level path error.
+    project_actions = {
+        "load_view",
+        "analyze",
+        "import_transcript_data",
+        "translate",
+        "save_table",
+        "synthesize",
+        "mix",
+        "generate_subtitles",
+    }
+    if action_name in project_actions and (not args or not str(args[0] or "").strip()):
+        return _empty_project_updates("请先新建或打开项目。")
     try:
         logger.info("项目任务开始：%s", action_name)
         with cancellation_scope(cancel_event):
@@ -2871,6 +2887,8 @@ def build_app() -> Any:
             return _run_project_action(load_view, str(path))
 
         def open_project_directory_callback(manifest: str) -> str:
+            if not str(manifest or "").strip():
+                return "请先新建或打开项目。"
             try:
                 return open_project_directory(manifest)
             except Exception as exc:
@@ -4161,11 +4179,11 @@ def build_app() -> Any:
             normalized_manifest = str(manifest or "").strip()
             if not normalized_manifest:
                 message = (
-                    f"新项目默认值已保存：{path}\n当前没有打开项目，因此没有可应用的当前项目。"
+                    f"请先新建或打开项目。\n新项目默认值已保存：{path}；当前没有可应用的项目。"
                 )
                 return (
                     message,
-                    *_empty_project_updates("默认设置已保存；当前没有打开项目。"),
+                    *_empty_project_updates("请先新建或打开项目。默认设置已保存。"),
                 )
 
             try:

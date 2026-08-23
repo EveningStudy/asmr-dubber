@@ -47,6 +47,9 @@ def test_every_setup_artifact_has_a_modelscope_first_source() -> None:
         "crispasr_linux_cuda_archives",
         "parakeet_11b_model_files",
         "parakeet_06b_model_files",
+        "crispasr_punctuation_model_files",
+        "crispasr_vad_model_files",
+        "openblas_linux_deb_archives",
     }
 
     assert required <= artifacts.keys()

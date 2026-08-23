@@ -67,11 +67,20 @@
     "crispasr_linux_cuda_archives": [
       "artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz"
     ],
+    "openblas_linux_deb_archives": [
+      "artifacts/runtimes/openblas/0.3.26/libopenblas0-pthread_0.3.26+ds-1ubuntu0.1_amd64.deb"
+    ],
     "parakeet_11b_model_files": [
       "artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf"
     ],
     "parakeet_06b_model_files": [
       "artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf"
+    ],
+    "crispasr_punctuation_model_files": [
+      "artifacts/models/crispasr/fireredpunc-q4_k.gguf"
+    ],
+    "crispasr_vad_model_files": [
+      "artifacts/models/crispasr/ggml-silero-v6.2.0.bin"
     ]
   },
   "pypi_indexes": [
@@ -140,6 +149,15 @@
   ],
   "crispasr_linux_cuda_archives": [
     "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz"
+  ],
+  "openblas_linux_deb_archives": [
+    "https://archive.ubuntu.com/ubuntu/pool/universe/o/openblas/libopenblas0-pthread_0.3.26%2Bds-1ubuntu0.1_amd64.deb"
+  ],
+  "crispasr_punctuation_model_files": [
+    "https://huggingface.co/cstr/fireredpunc-GGUF/resolve/main/fireredpunc-q4_k.gguf"
+  ],
+  "crispasr_vad_model_files": [
+    "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"
   ],
   "model_pack_sources": {
     "parakeet-ja-windows": [

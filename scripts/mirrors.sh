@@ -130,11 +130,21 @@ PY
       printf '%s\n' \
         "$modelscope_base/artifacts/runtimes/crispasr/v0.8.21/crispasr-linux-x86_64-cuda13.tar.gz"
       ;;
+    openblas_linux_deb_archives)
+      printf '%s\n' \
+        "$modelscope_base/artifacts/runtimes/openblas/0.3.26/libopenblas0-pthread_0.3.26%2Bds-1ubuntu0.1_amd64.deb"
+      ;;
     parakeet_11b_model_files)
       printf '%s\n' "$modelscope_base/artifacts/models/parakeet/parakeet-ctc-1.1b-ja-f16.gguf"
       ;;
     parakeet_06b_model_files)
       printf '%s\n' "$modelscope_base/artifacts/models/parakeet/parakeet-tdt-0.6b-ja.gguf"
+      ;;
+    crispasr_punctuation_model_files)
+      printf '%s\n' "$modelscope_base/artifacts/models/crispasr/fireredpunc-q4_k.gguf"
+      ;;
+    crispasr_vad_model_files)
+      printf '%s\n' "$modelscope_base/artifacts/models/crispasr/ggml-silero-v6.2.0.bin"
       ;;
   esac
 }
@@ -236,7 +246,7 @@ asmr_find_local_artifact() {
         "$cache_root/.asmr-dubber/cache/downloads/$filename" \
         "$cache_root/.asmr-dubber/bootstrap/linux/$filename" \
         "$cache_root/.asmr-dubber/bootstrap/windows/$filename"
-    done < <(printf '%s' "$roots" | tr ':' '\n')
+    done < <(printf '%s\n' "$roots" | tr ':' '\n')
   )
   return 1
 }
@@ -252,6 +262,7 @@ asmr_download() {
     if [[ "$(readlink -f "$local_artifact")" != "$(readlink -m "$destination")" ]]; then
       cp -f "$local_artifact" "$destination"
     fi
+    rm -f "$destination.partial"
     return 0
   fi
   if [[ -n "$expected" && -f "$destination.partial" ]]; then
@@ -265,7 +276,7 @@ asmr_download() {
     [[ -n "$candidate" ]] || continue
     echo "尝试下载：$candidate"
     curl_args=(
-      -fL --retry 4 --retry-all-errors --retry-delay 1 --connect-timeout 20
+      -fL --retry 4 --retry-delay 1 --connect-timeout 20
       -H "Accept-Encoding: identity"
     )
     if [[ "$candidate" == https://modelscope.cn/* || \

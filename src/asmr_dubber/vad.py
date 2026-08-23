@@ -225,7 +225,11 @@ def detect_asmr_speech(
                 sampling_rate=_SAMPLE_RATE,
                 return_tensors="np",
             ).input_features
-            logits = np.asarray(session.run(output_names, {input_name: features})[0][0])
+            # ONNX Runtime's generated stubs describe the output as a sparse
+            # tensor even though this model returns a dense NumPy array.
+            # Keep the runtime value dynamic and normalize it immediately.
+            outputs: Any = session.run(output_names, {input_name: features})
+            logits = np.asarray(outputs[0][0])
             valid_frames = min(
                 len(logits),
                 math.ceil(actual_samples / (_FRAME_SECONDS * _SAMPLE_RATE)),

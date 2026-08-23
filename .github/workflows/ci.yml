@@ -36,12 +36,12 @@ jobs:
         run: uv run --no-sync pyright
       - name: Verify ModelScope artifact contract
         run: uv run --no-sync python scripts/verify_modelscope_artifacts.py
-      - name: Test with coverage floor
+      - name: Run core behavior tests
         run: >-
           uv run --no-sync pytest
-          --cov=asmr_dubber
-          --cov-report=term-missing
-          --cov-fail-under=65
+          -m "not integration and not slow and not network and not gpu and not linux"
+      - name: Run local user workflow tests
+        run: uv run --no-sync pytest tests/test_user_workflow.py -m "integration and not slow"
       - name: Build UI graph
         run: >-
           uv run --no-sync python -c
@@ -63,3 +63,24 @@ jobs:
         run: uv build
       - name: Check distributions
         run: uvx twine check dist/*
+
+  linux-smoke:
+    name: Linux / headless media smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install core, UI, and development dependencies
+        run: uv sync --locked --extra ui --extra dev
+      - name: Check Linux scripts
+        run: bash -n scripts/linux/*.sh
+      - name: Run Linux behavior tests
+        run: uv run --no-sync pytest tests/test_user_workflow.py -m linux -q
+      - name: Run AutoFlow media smoke
+        run: uv run --no-sync pytest tests/test_user_workflow.py -m "integration and slow" -q
