@@ -561,6 +561,8 @@ def _mimo_runner(
             if cached is not None:
                 return cached
             mime = mimetypes.guess_type(reference.path.name)[0] or "audio/wav"
+            if mime in {"audio/x-wav", "audio/vnd.wave"}:
+                mime = "audio/wav"
             encoded = base64.b64encode(reference.path.read_bytes()).decode("ascii")
             value = f"data:{mime};base64,{encoded}"
             encoded_references[resolved] = value
