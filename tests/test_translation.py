@@ -59,6 +59,17 @@ def test_english_translator_uses_english_builtin_prompt() -> None:
         translator.close()
 
 
+def test_doubao_thinking_controls_follow_model_contract() -> None:
+    assert translation_module._openai_provider_controls(
+        "doubao",
+        "doubao-seed-2-0-lite-260215",
+    ) == {"reasoning_effort": "minimal"}
+    assert translation_module._openai_provider_controls(
+        "doubao",
+        "doubao-seed-1-6-250615",
+    ) == {"thinking": {"type": "disabled"}}
+
+
 def test_validates_exact_translation_ids_and_order() -> None:
     content = json.dumps(
         {
@@ -563,14 +574,23 @@ def test_deepseek_auth_error_is_not_retried() -> None:
 
 @pytest.mark.parametrize(
     "provider",
-    ["bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible"],
+    ["bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible", "sensenova"],
 )
 def test_llm_provider_adapters_keep_strict_sentence_ids(provider: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        if provider in {"bailian", "doubao", "openai", "openai_compatible"}:
+        if provider in {"bailian", "doubao", "openai", "openai_compatible", "sensenova"}:
             assert request.headers.get("Authorization") == "Bearer provider-key"
             assert payload["response_format"] == {"type": "json_object"}
+            if provider == "bailian":
+                assert payload["enable_thinking"] is False
+            if provider == "doubao":
+                assert payload["reasoning_effort"] == "minimal"
+                assert "thinking" not in payload
+            if provider == "sensenova":
+                assert payload["reasoning_effort"] == "none"
+                assert payload["max_completion_tokens"] >= 16_384
+                assert "user" not in payload
             return httpx.Response(
                 200,
                 json={
@@ -624,12 +644,16 @@ def test_llm_provider_adapters_keep_strict_sentence_ids(provider: str) -> None:
         "anthropic": "https://api.anthropic.com",
         "gemini": "https://generativelanguage.googleapis.com/v1beta",
         "openai_compatible": "http://127.0.0.1:11434/v1",
+        "sensenova": "https://api.sensenova.cn/compatible-mode/v2",
+    }
+    models = {
+        "doubao": "doubao-seed-2-0-lite-260215",
     }
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         translate_sentences(
             [sentence],
             api_key="provider-key",
-            model="test-model",
+            model=models.get(provider, "test-model"),
             base_url=base_urls[provider],
             provider=provider,
             client=client,

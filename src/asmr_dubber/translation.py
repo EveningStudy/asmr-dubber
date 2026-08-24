@@ -13,6 +13,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .api_contracts import APIContractError, merge_extra_body
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
 from .languages import (
@@ -114,8 +115,37 @@ LLM_RECONCILIATION_PROVIDERS = frozenset(
         "anthropic",
         "gemini",
         "openai_compatible",
+        "sensenova",
     }
 )
+
+
+def _openai_provider_controls(
+    provider: str,
+    model: str,
+    base_url: str = "",
+) -> dict[str, object]:
+    """Return non-thinking controls accepted by each provider's official REST API."""
+
+    host = base_url.casefold()
+    if provider == "deepseek" or "api.deepseek.com" in host:
+        return {"thinking": {"type": "disabled"}}
+    if provider == "bailian" or "dashscope.aliyuncs.com" in host:
+        return {"enable_thinking": False}
+    if provider == "doubao" or "volces.com" in host or "volcengine.com" in host:
+        if model.casefold().startswith("doubao-seed-2-0-"):
+            return {"reasoning_effort": "minimal"}
+        return {"thinking": {"type": "disabled"}}
+    if provider == "sensenova" or "sensenova.cn" in host:
+        return {"reasoning_effort": "none"}
+    if (
+        provider == "openai"
+        and model.casefold().startswith("gpt-5")
+        and "pro" not in model.casefold()
+    ):
+        return {"reasoning_effort": "none"}
+    return {}
+
 
 _SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str, str]] = {
     "ja": (
@@ -301,6 +331,7 @@ class DeepSeekTranslator:
         top_p: float = 1.0,
         minimum_output_tokens: int = 16_384,
         source_language: SourceLanguage = "ja",
+        extra_body: str = "{}",
     ) -> None:
         if not api_key.strip():
             raise TranslationError("缺少 DeepSeek API Key。请在 UI 中填写或设置 DEEPSEEK_API_KEY。")
@@ -313,6 +344,7 @@ class DeepSeekTranslator:
         self.top_p = top_p
         self.minimum_output_tokens = minimum_output_tokens
         self.source_language = source_language
+        self.extra_body = extra_body
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -371,7 +403,7 @@ class DeepSeekTranslator:
                     "content": _deepseek_translation_request(target, expected_ids, attempt),
                 }
             )
-            payload = {
+            payload: dict[str, object] = {
                 "model": self.model,
                 "messages": messages,
                 "response_format": {"type": "json_object"},
@@ -385,6 +417,15 @@ class DeepSeekTranslator:
                 "temperature": self.temperature,
                 "top_p": self.top_p,
             }
+            try:
+                payload = merge_extra_body(
+                    payload,
+                    self.extra_body,
+                    label="翻译附加请求参数",
+                    reserved={"model", "messages", "stream"},
+                )
+            except APIContractError as exc:
+                raise TranslationError(str(exc)) from exc
             try:
                 response = self.client.post(
                     f"{self.base_url}/chat/completions",
@@ -453,6 +494,7 @@ class LLMTranslator:
         max_retries: int = 5,
         client: httpx.Client | None = None,
         source_language: SourceLanguage = "ja",
+        extra_body: str = "{}",
     ) -> None:
         if not api_key.strip() and provider != "openai_compatible":
             raise TranslationError(f"{provider} 缺少 API Key。")
@@ -468,6 +510,7 @@ class LLMTranslator:
         self.max_output_tokens = max_output_tokens
         self.max_retries = max_retries
         self.source_language = source_language
+        self.extra_body = extra_body
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -528,8 +571,13 @@ class LLMTranslator:
             "doubao",
             "openai",
             "openai_compatible",
+            "sensenova",
         }:
-            token_field = "max_completion_tokens" if self.provider == "openai" else "max_tokens"
+            token_field = (
+                "max_completion_tokens"
+                if self.provider in {"openai", "sensenova"}
+                else "max_tokens"
+            )
             payload: dict[str, object] = {
                 "model": self.model,
                 "messages": messages,
@@ -540,8 +588,19 @@ class LLMTranslator:
                 "stream": False,
                 "user": job_id,
             }
-            if self.provider == "deepseek":
-                payload["thinking"] = {"type": "disabled"}
+            payload.update(_openai_provider_controls(self.provider, self.model, self.base_url))
+            if self.provider == "sensenova":
+                # SenseNova's compatibility gateway uses a strict request schema.
+                payload.pop("user", None)
+            try:
+                payload = merge_extra_body(
+                    payload,
+                    self.extra_body,
+                    label="翻译附加请求参数",
+                    reserved={"model", "messages", "stream"},
+                )
+            except APIContractError as exc:
+                raise TranslationError(str(exc)) from exc
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
@@ -551,7 +610,7 @@ class LLMTranslator:
                 json=payload,
             )
             # Some local OpenAI-compatible servers implement chat but not JSON mode.
-            if self.provider == "openai_compatible" and response.status_code == 400:
+            if self.provider in {"openai_compatible", "sensenova"} and response.status_code == 400:
                 payload.pop("response_format", None)
                 response = self.client.post(
                     f"{self.base_url}/chat/completions",
@@ -601,6 +660,10 @@ class LLMTranslator:
                 "responseMimeType": "application/json",
                 "maxOutputTokens": self.max_output_tokens,
             }
+            if self.model.startswith("gemini-3.1-pro"):
+                generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
+            elif self.model.startswith(("gemini-3.6", "gemini-3.5")):
+                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
             if not self.model.startswith(("gemini-3.6", "gemini-3.5-flash-lite")):
                 generation_config.update(
                     temperature=self.temperature,
@@ -774,12 +837,13 @@ def reconcile_script_sentences(
     on_batch: Callable[[], None] | None = None,
     client: httpx.Client | None = None,
     cancel_event: CancellationSignal | None = None,
+    extra_body: str = "{}",
 ) -> tuple[dict[str, str], list[dict[str, object]]]:
     """Use an LLM to map an untimed script onto ASR timing without changing time ranges."""
 
     if provider not in LLM_RECONCILIATION_PROVIDERS:
         raise TranslationError(
-            "台本校对需要大模型翻译服务；请选择 DeepSeek、百炼、豆包、OpenAI、Claude、"
+            "台本校对需要大模型翻译服务；请选择 DeepSeek、百炼、豆包、商汤、OpenAI、Claude、"
             "Gemini 或本地/自定义 OpenAI-compatible。"
         )
     batches = _script_reconciliation_batches(recognized, script_lines)
@@ -794,6 +858,7 @@ def reconcile_script_sentences(
         max_output_tokens=max_output_tokens,
         client=client,
         source_language=source_language,
+        extra_body=extra_body,
     )
     cancel_translation = translator.close
     callback_signal = register_cancel_callback(cancel_translation, cancel_event)
@@ -1000,6 +1065,7 @@ def translate_sentences(
     on_batch: Callable[[], None] | None = None,
     client: httpx.Client | None = None,
     cancel_event: CancellationSignal | None = None,
+    extra_body: str = "{}",
 ) -> None:
     check_cancelled(cancel_event)
     pending = [sentence for sentence in sentences if sentence.enabled and not sentence.zh_text]
@@ -1021,6 +1087,7 @@ def translate_sentences(
             top_p=top_p,
             minimum_output_tokens=max_output_tokens,
             source_language=source_language,
+            extra_body=extra_body,
         )
     elif provider in {
         "bailian",
@@ -1029,6 +1096,7 @@ def translate_sentences(
         "anthropic",
         "gemini",
         "openai_compatible",
+        "sensenova",
     }:
         translator = LLMTranslator(
             provider=provider,
@@ -1041,6 +1109,7 @@ def translate_sentences(
             max_output_tokens=max_output_tokens,
             client=client,
             source_language=source_language,
+            extra_body=extra_body,
         )
     elif provider in {"deepl", "google_translate", "microsoft_translate"}:
         translator = MachineTranslationAPI(

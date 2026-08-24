@@ -87,9 +87,12 @@ class Sentence(BaseModel):
 class ProjectSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    asr_backend: Literal["parakeet_nemo", "kotoba_whisper", "faster_whisper"] = (
-        RECOMMENDED_ASR_BACKEND
-    )
+    asr_backend: Literal[
+        "generic_asr_api",
+        "parakeet_nemo",
+        "kotoba_whisper",
+        "faster_whisper",
+    ] = RECOMMENDED_ASR_BACKEND
     asr_model: str = RECOMMENDED_ASR_MODEL
     asr_batch_size: int = Field(default=1, ge=1, le=32)
     asr_device: str = "cuda"
@@ -107,6 +110,8 @@ class ProjectSettings(BaseModel):
     asr_condition_on_previous_text: bool = True
     asr_initial_prompt: str = ""
     asr_timeout_seconds: float = Field(default=600.0, ge=10.0, le=7200.0)
+    asr_api_base_url: str = "http://127.0.0.1:8000/v1"
+    asr_api_extra_body: str = "{}"
     asr_parakeet_decoder: Literal["tdt", "ctc"] = "tdt"
     asr_chunk_seconds: float = Field(default=120.0, ge=15.0, le=600.0)
     asr_kotoba_chunk_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
@@ -134,8 +139,11 @@ class ProjectSettings(BaseModel):
     translation_memory_sentences: int = Field(default=50, ge=0, le=500)
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
+    translation_extra_body: str = "{}"
     tts_backend: Literal[
         "indextts2",
+        "indextts2_api",
+        "generic_tts_api",
         "gpt_sovits",
         "cosyvoice",
         "fish_speech",
@@ -150,6 +158,7 @@ class ProjectSettings(BaseModel):
     tts_external_reference_text: str = ""
     tts_external_reference_language: Literal["auto", "ja", "en", "zh"] = "auto"
     tts_api_base_url: str = "http://127.0.0.1:9880"
+    tts_api_extra_body: str = "{}"
     tts_timeout_seconds: float = Field(default=600.0, ge=10.0, le=7200.0)
     tts_request_concurrency: int = Field(default=2, ge=1, le=8)
     tts_model_path: str = str(DEFAULT_INDEXTTS_MODEL_DIR)
@@ -347,7 +356,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.2.0"
+    app_version: str = "1.2.1"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -522,7 +531,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.2.0"
+        payload["app_version"] = "1.2.1"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

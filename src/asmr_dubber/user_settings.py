@@ -89,13 +89,24 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "help": "使用 Gemini generateContent 与 JSON 输出。可输入其他有效 Gemini 模型 ID。",
     },
     "openai_compatible": {
-        "label": "本地/自定义 OpenAI-compatible",
+        "label": "通用翻译 API（OpenAI-compatible）",
         "base_url": "http://127.0.0.1:11434/v1",
         "default_model": "local-model",
         "models": ["local-model", "qwen3:30b-a3b", "gpt-oss:20b"],
         "env": "OPENAI_COMPATIBLE_API_KEY",
         "help": "适用于 Ollama、LM Studio、vLLM 等。程序只调用接口，不会下载或启动模型。",
         "key_optional": True,
+    },
+    "sensenova": {
+        "label": "商汤日日新 SenseNova",
+        "base_url": "https://api.sensenova.cn/compatible-mode/v2",
+        "default_model": "SenseNova-V6.5-Turbo",
+        "models": ["SenseNova-V6.5-Turbo", "SenseNova-V6.5-Pro", "SenseChat-5"],
+        "env": "SENSENOVA_API_KEY",
+        "help": (
+            "使用商汤 OpenAI 兼容接口。结构化翻译会显式设置 reasoning_effort=none，"
+            "避免思维链占用输出并干扰 JSON。"
+        ),
     },
     "deepl": {
         "label": "DeepL API",
@@ -205,6 +216,7 @@ class UserSettings(ProjectSettings):
             ):
                 value["chinese_target_active_rms_dbfs"] = value["chinese_max_active_rms_dbfs"]
             if "asr_backend" in value and value.get("asr_backend") not in {
+                "generic_asr_api",
                 "parakeet_nemo",
                 "kotoba_whisper",
                 "faster_whisper",
@@ -213,6 +225,8 @@ class UserSettings(ProjectSettings):
                 value["asr_model"] = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
             if "tts_backend" in value and value.get("tts_backend") not in {
                 "indextts2",
+                "indextts2_api",
+                "generic_tts_api",
                 "gpt_sovits",
                 "cosyvoice",
                 "fish_speech",

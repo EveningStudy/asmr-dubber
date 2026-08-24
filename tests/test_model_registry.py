@@ -15,6 +15,7 @@ def test_default_backends_use_verified_recommendations() -> None:
 
 def test_only_supported_asr_and_tts_backends_are_registered() -> None:
     assert set(ASR_BACKENDS) == {
+        "generic_asr_api",
         "parakeet_nemo",
         "kotoba_whisper",
         "faster_whisper",
@@ -26,6 +27,8 @@ def test_only_supported_asr_and_tts_backends_are_registered() -> None:
     assert "kotoba-tech/kotoba-whisper-v2.0-faster" in (ASR_BACKENDS["faster_whisper"].models)
     assert set(TTS_BACKENDS) == {
         "indextts2",
+        "indextts2_api",
+        "generic_tts_api",
         "gpt_sovits",
         "cosyvoice",
         "fish_speech",
@@ -39,6 +42,8 @@ def test_only_supported_asr_and_tts_backends_are_registered() -> None:
     assert TTS_BACKENDS["edge_tts"].api_key is False
     assert TTS_BACKENDS["mimo_tts"].default_model == "mimo-v2.5-tts-voiceclone"
     assert TTS_BACKENDS["minimax"].default_voice == "female-shaonv"
+    assert TTS_BACKENDS["indextts2_api"].reference_audio is True
+    assert ASR_BACKENDS["generic_asr_api"].runtime == "http"
 
 
 def test_installable_backends_come_from_registry_capabilities() -> None:

@@ -3089,6 +3089,7 @@ def translate_titles(
             temperature=temperature,
             top_p=top_p,
             max_output_tokens=max_tokens,
+            extra_body=settings.translation_extra_body,
             deepl_formality=settings.translation_deepl_formality,
             microsoft_region=settings.translation_microsoft_region,
             send_context=True,

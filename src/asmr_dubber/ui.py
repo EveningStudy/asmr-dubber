@@ -303,6 +303,7 @@ _LLM_TRANSLATION_PROVIDERS = frozenset(
         "anthropic",
         "gemini",
         "openai_compatible",
+        "sensenova",
     }
 )
 _LOUDNESS_MODE_CHOICES = [
@@ -328,8 +329,10 @@ def _speech_language(value: Any) -> SpeechSourceLanguage:
 
 def _asr_backend_choices(language: SpeechSourceLanguage) -> list[tuple[str, str]]:
     if language == "en":
-        spec = ASR_BACKENDS["faster_whisper"]
-        return [(spec.label, spec.id)]
+        return [
+            (ASR_BACKENDS["faster_whisper"].label, "faster_whisper"),
+            (ASR_BACKENDS["generic_asr_api"].label, "generic_asr_api"),
+        ]
     return [(spec.label, key) for key, spec in ASR_BACKENDS.items()]
 
 
@@ -339,7 +342,7 @@ def _asr_models_for_language(
 ) -> list[str]:
     if language == "en":
         if backend_id != "faster_whisper":
-            return ["large-v2"]
+            return list(ASR_BACKENDS[backend_id].models)
         return [
             model
             for model in ASR_BACKENDS[backend_id].models
@@ -1025,7 +1028,8 @@ def _source_language_backend_update(language: Any, current_backend: Any) -> tupl
     if selected == "en" or backend_id not in ASR_BACKENDS:
         backend_id = "faster_whisper" if selected == "en" else "parakeet_nemo"
     note = (
-        "英语项目使用 Faster-Whisper；日语专用的 Parakeet、Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
+        "英语项目使用 Faster-Whisper 或通用 ASR API；日语专用的 Parakeet、"
+        "Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
         if selected == "en"
         else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
     )
@@ -1051,6 +1055,9 @@ def _asr_backend_update(
         vad_mode = "off"
     return (
         _gr_update(choices=models, value=default_model),
+        _gr_update(visible=backend_id == "generic_asr_api"),
+        _gr_update(visible=backend_id == "generic_asr_api"),
+        _gr_update(visible=backend_id == "generic_asr_api"),
         f"{spec.help}\n\n{spec.setup}",
         _gr_update(visible=backend_id == "faster_whisper"),
         _gr_update(visible=backend_id == "faster_whisper"),
@@ -1157,6 +1164,8 @@ def _review_language_update(
 
 
 _TTS_DEFAULT_URLS = {
+    "indextts2_api": "http://127.0.0.1:8000",
+    "generic_tts_api": "http://127.0.0.1:8000/v1",
     "gpt_sovits": "http://127.0.0.1:9880",
     "cosyvoice": "http://127.0.0.1:50000",
     "fish_speech": "http://127.0.0.1:8080",
@@ -1180,6 +1189,7 @@ def _tts_model_controls_update(backend: Any, model: Any) -> tuple[Any, ...]:
         _gr_update(visible=_tts_model_uses_reference(backend_id, model_id)),
         _gr_update(
             visible=backend_id in {"edge_tts", "minimax"}
+            or backend_id == "generic_tts_api"
             or (backend_id == "mimo_tts" and model_id == "mimo-v2.5-tts")
         ),
         _gr_update(visible=backend_id == "minimax"),
@@ -1208,7 +1218,7 @@ def _tts_backend_update(backend: Any) -> tuple[Any, ...]:
         ),
         _gr_update(visible=backend_id != "indextts2"),
         _gr_update(visible=backend_id == "gpt_sovits"),
-        _gr_update(visible=backend_id in {"gpt_sovits", "edge_tts", "minimax"}),
+        _gr_update(visible=backend_id in {"gpt_sovits", "edge_tts", "minimax", "generic_tts_api"}),
         _gr_update(choices=list(spec.voices), value=spec.default_voice),
         *_tts_model_controls_update(backend_id, spec.default_model)[1:],
     )
@@ -1219,6 +1229,7 @@ def _tts_service_visibility(backend: Any) -> tuple[Any, ...]:
     spec = TTS_BACKENDS.get(backend_id, TTS_BACKENDS["indextts2"])
     configurable_url = backend_id not in {"indextts2", "edge_tts"}
     return (
+        _gr_update(visible=configurable_url),
         _gr_update(visible=configurable_url),
         _gr_update(visible=spec.api_key),
         _gr_update(visible=spec.api_key),
@@ -1894,7 +1905,7 @@ def build_app() -> Any:
                             ),
                         )
                         source_language_help = gr.Markdown(
-                            "英语项目使用 Faster-Whisper；日语专用的 Parakeet、"
+                            "英语项目使用 Faster-Whisper 或通用 ASR API；日语专用的 Parakeet、"
                             "Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
                             if selected_source_language == "en"
                             else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
@@ -1914,6 +1925,35 @@ def build_app() -> Any:
                             value=asr_stored.asr_model,
                             allow_custom_value=True,
                         )
+                        settings_components["asr_api_base_url"] = gr.Textbox(
+                            label="通用 ASR API（接口）基础地址",
+                            value=asr_stored.asr_api_base_url,
+                            visible=asr_stored.asr_backend == "generic_asr_api",
+                            info="服务需实现 /v1/audio/transcriptions；例如 http://127.0.0.1:8000/v1。",
+                        )
+                        settings_components["asr_api_extra_body"] = gr.Textbox(
+                            label="通用 ASR API 附加请求参数（JSON）",
+                            value=asr_stored.asr_api_extra_body,
+                            visible=asr_stored.asr_backend == "generic_asr_api",
+                            lines=3,
+                            info="可填 language、prompt 等服务特有字段；留空使用默认请求。",
+                        )
+                        with gr.Group(
+                            visible=asr_stored.asr_backend == "generic_asr_api"
+                        ) as asr_api_group:
+                            asr_api_key = gr.Textbox(
+                                label="通用 ASR API 密钥",
+                                type="password",
+                                placeholder="输入后点击保存；界面不会回显已保存密钥",
+                            )
+                            asr_api_key_status = gr.Textbox(
+                                label="通用 ASR API 密钥状态",
+                                value=service_key_status("asr:generic_asr_api", True),
+                                interactive=False,
+                            )
+                            with gr.Row():
+                                save_asr_api_key_button = gr.Button("保存 ASR API 密钥")
+                                clear_asr_api_key_button = gr.Button("清除 ASR API 密钥")
                         asr_help = gr.Markdown(f"{asr_spec.help}\n\n{asr_spec.setup}")
                         with gr.Row():
                             settings_components["asr_device"] = gr.Dropdown(
@@ -2155,6 +2195,16 @@ def build_app() -> Any:
                                 )
                             )
                             reset_translation_prompt_button = gr.Button("恢复当前语言的内置 Prompt")
+                            settings_components["translation_extra_body"] = gr.Textbox(
+                                label="翻译 API 附加请求参数（JSON，可选）",
+                                value=stored.translation_extra_body,
+                                lines=3,
+                                info=(
+                                    "用于服务商特有字段，例如 reasoning_effort、enable_thinking "
+                                    "或 thinking。"
+                                    "不要覆盖 model、messages、stream。"
+                                ),
+                            )
                         with gr.Group(
                             visible=stored.translation_provider == "deepl"
                         ) as deepl_translation_group:
@@ -2381,6 +2431,13 @@ def build_app() -> Any:
                             label="TTS（语音合成）API（接口）基础地址",
                             value=stored.tts_api_base_url,
                             visible=stored.tts_backend not in {"indextts2", "edge_tts"},
+                        )
+                        settings_components["tts_api_extra_body"] = gr.Textbox(
+                            label="TTS（语音合成）API 附加请求参数（JSON，可选）",
+                            value=stored.tts_api_extra_body,
+                            visible=stored.tts_backend not in {"indextts2", "edge_tts"},
+                            lines=3,
+                            info="可传递服务商特有字段；不要覆盖 model、input。",
                         )
                         tts_key = gr.Textbox(
                             label="TTS（语音合成）服务 API 密钥",
@@ -3805,6 +3862,9 @@ def build_app() -> Any:
             ],
             outputs=[
                 settings_components["asr_model"],
+                settings_components["asr_api_base_url"],
+                settings_components["asr_api_extra_body"],
+                asr_api_group,
                 asr_help,
                 settings_components["asr_compute_type"],
                 settings_components["asr_beam_size"],
@@ -3869,6 +3929,9 @@ def build_app() -> Any:
             ],
             outputs=[
                 settings_components["asr_model"],
+                settings_components["asr_api_base_url"],
+                settings_components["asr_api_extra_body"],
+                asr_api_group,
                 asr_help,
                 settings_components["asr_compute_type"],
                 settings_components["asr_beam_size"],
@@ -3992,6 +4055,7 @@ def build_app() -> Any:
                 inputs=[settings_components["tts_backend"]],
                 outputs=[
                     settings_components["tts_api_base_url"],
+                    settings_components["tts_api_extra_body"],
                     tts_key,
                     tts_key_status,
                     tts_key_buttons,
@@ -4245,6 +4309,34 @@ def build_app() -> Any:
             clear_translation_key_callback,
             inputs=[settings_components["translation_provider"]],
             outputs=[translation_key_status],
+            api_name=_PRIVATE_API,
+            **runtime_options,
+        )
+
+        def save_asr_api_key_callback(key: str) -> str:
+            try:
+                save_service_key("asr:generic_asr_api", key)
+                return service_key_status("asr:generic_asr_api", True)
+            except Exception as exc:
+                return f"保存 ASR API 密钥失败：{_safe_error(exc)}"
+
+        def clear_asr_api_key_callback() -> str:
+            try:
+                clear_service_key("asr:generic_asr_api")
+                return service_key_status("asr:generic_asr_api", True)
+            except Exception as exc:
+                return f"清除 ASR API 密钥失败：{_safe_error(exc)}"
+
+        save_asr_api_key_button.click(
+            save_asr_api_key_callback,
+            inputs=[asr_api_key],
+            outputs=[asr_api_key_status],
+            api_name=_PRIVATE_API,
+            **runtime_options,
+        )
+        clear_asr_api_key_button.click(
+            clear_asr_api_key_callback,
+            outputs=[asr_api_key_status],
             api_name=_PRIVATE_API,
             **runtime_options,
         )

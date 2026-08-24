@@ -90,6 +90,7 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "temperature": settings.tts_temperature,
         "top_p": settings.tts_top_p,
         "api_base_url": settings.tts_api_base_url,
+        "api_extra_body": settings.tts_api_extra_body,
         "model_path": settings.tts_model_path,
         "config_path": settings.tts_config_path,
         "executable": settings.tts_executable,
@@ -104,7 +105,7 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "cosyvoice_mode": settings.tts_cosyvoice_mode,
         "zh": sentence.zh_text,
         "sentence_id": sentence.id,
-        "implementation": "supported-backends-v4",
+        "implementation": "supported-backends-v5-api-contracts",
     }
     if settings.tts_backend == "indextts2":
         payload["index_references"] = _index_reference_payload(project, sentence)

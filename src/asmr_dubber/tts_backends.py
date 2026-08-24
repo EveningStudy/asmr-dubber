@@ -20,6 +20,13 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from .api_contracts import (
+    APIContractError,
+    bearer_headers,
+    endpoint_url,
+    merge_extra_body,
+    write_audio_response,
+)
 from .audio import project_file_exists
 from .errors import OperationCancelledError, SynthesisError
 from .model_registry import TTS_BACKENDS
@@ -489,6 +496,110 @@ def _fish_runner(
     return run, cleanup
 
 
+def _indextts_api_runner(
+    project: DubProject,
+) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
+    import httpx
+
+    base = project.settings.tts_api_base_url
+    key = saved_service_key("tts:indextts2_api")
+    client = httpx.Client(
+        headers=bearer_headers(key),
+        timeout=project.settings.tts_timeout_seconds,
+    )
+    try:
+        url = endpoint_url(base, "/v1/tts")
+    except APIContractError as exc:
+        client.close()
+        raise SynthesisError(str(exc)) from exc
+
+    def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
+        try:
+            payload: dict[str, object] = {
+                "model": project.settings.tts_model or "IndexTTS2",
+                "text": sentence.zh_text,
+                "emotion_alpha": project.settings.tts_index_emo_alpha,
+                "temperature": project.settings.tts_temperature,
+                "top_p": project.settings.tts_top_p,
+                "speed": project.settings.tts_speed,
+            }
+            payload = merge_extra_body(
+                payload,
+                project.settings.tts_api_extra_body,
+                label="IndexTTS2 API 附加请求参数",
+                reserved={"text"},
+            )
+        except (OSError, APIContractError) as exc:
+            raise SynthesisError(str(exc)) from exc
+        data = {
+            key: json.dumps(value, ensure_ascii=False)
+            if isinstance(value, (dict, list))
+            else str(value)
+            for key, value in payload.items()
+        }
+        files: dict[str, tuple[str, Any, str]] = {
+            "voice": (reference.path.name, reference.path.open("rb"), "audio/wav")
+        }
+        if reference.emotion_path and reference.emotion_path.is_file():
+            files["emotion_audio"] = (
+                reference.emotion_path.name,
+                reference.emotion_path.open("rb"),
+                "audio/wav",
+            )
+        try:
+            response = client.post(url, data=data, files=files)
+        finally:
+            for item in files.values():
+                item[1].close()
+        try:
+            write_audio_response(response, output, client=client)
+        except APIContractError as exc:
+            raise SynthesisError(f"IndexTTS2 API 返回无效结果：{exc}") from exc
+
+    return run, client.close
+
+
+def _generic_tts_api_runner(
+    project: DubProject,
+) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
+    import httpx
+
+    key = saved_service_key("tts:generic_tts_api")
+    client = httpx.Client(
+        headers=bearer_headers(key),
+        timeout=project.settings.tts_timeout_seconds,
+    )
+    try:
+        url = endpoint_url(project.settings.tts_api_base_url, "/audio/speech")
+    except APIContractError as exc:
+        client.close()
+        raise SynthesisError(str(exc)) from exc
+
+    def run(sentence: Sentence, _reference: VoiceReference, output: Path) -> None:
+        try:
+            payload = merge_extra_body(
+                {
+                    "model": project.settings.tts_model or "tts-1",
+                    "input": sentence.zh_text,
+                    "voice": project.settings.tts_voice or "alloy",
+                    "response_format": "wav",
+                    "speed": project.settings.tts_speed,
+                },
+                project.settings.tts_api_extra_body,
+                label="TTS API 附加请求参数",
+                reserved={"model", "input"},
+            )
+        except APIContractError as exc:
+            raise SynthesisError(str(exc)) from exc
+        response = client.post(url, json=payload)
+        try:
+            write_audio_response(response, output, client=client)
+        except APIContractError as exc:
+            raise SynthesisError(f"通用 TTS API 返回无效结果：{exc}") from exc
+
+    return run, client.close
+
+
 def _edge_tts_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
@@ -674,6 +785,10 @@ def _runner(project: DubProject) -> tuple[Any, Callable[[], None]]:
     backend = project.settings.tts_backend
     if backend == "indextts2":
         return _load_indextts(project)
+    if backend == "indextts2_api":
+        return _indextts_api_runner(project)
+    if backend == "generic_tts_api":
+        return _generic_tts_api_runner(project)
     if backend == "gpt_sovits":
         return _gpt_sovits_runner(project)
     if backend == "cosyvoice":

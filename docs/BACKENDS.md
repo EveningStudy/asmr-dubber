@@ -1,6 +1,6 @@
 # 后端指南
 
-ASR（语音识别）接入 Parakeet、Kotoba-Whisper 和 Faster-Whisper 三个系列。TTS（语音合成）可使用本地 IndexTTS2、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
+ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
 
 程序启动时会检查 IndexTTS2 是否完整；未安装时，新项目默认使用 Edge TTS。项目开始执行后不会再静默切换后端。
 
@@ -13,6 +13,7 @@ ASR（语音识别）接入 Parakeet、Kotoba-Whisper 和 Faster-Whisper 三个�
 | Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 推荐、进阶 | 默认主识别，日语质量优先 |
 | Kotoba-Whisper（日语）| CPU、NVIDIA CUDA | 6 GB | 进阶安装 v2.2 | 日语 Whisper 对照与复核 |
 | Faster-Whisper（日语/英语）| CPU、NVIDIA CUDA | 6 GB | 进阶安装 large-v2 | 英语项目唯一的本地 ASR；CPU `int8`、词级时间戳 |
+| 通用 ASR API | 服务端 | — | 不安装本地模型 | 兼容 OpenAI 转写接口的本地或云端服务 |
 
 Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较小任务，但还要给驱动、音频和中间张量留空间。显存接近下限时保持批大小 1。
 
@@ -27,6 +28,8 @@ Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较�
 | GPT-SoVITS API | 用户管理的本机、容器或远程服务 | 需要准确源文 | 取决于服务端 |
 | CosyVoice API | 用户管理的 FastAPI 服务 | 零样本需要；跨语言不需要 | 取决于服务端 |
 | Fish Speech / Fish Audio API | 自建或云端服务 | 需要 | 云服务通常需要 |
+| IndexTTS2 API | 用户管理的本机、容器或云端服务 | 不需要 | 取决于服务端 |
+| 通用 TTS API | 兼容 OpenAI `/v1/audio/speech` 的服务 | 不使用 | 取决于服务端 |
 
 IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。Edge、MiMo 和 MiniMax 由在线服务完成合成；GPT-SoVITS、CosyVoice 和 Fish Speech 的服务端由用户自行管理。
 
@@ -137,7 +140,7 @@ analysis/asr_candidates.json
 analysis/asr_review.json
 ```
 
-DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic Claude、Google Gemini 和 OpenAI-compatible LLM 可以校对。DeepL、Google Cloud Translation 和 Microsoft Azure Translator 只能翻译，不能做这一步。
+DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Anthropic Claude、Google Gemini 和 OpenAI-compatible LLM 可以校对。DeepL、Google Cloud Translation 和 Microsoft Azure Translator 只能翻译，不能做这一步。
 
 ## IndexTTS2
 
@@ -161,6 +164,40 @@ bash scripts/linux/install-indextts2.sh
 统一音色参考更适合单角色长项目。逐句参考会跟随场景变化，但短句、气声、音效和背景音乐也更容易造成音色漂移。推荐选 5–15 秒、单一说话人、清晰且包含实义语音的参考。
 
 IndexTTS2 使用独立的 bilibili Model Use License，不属于本项目 MIT License。安装和使用前请阅读上游条款。
+
+## IndexTTS2 API
+
+这是本地 IndexTTS2 的远程适配，不会下载或启动服务端模型。设置中选择“IndexTTS2 云端/自建 API”，填写服务基础地址和密钥。程序调用：
+
+```text
+POST <基础地址>/v1/tts
+multipart/form-data
+  text：中文句子
+  voice：音色参考音频
+  emotion_audio：可选情绪参考音频
+  emotion_alpha、temperature、top_p、speed：可选参数
+```
+
+服务可以直接返回 WAV/MP3 音频，也可以返回带 `audio`、`audio_base64` 或 `audio_url` 字段的 JSON。参考音频不会写入 URL；程序会以 multipart 文件上传。不同项目的接口字段若有差异，可在“附加请求参数（JSON）”中补充未覆盖的字段。
+
+## 通用 ASR API
+
+选择“通用 ASR API（OpenAI-compatible）”后，填写基础地址、模型 ID 和密钥。程序调用 `<基础地址>/audio/transcriptions`，上传音频并请求 `verbose_json`。响应至少应包含：
+
+```json
+{
+  "text": "完整转写",
+  "segments": [
+    {"start": 0.0, "end": 1.2, "text": "一句话"}
+  ]
+}
+```
+
+模型、`language`、`prompt` 等服务特有字段可以填入附加 JSON。程序只使用返回的文字和时间戳，不会假设服务端使用哪一种识别模型。
+
+## 通用 TTS API
+
+选择“通用 TTS API（OpenAI-compatible）”后，程序调用 `<基础地址>/audio/speech`，发送 `model`、`input`、`voice`、`response_format=wav` 和 `speed`。服务可直接返回音频，或返回含 `audio`、`audio_base64`、`audio_url` 的 JSON。该后端不使用参考音频；需要音色克隆时请使用 IndexTTS2 API、MiMo voiceclone 或其他参考音频后端。
 
 ## Edge TTS
 
@@ -243,7 +280,7 @@ LLM 服务使用有界滑动上下文和翻译记忆，并要求每个输入句�
 
 | 服务 | 典型用途 |
 |---|---|
-| DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini | 上下文翻译、台本校对和多 ASR 校对 |
+| DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Claude、Gemini | 上下文翻译、台本校对和多 ASR 校对 |
 | OpenAI-compatible | Ollama、LM Studio、vLLM 或自建兼容接口 |
 | DeepL | 专业机器翻译 API |
 | Google Cloud Translation | Basic v2 逐句翻译 |

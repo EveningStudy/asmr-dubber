@@ -122,7 +122,7 @@ Faster-Whisper：
 | 作品、人物与场景背景 | 帮助专名和上下文消歧，不允许据此补写台词 |
 | 校对 Prompt | 约束 LLM 输出证据 ID 和严格 JSON；不确定时保留默认值 |
 
-校对只支持 DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 必须保留 `window_id`、`evidence_ids` 和结果 JSON 合同，否则程序会拒绝无法审计的输出。
+校对只支持 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 必须保留 `window_id`、`evidence_ids` 和结果 JSON 合同，否则程序会拒绝无法审计的输出。
 
 ## 翻译
 
@@ -130,7 +130,7 @@ Faster-Whisper：
 
 | 类型 | 服务 | 是否可做多 ASR 校对 |
 |---|---|---|
-| LLM | DeepSeek、阿里云百炼、豆包、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible | 可以 |
+| LLM | DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible | 可以 |
 | 机器翻译 | DeepL、Google Cloud Translation、Microsoft Azure Translator | 不可以 |
 
 默认翻译服务是 DeepSeek，模型为 `deepseek-v4-flash`。选择服务后，模型、基础地址、说明和密钥状态会一起刷新。模型框允许填写账户实际可用的模型 ID。
@@ -146,6 +146,7 @@ Faster-Whisper：
 | 上下文句数 | 24 | 当前批次周围的有界窗口 |
 | 翻译记忆句数 | 50 | 已确认日中对照的有界记忆 |
 | 翻译 Prompt | 按项目语言显示内置内容 | 日语和英语分别保存；编辑后只覆盖当前语言，恢复按钮可重新跟随内置版本 |
+| API 附加请求参数 | `{}` | JSON 对象；用于 `reasoning_effort`、`enable_thinking`、`thinking` 等服务商字段 |
 
 翻译保持句子 ID 和顺序。纯非语言内容返回空中文；包含台词的混合句只翻译有意义的部分。长项目不会把全部历史无限发送给服务。切换新项目的音频语言时，Prompt 编辑框会同步切换到对应语言；未编辑的一侧不会被覆盖。
 
@@ -156,7 +157,8 @@ Faster-Whisper：
 - Google Cloud Translation 使用 Basic v2 API Key；
 - 阿里云百炼默认使用 `https://dashscope.aliyuncs.com/compatible-mode/v1`；API Key、地域和地址必须匹配；
 - 豆包默认使用火山方舟北京地址；模型框也可填写控制台中的推理接入点 ID；
-- OpenAI-compatible 适用于本地或自建接口，密钥可选，默认地址示例是 `http://127.0.0.1:11434/v1`。
+- 商汤 SenseNova 默认使用 `https://api.sensenova.cn/compatible-mode/v2`，结构化请求会显式发送 `reasoning_effort=none`；
+- OpenAI-compatible 适用于本地或自建接口，密钥可选，默认地址示例是 `http://127.0.0.1:11434/v1`。如果服务有额外字段，可填“API 附加请求参数（JSON）”。
 
 ## TTS（语音合成）
 
@@ -164,7 +166,7 @@ Faster-Whisper：
 
 | 设置 | 默认 | 说明 |
 |---|---:|---|
-| TTS 后端 | IndexTTS2；未就绪时为 Edge TTS | 可选择 Edge、MiMo、MiniMax、GPT-SoVITS、CosyVoice 或 Fish API |
+| TTS 后端 | IndexTTS2；未就绪时为 Edge TTS | 可选择 IndexTTS2 API、通用 TTS API、Edge、MiMo、MiniMax、GPT-SoVITS、CosyVoice 或 Fish API |
 | 模型 | 随后端变化 | 云服务允许填写账号实际可用的模型 ID |
 | 单句超时 | 600 秒 | 本地任务和外部请求的失败上限 |
 | 在线/API 并发 | 2 | 只对 HTTP 后端显示，范围 1–8；限流时设为 1 |
@@ -186,6 +188,12 @@ Faster-Whisper：
 | 情绪参考 | 当前句 | 也可用项目参考、音色参考、外部音频或文字描述 |
 
 IndexTTS2 使用独立 Python 环境，不要把它手工安装进主程序 venv。它支持 NVIDIA CUDA 和 CPU；CPU 模式通常会慢很多，建议优先使用 CUDA。
+
+### IndexTTS2 API 与通用 TTS API
+
+IndexTTS2 API 连接远程或自建的 IndexTTS2 服务，使用 `/v1/tts` multipart 请求上传参考音频；服务端负责模型和显卡。通用 TTS API 使用 OpenAI-compatible `/audio/speech`，只发送文本、模型和音色，不使用参考音频。两者都不会由 Setup 下载模型。
+
+这两个后端都支持“API 附加请求参数（JSON）”，用于传递服务端额外字段。JSON 必须是对象，不能覆盖程序生成的 `model`、`text`/`input` 或 `stream` 等核心字段。服务返回音频文件，或返回含 `audio_base64`、`audio_url` 等字段的 JSON，程序会统一写入逐句 WAV 缓存。
 
 ### Edge TTS
 

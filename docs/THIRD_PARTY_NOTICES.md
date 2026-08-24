@@ -58,7 +58,7 @@ ASMR Dubber 只实现以下服务的客户端适配，不分发或启动它们�
 
 ## 翻译和云 API
 
-DeepSeek、阿里云百炼、豆包/火山方舟、OpenAI、Anthropic、Google、Microsoft、DeepL、小米 MiMo、MiniMax 和 Fish Audio 等 API 由相应供应商提供。ASMR Dubber 不转售这些服务，也不授予调用权限。用户自行承担：
+DeepSeek、阿里云百炼、豆包/火山方舟、商汤 SenseNova、OpenAI、Anthropic、Google、Microsoft、DeepL、小米 MiMo、MiniMax 和 Fish Audio 等 API 由相应供应商提供。ASMR Dubber 不转售这些服务，也不授予调用权限。用户自行承担：
 
 - 账户、地区、配额和费用；
 - 输入文字或音频是否允许发送给该供应商；

@@ -30,6 +30,7 @@ _LLM_PROVIDERS = {
     "anthropic",
     "gemini",
     "openai_compatible",
+    "sensenova",
 }
 
 
@@ -188,7 +189,7 @@ def _request_json(
     if provider not in _LLM_PROVIDERS:
         raise AsmrDubberError(
             "多 ASR（语音识别）校对需要大模型；当前翻译供应商不是 LLM。"
-            "请改用 DeepSeek、百炼、豆包、OpenAI、Claude、Gemini 或本地兼容接口。"
+            "请改用 DeepSeek、百炼、豆包、商汤、OpenAI、Claude、Gemini 或本地兼容接口。"
         )
     key = resolve_api_key(provider)
     preset = PROVIDER_PRESETS[provider]
@@ -230,6 +231,7 @@ def _request_json(
         top_p=1.0,
         max_output_tokens=settings.translation_max_output_tokens,
         timeout_seconds=settings.asr_timeout_seconds,
+        extra_body=settings.translation_extra_body,
     )
     try:
         content, limited = adapter._request(messages, job_id)

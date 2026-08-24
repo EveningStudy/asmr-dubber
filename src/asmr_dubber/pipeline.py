@@ -170,7 +170,7 @@ def _reconcile_untimed_script(
     if provider not in LLM_RECONCILIATION_PROVIDERS:
         raise ProjectError(
             "无时间轴台本的智能校对需要大模型翻译服务；请先在设置中选择 DeepSeek、百炼、"
-            "豆包、OpenAI、Claude、Gemini 或本地/自定义 OpenAI-compatible。"
+            "豆包、商汤、OpenAI、Claude、Gemini 或本地/自定义 OpenAI-compatible。"
         )
     preset = PROVIDER_PRESETS.get(provider)
     if preset is None:
@@ -232,6 +232,7 @@ def _reconcile_untimed_script(
             temperature=project.settings.translation_temperature,
             top_p=project.settings.translation_top_p,
             max_output_tokens=project.settings.translation_max_output_tokens,
+            extra_body=project.settings.translation_extra_body,
             job_id=f"asmr_{project.source.sha256[:24]}_script",
             progress=progress,
             cancel_event=cancel_event,
@@ -643,6 +644,7 @@ def _translate_project_impl(
         temperature=project.settings.translation_temperature,
         top_p=project.settings.translation_top_p,
         max_output_tokens=project.settings.translation_max_output_tokens,
+        extra_body=project.settings.translation_extra_body,
         deepl_formality=project.settings.translation_deepl_formality,
         microsoft_region=project.settings.translation_microsoft_region,
         send_context=project.settings.translation_send_context,

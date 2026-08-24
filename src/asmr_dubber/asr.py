@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from .api_contracts import APIContractError, bearer_headers, endpoint_url, merge_extra_body
 from .constants import PROJECT_ROOT
 from .environment import (
     cached_model_path,
@@ -33,10 +34,13 @@ from .segmentation import TimedToken, restore_punctuation, split_timed_tokens
 from .task_control import (
     CancellationSignal,
     check_cancelled,
+    register_cancel_callback,
     register_process,
     terminate_process_tree,
+    unregister_cancel_callback,
     unregister_process,
 )
+from .user_settings import saved_service_key
 from .vad import (
     build_condensed_analysis_audio,
     detect_asmr_speech,
@@ -165,6 +169,87 @@ def _cleanup_cuda() -> None:
             torch.cuda.synchronize()
     except ImportError:
         pass
+
+
+def _transcribe_generic_api(
+    analysis_audio: Path,
+    settings: ProjectSettings,
+    progress: Progress | None,
+    cancel_event: CancellationSignal | None = None,
+    *,
+    source_language: SpeechSourceLanguage = "ja",
+) -> tuple[list[Sentence], str]:
+    import httpx
+
+    if progress:
+        progress(f"上传音频到通用 ASR API：{settings.asr_model}", 0, 1)
+    try:
+        url = endpoint_url(settings.asr_api_base_url, "/audio/transcriptions")
+        payload = merge_extra_body(
+            {
+                "model": settings.asr_model,
+                "language": source_language,
+                "response_format": "verbose_json",
+            },
+            settings.asr_api_extra_body,
+            label="ASR API 附加请求参数",
+            reserved={"file", "model"},
+        )
+    except APIContractError as exc:
+        raise AsmrDubberError(str(exc)) from exc
+    form = {
+        key: (
+            json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+        )
+        for key, value in payload.items()
+        if value is not None
+    }
+    form["timestamp_granularities[]"] = "segment"
+    key = saved_service_key("asr:generic_asr_api")
+    client = httpx.Client(
+        headers=bearer_headers(key),
+        timeout=settings.asr_timeout_seconds,
+    )
+    callback_signal = register_cancel_callback(client.close, cancel_event)
+    try:
+        check_cancelled(cancel_event)
+        with analysis_audio.open("rb") as handle:
+            response = client.post(
+                url,
+                data=form,
+                files={"file": (analysis_audio.name, handle, "audio/wav")},
+            )
+        if response.is_error:
+            raise AsmrDubberError(
+                f"通用 ASR API 拒绝请求（HTTP {response.status_code}）：{response.text[:500]}"
+            )
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise AsmrDubberError("通用 ASR API 返回的不是有效 JSON。") from exc
+    except httpx.HTTPError as exc:
+        raise AsmrDubberError(f"通用 ASR API 请求失败：{exc}") from exc
+    finally:
+        unregister_cancel_callback(client.close, callback_signal)
+        client.close()
+    if not isinstance(result, Mapping):
+        raise AsmrDubberError("通用 ASR API JSON 顶层必须是对象。")
+    tokens: list[TimedToken] = []
+    for item in result.get("segments") or result.get("words") or []:
+        if not isinstance(item, Mapping):
+            continue
+        token = _finite_token(
+            item.get("text") or item.get("word"),
+            item.get("start"),
+            item.get("end"),
+        )
+        if token is not None:
+            tokens.append(token)
+    full_text = str(result.get("text") or "").strip() or "".join(token.text for token in tokens)
+    if not full_text:
+        raise AsmrDubberError("通用 ASR API 没有返回可用文字。")
+    language = str(result.get("language") or source_language)
+    return _finish_tokens(tokens, full_text, language, settings, source_language)
 
 
 def _transcribe_faster_whisper(
@@ -848,10 +933,14 @@ def transcribe_source(
 ) -> tuple[list[Sentence], str]:
     """Run one of the three deliberately supported recognition families."""
 
-    if source_language == "en" and settings.asr_backend != "faster_whisper":
-        raise AsmrDubberError("英语识别目前使用现有 Faster-Whisper 模型。")
+    if source_language == "en" and settings.asr_backend not in {
+        "faster_whisper",
+        "generic_asr_api",
+    }:
+        raise AsmrDubberError("英语识别可使用 Faster-Whisper 或通用 ASR API。")
 
     runners = {
+        "generic_asr_api": _transcribe_generic_api,
         "parakeet_nemo": _transcribe_parakeet,
         "kotoba_whisper": _transcribe_kotoba_whisper,
         "faster_whisper": _transcribe_faster_whisper,
@@ -861,7 +950,7 @@ def transcribe_source(
     except KeyError as exc:
         raise AsmrDubberError(
             f"不支持的 ASR（语音识别）后端：{settings.asr_backend}。"
-            "请选择 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
+            "请选择 Parakeet、Kotoba-Whisper、Faster-Whisper 或通用 ASR API。"
         ) from exc
     if settings.asr_vad_mode == "asmr":
         if source_language != "ja":

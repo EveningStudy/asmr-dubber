@@ -843,12 +843,15 @@ def test_vad_choices_hide_uninstalled_or_backend_irrelevant_modes(monkeypatch) -
 def test_english_language_setting_filters_japanese_asr_backends() -> None:
     backend, note = _source_language_backend_update("en", "parakeet_nemo")
     assert backend["value"] == "faster_whisper"
-    assert [value for _label, value in backend["choices"]] == ["faster_whisper"]
+    assert [value for _label, value in backend["choices"]] == [
+        "faster_whisper",
+        "generic_asr_api",
+    ]
     assert "日语专用" in note
 
     faster = ui_module._asr_backend_update("faster_whisper", "asmr", "en")
     assert "kotoba-tech/kotoba-whisper-v2.0-faster" not in faster[0]["choices"]
-    assert faster[10]["value"] == "off"
+    assert faster[13]["value"] == "off"
 
 
 def test_translation_provider_hides_unrelated_provider_settings() -> None:
@@ -874,7 +877,7 @@ def test_asr_backend_hides_parameters_owned_by_other_backends(monkeypatch) -> No
     kotoba = ui_module._asr_backend_update("kotoba_whisper")
     faster = ui_module._asr_backend_update("faster_whisper")
 
-    assert [parakeet[index]["visible"] for index in range(2, 10)] == [
+    assert [parakeet[index]["visible"] for index in range(5, 13)] == [
         False,
         False,
         False,
@@ -884,7 +887,7 @@ def test_asr_backend_hides_parameters_owned_by_other_backends(monkeypatch) -> No
         False,
         False,
     ]
-    assert [kotoba[index]["visible"] for index in range(2, 10)] == [
+    assert [kotoba[index]["visible"] for index in range(5, 13)] == [
         False,
         False,
         True,
@@ -894,7 +897,7 @@ def test_asr_backend_hides_parameters_owned_by_other_backends(monkeypatch) -> No
         False,
         True,
     ]
-    assert [faster[index]["visible"] for index in range(2, 10)] == [
+    assert [faster[index]["visible"] for index in range(5, 13)] == [
         True,
         True,
         True,

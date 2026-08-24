@@ -5,12 +5,12 @@ ASMR Dubber 用于把日语、英语音视频制作成中文配音和字幕。�
 ## 能做什么
 
 - 从音频或视频创建独立项目，并保留输入文件的原始副本；
-- 使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper 做 ASR（语音识别）；
+- 使用 Parakeet、Kotoba-Whisper、Faster-Whisper 或通用 ASR API 做 ASR（语音识别）；
 - 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，直接进入校对和配音；
 - 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
 - 使用多个已安装的识别模型交叉校对源文；
-- 通过 DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
-- 使用本地 IndexTTS2、无需 API Key 的 Edge TTS，或连接 MiMo、MiniMax、GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
+- 通过 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
+- 使用本地或云端 IndexTTS2、通用 TTS API、无需 API Key 的 Edge TTS，或连接 MiMo、MiniMax、GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
 - 逐句调整源文、中文、起止时间和是否配音；
 - 输出混音后的 WAV、视频，以及双语/中文/源文 SRT 和 LRC 字幕；
 - 可以只导出完整时间轴的中文克隆音轨，之后再把它加入原音轨，不必重新生成 TTS；
@@ -18,7 +18,7 @@ ASMR Dubber 用于把日语、英语音视频制作成中文配音和字幕。�
 - 中断后继续工作，只重做缺失或设置已经失效的部分；
 - 长任务可在网页中取消；程序日志可直接查看和下载。
 
-英语项目使用现有的 Faster-Whisper 模型；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。翻译和配音目标语言为简体中文。
+英语项目使用 Faster-Whisper 或通用 ASR API；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。翻译和配音目标语言为简体中文。
 
 ## 演示
 
@@ -166,10 +166,10 @@ Parakeet 和 IndexTTS2 已在 Ubuntu 24.04/WSL2 的 NVIDIA 环境验证；其它
 
 | 环节 | 可选后端 |
 |---|---|
-| ASR（语音识别）| Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语）|
+| ASR（语音识别）| Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语/英语）、通用 ASR API|
 | 时间戳 | 识别模型自带时间戳、Qwen3 ForcedAligner 0.6B |
-| TTS（语音合成）| IndexTTS2、Edge TTS、MiMo TTS、MiniMax TTS、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
-| 翻译 | DeepSeek、阿里云百炼、豆包（火山方舟）、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
+| TTS（语音合成）| IndexTTS2、IndexTTS2 API、通用 TTS API、Edge TTS、MiMo TTS、MiniMax TTS、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
+| 翻译 | DeepSeek、阿里云百炼、豆包（火山方舟）、商汤 SenseNova、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
 
 多模型交叉校对只列出本机完整可用的识别模型。
 

@@ -10,7 +10,7 @@ ASMR Dubber 把一次配音工作保存成项目。识别、翻译、校对、�
 
 1. 在“ASR（语音识别）”中选择新项目的音频语言和识别方式；
 2. 在“翻译”中选择服务、模型和接口地址，保存当前服务的 API Key；
-3. 在“TTS（语音合成）”中选择本地 IndexTTS2、Edge TTS 或云端服务。
+3. 在“TTS（语音合成）”中选择本地/云端 IndexTTS2、通用 TTS API、Edge TTS 或其它云端服务。
 
 Edge TTS 不需要 API Key。IndexTTS2 未安装、独立运行环境损坏或 checkpoints 不完整时，程序会把 Edge TTS 作为新项目的默认后端；已经保存的项目设置不会被自动改写。
 
@@ -46,7 +46,7 @@ Edge TTS 不需要 API Key。IndexTTS2 未安装、独立运行环境损坏或 c
 - TXT 和粘贴的纯文本按每个非空行作为一句；只有一个长段落时，会先按源语言或中文句末标点拆分；
 - 日语或英语纯文本可以按台词长度生成初始时间轴，也可以使用进阶组件中的 Qwen3 ForcedAligner 对齐；中文纯文本可以按长度估算，或使用下面的智能台本校对，不单独使用 Qwen3。
 
-如果台本没有时间轴，可以选择“先运行 ASR/翻译，再用大模型校对台本”。程序会先用当前 ASR 设置得到真实时间轴；中文台本还会先完成一次中文翻译。随后，大模型只负责把台本文字映射到这些已有区间，不会重新猜测时间，也不会改动原音频。这个方式需要 DeepSeek、OpenAI、Claude、Gemini 或本地 OpenAI-compatible 等大模型服务，并且会比直接导入多一次处理时间；带时间轴的字幕仍然直接导入。
+如果台本没有时间轴，可以选择“先运行 ASR/翻译，再用大模型校对台本”。程序会先用当前 ASR 设置得到真实时间轴；中文台本还会先完成一次中文翻译。随后，大模型只负责把台本文字映射到这些已有区间，不会重新猜测时间，也不会改动原音频。这个方式需要 DeepSeek、百炼、豆包、商汤、OpenAI、Claude、Gemini 或本地 OpenAI-compatible 等大模型服务，并且会比直接导入多一次处理时间；带时间轴的字幕仍然直接导入。
 
 Qwen3 ForcedAligner 会按不超过五分钟的音频区间分组处理。纯文本缺少原始时间信息，即使使用自动对齐或智能台本校对，也应在句子表中抽查开始、结束和漏行。导入会替换当前句子表，但不会改动项目原媒体；原台本文字和导入报告保存在项目的 `imports` 目录。
 
@@ -90,7 +90,7 @@ VAD 能减少长静音和部分幻觉，但阈值太高会删掉耳语、呼吸�
 
 - 各识别器串行运行，总耗时大致相加；
 - 每个模型仍需单独满足内存和显存条件；
-- 交叉校对需要 DeepSeek、阿里云百炼、豆包、OpenAI、Claude、Gemini 或 OpenAI-compatible LLM；
+- 交叉校对需要 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Claude、Gemini 或 OpenAI-compatible LLM；
 - DeepL、Google Cloud Translation 和 Microsoft Translator 不能承担候选校对；
 - “作品、人物与场景背景”只用于专名和消歧，不能成为补写台词的依据；
 - 候选和裁决记录保存在 `analysis/asr_candidates.json` 与 `analysis/asr_review.json`，便于复查。

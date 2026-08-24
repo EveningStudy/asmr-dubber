@@ -88,6 +88,23 @@ class ModelBackend:
 
 
 ASR_BACKENDS: dict[str, ModelBackend] = {
+    "generic_asr_api": ModelBackend(
+        id="generic_asr_api",
+        label="通用 ASR API（OpenAI-compatible）",
+        kind="asr",
+        runtime="http",
+        default_model="whisper-1",
+        models=("whisper-1",),
+        help=(
+            "连接兼容 /v1/audio/transcriptions 的语音识别服务。上传音频并读取 "
+            "verbose_json 中的 segments；模型 ID 和附加请求参数均可自定义。"
+        ),
+        setup="填写 API 基础地址、模型 ID 和密钥；程序不会下载或启动服务端模型。",
+        api_key=True,
+        support_level="supported",
+        devices=("cpu",),
+        execution=ExecutionCapabilities(batch_strategy="none"),
+    ),
     "parakeet_nemo": ModelBackend(
         id="parakeet_nemo",
         label="Parakeet 日语 · CrispASR（推荐）",
@@ -211,6 +228,48 @@ TTS_BACKENDS: dict[str, ModelBackend] = {
             progress_strategy="streamed_process",
             persistent_session=True,
         ),
+    ),
+    "indextts2_api": ModelBackend(
+        id="indextts2_api",
+        label="IndexTTS2 云端/自建 API",
+        kind="tts",
+        runtime="http",
+        default_model="IndexTTS2",
+        models=("IndexTTS2",),
+        help=(
+            "通过 /v1/tts 调用远程 IndexTTS2。程序以 multipart 文件发送音色参考和"
+            "可选情绪参考；服务可直接返回音频，也可返回 Base64 或音频 URL。"
+        ),
+        setup="填写服务地址和可选 API Key；服务端需实现文档中的 IndexTTS2 JSON 合同。",
+        reference_audio=True,
+        reference_text="unused",
+        style_reference=True,
+        api_key=True,
+        support_level="supported",
+        devices=("cpu",),
+        execution=ExecutionCapabilities(
+            batch_strategy="request_concurrency",
+            reusable_reference_conditioning=True,
+        ),
+    ),
+    "generic_tts_api": ModelBackend(
+        id="generic_tts_api",
+        label="通用 TTS API（OpenAI-compatible）",
+        kind="tts",
+        runtime="http",
+        default_model="tts-1",
+        models=("tts-1",),
+        default_voice="alloy",
+        voices=("alloy",),
+        help=(
+            "连接兼容 /v1/audio/speech 的语音合成服务。适合不使用参考音频的云端"
+            "音色；模型、音色和附加请求参数均可自定义。"
+        ),
+        setup="填写 API 基础地址、模型、音色和密钥；程序不会下载服务端模型。",
+        api_key=True,
+        support_level="supported",
+        devices=("cpu",),
+        execution=ExecutionCapabilities(batch_strategy="request_concurrency"),
     ),
     "gpt_sovits": ModelBackend(
         id="gpt_sovits",
