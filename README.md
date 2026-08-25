@@ -274,3 +274,7 @@ bash scripts/linux/run-cli.sh --help
 ## 许可与责任
 
 项目代码采用[MIT License](LICENSE)。模型、运行时和云服务适用各自的许可证或服务条款，其中 IndexTTS2 使用独立的 bilibili Model Use License。请确认你有权处理输入作品和参考声音，并按适用规则标记合成内容。详见[第三方软件与模型说明](docs/THIRD_PARTY_NOTICES.md)。
+
+## 友链
+
+- [LINUX DO](https://linux.do/)：新的理想型社区
