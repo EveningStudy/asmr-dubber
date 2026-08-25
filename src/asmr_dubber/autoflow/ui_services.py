@@ -75,6 +75,7 @@ class AutoFlowEditView:
     mode: str
     layout: str
     embed_subtitles: bool
+    subtitles_only: bool
     rebuild: bool
     plan_id: str
 
@@ -503,6 +504,7 @@ def serialize_plan(plan: engine.SmartTaskPlan) -> dict[str, Any]:
         "retry_of": plan.retry_of,
         "translate_work_title": plan.translate_work_title,
         "translate_track_titles": plan.translate_track_titles,
+        "subtitles_only": plan.subtitles_only,
     }
 
 
@@ -531,6 +533,7 @@ def deserialize_plan(payload: Any) -> engine.SmartTaskPlan:
             retry_of=str(payload.get("retry_of") or "").strip() or None,
             translate_work_title=bool(payload.get("translate_work_title", True)),
             translate_track_titles=bool(payload.get("translate_track_titles", True)),
+            subtitles_only=bool(payload.get("subtitles_only", False)),
         )
     except (KeyError, TypeError, ValueError, OSError, engine.VideoPreparerError) as exc:
         raise ProjectError(f"自动处理队列数据无效：{exc}") from exc
@@ -612,6 +615,7 @@ def build_plan_for_ui(
     background_value: Any,
     embed_subtitles: bool,
     rebuild: bool,
+    subtitles_only: bool = False,
     *,
     settings: UserSettings | None = None,
 ) -> dict[str, Any]:
@@ -643,6 +647,7 @@ def build_plan_for_ui(
         embed_subtitles=bool(embed_subtitles) if mode != engine.MODE_AUDIO else False,
         translate_work_title=current.autoflow_translate_work_title,
         translate_track_titles=current.autoflow_translate_track_titles,
+        subtitles_only=bool(subtitles_only),
     )
     plan = engine.SmartTaskPlan(
         folder=folder,
@@ -659,6 +664,7 @@ def build_plan_for_ui(
         force=bool(rebuild),
         translate_work_title=current.autoflow_translate_work_title,
         translate_track_titles=current.autoflow_translate_track_titles,
+        subtitles_only=bool(subtitles_only),
     )
     _guard_output_replacement(plan)
     return serialize_plan(plan)
@@ -747,7 +753,7 @@ def queue_rows(queue_payload: Any) -> list[list[Any]]:
                 index,
                 plan.folder.name,
                 len(plan.sources),
-                MODE_LABELS[plan.mode],
+                f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
                 LAYOUT_LABELS[plan.layout],
                 str(plan.output_root),
             ]
@@ -773,7 +779,7 @@ def queue_items_for_ui(
                 "position": index,
                 "work": plan.folder.name,
                 "tracks": len(plan.sources),
-                "mode": MODE_LABELS[plan.mode],
+                "mode": f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
                 "layout": LAYOUT_LABELS[plan.layout],
                 "output": plan.output_root.as_posix(),
                 "titles": (
@@ -868,6 +874,7 @@ def edit_plan_for_ui(
         mode=plan.mode,
         layout=plan.layout,
         embed_subtitles=plan.embed_subtitles,
+        subtitles_only=plan.subtitles_only,
         rebuild=plan.rebuild,
         plan_id=plan.plan_id,
     )

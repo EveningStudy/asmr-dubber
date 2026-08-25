@@ -201,6 +201,7 @@ class SmartTaskPlan:
     retry_of: str | None = None
     translate_work_title: bool = True
     translate_track_titles: bool = True
+    subtitles_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -1288,6 +1289,7 @@ def plan_identity(
     embed_subtitles: bool = True,
     translate_work_title: bool = True,
     translate_track_titles: bool = True,
+    subtitles_only: bool = False,
 ) -> str:
     payload = {
         "source_folder": os.path.normcase(str(source_folder.resolve())),
@@ -1324,6 +1326,8 @@ def plan_identity(
             "work": bool(translate_work_title),
             "tracks": bool(translate_track_titles),
         }
+    if subtitles_only:
+        payload["subtitles_only"] = True
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
@@ -1364,6 +1368,7 @@ def write_plan_manifest(
     sources: list[AudioSource],
     background: Path | None,
     embed_subtitles: bool,
+    subtitles_only: bool = False,
     plan_id: str | None = None,
     jobs: Sequence[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -1378,6 +1383,7 @@ def write_plan_manifest(
         "edition": edition,
         "background": str(background) if background else None,
         "embed_subtitles": bool(embed_subtitles),
+        "subtitles_only": bool(subtitles_only),
         "tracks": [
             {
                 "index": index,
@@ -1415,6 +1421,7 @@ def load_state(path: Path) -> dict[str, Any] | None:
     payload.setdefault("harmonized_volume_db", -DEFAULT_HARMONIZED_VOLUME_REDUCTION_DB)
     payload.setdefault("harmonized_delay_seconds", round(DEFAULT_HARMONIZED_DELAY_MINUTES * 60))
     payload.setdefault("embed_subtitles", True)
+    payload.setdefault("subtitles_only", False)
     payload.setdefault("reference_wait_seconds", REFERENCE_SELECTION_TIMEOUT_SECONDS)
     return payload
 
@@ -2703,6 +2710,53 @@ def copy_final_outputs(
     }
 
 
+def copy_subtitle_only_outputs(
+    paths: ToolPaths,
+    project_json: Path,
+    folder: Path,
+    mode: str,
+    *,
+    original_media: Path,
+    master_audio: Path,
+    background: Path | None,
+    harmonized_delay_seconds: int,
+    harmonized_volume_db: float,
+    embed_subtitles: bool,
+) -> dict[str, str]:
+    """Publish subtitles without creating a synthesized or mixed track."""
+
+    if not original_media.is_file():
+        raise VideoPreparerError("找不到已经生成的原声成品。")
+    srt, lrc = copy_subtitles(
+        project_json,
+        folder,
+        mode,
+        harmonized_delay_seconds=harmonized_delay_seconds,
+    )
+    outputs = {
+        "original": str(original_media),
+        "srt": str(srt),
+        "lrc": str(lrc),
+    }
+    normalized_mode = normalize_mode(mode)
+    if normalized_mode != MODE_AUDIO and embed_subtitles:
+        destination = folder / "原声字幕版.mp4"
+        lead = harmonized_delay_seconds if normalized_mode == MODE_VIDEO_HARMONIZED else 0
+        volume = harmonized_volume_db if normalized_mode == MODE_VIDEO_HARMONIZED else 0.0
+        print("  正在生成带字幕的原声视频……")
+        render_static_bilingual_video(
+            paths,
+            master_audio,
+            background,
+            srt,
+            destination,
+            lead_seconds=lead,
+            volume_db=volume,
+        )
+        outputs["video"] = str(destination)
+    return outputs
+
+
 def concat_audio_files(
     paths: ToolPaths,
     files: Sequence[Path],
@@ -3338,6 +3392,7 @@ def create_initial_state(
     config: AppConfig,
     *,
     embed_subtitles: bool = True,
+    subtitles_only: bool = False,
 ) -> dict[str, Any]:
     mode = normalize_mode(mode)
     return {
@@ -3352,6 +3407,7 @@ def create_initial_state(
         "fingerprint": fingerprint(sources, background),
         "background": str(background) if background else None,
         "embed_subtitles": bool(embed_subtitles),
+        "subtitles_only": bool(subtitles_only),
         "workspace": str(workspace_path(folder)),
         "timeline": [],
         "title_translations": {},
@@ -3376,6 +3432,7 @@ def create_planned_state(
     folder_translation: str,
     title_translations: dict[str, str],
     embed_subtitles: bool,
+    subtitles_only: bool,
 ) -> dict[str, Any]:
     state = create_initial_state(
         output_folder,
@@ -3384,6 +3441,7 @@ def create_planned_state(
         background,
         config,
         embed_subtitles=embed_subtitles,
+        subtitles_only=subtitles_only,
     )
     state.update(
         {
@@ -3416,6 +3474,7 @@ def execute_planned_job(
     folder_translation: str,
     title_translations: dict[str, str],
     embed_subtitles: bool,
+    subtitles_only: bool,
     rebuild: bool,
     shared_reference: dict[str, str] | None = None,
     capture_reference_path: Path | None = None,
@@ -3436,6 +3495,10 @@ def execute_planned_job(
         ):
             raise VideoPreparerError(
                 f"{output_folder.name} 的字幕内嵌设置发生变化；请使用 --rebuild 重做。"
+            )
+        if bool(state.get("subtitles_only", False)) != bool(subtitles_only):
+            raise VideoPreparerError(
+                f"{output_folder.name} 的处理内容发生变化；请使用 --rebuild 重做。"
             )
         missing = missing_resume_artifacts(state, output_folder)
         if missing:
@@ -3475,6 +3538,7 @@ def execute_planned_job(
             folder_translation=folder_translation,
             title_translations=title_translations,
             embed_subtitles=embed_subtitles,
+            subtitles_only=subtitles_only,
         )
         save_state(state_file, state)
     elif not status_at_least(state, "synthesized"):
@@ -3703,6 +3767,7 @@ def build_merged_outputs(
     folder_translation: str,
     title_translations: dict[str, str],
     embed_subtitles: bool,
+    subtitles_only: bool = False,
 ) -> dict[str, str]:
     """Build the merged product from completed per-track projects."""
 
@@ -3725,16 +3790,19 @@ def build_merged_outputs(
         expected_samples=expected,
         name="original",
     )
-    mixed_files = [
-        _state_mixed_audio(state, Path(str(state.get("project_json") or ""))) for state in states
-    ]
-    mixed_master, _ = concat_audio_files(
-        paths,
-        mixed_files,
-        work,
-        expected_samples=expected,
-        name="mixed",
-    )
+    mixed_master: Path | None = None
+    if not subtitles_only:
+        mixed_files = [
+            _state_mixed_audio(state, Path(str(state.get("project_json") or "")))
+            for state in states
+        ]
+        mixed_master, _ = concat_audio_files(
+            paths,
+            mixed_files,
+            work,
+            expected_samples=expected,
+            name="mixed",
+        )
 
     timeline = _timeline_from_states(states)
     merged_state: dict[str, Any] = {
@@ -3764,18 +3832,20 @@ def build_merged_outputs(
 
     if mode == MODE_AUDIO:
         original_destination = output_folder / "原声.flac"
-        mixed_destination = output_folder / "双语版.flac"
         atomic_copy(original_master, original_destination)
-        atomic_copy(mixed_master, mixed_destination)
         outputs = {
             "original": str(original_destination),
-            "audio": str(mixed_destination),
             "srt": str(srt),
             "lrc": str(lrc),
         }
+        if not subtitles_only:
+            if mixed_master is None:
+                raise VideoPreparerError("找不到可合并的双语音频。")
+            mixed_destination = output_folder / "双语版.flac"
+            atomic_copy(mixed_master, mixed_destination)
+            outputs["audio"] = str(mixed_destination)
     else:
         original_destination = output_folder / "原声.mp4"
-        bilingual_destination = output_folder / "双语版.mp4"
         lead = int(config.harmonized_delay_seconds) if mode == MODE_VIDEO_HARMONIZED else 0
         volume = config.harmonized_volume_db if mode == MODE_VIDEO_HARMONIZED else 0.0
         render_static_video(
@@ -3786,31 +3856,47 @@ def build_merged_outputs(
             lead_seconds=lead,
             volume_db=volume,
         )
-        if embed_subtitles:
-            render_static_bilingual_video(
-                paths,
-                mixed_master,
-                background,
-                srt,
-                bilingual_destination,
-                lead_seconds=lead,
-                volume_db=volume,
-            )
-        else:
-            render_static_video(
-                paths,
-                mixed_master,
-                background,
-                bilingual_destination,
-                lead_seconds=lead,
-                volume_db=volume,
-            )
         outputs = {
             "original": str(original_destination),
-            "video": str(bilingual_destination),
             "srt": str(srt),
             "lrc": str(lrc),
         }
+        if subtitles_only and embed_subtitles:
+            subtitle_destination = output_folder / "原声字幕版.mp4"
+            render_static_bilingual_video(
+                paths,
+                original_master,
+                background,
+                srt,
+                subtitle_destination,
+                lead_seconds=lead,
+                volume_db=volume,
+            )
+            outputs["video"] = str(subtitle_destination)
+        elif not subtitles_only:
+            if mixed_master is None:
+                raise VideoPreparerError("找不到可合并的双语音频。")
+            bilingual_destination = output_folder / "双语版.mp4"
+            if embed_subtitles:
+                render_static_bilingual_video(
+                    paths,
+                    mixed_master,
+                    background,
+                    srt,
+                    bilingual_destination,
+                    lead_seconds=lead,
+                    volume_db=volume,
+                )
+            else:
+                render_static_video(
+                    paths,
+                    mixed_master,
+                    background,
+                    bilingual_destination,
+                    lead_seconds=lead,
+                    volume_db=volume,
+                )
+            outputs["video"] = str(bilingual_destination)
     timestamp = write_timestamp_document(merged_state, output_folder)
     outputs["timestamps"] = str(timestamp)
     shutil.rmtree(work, ignore_errors=True)
@@ -3900,11 +3986,20 @@ def write_smart_summary(
     return index_file, timeline_file
 
 
-def output_mapping_complete(outputs: Any, *, mode: str) -> bool:
+def output_mapping_complete(
+    outputs: Any,
+    *,
+    mode: str,
+    subtitles_only: bool = False,
+    embed_subtitles: bool = True,
+) -> bool:
     if not isinstance(outputs, dict):
         return False
     required = {"original", "srt", "lrc", "timestamps"}
-    required.add("audio" if normalize_mode(mode) == MODE_AUDIO else "video")
+    if not subtitles_only:
+        required.add("audio" if normalize_mode(mode) == MODE_AUDIO else "video")
+    elif normalize_mode(mode) != MODE_AUDIO and embed_subtitles:
+        required.add("video")
     return all(Path(str(outputs.get(key) or "")).is_file() for key in required)
 
 
@@ -4365,11 +4460,18 @@ def print_smart_plan_summary(plan: SmartTaskPlan, *, index: int | None = None) -
     print(f"\n{heading}已配置：{plan.folder.name}")
     print(f"  音频版本：{plan.edition_label}（{len(plan.sources)} 轨）")
     print(f"  处理类型：{mode_label(plan.mode)}")
+    print(f"  处理内容：{'仅生成字幕' if plan.subtitles_only else '中文配音和字幕'}")
     print(f"  成品组织：{layout_label(plan.layout)}")
     if plan.mode != MODE_AUDIO:
         print(f"  背景图片：{plan.background.name if plan.background else '黑色背景'}")
         subtitle_mode = (
-            "内嵌，同时保留 SRT/LRC" if plan.embed_subtitles else "不内嵌，仅保留 SRT/LRC"
+            "原声视频带字幕，同时保留 SRT/LRC"
+            if plan.subtitles_only and plan.embed_subtitles
+            else "原声视频不带字幕，仅保留 SRT/LRC"
+            if plan.subtitles_only
+            else "内嵌，同时保留 SRT/LRC"
+            if plan.embed_subtitles
+            else "不内嵌，仅保留 SRT/LRC"
         )
         print(f"  视频字幕：{subtitle_mode}")
     print(f"  输出目录：{plan.output_root}")
@@ -4393,12 +4495,14 @@ def execute_prepared_smart_plan(
     layout = plan.layout
     background = plan.background
     embed_subtitles = plan.embed_subtitles
+    subtitles_only = plan.subtitles_only
     plan_id = plan.plan_id
     rebuild = plan.rebuild
     force = plan.force
     log_event(
         f"开始智能任务 plan={plan_id} source={folder} mode={mode} layout={layout} "
-        f"tracks={len(sources)} embed_subtitles={embed_subtitles}"
+        f"tracks={len(sources)} embed_subtitles={embed_subtitles} "
+        f"subtitles_only={subtitles_only}"
     )
     prepare_smart_output_root(output_root, plan_id=plan_id, force=force, rebuild=rebuild)
 
@@ -4409,7 +4513,10 @@ def execute_prepared_smart_plan(
             print(f"背景图片：{background.name}")
         else:
             print("背景图片：黑色背景")
-        print(f"视频字幕：{'内嵌' if embed_subtitles else '不内嵌（外部 SRT/LRC 仍保留）'}")
+        if subtitles_only:
+            print(f"原声视频字幕：{'生成' if embed_subtitles else '不生成'}")
+        else:
+            print(f"视频字幕：{'内嵌' if embed_subtitles else '不内嵌（外部 SRT/LRC 仍保留）'}")
 
     folder_translation, title_translations = translated_plan_titles(
         plan_id,
@@ -4430,6 +4537,7 @@ def execute_prepared_smart_plan(
         sources=list(sources),
         background=background,
         embed_subtitles=embed_subtitles,
+        subtitles_only=subtitles_only,
         plan_id=plan_id,
         jobs=descriptors,
     )
@@ -4456,6 +4564,7 @@ def execute_prepared_smart_plan(
             "edition": edition,
             "background": str(background) if background else None,
             "embed_subtitles": embed_subtitles,
+            "subtitles_only": subtitles_only,
             "jobs": descriptors,
         }
     )
@@ -4486,6 +4595,7 @@ def execute_prepared_smart_plan(
             folder_translation=folder_translation,
             title_translations=title_translations,
             embed_subtitles=embed_subtitles,
+            subtitles_only=subtitles_only,
             rebuild=rebuild,
             reference_event_callback=reference_event_callback,
         )
@@ -4494,13 +4604,16 @@ def execute_prepared_smart_plan(
     else:
         # Let the longest source establish the shared voice anchor. Processing
         # order is otherwise restored in the original track order for output.
-        durations = [audio_duration_samples(paths, item.path) for item in sources]
-        anchor_index = max(range(len(sources)), key=lambda index: (durations[index], -index))
-        processing_order = [
-            anchor_index,
-            *[index for index in range(len(sources)) if index != anchor_index],
-        ]
-        print(f"\n分轨模式先处理最长音轨（第 {anchor_index + 1} 条）以建立共用参考。")
+        if subtitles_only:
+            processing_order = list(range(len(sources)))
+        else:
+            durations = [audio_duration_samples(paths, item.path) for item in sources]
+            anchor_index = max(range(len(sources)), key=lambda index: (durations[index], -index))
+            processing_order = [
+                anchor_index,
+                *[index for index in range(len(sources)) if index != anchor_index],
+            ]
+            print(f"\n分轨模式先处理最长音轨（第 {anchor_index + 1} 条）以建立共用参考。")
         for zero_index in processing_order:
             index = zero_index + 1
             descriptor = next(item for item in descriptors if item.get("index") == index)
@@ -4519,13 +4632,14 @@ def execute_prepared_smart_plan(
                 folder_translation=folder_translation,
                 title_translations=title_translations,
                 embed_subtitles=embed_subtitles,
+                subtitles_only=subtitles_only,
                 rebuild=rebuild,
                 shared_reference=shared_reference,
                 capture_reference_path=capture,
                 reference_event_callback=reference_event_callback,
             )
             states_by_index[index] = state
-            if shared_reference is None:
+            if not subtitles_only and shared_reference is None:
                 candidate = state.get("shared_reference")
                 if (
                     isinstance(candidate, dict)
@@ -4555,7 +4669,12 @@ def execute_prepared_smart_plan(
         if (
             not rebuild
             and str(previous_merged.get("status") or "") == "completed"
-            and output_mapping_complete(previous_merged.get("outputs"), mode=mode)
+            and output_mapping_complete(
+                previous_merged.get("outputs"),
+                mode=mode,
+                subtitles_only=subtitles_only,
+                embed_subtitles=embed_subtitles,
+            )
         ):
             print("\n合并成品已经完整，跳过重复生成。")
             merged_descriptor["outputs"] = dict(previous_merged["outputs"])
@@ -4574,6 +4693,7 @@ def execute_prepared_smart_plan(
                 folder_translation=folder_translation,
                 title_translations=title_translations,
                 embed_subtitles=embed_subtitles,
+                subtitles_only=subtitles_only,
             )
             merged_descriptor["outputs"] = merged_outputs
             merged_descriptor["status"] = "completed"
@@ -4714,9 +4834,14 @@ def missing_resume_artifacts(state: dict[str, Any], folder: Path) -> list[Path]:
         require_file(project_json)
     if status_at_least(state, "outputs_ready"):
         outputs = state.get("outputs") or {}
-        primary_key = "audio" if normalize_mode(state["mode"]) == MODE_AUDIO else "video"
-        default_primary = folder / ("双语版.wav" if primary_key == "audio" else "双语版.mp4")
-        require_file(Path(str(outputs.get(primary_key) or default_primary)))
+        subtitles_only = bool(state.get("subtitles_only", False))
+        mode = normalize_mode(state["mode"])
+        if not subtitles_only:
+            primary_key = "audio" if mode == MODE_AUDIO else "video"
+            default_primary = folder / ("双语版.wav" if primary_key == "audio" else "双语版.mp4")
+            require_file(Path(str(outputs.get(primary_key) or default_primary)))
+        elif mode != MODE_AUDIO and bool(state.get("embed_subtitles", True)):
+            require_file(Path(str(outputs.get("video") or folder / "原声字幕版.mp4")))
         for key, name in (("srt", "双语版.srt"), ("lrc", "双语版.lrc")):
             require_file(Path(str(outputs.get(key) or folder / name)))
     if status_at_least(state, "completed"):
@@ -4860,51 +4985,53 @@ def execute_task(
         state["status"] = "awaiting_reference"
         save_state(state_file, state)
 
-    if not status_at_least(state, "synthesized"):
-        if shared_reference is not None:
-            apply_shared_reference(project_json, shared_reference)
-            print("\n  已复用本作品的统一音色参考，不需要再次选择。")
-        else:
-            reference_id = project_reference_id(project_json)
-            if reference_id:
-                print(f"\n复用已保存的统一音色参考：{reference_id}")
-            elif project_has_external_reference(project_json):
-                print("\n复用当前项目已经保存的外部参考音频。")
-            elif not wait_for_reference(
-                paths,
-                project_json,
-                timeout_seconds=int(
-                    state.get("reference_wait_seconds", REFERENCE_SELECTION_TIMEOUT_SECONDS)
-                ),
-                event_callback=reference_event_callback,
-                event_context={
-                    "plan_id": str(state.get("plan_id") or ""),
-                    "job_id": str(state.get("job_id") or ""),
-                    "work": Path(str(state.get("source_folder") or folder)).name,
-                    "output_folder": str(folder.resolve()),
-                },
-                launch_ui=reference_event_callback is None,
-            ):
-                return
-        if capture_reference_path is not None and not state.get("shared_reference"):
-            state["shared_reference"] = extract_shared_reference(
-                project_json,
-                capture_reference_path,
-            )
+    subtitles_only = bool(state.get("subtitles_only", False))
+    if not subtitles_only:
+        if not status_at_least(state, "synthesized"):
+            if shared_reference is not None:
+                apply_shared_reference(project_json, shared_reference)
+                print("\n  已复用本作品的统一音色参考，不需要再次选择。")
+            else:
+                reference_id = project_reference_id(project_json)
+                if reference_id:
+                    print(f"\n复用已保存的统一音色参考：{reference_id}")
+                elif project_has_external_reference(project_json):
+                    print("\n复用当前项目已经保存的外部参考音频。")
+                elif not wait_for_reference(
+                    paths,
+                    project_json,
+                    timeout_seconds=int(
+                        state.get("reference_wait_seconds", REFERENCE_SELECTION_TIMEOUT_SECONDS)
+                    ),
+                    event_callback=reference_event_callback,
+                    event_context={
+                        "plan_id": str(state.get("plan_id") or ""),
+                        "job_id": str(state.get("job_id") or ""),
+                        "work": Path(str(state.get("source_folder") or folder)).name,
+                        "output_folder": str(folder.resolve()),
+                    },
+                    launch_ui=reference_event_callback is None,
+                ):
+                    return
+            if capture_reference_path is not None and not state.get("shared_reference"):
+                state["shared_reference"] = extract_shared_reference(
+                    project_json,
+                    capture_reference_path,
+                )
+                save_state(state_file, state)
+            print("\n[5/5] TTS（语音合成）、混音与字幕")
+            run_asmr_cli(paths, "synthesize", str(project_json))
+            state["status"] = "synthesized"
             save_state(state_file, state)
-        print("\n[5/5] TTS（语音合成）、混音与字幕")
-        run_asmr_cli(paths, "synthesize", str(project_json))
-        state["status"] = "synthesized"
-        save_state(state_file, state)
 
-    if not status_at_least(state, "mixed"):
-        run_asmr_cli(paths, "mix", str(project_json))
-        project = read_project(project_json)
-        mixed_audio = project_asset(project_json, project.get("output_file"))
-        if mixed_audio is not None:
-            state["project_mixed_audio"] = str(mixed_audio)
-        state["status"] = "mixed"
-        save_state(state_file, state)
+        if not status_at_least(state, "mixed"):
+            run_asmr_cli(paths, "mix", str(project_json))
+            project = read_project(project_json)
+            mixed_audio = project_asset(project_json, project.get("output_file"))
+            if mixed_audio is not None:
+                state["project_mixed_audio"] = str(mixed_audio)
+            state["status"] = "mixed"
+            save_state(state_file, state)
 
     if not status_at_least(state, "subtitles_ready"):
         run_asmr_cli(paths, "subtitles", str(project_json), "--language", "bilingual")
@@ -4912,15 +5039,42 @@ def execute_task(
         save_state(state_file, state)
 
     if not status_at_least(state, "outputs_ready"):
-        state["outputs"] = copy_final_outputs(
-            paths,
-            project_json,
-            folder,
-            str(state["mode"]),
-            harmonized_delay_seconds=int(state["harmonized_delay_seconds"]),
-            harmonized_volume_db=float(state["harmonized_volume_db"]),
-            embed_subtitles=bool(state.get("embed_subtitles", True)),
-        )
+        if subtitles_only:
+            master_audio = Path(str(state.get("master_audio") or ""))
+            if (
+                normalize_mode(state["mode"]) != MODE_AUDIO
+                and bool(state.get("embed_subtitles", True))
+                and not master_audio.is_file()
+            ):
+                master_audio, _timeline = normalize_and_concat(
+                    paths,
+                    sources,
+                    Path(str(state["workspace"])),
+                )
+                state["master_audio"] = str(master_audio)
+                save_state(state_file, state)
+            state["outputs"] = copy_subtitle_only_outputs(
+                paths,
+                project_json,
+                folder,
+                str(state["mode"]),
+                original_media=Path(str(state.get("original_media") or "")),
+                master_audio=master_audio,
+                background=(Path(str(state["background"])) if state.get("background") else None),
+                harmonized_delay_seconds=int(state["harmonized_delay_seconds"]),
+                harmonized_volume_db=float(state["harmonized_volume_db"]),
+                embed_subtitles=bool(state.get("embed_subtitles", True)),
+            )
+        else:
+            state["outputs"] = copy_final_outputs(
+                paths,
+                project_json,
+                folder,
+                str(state["mode"]),
+                harmonized_delay_seconds=int(state["harmonized_delay_seconds"]),
+                harmonized_volume_db=float(state["harmonized_volume_db"]),
+                embed_subtitles=bool(state.get("embed_subtitles", True)),
+            )
         state["status"] = "outputs_ready"
         save_state(state_file, state)
 
@@ -4949,7 +5103,10 @@ def execute_task(
 
     print("\n全部完成。文件已放回：")
     print(f"  {folder}")
-    if normalize_mode(state["mode"]) == MODE_AUDIO:
+    if subtitles_only:
+        if normalize_mode(state["mode"]) != MODE_AUDIO and state["outputs"].get("video"):
+            print("  - 原声字幕版.mp4")
+    elif normalize_mode(state["mode"]) == MODE_AUDIO:
         print("  - 原声.flac")
         print(f"  - {Path(state['outputs']['audio']).name}")
     else:
@@ -5718,6 +5875,7 @@ def failed_task_payload(
         "embed_subtitles": plan.embed_subtitles,
         "translate_work_title": plan.translate_work_title,
         "translate_track_titles": plan.translate_track_titles,
+        "subtitles_only": plan.subtitles_only,
         "sources": [serialize_audio_source(item) for item in plan.sources],
     }
     if error:
@@ -5804,6 +5962,7 @@ def load_failed_task_plans() -> list[SmartTaskPlan]:
                     retry_of=str(record.get("retry_of") or "").strip() or None,
                     translate_work_title=bool(record.get("translate_work_title", True)),
                     translate_track_titles=bool(record.get("translate_track_titles", True)),
+                    subtitles_only=bool(record.get("subtitles_only", False)),
                 )
             )
         except (TypeError, ValueError, OSError, VideoPreparerError):
@@ -5912,8 +6071,10 @@ def print_smart_work_queue(
             except ValueError:
                 background = plan.background.name
         subtitle = "内嵌字幕" if plan.embed_subtitles else "外部字幕"
+        content = "仅生成字幕" if plan.subtitles_only else "中文配音和字幕"
         detail = (
-            f"{layout_label(plan.layout)} · 背景：{background} · {subtitle} · {transcript_label}"
+            f"{content} · {layout_label(plan.layout)} · 背景：{background} · "
+            f"{subtitle} · {transcript_label}"
         )
         print(
             f"  {index}. {plan.folder.name}\n"

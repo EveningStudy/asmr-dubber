@@ -380,6 +380,7 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> N
     for label in (
         "音频版本",
         "包含特典、样本和 Free Talk",
+        "处理内容",
         "输出类型",
         "成品组织",
         "视频画面",
@@ -399,6 +400,9 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> N
         "每个作品最多等待（秒）",
     ):
         assert getattr(components_by_label[label], "info", "")
+
+    task_content = components_by_label["处理内容"]
+    assert ("仅生成字幕（不配音）", "subtitles") in task_content.choices
 
     track_list = components_by_label["本次将处理的音轨"]
     queue_list = components_by_label["处理队列"]

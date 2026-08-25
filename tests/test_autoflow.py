@@ -233,6 +233,123 @@ def test_autoflow_plan_preserves_track_order_and_per_track_subtitles(tmp_path: P
         add_plan_to_queue(queue, payload)
 
 
+def test_autoflow_subtitle_only_plan_is_persisted_and_has_distinct_identity(
+    tmp_path: Path,
+) -> None:
+    work = _work(tmp_path)
+    settings = UserSettings()
+    scanned = scan_for_ui(work, settings=settings)
+    regular = build_plan_for_ui(
+        work,
+        scanned.selected_edition,
+        scanned.source_payloads,
+        "video_normal",
+        "merged",
+        scanned.selected_background,
+        True,
+        False,
+        False,
+        settings=settings,
+    )
+    subtitle_only = build_plan_for_ui(
+        work,
+        scanned.selected_edition,
+        scanned.source_payloads,
+        "video_normal",
+        "merged",
+        scanned.selected_background,
+        True,
+        False,
+        True,
+        settings=settings,
+    )
+
+    plan = deserialize_plan(subtitle_only)
+    assert plan.subtitles_only is True
+    assert plan.embed_subtitles is True
+    assert plan.plan_id != deserialize_plan(regular).plan_id
+    assert queue_items_for_ui([subtitle_only])[0]["mode"] == "仅字幕 · 普通静态视频"
+
+
+def test_autoflow_subtitle_only_execution_skips_reference_tts_and_mix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_json = tmp_path / "project.json"
+    project_json.write_text("{}", encoding="utf-8")
+    original = tmp_path / "原声.flac"
+    original.write_bytes(b"audio")
+    master = tmp_path / "master.wav"
+    master.write_bytes(b"master")
+    state_file = tmp_path / "state.json"
+    state = {
+        "schema": 1,
+        "status": "awaiting_reference",
+        "mode": engine.MODE_AUDIO,
+        "subtitles_only": True,
+        "embed_subtitles": False,
+        "project_json": str(project_json),
+        "original_media": str(original),
+        "master_audio": str(master),
+        "harmonized_delay_seconds": 0,
+        "harmonized_volume_db": -10.0,
+        "timeline": [
+            {
+                "filename": "01.wav",
+                "relative_path": "01.wav",
+                "title_ja": "第一轨",
+                "start_samples": 0,
+                "duration_samples": engine.SAMPLE_RATE,
+            }
+        ],
+        "title_translations": {"01.wav": "第一轨"},
+        "folder_name_original": "作品",
+        "folder_name_translation": "作品",
+        "source_folder": str(tmp_path),
+        "outputs": {},
+    }
+    commands: list[str] = []
+
+    monkeypatch.setattr(
+        engine,
+        "run_asmr_cli",
+        lambda _paths, command, *_arguments: commands.append(command),
+    )
+    monkeypatch.setattr(
+        engine,
+        "wait_for_reference",
+        lambda *_args, **_kwargs: pytest.fail("仅字幕任务不应等待参考音频"),
+    )
+    monkeypatch.setattr(
+        engine,
+        "copy_subtitle_only_outputs",
+        lambda *_args, **_kwargs: {
+            "original": str(original),
+            "srt": str(tmp_path / "双语版.srt"),
+            "lrc": str(tmp_path / "双语版.lrc"),
+        },
+    )
+
+    def fake_timestamp(_state: dict[str, object], folder: Path) -> Path:
+        path = folder / "时间戳.txt"
+        path.write_text("00:00:00 第一轨\n", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(engine, "write_timestamp_document", fake_timestamp)
+
+    engine.execute_task(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        tmp_path,
+        state_file,
+        state,
+        [],
+    )
+
+    assert commands == ["subtitles"]
+    assert state["status"] == "completed"
+    assert "audio" not in state["outputs"]
+
+
 def test_autoflow_requires_explicit_rebuild_before_replacing_other_plan(tmp_path: Path) -> None:
     work = _work(tmp_path)
     settings = UserSettings()

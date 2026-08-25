@@ -1623,6 +1623,18 @@ def build_app() -> Any:
                                 "#### 成品类型与组织",
                                 elem_classes=["autoflow-section-title"],
                             )
+                            autoflow_task_content = gr.Radio(
+                                label="处理内容",
+                                choices=[
+                                    ("中文配音和字幕", "dubbing"),
+                                    ("仅生成字幕（不配音）", "subtitles"),
+                                ],
+                                value="dubbing",
+                                info=(
+                                    "仅生成字幕会完成识别和必要的翻译，但不会选择参考音频、"
+                                    "运行 TTS（语音合成）或混音。"
+                                ),
+                            )
                             with gr.Row(elem_classes=["mobile-stack"]):
                                 autoflow_mode = gr.Radio(
                                     label="输出类型",
@@ -3188,6 +3200,7 @@ def build_app() -> Any:
             background: Any,
             embed_subtitles: bool,
             rebuild: bool,
+            task_content: Any,
         ) -> tuple[Any, ...]:
             try:
                 plan = build_plan_for_ui(
@@ -3199,6 +3212,7 @@ def build_app() -> Any:
                     background,
                     embed_subtitles,
                     rebuild,
+                    str(task_content or "dubbing") == "subtitles",
                 )
                 selected = str(editing_plan_id or "").strip()
                 items = (
@@ -3286,12 +3300,26 @@ def build_app() -> Any:
                     view.selection_summary,
                     gr.update(value=view.mode),
                     gr.update(value=view.layout),
+                    gr.update(value="subtitles" if view.subtitles_only else "dubbing"),
                     gr.update(
                         choices=view.background_choices,
                         value=view.selected_background,
                     ),
                     _stage_autoflow_background(view.selected_background_preview),
-                    gr.update(value=view.embed_subtitles),
+                    gr.update(
+                        value=view.embed_subtitles,
+                        label=(
+                            "让原声视频带字幕" if view.subtitles_only else "在视频中内嵌双语字幕"
+                        ),
+                        info=(
+                            "勾选后会另外生成原声字幕版 MP4；SRT 和 LRC 始终保留。"
+                            if view.subtitles_only
+                            else (
+                                "勾选后字幕直接显示在视频里；无论是否内嵌，"
+                                "都会另外保留 SRT 和 LRC。"
+                            )
+                        ),
+                    ),
                     gr.update(visible=view.mode != "audio"),
                     gr.update(value=view.rebuild),
                     gr.update(value="保存队列修改"),
@@ -3301,7 +3329,7 @@ def build_app() -> Any:
             except Exception as exc:
                 logger.exception("载入自动处理队列任务失败")
                 return (
-                    *(gr.update() for _index in range(17)),
+                    *(gr.update() for _index in range(18)),
                     f"无法编辑队列任务：{_safe_error(exc)}",
                 )
 
@@ -3653,10 +3681,32 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+
+        def autoflow_video_options_callback(mode: Any, task_content: Any) -> tuple[Any, Any]:
+            subtitles_only = str(task_content or "dubbing") == "subtitles"
+            return (
+                gr.update(visible=str(mode or "audio") != "audio"),
+                gr.update(
+                    label=("让原声视频带字幕" if subtitles_only else "在视频中内嵌双语字幕"),
+                    info=(
+                        "勾选后会另外生成原声字幕版 MP4；SRT 和 LRC 始终保留。"
+                        if subtitles_only
+                        else "勾选后字幕直接显示在视频里；无论是否内嵌，都会另外保留 SRT 和 LRC。"
+                    ),
+                ),
+            )
+
         autoflow_mode.change(
-            lambda mode: gr.update(visible=str(mode or "audio") != "audio"),
-            inputs=[autoflow_mode],
-            outputs=[autoflow_video_group],
+            autoflow_video_options_callback,
+            inputs=[autoflow_mode, autoflow_task_content],
+            outputs=[autoflow_video_group, autoflow_embed_subtitles],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        autoflow_task_content.change(
+            autoflow_video_options_callback,
+            inputs=[autoflow_mode, autoflow_task_content],
+            outputs=[autoflow_video_group, autoflow_embed_subtitles],
             api_name=_PRIVATE_API,
             queue=False,
         )
@@ -3673,6 +3723,7 @@ def build_app() -> Any:
                 autoflow_background,
                 autoflow_embed_subtitles,
                 autoflow_rebuild,
+                autoflow_task_content,
             ],
             outputs=[
                 autoflow_queue_state,
@@ -3742,6 +3793,7 @@ def build_app() -> Any:
                 autoflow_selection_summary,
                 autoflow_mode,
                 autoflow_layout,
+                autoflow_task_content,
                 autoflow_background,
                 autoflow_background_preview,
                 autoflow_embed_subtitles,
