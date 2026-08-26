@@ -34,11 +34,6 @@ https://github.com/user-attachments/assets/ca7884c7-9272-4b07-a527-5e7c0351758b
 
 https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
 
-### 素材 4（18+）
-
-https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
-
-
 [▶ 在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)
 
 以上素材仅用于功能演示，如有侵权请联系删除。
