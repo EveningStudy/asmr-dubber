@@ -38,7 +38,6 @@ https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
 
 https://github.com/user-attachments/assets/f938ef87-ebf4-4597-87ec-50313ff4a20c
 
-[![B 站演示视频封面](assets/demos/bilibili-preview.jpg)](https://www.bilibili.com/video/BV1f43G6YEov/)
 
 [▶ 在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)
 
