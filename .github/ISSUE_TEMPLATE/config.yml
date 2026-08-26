@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: 使用和配置问题
+    url: https://github.com/EveningStudy/asmr-dubber/discussions/categories/q-a
+    about: 安装方法、硬件选择、模型配置和一般使用问题请在 Discussions 提问。
+  - name: 安全漏洞或敏感社区报告
+    url: https://github.com/EveningStudy/asmr-dubber/security/advisories/new
+    about: 请使用私密入口，不要在公开 Issue 中披露漏洞、密钥或个人信息。

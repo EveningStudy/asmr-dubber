@@ -4,6 +4,9 @@
 准备修改的[后端说明](docs/BACKENDS.md)。涉及新模型、安装体积、数据格式或用户流程的工作，
 建议先开 Issue 说明目的和维护成本。
 
+一般使用问题请参阅[支持说明](SUPPORT.md)，安全问题按[安全策略](SECURITY.md)私密报告。参与
+讨论和贡献即表示同意遵守[社区行为准则](CODE_OF_CONDUCT.md)。
+
 ## 开发环境
 
 项目使用 Python 3.12 和 uv。开发环境可以放在仓库内，但不要复用用户的便携运行环境：
@@ -56,16 +59,21 @@ uv run --no-sync pytest
 
 ASR（语音识别）范围：
 
+- 通用 ASR API（OpenAI-compatible）；
 - Parakeet；
 - Kotoba-Whisper；
 - Faster-Whisper。
 
 TTS（语音合成）范围：
 
-- IndexTTS2；
+- IndexTTS2 本地后端和 IndexTTS2 API；
+- 通用 TTS API（OpenAI-compatible）；
 - GPT-SoVITS API；
 - CosyVoice API；
-- Fish Speech/Fish Audio API。
+- Fish Speech/Fish Audio API；
+- Edge TTS；
+- 小米 MiMo TTS API；
+- MiniMax TTS API。
 
 引入另一个模型系列会增加运行时冲突、模型镜像、硬件验证、缓存语义、许可证和 UI 复杂度。不要只添加
 一个能在开发机运行的下拉项。需要扩展范围时，提案应覆盖长期维护和删除条件。
