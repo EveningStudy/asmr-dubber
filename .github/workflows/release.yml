@@ -135,7 +135,7 @@ jobs:
               raise SystemExit("docs/RELEASE.md is empty")
           Path("release-notes.md").write_text(notes + "\n", encoding="utf-8")
           PY
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: windows-release
           path: release-assets
