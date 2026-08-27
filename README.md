@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
 
 ## 下载与安装（Windows）
 
-从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)下载 `ASMR-Dubber-windows-portable.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
+从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)下载 `ASMR-Dubber-windows-portable-v1.3.0.zip`，完整解压到最终使用位置。不要直接在压缩软件里运行。
 
 > **使用前请启用 Windows 长路径。** 进入“设置 → 系统 → 高级 → 文件资源管理器”，打开“启用长路径”，然后重新启动 ASMR Dubber。未启用时，IndexTTS2 等第三方运行环境中的深层文件可能超过 Windows 的传统路径限制，出现“文件明明存在但程序报告找不到”的错误。如果当前 Windows 没有这个开关，请把程序解压到 `D:\ASMR-Dubber` 这类短路径。
 
@@ -166,7 +166,7 @@ Parakeet 和 IndexTTS2 已在 Ubuntu 24.04/WSL2 的 NVIDIA 环境验证；其它
 | TTS（语音合成）| IndexTTS2、IndexTTS2 API、通用 TTS API、Edge TTS、MiMo TTS、MiniMax TTS、GPT-SoVITS API、CosyVoice API、Fish Speech/Fish Audio API |
 | 翻译 | DeepSeek、阿里云百炼、豆包（火山方舟）、商汤 SenseNova、OpenAI、Anthropic Claude、Google Gemini、OpenAI-compatible、DeepL、Google Cloud Translation、Microsoft Azure Translator |
 
-多模型交叉校对只列出本机完整可用的识别模型。
+多模型交叉校对只列出本机完整可用的识别模型。程序会对齐不同模型的长短句、按模型家族判断一致性，并标记没有形成可靠共识的句子。该功能仍属于实验性功能，结果需要人工复核。
 
 Faster-Whisper large-v3 不随安装方案下载，需要时可按[后端指南](docs/BACKENDS.md#使用-large-v3)放入程序目录。
 

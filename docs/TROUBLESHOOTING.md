@@ -262,6 +262,16 @@ bash scripts/linux/install-parakeet.sh
 
 DeepL、Google Cloud Translation 和 Microsoft Translator 不会出现在校对能力中。候选失败时查看 `analysis/asr_candidates.json` 和 `analysis/asr_review.json`。
 
+## 多模型校对结果仍然不理想
+
+多模型校对只能在识别器实际给出的候选中选择，不能恢复所有模型都漏掉的文字。先打开项目的 `analysis/asr_review.json`：
+
+- `consensus` 表示至少两个独立模型家族近似一致；
+- `llm_choice` 表示程序没有形成共识，由 LLM 选择现有候选；
+- `single_family`、`fallback` 或 `low_confidence_fallback` 表示证据不足，句子会在项目诊断中提示核对。
+
+大量句子需要核对时，分别单独运行参与模型，保留对这段作品表现最稳定的一个。背景音乐、极轻耳语、非语言发声和所有候选同时出错时，多模型模式不一定优于单模型。
+
 ## 改了设置，当前项目仍按原设置运行
 
 只点“仅保存为以后新项目默认值”不会修改已打开项目。请：

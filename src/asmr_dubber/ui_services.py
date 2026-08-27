@@ -369,6 +369,16 @@ def open_project_directory(project_path: str) -> str:
     return f"已在文件管理器中打开项目目录：{opened}"
 
 
+def open_project_output_directory(project_path: str) -> str:
+    if not str(project_path or "").strip():
+        raise ProjectError("请先新建或打开项目。")
+    _project, directory = pipeline.reload_project(project_path)
+    output_directory = directory / "output"
+    output_directory.mkdir(parents=True, exist_ok=True)
+    opened = open_directory(output_directory)
+    return f"已在文件管理器中打开输出文件夹：{opened}"
+
+
 def create_project(
     source_media: Any,
     source_language: str = "ja",

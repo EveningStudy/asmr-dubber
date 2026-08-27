@@ -40,6 +40,7 @@ from asmr_dubber.ui_services import (
     apply_table,
     import_transcript_data,
     open_project_directory,
+    open_project_output_directory,
     preview_edge_tts_voice,
     reference_picker,
     select_autoflow_external_reference,
@@ -240,6 +241,24 @@ def test_open_project_directory_uses_loaded_project_path(tmp_path: Path, monkeyp
     assert str(manifest.parent.resolve()) in message
 
 
+def test_open_project_output_directory_uses_project_output_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _project_value, manifest = _project(tmp_path / "project")
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "asmr_dubber.ui_services.open_directory",
+        lambda path: opened.append(Path(path).resolve()) or Path(path).resolve(),
+    )
+
+    message = open_project_output_directory(str(manifest))
+
+    expected = (manifest.parent / "output").resolve()
+    assert expected.is_dir()
+    assert opened == [expected]
+    assert str(expected) in message
+
+
 def test_reference_picker_previews_and_persists_selection(
     tmp_path: Path,
     monkeypatch,
@@ -331,6 +350,7 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) ->
     assert "已有台本/字幕的处理方式" not in labels
     assert "默认成品组织" in labels
     assert "打开项目目录" in values
+    assert "打开 output 文件夹" in values
     assert any("多模型结果可能不如单模型" in str(value) for value in values)
     autoflow_log = next(
         component

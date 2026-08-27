@@ -5,8 +5,9 @@ import math
 import re
 import time
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ class ReviewCandidate:
     text: str
     evidence_ids: tuple[str, ...]
     sources: tuple[str, ...]
+    families: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,21 @@ class ReviewDecision:
     selected_candidate: int | None
 
 
+@dataclass(frozen=True)
+class FlattenedTranscript:
+    raw_text: str
+    normalized_text: str
+    raw_positions: tuple[int, ...]
+    token_starts: tuple[float, ...]
+    token_ends: tuple[float, ...]
+    sentence_ranges: tuple[tuple[int, int], ...]
+
+
+_MIN_LLM_CONFIDENCE = 0.65
+_FUZZY_CONSENSUS_THRESHOLD = 0.84
+_ALIGNMENT_BLOCK_SECONDS = 60.0
+
+
 _SELECTION_CONTRACT = """硬性输出规则（优先级高于其它提示）：
 1. 你只能为每个目标窗口选择程序给出的候选序号，不得自由生成、改写、拼接或翻译文字。
 2. selected_candidate 使用每个窗口中从 1 开始的 candidate 编号；0 仅表示确定没有实义语音。
@@ -76,8 +93,253 @@ _SELECTION_CONTRACT = """硬性输出规则（优先级高于其它提示）：
 """
 
 
-def _overlap(left: Sentence, right: ReviewWindow) -> float:
-    return max(0.0, min(left.end_seconds, right.end) - max(left.start_seconds, right.start))
+def _alignment_characters(text: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    return [
+        character
+        for character in normalized
+        if not character.isspace() and not unicodedata.category(character).startswith("P")
+    ]
+
+
+def _flatten_transcript(sentences: list[Sentence]) -> FlattenedTranscript:
+    raw_parts: list[str] = []
+    normalized: list[str] = []
+    raw_positions: list[int] = []
+    token_starts: list[float] = []
+    token_ends: list[float] = []
+    sentence_ranges: list[tuple[int, int]] = []
+    raw_offset = 0
+    for sentence_index, sentence in enumerate(sentences):
+        if sentence_index:
+            raw_parts.append("\n")
+            raw_offset += 1
+        text = sentence.source_text.strip()
+        raw_parts.append(text)
+        characters: list[tuple[str, int]] = []
+        for raw_index, raw_character in enumerate(text):
+            characters.extend(
+                (character, raw_offset + raw_index)
+                for character in _alignment_characters(raw_character)
+            )
+        token_start = len(normalized)
+        count = len(characters)
+        duration = max(0.0, sentence.end_seconds - sentence.start_seconds)
+        for character_index, (character, raw_position) in enumerate(characters):
+            normalized.append(character)
+            raw_positions.append(raw_position)
+            token_starts.append(sentence.start_seconds + duration * character_index / max(1, count))
+            token_ends.append(
+                sentence.start_seconds + duration * (character_index + 1) / max(1, count)
+            )
+        sentence_ranges.append((token_start, len(normalized)))
+        raw_offset += len(text)
+    return FlattenedTranscript(
+        raw_text="".join(raw_parts),
+        normalized_text="".join(normalized),
+        raw_positions=tuple(raw_positions),
+        token_starts=tuple(token_starts),
+        token_ends=tuple(token_ends),
+        sentence_ranges=tuple(sentence_ranges),
+    )
+
+
+def _project_boundary(
+    opcodes: Sequence[tuple[str, int, int, int, int]],
+    primary_index: int,
+    primary_length: int,
+    secondary_length: int,
+) -> int:
+    if primary_index <= 0:
+        return 0
+    if primary_index >= primary_length:
+        return secondary_length
+    for _tag, primary_start, primary_end, secondary_start, secondary_end in opcodes:
+        if primary_start <= primary_index < primary_end:
+            primary_span = primary_end - primary_start
+            if primary_span <= 0:
+                return secondary_start
+            ratio = (primary_index - primary_start) / primary_span
+            return round(secondary_start + ratio * (secondary_end - secondary_start))
+    return secondary_length
+
+
+def _raw_fragment(transcript: FlattenedTranscript, start: int, end: int) -> str:
+    start = max(0, min(start, len(transcript.raw_positions)))
+    end = max(start, min(end, len(transcript.raw_positions)))
+    if start == end:
+        return ""
+    raw_start = transcript.raw_positions[start]
+    raw_end = (
+        transcript.raw_positions[end]
+        if end < len(transcript.raw_positions)
+        else len(transcript.raw_text)
+    )
+    while raw_end <= raw_start and end < len(transcript.raw_positions):
+        end += 1
+        raw_end = (
+            transcript.raw_positions[end]
+            if end < len(transcript.raw_positions)
+            else len(transcript.raw_text)
+        )
+    return " ".join(transcript.raw_text[raw_start:raw_end].split()).strip()
+
+
+def _temporal_token_range(
+    transcript: FlattenedTranscript,
+    start: float,
+    end: float,
+    max_drift_seconds: float,
+) -> tuple[int, int]:
+    matching = [
+        index
+        for index, (token_start, token_end) in enumerate(
+            zip(transcript.token_starts, transcript.token_ends, strict=True)
+        )
+        if token_end >= start - max_drift_seconds and token_start <= end + max_drift_seconds
+    ]
+    if not matching:
+        return (0, 0)
+    return matching[0], matching[-1] + 1
+
+
+def _project_source_to_primary_windows(
+    primary_sentences: list[Sentence],
+    secondary_sentences: list[Sentence],
+    max_drift_seconds: float,
+) -> list[tuple[str, float, float] | None]:
+    projected: list[tuple[str, float, float] | None] = []
+    block_start = 0
+    while block_start < len(primary_sentences):
+        block_end = block_start + 1
+        first_start = primary_sentences[block_start].start_seconds
+        while (
+            block_end < len(primary_sentences)
+            and primary_sentences[block_end].end_seconds - first_start <= _ALIGNMENT_BLOCK_SECONDS
+        ):
+            block_end += 1
+        primary_block_sentences = primary_sentences[block_start:block_end]
+        time_start = primary_block_sentences[0].start_seconds - max_drift_seconds
+        time_end = primary_block_sentences[-1].end_seconds + max_drift_seconds
+        secondary_block_sentences = [
+            sentence
+            for sentence in secondary_sentences
+            if sentence.end_seconds >= time_start and sentence.start_seconds <= time_end
+        ]
+        primary = _flatten_transcript(primary_block_sentences)
+        secondary = _flatten_transcript(secondary_block_sentences)
+        if not primary.normalized_text or not secondary.normalized_text:
+            projected.extend(None for _ in primary_block_sentences)
+            block_start = block_end
+            continue
+        opcodes = SequenceMatcher(
+            None,
+            primary.normalized_text,
+            secondary.normalized_text,
+            autojunk=False,
+        ).get_opcodes()
+        for sentence, (primary_start, primary_end) in zip(
+            primary_block_sentences, primary.sentence_ranges, strict=True
+        ):
+            secondary_start = _project_boundary(
+                opcodes,
+                primary_start,
+                len(primary.normalized_text),
+                len(secondary.normalized_text),
+            )
+            secondary_end = _project_boundary(
+                opcodes,
+                primary_end,
+                len(primary.normalized_text),
+                len(secondary.normalized_text),
+            )
+            if secondary_end <= secondary_start:
+                secondary_start, secondary_end = _temporal_token_range(
+                    secondary,
+                    sentence.start_seconds,
+                    sentence.end_seconds,
+                    max_drift_seconds,
+                )
+            text = _raw_fragment(secondary, secondary_start, secondary_end)
+            if not text:
+                projected.append(None)
+                continue
+            projected_start = secondary.token_starts[secondary_start]
+            projected_end = secondary.token_ends[secondary_end - 1]
+            distance = max(
+                0.0,
+                sentence.start_seconds - projected_end,
+                projected_start - sentence.end_seconds,
+            )
+            if distance > max_drift_seconds:
+                temporal_start, temporal_end = _temporal_token_range(
+                    secondary,
+                    sentence.start_seconds,
+                    sentence.end_seconds,
+                    max_drift_seconds,
+                )
+                temporal_text = _raw_fragment(secondary, temporal_start, temporal_end)
+                if not temporal_text:
+                    projected.append(None)
+                    continue
+                secondary_start, secondary_end, text = temporal_start, temporal_end, temporal_text
+                projected_start = secondary.token_starts[secondary_start]
+                projected_end = secondary.token_ends[secondary_end - 1]
+            projected.append((text, projected_start, projected_end))
+        block_start = block_end
+    return projected
+
+
+def _join_source_text(left: str, right: str) -> str:
+    left = left.strip()
+    right = right.strip()
+    if not left:
+        return right
+    if not right:
+        return left
+    return f"{left}{right}"
+
+
+def _stabilize_primary_sentences(sentences: list[Sentence]) -> list[Sentence]:
+    """Merge timestamp glitches that are too short to be useful review windows."""
+
+    stable = [sentence.model_copy(deep=True) for sentence in sentences]
+    while len(stable) > 1:
+        micro_index = next(
+            (
+                index
+                for index, sentence in enumerate(stable)
+                if sentence.end_seconds - sentence.start_seconds < 0.2
+            ),
+            None,
+        )
+        if micro_index is None:
+            break
+        if micro_index == 0:
+            merge_left = False
+        elif micro_index == len(stable) - 1:
+            merge_left = True
+        else:
+            previous_gap = max(
+                0.0, stable[micro_index].start_seconds - stable[micro_index - 1].end_seconds
+            )
+            next_gap = max(
+                0.0, stable[micro_index + 1].start_seconds - stable[micro_index].end_seconds
+            )
+            merge_left = previous_gap < next_gap
+        if merge_left:
+            target = stable[micro_index - 1]
+            source = stable[micro_index]
+            target.end_seconds = max(target.end_seconds, source.end_seconds)
+            target.source_text = _join_source_text(target.source_text, source.source_text)
+            stable.pop(micro_index)
+        else:
+            source = stable[micro_index]
+            target = stable[micro_index + 1]
+            target.start_seconds = min(source.start_seconds, target.start_seconds)
+            target.source_text = _join_source_text(source.source_text, target.source_text)
+            stable.pop(micro_index)
+    return stable
 
 
 def _build_windows(
@@ -86,38 +348,34 @@ def _build_windows(
 ) -> list[ReviewWindow]:
     if not transcriptions or not transcriptions[0][1]:
         return []
-    primary_label, primary = transcriptions[0]
+    primary_label, primary_sentences = transcriptions[0]
+    primary = _stabilize_primary_sentences(primary_sentences)
     windows = [
         ReviewWindow(id="", start=item.start_seconds, end=item.end_seconds) for item in primary
     ]
     for source_index, (label, sentences) in enumerate(transcriptions):
-        for sentence_index, sentence in enumerate(sentences):
-            if source_index == 0:
-                window = windows[sentence_index]
-            else:
-                midpoint = (sentence.start_seconds + sentence.end_seconds) / 2
-                ranked = sorted(
-                    (
-                        (
-                            _overlap(sentence, window),
-                            -abs(midpoint - (window.start + window.end) / 2),
-                            index,
-                        )
-                        for index, window in enumerate(windows)
-                    ),
-                    reverse=True,
-                )
-                best_overlap, negative_distance, best_index = ranked[0]
-                if best_overlap <= 0 and -negative_distance > max_drift_seconds:
-                    continue
-                window = windows[best_index]
+        if source_index == 0:
+            projected = [
+                (sentence.source_text, sentence.start_seconds, sentence.end_seconds)
+                for sentence in primary
+            ]
+        else:
+            projected = _project_source_to_primary_windows(
+                primary,
+                sentences,
+                max_drift_seconds,
+            )
+        for window, candidate in zip(windows, projected, strict=True):
+            if candidate is None:
+                continue
+            text, start, end = candidate
             window.evidence.append(
                 Evidence(
                     id="",
                     source=label if source_index else primary_label,
-                    text=sentence.source_text,
-                    start=sentence.start_seconds,
-                    end=sentence.end_seconds,
+                    text=text,
+                    start=start,
+                    end=end,
                 )
             )
     for window_index, window in enumerate(windows, start=1):
@@ -147,6 +405,7 @@ def _window_payload(
             {
                 "id": item.id,
                 "source": item.source,
+                "family": _source_family(item.source),
                 "text": item.text,
                 "time": [round(item.start, 3), round(item.end, 3)],
                 "text_priority": item.source == text_priority_source,
@@ -167,20 +426,109 @@ def _normalize_candidate_text(text: str) -> str:
     )
 
 
+def _source_family(source: str) -> str:
+    backend = source.partition("|")[0].casefold().strip()
+    if "parakeet" in backend:
+        return "parakeet"
+    if "whisper" in backend:
+        return "whisper"
+    return backend or source.casefold().strip()
+
+
+def _candidate_similarity(left: str, right: str) -> float:
+    left_normalized = _normalize_candidate_text(left)
+    right_normalized = _normalize_candidate_text(right)
+    if not left_normalized or not right_normalized:
+        return 0.0
+    if left_normalized == right_normalized:
+        return 1.0
+    shorter = min(len(left_normalized), len(right_normalized))
+    longer = max(len(left_normalized), len(right_normalized))
+    if shorter <= 3 or shorter / longer < 0.65:
+        return 0.0
+    return SequenceMatcher(
+        None,
+        left_normalized,
+        right_normalized,
+        autojunk=False,
+    ).ratio()
+
+
+def _candidate_quality(text: str) -> float:
+    normalized = _normalize_candidate_text(text)
+    if not normalized:
+        return -10.0
+    score = 0.0
+    if "�" in text:
+        score -= 4.0
+    if len(normalized) >= 12:
+        trigrams = [normalized[index : index + 3] for index in range(len(normalized) - 2)]
+        unique_ratio = len(set(trigrams)) / max(1, len(trigrams))
+        if unique_ratio < 0.7:
+            score -= (0.7 - unique_ratio) * 5.0
+    return score
+
+
+def _candidate_warning(text: str) -> str:
+    normalized = _normalize_candidate_text(text)
+    warnings: list[str] = []
+    if "�" in text:
+        warnings.append("包含解码异常字符")
+    if len(normalized) >= 12:
+        trigrams = [normalized[index : index + 3] for index in range(len(normalized) - 2)]
+        unique_ratio = len(set(trigrams)) / max(1, len(trigrams))
+        if unique_ratio < 0.7:
+            warnings.append("存在异常重复")
+    return "；".join(warnings)
+
+
 def _window_candidates(window: ReviewWindow) -> list[ReviewCandidate]:
-    grouped: dict[str, list[Evidence]] = {}
-    for evidence in window.evidence:
-        normalized = _normalize_candidate_text(evidence.text)
-        if normalized:
-            grouped.setdefault(normalized, []).append(evidence)
-    return [
-        ReviewCandidate(
-            text=evidence_group[0].text.strip(),
-            evidence_ids=tuple(item.id for item in evidence_group),
-            sources=tuple(dict.fromkeys(item.source for item in evidence_group)),
+    evidence = [item for item in window.evidence if _normalize_candidate_text(item.text)]
+    parents = list(range(len(evidence)))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = root(left), root(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for left in range(len(evidence)):
+        for right in range(left + 1, len(evidence)):
+            if (
+                _candidate_similarity(evidence[left].text, evidence[right].text)
+                >= _FUZZY_CONSENSUS_THRESHOLD
+            ):
+                union(left, right)
+    grouped: dict[int, list[Evidence]] = {}
+    for index, item in enumerate(evidence):
+        grouped.setdefault(root(index), []).append(item)
+
+    candidates: list[ReviewCandidate] = []
+    for evidence_group in grouped.values():
+        representative = max(
+            evidence_group,
+            key=lambda item: (
+                sum(_candidate_similarity(item.text, other.text) for other in evidence_group),
+                _candidate_quality(item.text),
+                len(_normalize_candidate_text(item.text)),
+                -window.evidence.index(item),
+            ),
         )
-        for evidence_group in grouped.values()
-    ]
+        sources = tuple(dict.fromkeys(item.source for item in evidence_group))
+        candidates.append(
+            ReviewCandidate(
+                text=representative.text.strip(),
+                evidence_ids=tuple(item.id for item in evidence_group),
+                sources=sources,
+                families=tuple(dict.fromkeys(_source_family(source) for source in sources)),
+            )
+        )
+    return candidates
 
 
 def _candidate_payload(
@@ -195,7 +543,9 @@ def _candidate_payload(
                 "candidate": index,
                 "text": candidate.text,
                 "sources": list(candidate.sources),
+                "families": list(candidate.families),
                 "text_priority": text_priority_source in candidate.sources,
+                "quality_warning": _candidate_warning(candidate.text),
             }
             for index, candidate in enumerate(_window_candidates(window), start=1)
         ],
@@ -204,14 +554,19 @@ def _candidate_payload(
 
 def _fallback_candidate_index(window: ReviewWindow, text_priority_source: str) -> int:
     candidates = _window_candidates(window)
-    for index, candidate in enumerate(candidates, start=1):
-        if text_priority_source and text_priority_source in candidate.sources:
-            return index
     primary_source = window.evidence[0].source if window.evidence else ""
-    for index, candidate in enumerate(candidates, start=1):
-        if primary_source in candidate.sources:
-            return index
-    return 1 if candidates else 0
+    ranked = sorted(
+        enumerate(candidates, start=1),
+        key=lambda item: (
+            len(item[1].families),
+            _candidate_quality(item[1].text),
+            text_priority_source in item[1].sources,
+            primary_source in item[1].sources,
+            -item[0],
+        ),
+        reverse=True,
+    )
+    return ranked[0][0] if ranked else 0
 
 
 def _decision_for_candidate(
@@ -244,15 +599,24 @@ def _deterministic_decision(
     if not candidates:
         return ReviewDecision("", (), 1.0, "non_speech", "没有非空识别候选", 0)
     if len(candidates) == 1:
-        sources = len(candidates[0].sources)
+        if _candidate_quality(candidates[0].text) < -1.0:
+            return None
+        families = len(candidates[0].families)
         return _decision_for_candidate(
             window,
             1,
-            confidence=0.98 if sources >= 2 else 0.75,
-            decision="consensus" if sources >= 2 else "single_candidate",
-            reason=(f"{sources} 个识别模型文字一致" if sources >= 2 else "只有一个非空候选"),
+            confidence=0.96 if families >= 2 else 0.72,
+            decision="consensus" if families >= 2 else "single_family",
+            reason=(
+                f"{families} 个独立模型家族文字一致"
+                if families >= 2
+                else "只有一个模型家族提供有效候选"
+            ),
         )
-    votes = [len(candidate.sources) for candidate in candidates]
+    votes = [
+        len(candidate.families) if _candidate_quality(candidate.text) >= -1.0 else 0
+        for candidate in candidates
+    ]
     best_votes = max(votes)
     winners = [
         index for index, votes_count in enumerate(votes, start=1) if votes_count == best_votes
@@ -263,7 +627,7 @@ def _deterministic_decision(
             winners[0],
             confidence=min(0.99, 0.75 + best_votes * 0.08),
             decision="consensus",
-            reason=f"{best_votes} 个识别模型文字一致",
+            reason=f"{best_votes} 个独立模型家族文字一致",
         )
     return None
 
@@ -347,6 +711,7 @@ def _request_json(
 def _validate_results(
     payload: Mapping[str, Any],
     targets: list[ReviewWindow],
+    text_priority_source: str,
 ) -> dict[str, ReviewDecision]:
     results = payload.get("results")
     if not isinstance(results, list):
@@ -368,13 +733,27 @@ def _validate_results(
             confidence = float(item.get("confidence", 0.5))
         except (TypeError, ValueError):
             confidence = 0.5
-        validated[window.id] = _decision_for_candidate(
-            window,
-            selected_candidate,
-            confidence=min(1.0, max(0.0, confidence)),
-            decision="llm_choice",
-            reason="大模型从现有候选中选择",
-        )
+        confidence = min(1.0, max(0.0, confidence))
+        if confidence < _MIN_LLM_CONFIDENCE:
+            fallback = _fallback_candidate_index(window, text_priority_source)
+            validated[window.id] = _decision_for_candidate(
+                window,
+                fallback,
+                confidence=confidence,
+                decision="low_confidence_fallback",
+                reason=(
+                    f"大模型置信度 {confidence:.2f} 低于 {_MIN_LLM_CONFIDENCE:.2f}，"
+                    "已回退到程序评分最高的现有候选"
+                ),
+            )
+        else:
+            validated[window.id] = _decision_for_candidate(
+                window,
+                selected_candidate,
+                confidence=confidence,
+                decision="llm_choice",
+                reason="大模型从现有候选中选择",
+            )
     return validated
 
 
@@ -423,7 +802,11 @@ def _review_chunk(
         },
     ]
     content = _request_json(settings, messages, job_id)
-    return _validate_results(_extract_object(content), targets)
+    return _validate_results(
+        _extract_object(content),
+        targets,
+        settings.asr_review_text_priority_model,
+    )
 
 
 def _evidence_range(
@@ -528,11 +911,22 @@ def review_transcriptions(
             settings.asr_review_timestamp_priority_model,
         )
         if text and end > start:
+            needs_review = decision.decision in {
+                "single_family",
+                "fallback",
+                "low_confidence_fallback",
+            }
             sentence = Sentence(
                 id=f"s{len(sentences) + 1:06d}",
                 start_seconds=max(0.0, start),
                 end_seconds=end,
                 source_text=text,
+                status="review_uncertain" if needs_review else "pending",
+                error=(
+                    f"多模型校对未形成可靠共识：{decision.reason}。请试听并核对原文。"
+                    if needs_review
+                    else None
+                ),
             )
             sentences.append(sentence)
             sentence_by_window[window.id] = sentence
@@ -545,6 +939,8 @@ def review_transcriptions(
                 "decision": decision.decision,
                 "reason": decision.reason,
                 "selected_candidate": decision.selected_candidate,
+                "needs_review": decision.decision
+                in {"single_family", "fallback", "low_confidence_fallback"},
                 "computed_time": [start, end],
                 "text_priority_model": settings.asr_review_text_priority_model,
                 "timestamp_priority_model": settings.asr_review_timestamp_priority_model,

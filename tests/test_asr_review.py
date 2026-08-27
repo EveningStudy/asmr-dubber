@@ -16,7 +16,7 @@ def _sentence(identifier: str, start: float, end: float, text: str) -> Sentence:
     )
 
 
-def test_review_windows_keep_primary_timeline_and_ignore_unmatched_secondary() -> None:
+def test_review_windows_ignore_secondary_text_outside_timeline_drift() -> None:
     primary = [
         _sentence("p1", 1.0, 2.0, "始めましょう"),
         _sentence("p2", 4.0, 5.0, "次です"),
@@ -34,9 +34,27 @@ def test_review_windows_keep_primary_timeline_and_ignore_unmatched_secondary() -
     assert len(windows) == 2
     assert [len(window.evidence) for window in windows] == [2, 1]
     assert windows[0].evidence[0].id == "w000001-c01"
-    assert all(
-        evidence.text != "聞こえますか" for window in windows for evidence in window.evidence
+
+
+def test_long_secondary_segment_is_split_across_every_covered_window() -> None:
+    primary = [
+        _sentence("p1", 0.0, 2.0, "本作の特徴"),
+        _sentence("p2", 2.0, 4.0, "本作の舞台"),
+        _sentence("p3", 4.0, 6.0, "剣と魔法の世界"),
+    ]
+    secondary = [_sentence("s1", 0.0, 6.0, "本作の特徴は、本作の舞台は、剣と魔法の世界。")]
+
+    windows = _build_windows(
+        [("primary", primary), ("faster_whisper|large-v2", secondary)],
+        max_drift_seconds=0.5,
     )
+
+    fragments = [window.evidence[1].text for window in windows]
+    assert len(fragments) == 3
+    assert all(fragment != secondary[0].source_text for fragment in fragments)
+    assert "本作の特徴" in fragments[0]
+    assert "本作の舞台" in fragments[1]
+    assert "剣と魔法" in fragments[2]
 
 
 def test_evidence_time_keeps_primary_window_by_default() -> None:
@@ -105,8 +123,8 @@ def test_consensus_skips_llm_and_records_decision(monkeypatch, tmp_path: Path) -
 
     sentences = review_transcriptions(
         _transcriptions(
-            ("faster_whisper|large-v2", "こんにちは。"),
-            ("kotoba_whisper|kotoba-tech/kotoba-whisper-v2.2", "こんにちは"),
+            ("parakeet_nemo|model", "こんにちは。"),
+            ("faster_whisper|large-v2", "こんにちは"),
         ),
         _settings(),
         report,
@@ -126,15 +144,44 @@ def test_majority_vote_beats_dissent_without_llm(monkeypatch, tmp_path: Path) ->
 
     sentences = review_transcriptions(
         _transcriptions(
-            ("faster_whisper|large-v2", "正しい文"),
-            ("kotoba_whisper|kotoba-tech/kotoba-whisper-v2.2", "正しい文。"),
-            ("parakeet_nemo|model", "全く違う文"),
+            ("parakeet_nemo|model", "正しい文"),
+            ("faster_whisper|large-v2", "正しい文。"),
+            ("kotoba_whisper|kotoba-tech/kotoba-whisper-v2.2", "全く違う文"),
         ),
         _settings(),
         tmp_path / "review.json",
     )
 
     assert [item.source_text for item in sentences] == ["正しい文"]
+
+
+def test_models_from_same_family_do_not_create_false_majority(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.asr_review._request_json",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "results": [
+                    {
+                        "window_id": "w000001",
+                        "selected_candidate": 2,
+                        "confidence": 0.9,
+                    }
+                ]
+            }
+        ),
+    )
+
+    sentences = review_transcriptions(
+        _transcriptions(
+            ("parakeet_nemo|model", "独立した候補"),
+            ("faster_whisper|large-v2", "同じ系列の候補"),
+            ("kotoba_whisper|kotoba-tech/kotoba-whisper-v2.2", "同じ系列の候補。"),
+        ),
+        _settings(),
+        tmp_path / "review.json",
+    )
+
+    assert [item.source_text for item in sentences] == ["同じ系列の候補"]
 
 
 def test_llm_can_only_select_an_existing_candidate(monkeypatch, tmp_path: Path) -> None:
@@ -165,6 +212,41 @@ def test_llm_can_only_select_an_existing_candidate(monkeypatch, tmp_path: Path) 
 
     assert [item.source_text for item in sentences] == ["候補二"]
     assert json.loads(report.read_text(encoding="utf-8"))["results"][0]["decision"] == "llm_choice"
+
+
+def test_low_confidence_llm_choice_falls_back_and_marks_sentence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.asr_review._request_json",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "results": [
+                    {
+                        "window_id": "w000001",
+                        "selected_candidate": 2,
+                        "confidence": 0.4,
+                    }
+                ]
+            }
+        ),
+    )
+    report = tmp_path / "review.json"
+
+    sentences = review_transcriptions(
+        _transcriptions(
+            ("faster_whisper|large-v2", "主模型文字"),
+            ("parakeet_nemo|model", "低置信候选"),
+        ),
+        _settings(),
+        report,
+    )
+
+    assert [item.source_text for item in sentences] == ["主模型文字"]
+    assert sentences[0].status == "review_uncertain"
+    result = json.loads(report.read_text(encoding="utf-8"))["results"][0]
+    assert result["decision"] == "low_confidence_fallback"
+    assert result["needs_review"] is True
 
 
 def test_invalid_llm_selection_falls_back_to_primary(monkeypatch, tmp_path: Path) -> None:

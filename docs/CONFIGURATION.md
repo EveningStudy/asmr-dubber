@@ -118,11 +118,11 @@ Faster-Whisper：
 | 参与校对的识别模型 | 依次运行的候选集合，最多 6 个 |
 | 文字判断优先来源 | 候选冲突时优先参考的识别器，不是无条件覆盖 |
 | 最终时间戳来源 | 使用某个候选的边界，或用 Qwen3 ForcedAligner 对最终文字重新对齐 |
-| 允许时间漂移 | 合并相邻候选窗口时容许的边界差，默认 1.5 秒 |
+| 允许时间漂移 | 把其它模型的全文结果投影到比较窗口时容许的边界差，默认 1.5 秒 |
 | 作品、人物与场景背景 | 帮助专名和上下文消歧，不允许据此补写台词 |
-| 校对 Prompt | 约束 LLM 输出证据 ID 和严格 JSON；不确定时保留默认值 |
+| 校对 Prompt | 约束 LLM 只能选择现有候选并输出严格 JSON；不确定时保留默认值 |
 
-校对只支持 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 必须保留 `window_id`、`evidence_ids` 和结果 JSON 合同，否则程序会拒绝无法审计的输出。
+校对只支持 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Anthropic、Gemini 和 OpenAI-compatible 服务。Prompt 不应要求模型改写或拼接候选；程序会追加 `window_id`、`selected_candidate` 和结果 JSON 的硬性合同。
 
 ## 翻译
 

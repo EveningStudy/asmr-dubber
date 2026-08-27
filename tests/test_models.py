@@ -302,6 +302,19 @@ def test_legacy_freeform_asr_review_prompt_is_migrated_to_candidate_selection() 
     assert settings.asr_review_prompt == DEFAULT_ASR_REVIEW_PROMPT
 
 
+def test_legacy_japanese_review_prompt_with_evidence_ids_is_migrated() -> None:
+    settings = ProjectSettings.model_validate(
+        {
+            "asr_review_prompt": (
+                "你是日语语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。\n"
+                '只输出 {"ja":"校对后的日文","evidence_ids":[]}。'
+            )
+        }
+    )
+
+    assert settings.asr_review_prompt == DEFAULT_ASR_REVIEW_PROMPT
+
+
 def test_asmr_vad_and_standalone_alignment_are_independent_stages() -> None:
     settings = ProjectSettings(
         asr_backend="parakeet_nemo",

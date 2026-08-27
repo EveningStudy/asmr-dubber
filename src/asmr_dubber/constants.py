@@ -31,7 +31,9 @@ DEFAULT_ASR_REVIEW_PROMPT = """你是语音识别结果复核员。
 
 结合相邻句和用户提供的作品、人物、场景背景，判断哪一个现有候选最可信。重点排除同音词误识别、
 专名错误、重复循环和静音处幻觉。不得改写、拼接或补充候选中不存在的文字；无法判断时优先选择
-主文字来源。只有确认该窗口完全是非语言内容或所有候选都是幻觉时，才选择 0。
+程序评分较高的候选。sources 属于同一个 families 时不算独立佐证；quality_warning 表示程序检测到
+异常重复或解码问题。只有确认该窗口完全是非语言内容或所有候选都是幻觉时，才选择 0。请如实
+给出 confidence，证据不足时不要给出虚假的高置信度。
 """
 DEFAULT_PROJECTS_DIR = user_data_dir() / "projects"
 DEFAULT_RUNTIMES_DIR = user_data_dir() / "runtimes"

@@ -97,6 +97,7 @@ from .ui_services import (
     load_view,
     mix,
     open_project_directory,
+    open_project_output_directory,
     preview_edge_tts_voice,
     preview_reference,
     recent_projects,
@@ -1528,6 +1529,7 @@ def build_app() -> Any:
                             subtitle_button = gr.Button("生成字幕")
 
                         gr.Markdown("## 输出文件")
+                        open_project_output_directory_button = gr.Button("打开 output 文件夹")
                         with gr.Row(elem_classes=["mobile-stack"]):
                             output_audio = gr.Audio(
                                 label="混音成品",
@@ -2991,6 +2993,15 @@ def build_app() -> Any:
                 logger.exception("打开项目目录失败")
                 return f"无法打开项目目录：{_safe_error(exc)}"
 
+        def open_project_output_directory_callback(manifest: str) -> str:
+            if not str(manifest or "").strip():
+                return "请先新建或打开项目。"
+            try:
+                return open_project_output_directory(manifest)
+            except Exception as exc:
+                logger.exception("打开项目输出文件夹失败")
+                return f"无法打开输出文件夹：{_safe_error(exc)}"
+
         def asr_callback(
             manifest: str,
             table: Any,
@@ -3559,6 +3570,13 @@ def build_app() -> Any:
         )
         open_project_directory_button.click(
             open_project_directory_callback,
+            inputs=[project_path],
+            outputs=[status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        open_project_output_directory_button.click(
+            open_project_output_directory_callback,
             inputs=[project_path],
             outputs=[status],
             api_name=_PRIVATE_API,

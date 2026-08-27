@@ -129,9 +129,11 @@ Parakeet/CrispASR 和 Faster-Whisper 可以使用各自的 Silero VAD。它跟�
 
 ## 多模型交叉校对
 
-多模型模式让已安装的 Parakeet、Kotoba-Whisper 和 Faster-Whisper 依次识别，再由 LLM 在时间窗口内选择证据。它不是简单多数投票：日语专用模型一致、上下文、重复幻觉和候选置信度都会影响判断。
+多模型模式让已安装的 Parakeet、Kotoba-Whisper 和 Faster-Whisper 依次识别。程序先合并过短的异常分段，再用全文字符对齐把其它模型的长短句投影到共同的比较窗口。文字近似一致时直接采用；仍有争议时，LLM 只能从窗口内的现有候选中选择。
 
-界面只列出本地模型和运行依赖都完整的组合。文字优先来源必须是已安装识别器；最终时间戳可来自某个候选，也可由 Qwen3 ForcedAligner 重算。LLM 只能引用真实候选的 `evidence_ids`，程序再从这些候选计算边界，不接受模型自行编造时间。
+Parakeet 变体按 Parakeet 家族计票，Kotoba-Whisper 与 Faster-Whisper 按 Whisper 家族计票，避免同架构模型重复计票。LLM 置信度低于程序门槛时不会覆盖程序裁决，该句会在项目诊断中标记为需要核对。
+
+界面只列出本地模型和运行依赖都完整的组合。文字优先来源必须是已安装识别器；最终时间戳可来自某个候选，也可由 Qwen3 ForcedAligner 重算。程序不接受 LLM 自行编造文字或时间。
 
 审计文件：
 

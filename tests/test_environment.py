@@ -156,6 +156,8 @@ def test_windows_portable_release_bundles_bootstrap_runtime() -> None:
     assert 'Join-Path $portable "bootstrap\\windows\\uv"' in workflow
     assert 'Join-Path $portable "runtimes\\python"' in workflow
     assert "uv python install 3.12 --managed-python --no-bin" in workflow
+    assert "ASMR-Dubber-windows-portable-v$version.zip" in workflow
+    assert "release-assets/ASMR-Dubber-windows-portable-v*.zip" in workflow
     assert "uv_archives_windows" in setup
     assert "be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e" in setup
     assert mirrors["uv_archives_windows"][0].startswith("https://releases.astral.sh/")

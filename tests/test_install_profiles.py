@@ -438,8 +438,8 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.2.2.0")' in source
-        assert 'AssemblyFileVersion("1.2.2.0")' in source
+        assert 'AssemblyVersion("1.3.0.0")' in source
+        assert 'AssemblyFileVersion("1.3.0.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

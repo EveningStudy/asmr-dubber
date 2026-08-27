@@ -33,6 +33,15 @@ from .languages import SourceLanguage
 from .storage import atomic_write_text, exclusive_file_lock
 
 
+def _is_legacy_asr_review_prompt(value: str) -> bool:
+    prompt = str(value or "").strip()
+    return (
+        prompt.startswith("你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。")
+        or prompt.startswith("你是日语语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。")
+        or ('"evidence_ids"' in prompt and ('"ja"' in prompt or "校对后的日文" in prompt))
+    )
+
+
 class AudioInfo(BaseModel):
     path: str
     sha256: str
@@ -267,9 +276,7 @@ class ProjectSettings(BaseModel):
                 if value.get("asr_review_enabled") and not review_models:
                     value["asr_review_enabled"] = False
             legacy_review_prompt = str(value.get("asr_review_prompt", "") or "").strip()
-            if legacy_review_prompt.startswith(
-                "你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。"
-            ):
+            if _is_legacy_asr_review_prompt(legacy_review_prompt):
                 value["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
             priority_defaults = {
                 "asr_review_text_priority_model": DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
@@ -352,7 +359,7 @@ def settings_for_source_language(
     if values.get("asr_vad_mode") == "asmr":
         values["asr_vad_mode"] = "off"
     review_prompt = str(values.get("asr_review_prompt", ""))
-    if review_prompt.startswith("你是日语语音识别校对专家"):
+    if _is_legacy_asr_review_prompt(review_prompt):
         values["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
     return ProjectSettings.model_validate(values)
 
@@ -361,7 +368,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.2.2"
+    app_version: str = "1.3.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -536,7 +543,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.2.2"
+        payload["app_version"] = "1.3.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

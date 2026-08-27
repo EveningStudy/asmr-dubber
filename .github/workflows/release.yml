@@ -22,8 +22,14 @@ jobs:
         shell: pwsh
         run: ./launcher/windows/build.ps1
       - name: Build portable Windows source archive
+        id: portable
         shell: pwsh
         run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag does not contain a valid semantic version: ${{ github.ref_name }}"
+          }
+          $archiveName = "ASMR-Dubber-windows-portable-v$version.zip"
           $staging = Join-Path $env:RUNNER_TEMP "ASMR-Dubber"
           New-Item -ItemType Directory -Force $staging | Out-Null
           Get-ChildItem -Force | Where-Object {
@@ -82,11 +88,12 @@ jobs:
             throw "Bundled Windows core wheelhouse failed its runtime import smoke test."
           }
           Compress-Archive -Path $staging `
-            -DestinationPath "ASMR-Dubber-windows-portable.zip"
+            -DestinationPath $archiveName
+          "archive=$archiveName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: ASMR-Dubber-windows-portable.zip
+          path: ${{ steps.portable.outputs.archive }}
           if-no-files-found: error
 
   github-release:
@@ -138,6 +145,6 @@ jobs:
         run: >-
           gh release create "${GITHUB_REF_NAME}"
           dist/*
-          release-assets/ASMR-Dubber-windows-portable.zip
+          release-assets/ASMR-Dubber-windows-portable-v*.zip
           --notes-file release-notes.md
           --verify-tag
