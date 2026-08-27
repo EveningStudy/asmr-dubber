@@ -80,6 +80,7 @@ from .runtime_manager import (
     hardware_markdown,
     install_backend,
     installable_backend_ids,
+    ordered_backends,
     recommended_stack_markdown,
     refresh_hardware,
 )
@@ -292,6 +293,15 @@ _NATIVE_OUTPUT_AUDIO_JS = """
     });
     globalThis.__asmrDubberAudioObserver = observer;
     syncOutputAudio();
+
+    clearInterval(globalThis.__asmrDubberAutoflowLogTimer);
+    let previousLog = null;
+    globalThis.__asmrDubberAutoflowLogTimer = setInterval(() => {
+        const textarea = document.querySelector("#autoflow-run-log textarea");
+        if (!textarea || textarea.value === previousLog) return;
+        previousLog = textarea.value;
+        textarea.scrollTop = textarea.scrollHeight;
+    }, 250);
 }
 """
 _LLM_TRANSLATION_PROVIDERS = frozenset(
@@ -327,13 +337,18 @@ def _speech_language(value: Any) -> SpeechSourceLanguage:
     return "en" if str(value or "ja") == "en" else "ja"
 
 
-def _asr_backend_choices(language: SpeechSourceLanguage) -> list[tuple[str, str]]:
+def _asr_backend_choices(
+    language: SpeechSourceLanguage,
+    settings: ProjectSettings | UserSettings | None = None,
+) -> list[tuple[str, str]]:
     if language == "en":
+        allowed = {"faster_whisper", "generic_asr_api"}
         return [
-            (ASR_BACKENDS["faster_whisper"].label, "faster_whisper"),
-            (ASR_BACKENDS["generic_asr_api"].label, "generic_asr_api"),
+            (spec.label, spec.id)
+            for spec in ordered_backends(ASR_BACKENDS, settings=settings)
+            if spec.id in allowed
         ]
-    return [(spec.label, key) for key, spec in ASR_BACKENDS.items()]
+    return [(spec.label, spec.id) for spec in ordered_backends(ASR_BACKENDS, settings=settings)]
 
 
 def _asr_models_for_language(
@@ -1033,7 +1048,10 @@ def _source_language_backend_update(language: Any, current_backend: Any) -> tupl
         if selected == "en"
         else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
     )
-    return _gr_update(choices=_asr_backend_choices(selected), value=backend_id), note
+    return (
+        _gr_update(choices=_asr_backend_choices(selected, load_user_settings()), value=backend_id),
+        note,
+    )
 
 
 def _asr_backend_update(
@@ -1800,6 +1818,8 @@ def build_app() -> Any:
                                 value=recent_autoflow_log_text(),
                                 lines=18,
                                 interactive=False,
+                                autoscroll=True,
+                                elem_id="autoflow-run-log",
                             )
 
             with gr.Tab("设置", id="settings"):
@@ -1842,9 +1862,9 @@ def build_app() -> Any:
                             install_asr_choice = gr.Dropdown(
                                 label="要安装/修复的 ASR（语音识别）后端",
                                 choices=[
-                                    (spec.label, backend_id)
-                                    for backend_id, spec in ASR_BACKENDS.items()
-                                    if backend_id in _INSTALLABLE
+                                    (spec.label, spec.id)
+                                    for spec in ordered_backends(ASR_BACKENDS, settings=stored)
+                                    if spec.id in _INSTALLABLE
                                 ],
                                 value="parakeet_nemo",
                                 scale=3,
@@ -1868,9 +1888,9 @@ def build_app() -> Any:
                             install_tts_choice = gr.Dropdown(
                                 label="要安装/修复的 TTS（语音合成）后端",
                                 choices=[
-                                    (spec.label, backend_id)
-                                    for backend_id, spec in TTS_BACKENDS.items()
-                                    if backend_id in _INSTALLABLE
+                                    (spec.label, spec.id)
+                                    for spec in ordered_backends(TTS_BACKENDS, settings=stored)
+                                    if spec.id in _INSTALLABLE
                                 ],
                                 value="indextts2",
                                 scale=3,
@@ -1925,7 +1945,7 @@ def build_app() -> Any:
                         gr.Markdown("### 识别方式")
                         settings_components["asr_backend"] = gr.Dropdown(
                             label="ASR（语音识别）后端",
-                            choices=_asr_backend_choices(selected_source_language),
+                            choices=_asr_backend_choices(selected_source_language, asr_stored),
                             value=asr_stored.asr_backend,
                         )
                         settings_components["asr_model"] = gr.Dropdown(
@@ -2087,7 +2107,11 @@ def build_app() -> Any:
                             info="识别文字不变；该模型只重新寻找每句话的起止时间。",
                         )
                         with gr.Accordion("多模型交叉校对（实验性）", open=False):
-                            gr.Markdown("**实验性，不建议使用。**")
+                            gr.Markdown(
+                                "**实验性，不建议作为默认方案。多模型结果可能不如单模型。** "
+                                "不同模型的分句差异、共同误识别或大模型判断错误都可能降低准确率；"
+                                "重要内容请人工核对。"
+                            )
                             settings_components["asr_review_enabled"] = gr.Checkbox(
                                 label="启用多 ASR（语音识别）+ 大模型交叉校对",
                                 value=initial_review_enabled,
@@ -2095,13 +2119,13 @@ def build_app() -> Any:
                                 info="下面只列出本地已完整下载并可运行的识别模型。",
                             )
                             settings_components["asr_review_models"] = gr.CheckboxGroup(
-                                label="参与校对的识别模型",
+                                label="复核模型",
                                 choices=initial_review_choices,
                                 value=initial_review_models,
                                 visible=initial_review_enabled,
                             )
                             settings_components["asr_review_text_priority_model"] = gr.Dropdown(
-                                label="文字判断优先来源",
+                                label="主文字来源",
                                 choices=initial_review_choices,
                                 value=initial_review_text_priority,
                                 visible=initial_review_enabled,
@@ -2257,7 +2281,10 @@ def build_app() -> Any:
                     with gr.Tab("TTS（语音合成）", id="tts"):
                         settings_components["tts_backend"] = gr.Dropdown(
                             label="TTS（语音合成）后端",
-                            choices=[(spec.label, key) for key, spec in TTS_BACKENDS.items()],
+                            choices=[
+                                (spec.label, spec.id)
+                                for spec in ordered_backends(TTS_BACKENDS, settings=stored)
+                            ],
                             value=stored.tts_backend,
                         )
                         settings_components["tts_model"] = gr.Dropdown(

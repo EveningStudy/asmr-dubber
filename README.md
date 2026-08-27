@@ -1,22 +1,23 @@
 # ASMR Dubber
 
-ASMR Dubber 用于把日语、英语音视频制作成中文配音和字幕。识别结果会整理成可编辑的句子表，可分步完成翻译、配音、混音和字幕导出。
+[![GitHub Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
+![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+ASMR Dubber 用于为日语、英语音声制作中文配音、双语音频和字幕。它保留原声，将中文配音按原时间轴混入音频，并生成中文或双语字幕。识别、翻译、配音和混音可以分步执行，台词和时间轴都能在表格中校对。
 
 ## 能做什么
 
-- 从音频或视频创建独立项目，并保留输入文件的原始副本；
-- 使用 Parakeet、Kotoba-Whisper、Faster-Whisper 或通用 ASR API 做 ASR（语音识别）；
-- 可导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 和纯文本台本；中文台本可跳过 ASR 与翻译，直接进入校对和配音；
-- 可选日语 ASMR 专用 VAD（语音活动检测）和 Qwen3 ForcedAligner 时间戳对齐；
-- 使用多个已安装的识别模型交叉校对源文；
-- 通过 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Claude、Gemini、DeepL、Google 或 Microsoft 等服务翻译；
-- 使用本地或云端 IndexTTS2、通用 TTS API、无需 API Key 的 Edge TTS，或连接 MiMo、MiniMax、GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio API 做 TTS（语音合成）；
-- 逐句调整源文、中文、起止时间和是否配音；
-- 输出混音后的 WAV、视频，以及双语/中文/源文 SRT 和 LRC 字幕；
-- 可以只导出完整时间轴的中文克隆音轨，之后再把它加入原音轨，不必重新生成 TTS；
-- 可在“批量处理”中扫描 DLsite 作品目录，按音轨或整部作品排队生成音频、静态视频和字幕；
-- 中断后继续工作，只重做缺失或设置已经失效的部分；
-- 长任务可在网页中取消；程序日志可直接查看和下载。
+- 将日语、英语音频或视频识别为带时间戳的台词。支持 Parakeet、Kotoba-Whisper、Faster-Whisper 和通用 ASR API。
+- 导入日语、英语或中文的 SRT、VTT、ASS/SSA、LRC 字幕和纯文本台本。已有中文字幕时，可以直接进入配音。
+- 使用日语 ASMR 专用 Whisper VAD 处理静音和非语音片段，或使用 Qwen3 ForcedAligner 重新对齐时间戳。多模型交叉校对为实验性功能。
+- 将台词翻译为简体中文。支持 DeepSeek、阿里云百炼、豆包、商汤 SenseNova、OpenAI、Claude、Gemini、DeepL、Google、Microsoft 和 OpenAI-compatible 接口。
+- 生成中文配音。支持本地或云端 IndexTTS2、Edge TTS、MiMo、MiniMax、GPT-SoVITS、CosyVoice、Fish Speech/Fish Audio 和 OpenAI-compatible TTS API。
+- 将中文配音与原声混合为双语音频，也可以单独导出中文音轨，留给其它音频或视频软件处理。
+- 导出混音 WAV、带字幕的静态视频，以及源文、中文或双语 SRT/LRC 字幕。配音和混音可以分别重做。
+- 批量扫描 DLsite 作品目录，调整音轨顺序后连续制作双语音频、静态视频和字幕；也可以只生成字幕。
+- 保存项目进度和已经生成的配音缓存。任务可以取消，失败后可以从未完成的步骤继续。
 
 英语项目使用 Faster-Whisper 或通用 ASR API；Parakeet、Kotoba-Whisper 和日语 ASMR 专用 VAD 仍只用于日语。翻译和配音目标语言为简体中文。
 

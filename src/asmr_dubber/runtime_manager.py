@@ -610,7 +610,7 @@ def available_backend_models_markdown(
     registry = ASR_BACKENDS if kind == "asr" else TTS_BACKENDS
     title = "ASR（语音识别）" if kind == "asr" else "TTS（语音合成）"
     lines = [f"**本机 {title} 可用状态（只读检测）**"]
-    for backend in registry.values():
+    for backend in ordered_backends(registry, settings=settings):
         statuses = [
             (model_id, backend_model_status(backend, model_id, settings=settings))
             for model_id in backend.models
@@ -633,6 +633,32 @@ def available_backend_models_markdown(
             overall = backend_status(backend, settings=settings)
             lines.append(f"- **[不可用] {backend.label}**：{overall.label}")
     return "\n".join(lines)
+
+
+def ordered_backends(
+    registry: dict[str, ModelBackend],
+    settings: Any | None = None,
+) -> list[ModelBackend]:
+    """Order UI choices by local readiness while keeping generic APIs last."""
+    original_order = {backend_id: index for index, backend_id in enumerate(registry)}
+
+    def key(backend: ModelBackend) -> tuple[int, int, int, int]:
+        if backend.id.startswith("generic_"):
+            return (4, 1, 1, original_order[backend.id])
+        status = backend_status(backend, settings=settings)
+        if backend.runtime == "http":
+            group = 2
+        elif status.state == "ready":
+            group = 0
+        else:
+            group = 1
+        recommended = 0 if backend.tested_default else 1
+        support = {"verified": 0, "supported": 1, "experimental": 2, "community": 3}[
+            backend.support_level
+        ]
+        return (group, recommended, support, original_order[backend.id])
+
+    return sorted(registry.values(), key=key)
 
 
 def available_asr_review_choices(settings: Any | None = None) -> list[tuple[str, str]]:
@@ -723,7 +749,7 @@ def backend_catalog_rows(
         else (("ASR（语音识别）", ASR_BACKENDS), ("TTS（语音合成）", TTS_BACKENDS))
     )
     for kind_label, registry in registries:
-        for backend in registry.values():
+        for backend in ordered_backends(registry, settings=settings):
             status = backend_status(backend, settings=settings)
             row = [
                 backend.label,

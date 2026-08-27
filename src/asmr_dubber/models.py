@@ -266,6 +266,11 @@ class ProjectSettings(BaseModel):
                 value["asr_review_models"] = review_models
                 if value.get("asr_review_enabled") and not review_models:
                     value["asr_review_enabled"] = False
+            legacy_review_prompt = str(value.get("asr_review_prompt", "") or "").strip()
+            if legacy_review_prompt.startswith(
+                "你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。"
+            ):
+                value["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
             priority_defaults = {
                 "asr_review_text_priority_model": DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
                 "asr_review_timestamp_priority_model": (DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY),

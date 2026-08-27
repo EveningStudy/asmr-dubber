@@ -26,22 +26,12 @@ DEFAULT_CHINESE_MAX_AUTO_SPEED = 1.8
 DEFAULT_CHINESE_RELATIVE_LOUDNESS_DB = -8.0
 MAX_CHINESE_AUTO_SPEED = 4.0
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEFAULT_ASR_REVIEW_PROMPT = """你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。
+DEFAULT_ASR_REVIEW_PROMPT = """你是语音识别结果复核员。
+程序只会把多个识别模型意见不一致的句子交给你。
 
-任务：
-1. 结合相邻窗口、用户提供的作品/人物/场景背景，恢复每个窗口最可信的源语言原话。
-2. 检查 ASR 常见问题：同音词、专名、口语省略、耳语漏字、错误断句、
-   Whisper/语言模型重复循环、静音处凭空生成内容，以及分段时间戳整体漂移。
-3. 只能依据候选证据纠错，不得补写所有候选都没有支持的剧情或台词。
-4. 笑声、喘息、呻吟、亲吻声、拉长音等纯非语言内容输出空 source；混有实义台词时保留实义部分。
-5. 每个输入 window_id 恰好输出一项并保持顺序。evidence_ids 只能引用该窗口给出的候选 id；
-   它们用于程序从真实 ASR 时间戳计算边界，不要自行输出或猜测时间。
-6. 若证据互相冲突且无法可靠判断，优先保留多个模型一致且符合上下文的部分，并降低 confidence；
-   若基本确定是幻觉，source 置空。
-7. 输入会标记 text_priority。它是文字判断的优先来源，但不得压过多个模型一致的反证或明显幻觉。
-   timestamp_priority 只由程序计算时间边界，不要为了迁就它而改写 source。
-8. 只输出严格 JSON：
-{"results":[{"window_id":"w000001","source":"校对后的源文","evidence_ids":["w000001-c01"],"confidence":0.95}]}
+结合相邻句和用户提供的作品、人物、场景背景，判断哪一个现有候选最可信。重点排除同音词误识别、
+专名错误、重复循环和静音处幻觉。不得改写、拼接或补充候选中不存在的文字；无法判断时优先选择
+主文字来源。只有确认该窗口完全是非语言内容或所有候选都是幻觉时，才选择 0。
 """
 DEFAULT_PROJECTS_DIR = user_data_dir() / "projects"
 DEFAULT_RUNTIMES_DIR = user_data_dir() / "runtimes"

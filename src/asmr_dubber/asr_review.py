@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import math
-import random
 import re
-import statistics
 import time
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +50,32 @@ class ReviewWindow:
     evidence: list[Evidence] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ReviewCandidate:
+    text: str
+    evidence_ids: tuple[str, ...]
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReviewDecision:
+    text: str
+    evidence_ids: tuple[str, ...]
+    confidence: float
+    decision: str
+    reason: str
+    selected_candidate: int | None
+
+
+_SELECTION_CONTRACT = """硬性输出规则（优先级高于其它提示）：
+1. 你只能为每个目标窗口选择程序给出的候选序号，不得自由生成、改写、拼接或翻译文字。
+2. selected_candidate 使用每个窗口中从 1 开始的 candidate 编号；0 仅表示确定没有实义语音。
+3. 每个 target_window_id 恰好输出一项，顺序必须一致。
+4. 只输出严格 JSON：
+{"results":[{"window_id":"w000001","selected_candidate":1,"confidence":0.8}]}
+"""
+
+
 def _overlap(left: Sentence, right: ReviewWindow) -> float:
     return max(0.0, min(left.end_seconds, right.end) - max(left.start_seconds, right.start))
 
@@ -65,7 +90,6 @@ def _build_windows(
     windows = [
         ReviewWindow(id="", start=item.start_seconds, end=item.end_seconds) for item in primary
     ]
-    pending: list[tuple[str, Sentence]] = []
     for source_index, (label, sentences) in enumerate(transcriptions):
         for sentence_index, sentence in enumerate(sentences):
             if source_index == 0:
@@ -85,7 +109,6 @@ def _build_windows(
                 )
                 best_overlap, negative_distance, best_index = ranked[0]
                 if best_overlap <= 0 and -negative_distance > max_drift_seconds:
-                    pending.append((label, sentence))
                     continue
                 window = windows[best_index]
             window.evidence.append(
@@ -97,38 +120,6 @@ def _build_windows(
                     end=sentence.end_seconds,
                 )
             )
-
-    # Keep content seen only by a secondary recognizer. Nearby secondary-only
-    # segments are grouped, but never merged into a distant primary sentence.
-    for label, sentence in sorted(pending, key=lambda item: item[1].start_seconds):
-        midpoint = (sentence.start_seconds + sentence.end_seconds) / 2
-        candidates = [
-            window
-            for window in windows
-            if not any(e.source == primary_label for e in window.evidence)
-            and abs(midpoint - (window.start + window.end) / 2) <= max_drift_seconds
-        ]
-        if candidates:
-            window = min(
-                candidates,
-                key=lambda item: abs(midpoint - (item.start + item.end) / 2),
-            )
-            window.start = min(window.start, sentence.start_seconds)
-            window.end = max(window.end, sentence.end_seconds)
-        else:
-            window = ReviewWindow(id="", start=sentence.start_seconds, end=sentence.end_seconds)
-            windows.append(window)
-        window.evidence.append(
-            Evidence(
-                id="",
-                source=label,
-                text=sentence.source_text,
-                start=sentence.start_seconds,
-                end=sentence.end_seconds,
-            )
-        )
-
-    windows.sort(key=lambda item: (item.start, item.end))
     for window_index, window in enumerate(windows, start=1):
         window.id = f"w{window_index:06d}"
         window.evidence = [
@@ -164,6 +155,117 @@ def _window_payload(
             for item in window.evidence
         ],
     }
+
+
+def _normalize_candidate_text(text: str) -> str:
+    """Normalize harmless presentation differences before deterministic voting."""
+    normalized = unicodedata.normalize("NFKC", text).casefold().strip()
+    return "".join(
+        character
+        for character in normalized
+        if not character.isspace() and not unicodedata.category(character).startswith("P")
+    )
+
+
+def _window_candidates(window: ReviewWindow) -> list[ReviewCandidate]:
+    grouped: dict[str, list[Evidence]] = {}
+    for evidence in window.evidence:
+        normalized = _normalize_candidate_text(evidence.text)
+        if normalized:
+            grouped.setdefault(normalized, []).append(evidence)
+    return [
+        ReviewCandidate(
+            text=evidence_group[0].text.strip(),
+            evidence_ids=tuple(item.id for item in evidence_group),
+            sources=tuple(dict.fromkeys(item.source for item in evidence_group)),
+        )
+        for evidence_group in grouped.values()
+    ]
+
+
+def _candidate_payload(
+    window: ReviewWindow,
+    text_priority_source: str,
+) -> dict[str, Any]:
+    return {
+        "window_id": window.id,
+        "approximate_time": [round(window.start, 3), round(window.end, 3)],
+        "candidates": [
+            {
+                "candidate": index,
+                "text": candidate.text,
+                "sources": list(candidate.sources),
+                "text_priority": text_priority_source in candidate.sources,
+            }
+            for index, candidate in enumerate(_window_candidates(window), start=1)
+        ],
+    }
+
+
+def _fallback_candidate_index(window: ReviewWindow, text_priority_source: str) -> int:
+    candidates = _window_candidates(window)
+    for index, candidate in enumerate(candidates, start=1):
+        if text_priority_source and text_priority_source in candidate.sources:
+            return index
+    primary_source = window.evidence[0].source if window.evidence else ""
+    for index, candidate in enumerate(candidates, start=1):
+        if primary_source in candidate.sources:
+            return index
+    return 1 if candidates else 0
+
+
+def _decision_for_candidate(
+    window: ReviewWindow,
+    selected_candidate: int,
+    *,
+    confidence: float,
+    decision: str,
+    reason: str,
+) -> ReviewDecision:
+    candidates = _window_candidates(window)
+    if selected_candidate == 0:
+        return ReviewDecision("", (), confidence, decision, reason, 0)
+    candidate = candidates[selected_candidate - 1]
+    return ReviewDecision(
+        candidate.text,
+        candidate.evidence_ids,
+        confidence,
+        decision,
+        reason,
+        selected_candidate,
+    )
+
+
+def _deterministic_decision(
+    window: ReviewWindow,
+    text_priority_source: str,
+) -> ReviewDecision | None:
+    candidates = _window_candidates(window)
+    if not candidates:
+        return ReviewDecision("", (), 1.0, "non_speech", "没有非空识别候选", 0)
+    if len(candidates) == 1:
+        sources = len(candidates[0].sources)
+        return _decision_for_candidate(
+            window,
+            1,
+            confidence=0.98 if sources >= 2 else 0.75,
+            decision="consensus" if sources >= 2 else "single_candidate",
+            reason=(f"{sources} 个识别模型文字一致" if sources >= 2 else "只有一个非空候选"),
+        )
+    votes = [len(candidate.sources) for candidate in candidates]
+    best_votes = max(votes)
+    winners = [
+        index for index, votes_count in enumerate(votes, start=1) if votes_count == best_votes
+    ]
+    if best_votes >= 2 and len(winners) == 1:
+        return _decision_for_candidate(
+            window,
+            winners[0],
+            confidence=min(0.99, 0.75 + best_votes * 0.08),
+            decision="consensus",
+            reason=f"{best_votes} 个识别模型文字一致",
+        )
+    return None
 
 
 def _extract_object(content: str) -> dict[str, Any]:
@@ -226,7 +328,7 @@ def _request_json(
         api_key=key,
         model=settings.translation_model,
         base_url=base_url,
-        system_prompt=settings.asr_review_prompt,
+        system_prompt=f"{settings.asr_review_prompt.strip()}\n\n{_SELECTION_CONTRACT}",
         temperature=0.0,
         top_p=1.0,
         max_output_tokens=settings.translation_max_output_tokens,
@@ -245,7 +347,7 @@ def _request_json(
 def _validate_results(
     payload: Mapping[str, Any],
     targets: list[ReviewWindow],
-) -> dict[str, tuple[str, list[str], float]]:
+) -> dict[str, ReviewDecision]:
     results = payload.get("results")
     if not isinstance(results, list):
         raise AsmrDubberError("ASR（语音识别）校对 JSON 缺少 results 数组。")
@@ -253,24 +355,26 @@ def _validate_results(
     actual = [str(item.get("window_id", "")) for item in results if isinstance(item, Mapping)]
     if actual != expected:
         raise AsmrDubberError("ASR（语音识别）校对返回的 window_id 数量或顺序不一致。")
-    validated: dict[str, tuple[str, list[str], float]] = {}
+    validated: dict[str, ReviewDecision] = {}
     for window, item in zip(targets, results, strict=True):
         assert isinstance(item, Mapping)
-        text = str(item.get("source", item.get("ja", "")) or "").strip()
-        ids = item.get("evidence_ids") or []
-        if not isinstance(ids, list):
-            raise AsmrDubberError(f"{window.id} 的 evidence_ids 不是数组。")
-        allowed = {evidence.id for evidence in window.evidence}
-        selected = [str(value) for value in ids]
-        if any(value not in allowed for value in selected):
-            raise AsmrDubberError(f"{window.id} 引用了不存在的 ASR（语音识别）证据。")
-        if text and not selected:
-            raise AsmrDubberError(f"{window.id} 生成了文字但没有引用证据。")
+        try:
+            selected_candidate = int(item.get("selected_candidate", -1))
+        except (TypeError, ValueError) as exc:
+            raise AsmrDubberError(f"{window.id} 的候选序号无效。") from exc
+        if not 0 <= selected_candidate <= len(_window_candidates(window)):
+            raise AsmrDubberError(f"{window.id} 选择了不存在的候选序号。")
         try:
             confidence = float(item.get("confidence", 0.5))
         except (TypeError, ValueError):
             confidence = 0.5
-        validated[window.id] = (text, selected, min(1.0, max(0.0, confidence)))
+        validated[window.id] = _decision_for_candidate(
+            window,
+            selected_candidate,
+            confidence=min(1.0, max(0.0, confidence)),
+            decision="llm_choice",
+            reason="大模型从现有候选中选择",
+        )
     return validated
 
 
@@ -280,10 +384,13 @@ def _review_chunk(
     settings: ProjectSettings,
     job_id: str,
     source_language: SourceLanguage,
-) -> dict[str, tuple[str, list[str], float]]:
+) -> dict[str, ReviewDecision]:
     target_ids = [window.id for window in targets]
     messages = [
-        {"role": "system", "content": settings.asr_review_prompt},
+        {
+            "role": "system",
+            "content": f"{settings.asr_review_prompt.strip()}\n\n{_SELECTION_CONTRACT}",
+        },
         {
             "role": "user",
             "content": f"当前音频的源语言是：{source_language_label(source_language)}。",
@@ -305,11 +412,7 @@ def _review_chunk(
                     {
                         "target_window_ids": target_ids,
                         "windows": [
-                            _window_payload(
-                                window,
-                                settings.asr_review_text_priority_model,
-                                settings.asr_review_timestamp_priority_model,
-                            )
+                            _candidate_payload(window, settings.asr_review_text_priority_model)
                             for window in windows
                         ],
                     },
@@ -319,25 +422,8 @@ def _review_chunk(
             ),
         },
     ]
-    last_error: Exception | None = None
-    for attempt in range(1, 4):
-        try:
-            content = _request_json(settings, messages, job_id)
-            return _validate_results(_extract_object(content), targets)
-        except (AsmrDubberError, httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            last_error = exc
-            if attempt < 3:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"第 {attempt + 1} 次严格修正：只返回 {target_ids}，保持顺序，"
-                            "每个非空 source 必须引用本窗口已有 evidence_ids。"
-                        ),
-                    }
-                )
-                time.sleep(min(4.0, 2 ** (attempt - 1) + random.random()))
-    raise AsmrDubberError(f"多 ASR（语音识别）校对在 3 次尝试后失败：{last_error}") from last_error
+    content = _request_json(settings, messages, job_id)
+    return _validate_results(_extract_object(content), targets)
 
 
 def _evidence_range(
@@ -345,24 +431,13 @@ def _evidence_range(
     selected_ids: list[str],
     timestamp_priority_source: str = "",
 ) -> tuple[float, float]:
-    selected = [item for item in window.evidence if item.id in set(selected_ids)]
     preferred = [item for item in window.evidence if item.source == timestamp_priority_source]
-    if selected and preferred:
-        # Text evidence still decides whether the window is kept.  Once it is
-        # kept, the user's time-priority recognizer provides the boundary even
-        # when its transcription text was not selected by the LLM.
+    if selected_ids and preferred:
         return (
             min(item.start for item in preferred),
             max(item.end for item in preferred),
         )
-    by_source: dict[str, list[Evidence]] = {}
-    for item in selected:
-        by_source.setdefault(item.source, []).append(item)
-    starts = [min(item.start for item in items) for items in by_source.values()]
-    ends = [max(item.end for item in items) for items in by_source.values()]
-    if not starts or not ends:
-        return window.start, window.end
-    return statistics.median(starts), statistics.median(ends)
+    return window.start, window.end
 
 
 def review_transcriptions(
@@ -377,40 +452,76 @@ def review_transcriptions(
 ) -> list[Sentence]:
     """Resolve several timed ASR hypotheses while keeping timestamps evidence-bound."""
     check_cancelled(cancel_event)
-    ordered = list(transcriptions)
-    timestamp_priority = settings.asr_review_timestamp_priority_model
-    for index, (label, _sentences) in enumerate(ordered):
-        if label == timestamp_priority:
-            ordered.insert(0, ordered.pop(index))
-            break
-    windows = _build_windows(ordered, settings.asr_review_max_drift_seconds)
+    windows = _build_windows(list(transcriptions), settings.asr_review_max_drift_seconds)
     if not windows:
         raise AsmrDubberError("多 ASR（语音识别）校对没有可比较的候选窗口。")
-    reviewed: dict[str, tuple[str, list[str], float]] = {}
-    chunk_size = 24
-    total = math.ceil(len(windows) / chunk_size)
-    for chunk_index, start in enumerate(range(0, len(windows), chunk_size), start=1):
+    reviewed: dict[str, ReviewDecision] = {}
+    ambiguous: list[ReviewWindow] = []
+    position_by_id = {window.id: index for index, window in enumerate(windows)}
+    for window in windows:
+        decision = _deterministic_decision(window, settings.asr_review_text_priority_model)
+        if decision is None:
+            ambiguous.append(window)
+        else:
+            reviewed[window.id] = decision
+
+    chunk_size = 8
+    total = math.ceil(len(ambiguous) / chunk_size) if ambiguous else 0
+    for chunk_index, start in enumerate(range(0, len(ambiguous), chunk_size), start=1):
         check_cancelled(cancel_event)
-        targets = windows[start : start + chunk_size]
-        context = windows[max(0, start - 2) : min(len(windows), start + chunk_size + 2)]
+        targets = ambiguous[start : start + chunk_size]
+        target_positions = [position_by_id[window.id] for window in targets]
+        context = windows[
+            max(0, min(target_positions) - 2) : min(len(windows), max(target_positions) + 3)
+        ]
         if progress:
-            progress(f"大模型交叉校对：{chunk_index}/{total}", chunk_index - 1, total)
-        reviewed.update(
-            _review_chunk(
-                context,
-                targets,
-                settings,
-                f"asr-review-{chunk_index}-{int(time.time())}",
-                source_language,
+            progress(f"大模型复核争议句：{chunk_index}/{total}", chunk_index - 1, total)
+        try:
+            reviewed.update(
+                _review_chunk(
+                    context,
+                    targets,
+                    settings,
+                    f"asr-review-{chunk_index}-{int(time.time())}",
+                    source_language,
+                )
             )
-        )
+        except (AsmrDubberError, httpx.HTTPError, KeyError, IndexError, ValueError) as batch_error:
+            check_cancelled(cancel_event)
+            for window in targets:
+                position = position_by_id[window.id]
+                try:
+                    reviewed.update(
+                        _review_chunk(
+                            windows[max(0, position - 2) : position + 3],
+                            [window],
+                            settings,
+                            f"asr-review-{window.id}-{int(time.time())}",
+                            source_language,
+                        )
+                    )
+                except (AsmrDubberError, httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                    check_cancelled(cancel_event)
+                    selected = _fallback_candidate_index(
+                        window, settings.asr_review_text_priority_model
+                    )
+                    reviewed[window.id] = _decision_for_candidate(
+                        window,
+                        selected,
+                        confidence=0.35,
+                        decision="fallback",
+                        reason=f"大模型复核失败，已回退主模型：{exc or batch_error}",
+                    )
         check_cancelled(cancel_event)
 
     sentences: list[Sentence] = []
     sentence_by_window: dict[str, Sentence] = {}
     report_results: list[dict[str, Any]] = []
     for window in windows:
-        text, selected_ids, confidence = reviewed[window.id]
+        decision = reviewed[window.id]
+        text = decision.text
+        selected_ids = list(decision.evidence_ids)
+        confidence = decision.confidence
         start, end = _evidence_range(
             window,
             selected_ids,
@@ -431,6 +542,9 @@ def review_transcriptions(
                 "source": text,
                 "evidence_ids": selected_ids,
                 "confidence": confidence,
+                "decision": decision.decision,
+                "reason": decision.reason,
+                "selected_candidate": decision.selected_candidate,
                 "computed_time": [start, end],
                 "text_priority_model": settings.asr_review_text_priority_model,
                 "timestamp_priority_model": settings.asr_review_timestamp_priority_model,
@@ -476,5 +590,10 @@ def review_transcriptions(
         encoding="utf-8",
     )
     if progress:
-        progress(f"多 ASR（语音识别）校对完成：保留 {len(sentences)} 句", total, total)
+        progress(
+            f"多 ASR（语音识别）校对完成：保留 {len(sentences)} 句，"
+            f"其中 {len(ambiguous)} 句需要大模型复核",
+            total,
+            total,
+        )
     return sentences

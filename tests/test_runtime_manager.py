@@ -17,6 +17,7 @@ from asmr_dubber.errors import EnvironmentError as AppEnvironmentError
 from asmr_dubber.model_registry import ASR_BACKENDS, TTS_BACKENDS
 from asmr_dubber.platforms import PlatformInfo
 from asmr_dubber.runtime_manager import (
+    BackendStatus,
     HardwareProfile,
     _run_streaming_process,
     available_asr_review_choices,
@@ -28,6 +29,7 @@ from asmr_dubber.runtime_manager import (
     download_backend_models,
     hardware_markdown,
     install_backend,
+    ordered_backends,
     recommended_stack_markdown,
 )
 from asmr_dubber.user_settings import UserSettings
@@ -222,6 +224,39 @@ def test_backend_catalog_can_be_split_by_kind(monkeypatch) -> None:
     assert len(asr_rows) == len(ASR_BACKENDS)
     assert len(tts_rows) == len(TTS_BACKENDS)
     assert all(len(row) == 6 for row in [*asr_rows, *tts_rows])
+
+
+def test_backend_order_places_ready_recommended_first_and_generic_last(monkeypatch) -> None:
+    states = {
+        "parakeet_nemo": BackendStatus("ready", "可用"),
+        "kotoba_whisper": BackendStatus("missing", "未安装"),
+        "faster_whisper": BackendStatus("ready", "可用"),
+        "generic_asr_api": BackendStatus("external", "外部服务"),
+    }
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.backend_status",
+        lambda backend, settings=None: states[backend.id],
+    )
+
+    ordered = [backend.id for backend in ordered_backends(ASR_BACKENDS, UserSettings())]
+
+    assert ordered[:2] == ["parakeet_nemo", "faster_whisper"]
+    assert ordered[-1] == "generic_asr_api"
+
+
+def test_tts_backend_order_keeps_generic_api_last(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "asmr_dubber.runtime_manager.backend_status",
+        lambda backend, settings=None: BackendStatus(
+            "ready" if backend.id in {"indextts2", "edge_tts"} else "external",
+            "可用",
+        ),
+    )
+
+    ordered = [backend.id for backend in ordered_backends(TTS_BACKENDS, UserSettings())]
+
+    assert ordered[:2] == ["indextts2", "edge_tts"]
+    assert ordered[-1] == "generic_tts_api"
 
 
 def test_indextts_status_accepts_windows_runtime(monkeypatch, tmp_path: Path) -> None:

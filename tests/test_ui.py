@@ -14,6 +14,7 @@ from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, sa
 from asmr_dubber.runtime_manager import BackendStatus
 from asmr_dubber.translation import SYSTEM_PROMPT, default_translation_prompt
 from asmr_dubber.ui import (
+    _NATIVE_OUTPUT_AUDIO_JS,
     APP_CSS,
     DownloadController,
     ProjectTaskController,
@@ -330,7 +331,15 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) ->
     assert "已有台本/字幕的处理方式" not in labels
     assert "默认成品组织" in labels
     assert "打开项目目录" in values
-    assert any("实验性，不建议使用" in str(value) for value in values)
+    assert any("多模型结果可能不如单模型" in str(value) for value in values)
+    autoflow_log = next(
+        component
+        for component in app.blocks.values()
+        if getattr(component, "label", None) == "自动处理日志"
+    )
+    assert autoflow_log.autoscroll is True
+    assert "__asmrDubberAutoflowLogTimer" in _NATIVE_OUTPUT_AUDIO_JS
+    assert 'querySelector("#autoflow-run-log textarea")' in _NATIVE_OUTPUT_AUDIO_JS
     assert "仅保存为以后新项目默认值" in values
     assert "保存并应用到当前项目" in values
 

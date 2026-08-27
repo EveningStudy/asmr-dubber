@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from asmr_dubber.constants import DEFAULT_ASR_REVIEW_PROMPT
 from asmr_dubber.errors import ProjectConflictError, ProjectError
 from asmr_dubber.models import (
     AudioInfo,
@@ -286,6 +287,19 @@ def test_legacy_automatic_parakeet_chunking_is_migrated() -> None:
     settings = ProjectSettings.model_validate({"asr_chunk_seconds": 0})
 
     assert settings.asr_chunk_seconds == 120.0
+
+
+def test_legacy_freeform_asr_review_prompt_is_migrated_to_candidate_selection() -> None:
+    settings = ProjectSettings.model_validate(
+        {
+            "asr_review_prompt": (
+                "你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。\n"
+                "旧版会要求模型自由生成文字。"
+            )
+        }
+    )
+
+    assert settings.asr_review_prompt == DEFAULT_ASR_REVIEW_PROMPT
 
 
 def test_asmr_vad_and_standalone_alignment_are_independent_stages() -> None:
