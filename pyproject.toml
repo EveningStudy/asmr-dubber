@@ -52,13 +52,13 @@ asr-faster-whisper = [
 ]
 asr-kotoba-whisper = [
   "accelerate>=1.10,<2",
-  "torch>=2.6,<2.12",
+  "torch>=2.6,<2.14",
   "torchaudio>=2.6,<2.12",
   "transformers>=4.57,<5",
 ]
 asr-forced-aligner = [
   "qwen-asr==0.0.6",
-  "torch>=2.6,<2.12",
+  "torch>=2.6,<2.14",
   "torchaudio>=2.6,<2.12",
   "transformers>=4.57,<5",
 ]
