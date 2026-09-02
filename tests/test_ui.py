@@ -19,6 +19,7 @@ from asmr_dubber.ui import (
     DownloadController,
     ProjectTaskController,
     _autoflow_log_events,
+    _backend_usage_markdown,
     _install_backend_log_events,
     _loudness_mode,
     _loudness_mode_update,
@@ -338,7 +339,8 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) ->
     assert "1 · 运行 ASR（语音识别）" in values
     assert "4 · 生成中文配音" in values
     assert "5 · 混音与输出" in values
-    assert "作品文件夹" in labels
+    assert "包含音频的作品文件夹" in labels
+    assert "本次任务输出字幕" in labels
     assert "音频版本" in labels
     assert "本次将处理的音轨" in labels
     assert "处理队列" in labels
@@ -360,8 +362,13 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app) ->
     assert autoflow_log.autoscroll is True
     assert "__asmrDubberAutoflowLogTimer" in _NATIVE_OUTPUT_AUDIO_JS
     assert 'querySelector("#autoflow-run-log textarea")' in _NATIVE_OUTPUT_AUDIO_JS
-    assert "仅保存为以后新项目默认值" in values
-    assert "保存并应用到当前项目" in values
+    assert "保存设置" in values
+    assert "仅保存为以后新项目默认值" not in values
+    assert "保存并应用到当前项目" not in values
+    assert "测试当前 ASR API" in values
+    assert "测试当前翻译 API" in values
+    assert "测试当前 TTS 服务" in values
+    assert sum("目前正在使用" in str(value) for value in values) >= 3
 
     import_callback = next(
         function for function in app.fns.values() if function.name == "import_transcript_callback"
@@ -756,7 +763,7 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
     function = next(
         function for function in app.fns.values() if function.name == "apply_settings_callback"
     )
-    assert len(function.outputs) == 13
+    assert len(function.outputs) == 16
     assert function.outputs[0].label == "设置状态"
 
     values = [getattr(component, "value", None) for component in function.inputs]
@@ -807,8 +814,8 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
         "manifest": r"D:\projects\current\project.json",
         "applied": False,
     }
-    assert len(result) == 13
-    assert "新项目默认值已保存" in result[0]
+    assert len(result) == 16
+    assert "设置已保存" in result[0]
     assert "多模型交叉校对=关闭" in result[0]
     assert "多模型交叉校对=关闭" in result[10]
 
@@ -817,8 +824,43 @@ def test_apply_settings_button_saves_defaults_and_updates_both_pages(app, monkey
     without_project = function.fn(*values)
 
     assert captured == {"saved": False}
-    assert "请先新建或打开项目" in without_project[0]
-    assert "请先新建或打开项目" in without_project[10]
+    assert "以后新建的项目将使用这些设置" in without_project[0]
+    assert without_project[1]["__type__"] == "update"
+    assert "以后新建的项目" in without_project[13]
+
+
+def test_backend_usage_distinguishes_current_project_from_pending_form(
+    monkeypatch,
+) -> None:
+    project = DubProject(
+        source=AudioInfo(
+            path="source.wav",
+            sha256="0" * 64,
+            duration_seconds=1.0,
+            sample_rate=16_000,
+            channels=1,
+        )
+    )
+    project.settings.tts_backend = "indextts2"
+    project.settings.tts_model = "IndexTTS2"
+    monkeypatch.setattr(ui_module, "load_project", lambda _path: (project, Path(".")))
+
+    status = _backend_usage_markdown(
+        "tts",
+        "project.json",
+        "generic_tts_api",
+        "tts-1",
+        "https://user:secret@example.test/v1?token=hidden",
+    )
+
+    assert "目前正在使用" in status
+    assert "当前项目" in status
+    assert "IndexTTS2 本地" in status
+    assert "准备保存" in status
+    assert "通用 TTS API" in status
+    assert "https://example.test/v1" in status
+    assert "secret" not in status
+    assert "token=" not in status
 
 
 def test_installation_and_inference_share_one_runtime_queue(app) -> None:

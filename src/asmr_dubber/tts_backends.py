@@ -27,6 +27,7 @@ from .api_contracts import (
     merge_extra_body,
     write_audio_response,
 )
+from .api_logging import logged_http_client, safe_api_url
 from .audio import project_file_exists
 from .errors import OperationCancelledError, SynthesisError
 from .model_registry import TTS_BACKENDS
@@ -396,10 +397,8 @@ def _synthesize_indextts_cli_batch(
 def _gpt_sovits_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     url = f"{project.settings.tts_api_base_url.rstrip('/')}/tts"
-    client = httpx.Client(timeout=project.settings.tts_timeout_seconds)
+    client = logged_http_client("GPT-SoVITS API", timeout=project.settings.tts_timeout_seconds)
 
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         payload = {
@@ -429,12 +428,10 @@ def _gpt_sovits_runner(
 def _cosyvoice_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     mode = project.settings.tts_cosyvoice_mode
     endpoint = "inference_zero_shot" if mode == "zero_shot" else "inference_cross_lingual"
     url = f"{project.settings.tts_api_base_url.rstrip('/')}/{endpoint}"
-    client = httpx.Client(timeout=project.settings.tts_timeout_seconds)
+    client = logged_http_client("CosyVoice API", timeout=project.settings.tts_timeout_seconds)
 
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         data = {"tts_text": sentence.zh_text}
@@ -455,14 +452,17 @@ def _cosyvoice_runner(
 
 def _fish_runner(
     project: DubProject,
+    api_key: str | None = None,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     base = project.settings.tts_api_base_url.rstrip("/")
     url = base if base.endswith("/v1/tts") else f"{base}/v1/tts"
-    key = saved_service_key(f"tts:{project.settings.tts_backend}")
+    key = (api_key or "").strip() or saved_service_key(f"tts:{project.settings.tts_backend}")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    client = httpx.Client(headers=headers, timeout=project.settings.tts_timeout_seconds)
+    client = logged_http_client(
+        "Fish Speech / Fish Audio API",
+        headers=headers,
+        timeout=project.settings.tts_timeout_seconds,
+    )
     reference_payloads: dict[tuple[str, str], str] = {}
     payload_lock = threading.Lock()
 
@@ -498,12 +498,12 @@ def _fish_runner(
 
 def _indextts_api_runner(
     project: DubProject,
+    api_key: str | None = None,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     base = project.settings.tts_api_base_url
-    key = saved_service_key("tts:indextts2_api")
-    client = httpx.Client(
+    key = (api_key or "").strip() or saved_service_key("tts:indextts2_api")
+    client = logged_http_client(
+        "IndexTTS2 API",
         headers=bearer_headers(key),
         timeout=project.settings.tts_timeout_seconds,
     )
@@ -561,11 +561,11 @@ def _indextts_api_runner(
 
 def _generic_tts_api_runner(
     project: DubProject,
+    api_key: str | None = None,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
-    key = saved_service_key("tts:generic_tts_api")
-    client = httpx.Client(
+    key = (api_key or "").strip() or saved_service_key("tts:generic_tts_api")
+    client = logged_http_client(
+        "通用 TTS API",
         headers=bearer_headers(key),
         timeout=project.settings.tts_timeout_seconds,
     )
@@ -621,6 +621,8 @@ def _edge_tts_runner(
             communicator = edge_tts.Communicate(sentence.zh_text, voice=voice, rate=rate)
             await communicator.save(str(encoded))
 
+        started = time.perf_counter()
+        logger.info("API 请求开始：服务=Edge TTS 地址=Microsoft 在线语音服务")
         try:
             asyncio.run(synthesize())
             _run_ffmpeg(
@@ -644,21 +646,25 @@ def _edge_tts_runner(
             raise SynthesisError(f"Edge TTS 生成失败：{exc}") from exc
         finally:
             encoded.unlink(missing_ok=True)
+            logger.info(
+                "API 请求结束：服务=Edge TTS 耗时=%d ms",
+                round((time.perf_counter() - started) * 1000),
+            )
 
     return run, lambda: None
 
 
 def _mimo_runner(
     project: DubProject,
+    api_key: str | None = None,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     base = project.settings.tts_api_base_url.rstrip("/")
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
-    key = saved_service_key("tts:mimo_tts")
+    key = (api_key or "").strip() or saved_service_key("tts:mimo_tts")
     if not key:
         raise SynthesisError("小米 MiMo TTS 尚未保存 API Key。")
-    client = httpx.Client(
+    client = logged_http_client(
+        "小米 MiMo TTS API",
         headers={"api-key": key, "Content-Type": "application/json"},
         timeout=project.settings.tts_timeout_seconds,
     )
@@ -721,15 +727,15 @@ def _mimo_runner(
 
 def _minimax_runner(
     project: DubProject,
+    api_key: str | None = None,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    import httpx
-
     base = project.settings.tts_api_base_url.rstrip("/")
     url = base if base.endswith("/v1/t2a_v2") else f"{base}/v1/t2a_v2"
-    key = saved_service_key("tts:minimax")
+    key = (api_key or "").strip() or saved_service_key("tts:minimax")
     if not key:
         raise SynthesisError("MiniMax TTS 尚未保存 API Key。")
-    client = httpx.Client(
+    client = logged_http_client(
+        "MiniMax TTS API",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         timeout=project.settings.tts_timeout_seconds,
     )
@@ -781,26 +787,29 @@ def _minimax_runner(
     return run, client.close
 
 
-def _runner(project: DubProject) -> tuple[Any, Callable[[], None]]:
+def _runner(
+    project: DubProject,
+    api_key: str | None = None,
+) -> tuple[Any, Callable[[], None]]:
     backend = project.settings.tts_backend
     if backend == "indextts2":
         return _load_indextts(project)
     if backend == "indextts2_api":
-        return _indextts_api_runner(project)
+        return _indextts_api_runner(project, api_key)
     if backend == "generic_tts_api":
-        return _generic_tts_api_runner(project)
+        return _generic_tts_api_runner(project, api_key)
     if backend == "gpt_sovits":
         return _gpt_sovits_runner(project)
     if backend == "cosyvoice":
         return _cosyvoice_runner(project)
     if backend == "fish_speech":
-        return _fish_runner(project)
+        return _fish_runner(project, api_key)
     if backend == "edge_tts":
         return _edge_tts_runner(project)
     if backend == "mimo_tts":
-        return _mimo_runner(project)
+        return _mimo_runner(project, api_key)
     if backend == "minimax":
-        return _minimax_runner(project)
+        return _minimax_runner(project, api_key)
     raise SynthesisError(f"未知 TTS（语音合成）模型后端：{backend}")
 
 
@@ -856,6 +865,15 @@ def synthesize_with_selected_backend(
         )
     if progress:
         progress(f"加载 {spec.label}", 0, len(pending))
+    logger.info(
+        "TTS 后端开始：后端=%s 模型=%s 运行方式=%s 地址=%s 句数=%d 并发=%d",
+        project.settings.tts_backend,
+        project.settings.tts_model,
+        spec.runtime,
+        safe_api_url(project.settings.tts_api_base_url) if spec.runtime == "http" else "本地",
+        len(pending),
+        project.settings.tts_request_concurrency if spec.runtime == "http" else 1,
+    )
     run, cleanup = _runner(project)
     cleanup_lock = threading.Lock()
     cleanup_done = False

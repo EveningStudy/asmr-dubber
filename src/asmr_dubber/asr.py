@@ -19,6 +19,7 @@ import numpy as np
 import soundfile as sf
 
 from .api_contracts import APIContractError, bearer_headers, endpoint_url, merge_extra_body
+from .api_logging import logged_http_client, safe_api_url
 from .constants import PROJECT_ROOT
 from .environment import (
     cached_model_path,
@@ -178,6 +179,8 @@ def _transcribe_generic_api(
     cancel_event: CancellationSignal | None = None,
     *,
     source_language: SpeechSourceLanguage = "ja",
+    api_key: str | None = None,
+    probe_only: bool = False,
 ) -> tuple[list[Sentence], str]:
     import httpx
 
@@ -205,8 +208,14 @@ def _transcribe_generic_api(
         if value is not None
     }
     form["timestamp_granularities[]"] = "segment"
-    key = saved_service_key("asr:generic_asr_api")
-    client = httpx.Client(
+    key = (api_key or "").strip() or saved_service_key("asr:generic_asr_api")
+    logger.info(
+        "ASR 后端开始：后端=generic_asr_api 模型=%s 地址=%s",
+        settings.asr_model,
+        safe_api_url(url),
+    )
+    client = logged_http_client(
+        "通用 ASR API",
         headers=bearer_headers(key),
         timeout=settings.asr_timeout_seconds,
     )
@@ -234,6 +243,9 @@ def _transcribe_generic_api(
         client.close()
     if not isinstance(result, Mapping):
         raise AsmrDubberError("通用 ASR API JSON 顶层必须是对象。")
+    language = str(result.get("language") or source_language)
+    if probe_only:
+        return [], language
     tokens: list[TimedToken] = []
     for item in result.get("segments") or result.get("words") or []:
         if not isinstance(item, Mapping):
@@ -248,7 +260,6 @@ def _transcribe_generic_api(
     full_text = str(result.get("text") or "").strip() or "".join(token.text for token in tokens)
     if not full_text:
         raise AsmrDubberError("通用 ASR API 没有返回可用文字。")
-    language = str(result.get("language") or source_language)
     return _finish_tokens(tokens, full_text, language, settings, source_language)
 
 

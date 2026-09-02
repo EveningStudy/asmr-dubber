@@ -103,7 +103,7 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"
 & ".\.asmr-dubber\venv\Scripts\python.exe" -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Systran/faster-whisper-large-v3', local_dir=r'.asmr-dubber\models\faster-whisper-large-v3')"
 ```
 
-随后在 ASR 设置中选择 Faster-Whisper，并把模型填写为 `.asmr-dubber\models\faster-whisper-large-v3`。NVIDIA GPU 通常使用 `float16`，显存紧张时使用 `int8_float16`；CPU 使用 `int8`。已经打开项目时，保存后还需应用到当前项目。
+随后在 ASR 设置中选择 Faster-Whisper，并把模型填写为 `.asmr-dubber\models\faster-whisper-large-v3`。NVIDIA GPU 通常使用 `float16`，显存紧张时使用 `int8_float16`；CPU 使用 `int8`。已经打开项目时，“保存设置”会同时更新当前项目。
 
 ## VAD、识别和时间戳如何组合
 

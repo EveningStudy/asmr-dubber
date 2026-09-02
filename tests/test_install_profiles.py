@@ -435,11 +435,22 @@ def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
         assert model in source
 
 
+def test_windows_setup_does_not_turn_a_successful_install_into_exit_code_zero_failure() -> None:
+    source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
+
+    assert "if (exitCode != 0 || !IsCoreInstalled(root))" not in source
+    assert "if (exitCode != 0)" in source
+    assert "if (!HasCoreFiles(root))" in source
+    assert "if (!CanImportCore(root, out coreDiagnostic))" in source
+    assert "这项附加检查不会把成功安装改判为失败" in source
+    assert "check.WaitForExit(120000)" in source
+
+
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.3.0.0")' in source
-        assert 'AssemblyFileVersion("1.3.0.0")' in source
+        assert 'AssemblyVersion("1.3.1.0")' in source
+        assert 'AssemblyFileVersion("1.3.1.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

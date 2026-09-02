@@ -11,6 +11,7 @@ from .models import DubProject, Sentence
 from .task_control import CancellationSignal
 from .voice_reference import (
     STABLE_CLONE_MODES,
+    fallback_reference_sentence,
     reference_plan_hash,
 )
 from .voice_reference import (
@@ -40,6 +41,20 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
     }
     speaker_source = project.settings.tts_index_speaker_source
     emotion_source = project.settings.tts_index_emotion_source
+    if "sentence_reference" in {speaker_source, emotion_source}:
+        fallback = fallback_reference_sentence(project, sentence)
+        references["sentence_quality_fallback"] = (
+            {
+                "id": fallback.id,
+                "start": fallback.start_seconds,
+                "end": fallback.end_seconds,
+                "ja": fallback.source_text,
+                "zh": fallback.zh_text,
+            }
+            if fallback is not None
+            else None
+        )
+        references["sentence_quality_fallback_version"] = 1
     if "project_reference" in {speaker_source, emotion_source}:
         shared = shared_reference_sentence(project)
         references["project_reference"] = {

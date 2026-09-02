@@ -99,6 +99,10 @@ LAYOUT_ALIASES = {
     "both": LAYOUT_BOTH,
 }
 
+TRANSCRIPT_MODE_DIRECT = "direct"
+TRANSCRIPT_MODE_ASR_RECONCILE = "asr_reconcile"
+TRANSCRIPT_MODES = {TRANSCRIPT_MODE_DIRECT, TRANSCRIPT_MODE_ASR_RECONCILE}
+
 MODE_AUDIO = "audio"
 MODE_VIDEO_NORMAL = "video_normal"
 MODE_VIDEO_HARMONIZED = "video_harmonized"
@@ -179,6 +183,7 @@ class AudioSource:
     transcript_path: Path | None = None
     transcript_language: str | None = None
     transcript_timed: bool = False
+    transcript_mode: str = TRANSCRIPT_MODE_DIRECT
     source_language: str = "ja"
 
 
@@ -707,6 +712,11 @@ def source_from_candidate(index: int, candidate: TrackCandidate) -> AudioSource:
         transcript_path=transcript.path.resolve() if transcript else None,
         transcript_language=transcript.language if transcript else None,
         transcript_timed=transcript.timed if transcript else False,
+        transcript_mode=(
+            TRANSCRIPT_MODE_DIRECT
+            if transcript is None or transcript.timed
+            else TRANSCRIPT_MODE_ASR_RECONCILE
+        ),
         source_language=candidate.language,
     )
 
@@ -1237,6 +1247,7 @@ def fingerprint(audio: Iterable[AudioSource], background: Path | None) -> dict[s
                 "transcript": file_stat_payload(item.transcript_path),
                 "transcript_language": item.transcript_language,
                 "transcript_timed": item.transcript_timed,
+                "transcript_mode": item.transcript_mode,
                 "source_language": item.source_language,
             }
             for item in audio
@@ -1308,6 +1319,7 @@ def plan_identity(
                     {
                         "transcript_language": item.transcript_language,
                         "transcript_timed": item.transcript_timed,
+                        "transcript_mode": item.transcript_mode,
                     }
                     if item.transcript_path is not None
                     else {}
@@ -1394,6 +1406,7 @@ def write_plan_manifest(
                 "transcript": str(item.transcript_path) if item.transcript_path else None,
                 "transcript_language": item.transcript_language,
                 "transcript_timed": item.transcript_timed,
+                "transcript_mode": item.transcript_mode,
                 "source_language": item.source_language,
             }
             for index, item in enumerate(sources, start=1)
@@ -1452,6 +1465,7 @@ def legacy_chinese_timeline_needs_reimport(state: dict[str, Any]) -> bool:
         item.get("transcript")
         and str(item.get("transcript_language") or "") == "zh"
         and bool(item.get("transcript_timed"))
+        and str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT) == TRANSCRIPT_MODE_DIRECT
         for item in timeline
     )
 
@@ -1656,6 +1670,7 @@ def normalize_and_concat(
                 "transcript": str(source.transcript_path) if source.transcript_path else None,
                 "transcript_language": source.transcript_language,
                 "transcript_timed": source.transcript_timed,
+                "transcript_mode": source.transcript_mode,
                 "source_language": source.source_language,
                 "normalized": str(output),
                 "start_samples": cumulative_samples,
@@ -2301,13 +2316,11 @@ def import_available_source_transcript(
         item = usable[0]
         transcript = Path(str(item["transcript"])).resolve()
         language = str(item["transcript_language"])
-        plain_timing = (
-            "qwen"
-            if not bool(item.get("transcript_timed"))
-            and language in {"ja", "en"}
-            and _qwen_script_alignment_available(paths)
-            else "estimate"
+        transcript_mode = str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT)
+        use_asr_timing = transcript_mode == TRANSCRIPT_MODE_ASR_RECONCILE or not bool(
+            item.get("transcript_timed")
         )
+        plain_timing = "script_review" if use_asr_timing else "estimate"
         try:
             from asmr_dubber.models import load_project
             from asmr_dubber.pipeline import import_project_transcript
@@ -2319,6 +2332,7 @@ def import_available_source_transcript(
                 transcript_path=transcript,
                 plain_timing=plain_timing,
                 script_language=language,
+                use_embedded_timing=not use_asr_timing,
                 progress=lambda message, current, total: print(f"  {message}"),
             )
         except Exception as exc:
@@ -2330,11 +2344,19 @@ def import_available_source_transcript(
             **result,
         }
 
+    if any(
+        str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT) == TRANSCRIPT_MODE_ASR_RECONCILE
+        or not bool(item.get("transcript_timed"))
+        for item in usable
+    ):
+        return {"kind": "reconcile_after_asr", "count": len(usable)}
+
     # 合并模式只有在每一轨都有同语言的时间轴字幕时才直接替代 ASR。
     if len(usable) != len(timeline):
         if any(
             str(item.get("transcript_language") or "") == "zh"
             and bool(item.get("transcript_timed"))
+            and str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT) == TRANSCRIPT_MODE_DIRECT
             for item in usable
         ):
             return {"kind": "zh_overlay_partial", "count": len(usable)}
@@ -2344,6 +2366,7 @@ def import_available_source_transcript(
         if any(
             str(item.get("transcript_language") or "") == "zh"
             and bool(item.get("transcript_timed"))
+            and str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT) == TRANSCRIPT_MODE_DIRECT
             for item in usable
         ):
             return {"kind": "zh_overlay_partial", "count": len(usable)}
@@ -2357,6 +2380,47 @@ def import_available_source_transcript(
     return {"kind": "direct", "language": language, "sentences": sentence_count}
 
 
+def reconcile_timeline_scripts(
+    project_json: Path,
+    timeline: list[dict[str, Any]],
+) -> list[dict[str, object]]:
+    """Use ASR timing for the per-track scripts selected in an AutoFlow plan."""
+
+    try:
+        from asmr_dubber.models import load_project
+        from asmr_dubber.pipeline import reconcile_analyzed_project_script
+
+        results: list[dict[str, object]] = []
+        for item in timeline:
+            transcript_text = str(item.get("transcript") or "").strip()
+            mode = str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT)
+            language = str(item.get("transcript_language") or "").casefold()
+            if (
+                not transcript_text
+                or mode != TRANSCRIPT_MODE_ASR_RECONCILE
+                or language not in {"ja", "en", "zh"}
+            ):
+                continue
+            project, project_dir = load_project(project_json)
+            start = int(item["start_samples"]) / SAMPLE_RATE
+            end = start + int(item["duration_samples"]) / SAMPLE_RATE
+            result = reconcile_analyzed_project_script(
+                project,
+                project_dir,
+                transcript_path=Path(transcript_text),
+                script_language=cast(Literal["ja", "en", "zh"], language),
+                start_seconds=start,
+                end_seconds=end,
+                progress=lambda message, current, total: print(f"  {message}"),
+            )
+            results.append(result)
+        return results
+    except VideoPreparerError:
+        raise
+    except Exception as exc:
+        raise VideoPreparerError(f"使用 ASR 时间轴校对台本失败：{exc}") from exc
+
+
 def overlay_timed_chinese_transcripts(
     project_json: Path,
     timeline: list[dict[str, Any]],
@@ -2367,6 +2431,7 @@ def overlay_timed_chinese_transcripts(
             str(item.get("transcript_language") or "") != "zh"
             or not item.get("transcript")
             or not bool(item.get("transcript_timed"))
+            or str(item.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT) != TRANSCRIPT_MODE_DIRECT
         ):
             continue
         duration = int(item["duration_samples"]) / SAMPLE_RATE
@@ -4046,6 +4111,7 @@ def effective_sources_for_draft(draft: SmartPlanDraft) -> list[AudioSource]:
                     transcript_path=None,
                     transcript_language=None,
                     transcript_timed=False,
+                    transcript_mode=TRANSCRIPT_MODE_DIRECT,
                 )
             )
         elif choice == "auto":
@@ -4946,15 +5012,25 @@ def execute_task(
             kind = str(transcript_result.get("kind") or "")
             if kind == "direct":
                 language = str(transcript_result.get("language") or "ja")
-                print(
-                    f"\n  已自动导入{language.upper()}台本/字幕，不再运行不必要的 ASR（语音识别）。"
+                print(f"\n  已处理{language.upper()}台本/字幕。")
+                reconciled = bool(transcript_result.get("script_reconciled"))
+                if reconciled:
+                    print("  已使用 ASR 时间轴校对台本文字；只会翻译没有匹配到中文的句子。")
+                else:
+                    print("  已沿用文件时间轴，不再运行不必要的 ASR（语音识别）。")
+                state["status"] = (
+                    "awaiting_reference" if language == "zh" and not reconciled else "analyzed"
                 )
-                state["status"] = "awaiting_reference" if language == "zh" else "analyzed"
                 save_state(state_file, state)
             elif kind in {"partial", "zh_overlay_partial"}:
                 print(
                     f"\n  找到 {transcript_result.get('count', 0)} 份台本/字幕，"
                     "但不足以覆盖全部合并音轨；本次仍运行 ASR。"
+                )
+            elif kind == "reconcile_after_asr":
+                print(
+                    f"\n  找到 {transcript_result.get('count', 0)} 份需要重新定时的台本；"
+                    "本次先运行 ASR，再按音轨校对文字。"
                 )
 
         if not status_at_least(state, "analyzed"):
@@ -4964,6 +5040,29 @@ def execute_task(
             save_state(state_file, state)
 
     transcript_result = state.get("transcript_import") or {}
+    if str(transcript_result.get("kind") or "") == "reconcile_after_asr" and not state.get(
+        "script_reconciliation_done"
+    ):
+        results = reconcile_timeline_scripts(
+            project_json,
+            list(state.get("timeline") or []),
+        )
+        state["script_reconciliation_done"] = True
+        state["script_reconciliation"] = results
+        print(f"  已使用 ASR 时间轴校对 {len(results)} 份台本。")
+        warning_ids = [
+            str(sentence_id)
+            for result in results
+            for sentence_id in cast(list[object], result.get("timing_warning_ids", []))
+        ]
+        if warning_ids:
+            preview = "、".join(warning_ids[:12])
+            suffix = f"，另有 {len(warning_ids) - 12} 句" if len(warning_ids) > 12 else ""
+            print(
+                f"  注意：{preview}{suffix} 的中文台本相对 ASR 时间窗过长；"
+                "配音达到最大自动加速后仍可能重叠。"
+            )
+        save_state(state_file, state)
     if str(transcript_result.get("kind") or "") == "zh_overlay_partial" and not state.get(
         "chinese_transcript_overlay_done"
     ):
@@ -5834,6 +5933,7 @@ def serialize_audio_source(source: AudioSource) -> dict[str, Any]:
         "transcript_path": str(source.transcript_path) if source.transcript_path else None,
         "transcript_language": source.transcript_language,
         "transcript_timed": source.transcript_timed,
+        "transcript_mode": source.transcript_mode,
         "source_language": source.source_language,
     }
 
@@ -5853,6 +5953,12 @@ def deserialize_audio_source(payload: Any) -> AudioSource:
         transcript_path=Path(transcript_text).expanduser().resolve() if transcript_text else None,
         transcript_language=str(payload.get("transcript_language") or "").strip() or None,
         transcript_timed=bool(payload.get("transcript_timed", False)),
+        transcript_mode=(
+            str(payload.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT).strip()
+            if str(payload.get("transcript_mode") or TRANSCRIPT_MODE_DIRECT).strip()
+            in TRANSCRIPT_MODES
+            else TRANSCRIPT_MODE_DIRECT
+        ),
         source_language=str(payload.get("source_language") or "ja"),
     )
 

@@ -59,6 +59,21 @@ def test_installable_backends_come_from_registry_capabilities() -> None:
     )
 
 
+def test_project_settings_preserve_supported_generic_api_backends() -> None:
+    settings = ProjectSettings.model_validate(
+        {
+            "asr_backend": "generic_asr_api",
+            "asr_model": "remote-asr",
+            "tts_backend": "indextts2_api",
+            "tts_model": "IndexTTS2",
+        }
+    )
+
+    assert settings.asr_backend == "generic_asr_api"
+    assert settings.asr_model == "remote-asr"
+    assert settings.tts_backend == "indextts2_api"
+
+
 def test_backend_registry_declares_execution_capabilities() -> None:
     faster = ASR_BACKENDS["faster_whisper"]
     assert faster.execution.batch_strategy == "internal_chunks"

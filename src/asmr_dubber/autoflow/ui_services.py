@@ -13,7 +13,6 @@ from ..user_settings import UserSettings, load_user_settings
 from . import engine
 from .catalog import (
     AUDIO_EXTENSIONS,
-    TIMED_TRANSCRIPT_EXTENSIONS,
     Edition,
     ScanResult,
     scan_work,
@@ -225,8 +224,9 @@ def _track_items(scan: ScanResult, sources: list[engine.AudioSource]) -> list[di
         transcript_choices: list[dict[str, Any]] = [
             {
                 "value": "",
-                "label": "不使用字幕",
+                "label": "不使用台本或字幕",
                 "language": "ignore",
+                "timed": False,
                 "selected": selected_path is None,
             }
         ]
@@ -237,6 +237,7 @@ def _track_items(scan: ScanResult, sources: list[engine.AudioSource]) -> list[di
                     "value": transcript.relative_path,
                     "label": f"{transcript.relative_path} · {label}",
                     "language": transcript.language,
+                    "timed": transcript.timed,
                     "selected": selected_path == transcript.path.resolve(),
                 }
             )
@@ -256,6 +257,28 @@ def _track_items(scan: ScanResult, sources: list[engine.AudioSource]) -> list[di
             }
             for language, label in SUBTITLE_LANGUAGE_LABELS.items()
         ]
+        selected_timed = bool(selected is not None and selected.timed)
+        selected_mode = (
+            source.transcript_mode
+            if source.transcript_mode in engine.TRANSCRIPT_MODES
+            else engine.TRANSCRIPT_MODE_DIRECT
+        )
+        if selected is not None and not selected_timed:
+            selected_mode = engine.TRANSCRIPT_MODE_ASR_RECONCILE
+        timing_choices = [
+            {
+                "value": engine.TRANSCRIPT_MODE_DIRECT,
+                "label": "沿用文件时间轴",
+                "selected": selected_mode == engine.TRANSCRIPT_MODE_DIRECT,
+                "disabled": not selected_timed,
+            },
+            {
+                "value": engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+                "label": "运行 ASR 重新定时，只采用台本文字",
+                "selected": selected_mode == engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+                "disabled": False,
+            },
+        ]
         items.append(
             {
                 "id": _source_id(source),
@@ -265,6 +288,7 @@ def _track_items(scan: ScanResult, sources: list[engine.AudioSource]) -> list[di
                 "category": engine.category_label(source.category),
                 "transcript_choices": transcript_choices,
                 "language_choices": language_choices,
+                "timing_choices": timing_choices,
                 "has_subtitle": selected_path is not None,
                 "can_move_up": index > 1,
                 "can_move_down": index < total,
@@ -284,7 +308,7 @@ def _track_view(
     return AutoFlowTrackView(
         source_payloads=_source_payloads(normalized),
         track_items=_track_items(scan, normalized),
-        summary=f"{prefix}：{len(normalized)} 条音轨，{matched} 条已选择字幕。",
+        summary=f"{prefix}：{len(normalized)} 条音轨，{matched} 条已选择台本或字幕。",
     )
 
 
@@ -314,6 +338,10 @@ def scan_for_ui(
     scan = _scan(folder, config)
     editions = _sorted_editions(scan, config)
     if not editions:
+        if scan.videos:
+            raise ProjectError(
+                "检测到视频文件。当前批量处理只扫描音频作品；单个视频请使用‘单个作品’。"
+            )
         raise ProjectError("这个文件夹里没有找到可处理的音频。")
     edition = editions[0]
     _label, sources, _metadata = _sources_for_edition(
@@ -330,8 +358,8 @@ def scan_for_ui(
     summary = (
         f"**扫描完成：** `{folder}`  \n"
         f"发现 **{scan.audio_count}** 个音频、**{len(editions)}** 个可选版本、"
-        f"**{len(scan.images)}** 张图片和 **{len(scan.transcripts)}** 份字幕。  \n"
-        f"当前版本将处理 **{len(sources)}** 条音轨，其中 **{matched}** 条已匹配字幕。"
+        f"**{len(scan.images)}** 张图片和 **{len(scan.transcripts)}** 份台本或字幕。  \n"
+        f"当前版本将处理 **{len(sources)}** 条音轨，其中 **{matched}** 条已匹配台本或字幕。"
     )
     return AutoFlowScanView(
         folder=str(folder),
@@ -409,6 +437,7 @@ def set_track_subtitle_for_ui(
     track_id: Any,
     transcript_value: Any,
     language_value: Any,
+    mode_value: Any = engine.TRANSCRIPT_MODE_DIRECT,
     *,
     settings: UserSettings | None = None,
 ) -> AutoFlowTrackView:
@@ -430,6 +459,7 @@ def set_track_subtitle_for_ui(
             transcript_path=None,
             transcript_language=None,
             transcript_timed=False,
+            transcript_mode=engine.TRANSCRIPT_MODE_DIRECT,
         )
     else:
         transcript = next(
@@ -441,11 +471,17 @@ def set_track_subtitle_for_ui(
         language = str(language_value or transcript.language).casefold()
         if language not in SUBTITLE_LANGUAGE_LABELS:
             raise ProjectError("字幕语言选择无效。")
+        mode = str(mode_value or engine.TRANSCRIPT_MODE_DIRECT).strip()
+        if not transcript.timed:
+            mode = engine.TRANSCRIPT_MODE_ASR_RECONCILE
+        if mode not in engine.TRANSCRIPT_MODES:
+            raise ProjectError("台本时间轴处理方式无效。")
         sources[source_index] = replace(
             sources[source_index],
             transcript_path=transcript.path.resolve(),
             transcript_language=language,
-            transcript_timed=True,
+            transcript_timed=transcript.timed,
+            transcript_mode=mode,
         )
     return _track_view(scan, sources, prefix="已更新字幕选择")
 
@@ -585,14 +621,12 @@ def _validated_sources_for_plan(
                 transcript_path=None,
                 transcript_language=None,
                 transcript_timed=False,
+                transcript_mode=engine.TRANSCRIPT_MODE_DIRECT,
             )
         else:
             transcript = transcripts.get(source.transcript_path.resolve())
-            if (
-                transcript is None
-                or transcript.path.suffix.casefold() not in TIMED_TRANSCRIPT_EXTENSIONS
-            ):
-                raise ProjectError(f"字幕已经不存在或格式不支持：{source.transcript_path.name}")
+            if transcript is None:
+                raise ProjectError(f"台本或字幕已经不存在：{source.transcript_path.name}")
             language = str(source.transcript_language or transcript.language).casefold()
             if language not in SUBTITLE_LANGUAGE_LABELS:
                 raise ProjectError(f"字幕语言无效：{source.transcript_path.name}")
@@ -600,7 +634,14 @@ def _validated_sources_for_plan(
                 normalized,
                 transcript_path=transcript.path.resolve(),
                 transcript_language=language,
-                transcript_timed=True,
+                transcript_timed=transcript.timed,
+                transcript_mode=(
+                    engine.TRANSCRIPT_MODE_ASR_RECONCILE
+                    if not transcript.timed
+                    else source.transcript_mode
+                    if source.transcript_mode in engine.TRANSCRIPT_MODES
+                    else engine.TRANSCRIPT_MODE_DIRECT
+                ),
             )
         validated.append(normalized)
     return validated
@@ -907,6 +948,30 @@ def open_output_directory(path_value: Any) -> str:
     path = Path(str(path_value or "")).expanduser().resolve()
     opened = open_directory(path)
     return f"已打开输出目录：{opened}"
+
+
+def subtitle_output_rows(output_directories: Any) -> list[list[str]]:
+    """List the external subtitle files published by the completed queue."""
+
+    rows: list[list[str]] = []
+    seen: set[Path] = set()
+    for value in output_directories or []:
+        root = Path(str(value or "")).expanduser().resolve()
+        if not root.is_dir():
+            continue
+        for path in sorted(
+            (
+                candidate.resolve()
+                for candidate in root.rglob("*")
+                if candidate.is_file() and candidate.suffix.casefold() in {".srt", ".lrc"}
+            ),
+            key=lambda item: item.as_posix().casefold(),
+        ):
+            if path in seen:
+                continue
+            seen.add(path)
+            rows.append([root.name, path.suffix.removeprefix(".").upper(), str(path)])
+    return rows
 
 
 def recent_log_text(max_characters: int = 30_000) -> str:

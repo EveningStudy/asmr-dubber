@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import random
 import re
 import time
@@ -14,6 +15,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .api_contracts import APIContractError, merge_extra_body
+from .api_logging import logged_http_client, safe_api_url
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
 from .languages import (
@@ -31,6 +33,7 @@ from .task_control import (
 )
 
 Progress = Callable[[str, int, int], None]
+logger = logging.getLogger(__name__)
 
 
 class _NonRetryableTranslationError(TranslationError):
@@ -72,6 +75,7 @@ class ScriptCorrection(BaseModel):
 
     id: str
     text: str
+    script_ids: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -317,6 +321,56 @@ def validate_script_reconciliation(content: str, expected_ids: list[str]) -> dic
     return {item.id: item.text for item in envelope.corrections}
 
 
+def _validated_script_mapping(
+    content: str,
+    expected_ids: list[str],
+    available_script: list[tuple[str, str]],
+    consumed_script_ids: set[str],
+) -> tuple[dict[str, str], list[str]]:
+    """Validate a monotonic, non-repeating mapping and return exact script text."""
+
+    try:
+        envelope = ScriptCorrectionEnvelope.model_validate(_extract_json(content))
+    except (ValidationError, TranslationError) as exc:
+        raise TranslationError(f"台本校对返回的结构无效：{exc}") from exc
+    actual_ids = [item.id for item in envelope.corrections]
+    if actual_ids != expected_ids:
+        missing = [item for item in expected_ids if item not in actual_ids]
+        extra = [item for item in actual_ids if item not in expected_ids]
+        raise TranslationError(
+            f"台本校对返回的 id/顺序不一致；缺少={missing[:8]}，多出={extra[:8]}"
+        )
+
+    script_lookup = dict(available_script)
+    script_order = {script_id: index for index, (script_id, _text) in enumerate(available_script)}
+    selected_ids: list[str] = []
+    corrections: dict[str, str] = {}
+    for item in envelope.corrections:
+        item_ids = [
+            str(script_id).strip() for script_id in item.script_ids if str(script_id).strip()
+        ]
+        if item.text and not item_ids:
+            raise TranslationError(f"{item.id} 返回了文字，但没有标明对应的台本 id。")
+        if len(item_ids) != len(set(item_ids)):
+            raise TranslationError(f"{item.id} 重复引用了同一条台本。")
+        for script_id in item_ids:
+            if script_id not in script_lookup:
+                raise TranslationError(f"{item.id} 引用了当前窗口之外的台本：{script_id}")
+            if script_id in consumed_script_ids or script_id in selected_ids:
+                raise TranslationError(f"台本 {script_id} 被重复分配。")
+        selected_ids.extend(item_ids)
+        parts = [script_lookup[script_id] for script_id in item_ids]
+        separator = (
+            "" if any(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", part) for part in parts) else " "
+        )
+        corrections[item.id] = separator.join(parts).strip()
+
+    positions = [script_order[script_id] for script_id in selected_ids]
+    if positions != sorted(positions):
+        raise TranslationError("台本映射顺序发生倒退。")
+    return corrections, selected_ids
+
+
 class DeepSeekTranslator:
     def __init__(
         self,
@@ -345,7 +399,7 @@ class DeepSeekTranslator:
         self.minimum_output_tokens = minimum_output_tokens
         self.source_language = source_language
         self.extra_body = extra_body
-        self.client = client or httpx.Client(timeout=timeout_seconds)
+        self.client = client or logged_http_client("DeepSeek 翻译 API", timeout=timeout_seconds)
         self._owns_client = client is None
 
     def close(self) -> None:
@@ -511,7 +565,7 @@ class LLMTranslator:
         self.max_retries = max_retries
         self.source_language = source_language
         self.extra_body = extra_body
-        self.client = client or httpx.Client(timeout=timeout_seconds)
+        self.client = client or logged_http_client(f"{provider} 翻译 API", timeout=timeout_seconds)
         self._owns_client = client is None
 
     def close(self) -> None:
@@ -738,36 +792,41 @@ class ScriptReconciliationBatch:
     script: list[tuple[str, str]]
 
 
-def _script_reconciliation_batches(
+def _script_fragments(script_lines: list[str]) -> list[str]:
+    """Split long script rows at sentence boundaries before assigning them once."""
+
+    fragments: list[str] = []
+    for raw in script_lines:
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        sentences = [
+            item.strip() for item in re.split(r"(?<=[。！？!?])\s*|(?<=…)\s*", line) if item.strip()
+        ]
+        for sentence in sentences or [line]:
+            if len(sentence) <= 80:
+                fragments.append(sentence)
+                continue
+            clauses = [
+                item.strip()
+                for item in re.split(r"(?<=[，、,；;：:])\s*", sentence)
+                if item.strip()
+            ]
+            fragments.extend(clauses or [sentence])
+    return fragments
+
+
+def _recognized_script_batches(
     recognized: list[Sentence],
-    script_lines: list[str],
     *,
     maximum_recognized: int = 8,
-    context_lines: int = 6,
-) -> list[ScriptReconciliationBatch]:
+) -> list[list[Sentence]]:
     if not recognized:
         raise TranslationError("没有可供台本校对的识别结果。")
-    if not script_lines:
-        raise TranslationError("台本中没有可供校对的文字。")
-    total_recognized = len(recognized)
-    total_script = len(script_lines)
-    batches: list[ScriptReconciliationBatch] = []
-    for start in range(0, total_recognized, maximum_recognized):
-        end = min(total_recognized, start + maximum_recognized)
-        estimated_start = int(start * total_script / total_recognized)
-        estimated_end = int(end * total_script / total_recognized)
-        window_start = max(0, estimated_start - context_lines)
-        window_end = min(total_script, estimated_end + context_lines)
-        if window_end - window_start > 48:
-            window_end = min(total_script, window_start + 48)
-        if window_end <= window_start:
-            window_end = min(total_script, window_start + 1)
-        script = [
-            (f"p{index + 1:06d}", text)
-            for index, text in enumerate(script_lines[window_start:window_end], start=window_start)
-        ]
-        batches.append(ScriptReconciliationBatch(recognized[start:end], script))
-    return batches
+    return [
+        recognized[start : start + maximum_recognized]
+        for start in range(0, len(recognized), maximum_recognized)
+    ]
 
 
 def _script_reconciliation_messages(
@@ -807,7 +866,12 @@ def _script_reconciliation_messages(
     user = (
         "请只根据下面两组数据完成校对。输出结构必须是："
         + json.dumps(
-            {"corrections": [{"id": sentence.id, "text": ""} for sentence in batch.recognized]},
+            {
+                "corrections": [
+                    {"id": sentence.id, "script_ids": [], "text": ""}
+                    for sentence in batch.recognized
+                ]
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -846,7 +910,14 @@ def reconcile_script_sentences(
             "台本校对需要大模型翻译服务；请选择 DeepSeek、百炼、豆包、商汤、OpenAI、Claude、"
             "Gemini 或本地/自定义 OpenAI-compatible。"
         )
-    batches = _script_reconciliation_batches(recognized, script_lines)
+    fragments = _script_fragments(script_lines)
+    if not fragments:
+        raise TranslationError("台本中没有可供校对的文字。")
+    recognized_batches = _recognized_script_batches(recognized)
+    script_items = [(f"p{index:06d}", text) for index, text in enumerate(fragments, start=1)]
+    script_position = {script_id: index for index, (script_id, _text) in enumerate(script_items)}
+    script_cursor = 0
+    consumed_script_ids: set[str] = set()
     translator = LLMTranslator(
         provider=provider,
         api_key=api_key,
@@ -866,11 +937,18 @@ def reconcile_script_sentences(
     report: list[dict[str, object]] = []
     try:
         with translator:
-            for index, batch in enumerate(batches):
+            for index, recognized_batch in enumerate(recognized_batches):
                 check_cancelled(cancel_event)
+                remaining_batches = len(recognized_batches) - index
+                remaining_script = max(1, len(script_items) - script_cursor)
+                expected_span = (remaining_script + remaining_batches - 1) // remaining_batches
+                window_size = min(48, max(12, expected_span + 8))
+                available_script = script_items[script_cursor : script_cursor + window_size]
+                batch = ScriptReconciliationBatch(recognized_batch, available_script)
                 expected_ids = [sentence.id for sentence in batch.recognized]
                 last_error: Exception | None = None
                 result: dict[str, str] | None = None
+                selected_script_ids: list[str] = []
                 for attempt in range(1, 4):
                     check_cancelled(cancel_event)
                     messages = _script_reconciliation_messages(
@@ -890,7 +968,12 @@ def reconcile_script_sentences(
                             )
                         if not content.strip():
                             raise TranslationError("台本校对模型返回了空内容。")
-                        result = validate_script_reconciliation(content, expected_ids)
+                        result, selected_script_ids = _validated_script_mapping(
+                            content,
+                            expected_ids,
+                            available_script,
+                            consumed_script_ids,
+                        )
                         break
                     except (_NonRetryableTranslationError, _OutputLengthTranslationError):
                         raise
@@ -902,13 +985,19 @@ def reconcile_script_sentences(
                         time.sleep(min(8.0, attempt * 1.5 + random.uniform(0.0, 0.5)))
                 if result is None:
                     raise TranslationError(
-                        f"台本校对第 {index + 1}/{len(batches)} 批失败：{last_error}"
+                        f"台本校对第 {index + 1}/{len(recognized_batches)} 批失败：{last_error}"
                     ) from last_error
                 corrections.update(result)
+                consumed_script_ids.update(selected_script_ids)
+                if selected_script_ids:
+                    script_cursor = (
+                        max(script_position[script_id] for script_id in selected_script_ids) + 1
+                    )
                 report.append(
                     {
                         "recognized_ids": expected_ids,
-                        "script_ids": [line_id for line_id, _ in batch.script],
+                        "available_script_ids": [line_id for line_id, _ in batch.script],
+                        "consumed_script_ids": selected_script_ids,
                         "corrections": result,
                     }
                 )
@@ -916,13 +1005,23 @@ def reconcile_script_sentences(
                     on_batch()
                 if progress:
                     progress(
-                        f"台本校对第 {index + 1}/{len(batches)} 批完成",
+                        f"台本校对第 {index + 1}/{len(recognized_batches)} 批完成",
                         index + 1,
-                        len(batches),
+                        len(recognized_batches),
                     )
                 check_cancelled(cancel_event)
     finally:
         unregister_cancel_callback(cancel_translation, callback_signal)
+    unused = [
+        script_id for script_id, _text in script_items if script_id not in consumed_script_ids
+    ]
+    if unused:
+        report.append(
+            {
+                "unused_script_ids": unused,
+                "reason": "这些台本片段没有可靠匹配到 ASR 时间区间，需要人工检查",
+            }
+        )
     return corrections, report
 
 
@@ -949,7 +1048,7 @@ class MachineTranslationAPI:
         self.deepl_formality = deepl_formality
         self.microsoft_region = microsoft_region.strip()
         self.source_language = source_language
-        self.client = client or httpx.Client(timeout=timeout_seconds)
+        self.client = client or logged_http_client(f"{provider} 翻译 API", timeout=timeout_seconds)
         self._owns_client = client is None
 
     def close(self) -> None:
@@ -1075,6 +1174,14 @@ def translate_sentences(
         return
     if source_language == "zh":
         raise TranslationError("中文源文本不需要再次翻译为中文。")
+    logger.info(
+        "翻译后端开始：服务=%s 模型=%s 地址=%s 句数=%d 源语言=%s",
+        provider,
+        model,
+        safe_api_url(base_url),
+        len(pending),
+        source_language,
+    )
     batches = _chunks(pending)
     if provider == "deepseek":
         translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(

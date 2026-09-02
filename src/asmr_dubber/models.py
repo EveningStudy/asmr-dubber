@@ -250,9 +250,16 @@ class ProjectSettings(BaseModel):
     def migrate_legacy_index_emotion(cls, value: Any) -> Any:
         if isinstance(value, dict):
             value = dict(value)
-            supported_asr = {"parakeet_nemo", "kotoba_whisper", "faster_whisper"}
+            supported_asr = {
+                "generic_asr_api",
+                "parakeet_nemo",
+                "kotoba_whisper",
+                "faster_whisper",
+            }
             supported_tts = {
                 "indextts2",
+                "indextts2_api",
+                "generic_tts_api",
                 "gpt_sovits",
                 "cosyvoice",
                 "fish_speech",
@@ -368,7 +375,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.3.0"
+    app_version: str = "1.3.1"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -503,9 +510,16 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
     warnings = list(payload.get("migration_warnings") or [])
     if version == 1:
         settings = dict(payload.get("settings") or {})
-        supported_asr = {"parakeet_nemo", "kotoba_whisper", "faster_whisper"}
+        supported_asr = {
+            "generic_asr_api",
+            "parakeet_nemo",
+            "kotoba_whisper",
+            "faster_whisper",
+        }
         supported_tts = {
             "indextts2",
+            "indextts2_api",
+            "generic_tts_api",
             "gpt_sovits",
             "cosyvoice",
             "fish_speech",
@@ -543,7 +557,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.3.0"
+        payload["app_version"] = "1.3.1"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

@@ -19,6 +19,7 @@ from typing import Any, cast
 from pydantic import ValidationError
 
 from . import __version__
+from .api_logging import safe_api_url
 from .app_logging import application_log_path, configure_logging, recent_log_text
 from .autoflow.ui_components import (
     QUEUE_LIST_CSS,
@@ -48,6 +49,7 @@ from .autoflow.ui_services import (
     replace_plan_in_queue,
     scan_for_ui,
     set_track_subtitle_for_ui,
+    subtitle_output_rows,
     toggle_plan_rebuild,
 )
 from .autoflow.ui_services import (
@@ -56,6 +58,7 @@ from .autoflow.ui_services import (
 from .autoflow.ui_services import (
     run_queue as run_autoflow_queue,
 )
+from .backend_diagnostics import test_asr_api, test_translation_api, test_tts_api
 from .constants import (
     DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
     DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY,
@@ -68,7 +71,7 @@ from .errors import InstallPausedError, OperationCancelledError
 from .languages import SpeechSourceLanguage, source_language_label
 from .model_packs import discover_model_packs, import_discovered_model_packs, model_pack_directory
 from .model_registry import ASR_BACKENDS, CLONE_MODE_LABELS, TTS_BACKENDS
-from .models import ProjectSettings, settings_for_source_language
+from .models import ProjectSettings, load_project, settings_for_source_language
 from .platforms import portable_home, require_supported_platform, runtime_executable_candidates
 from .runtime_manager import (
     asmr_vad_status,
@@ -955,6 +958,92 @@ def _translation_prompt_note(language: SpeechSourceLanguage, prompt: str) -> str
     return f"当前使用 **{label} → 中文自定义 Prompt**。另一种语言的 Prompt 不会被覆盖。"
 
 
+def _settings_in_effect(manifest: Any) -> tuple[ProjectSettings, str]:
+    normalized = str(manifest or "").strip()
+    if normalized:
+        project, _ = load_project(normalized)
+        return project.settings, "当前项目"
+    defaults = load_user_settings()
+    language = defaults.default_source_language
+    return (
+        settings_for_source_language(
+            defaults.to_project_settings(source_language=language),
+            language,
+        ),
+        "以后新建的项目",
+    )
+
+
+def _backend_summary(kind: str, settings: ProjectSettings) -> str:
+    if kind == "asr":
+        spec = ASR_BACKENDS.get(settings.asr_backend)
+        label = spec.label if spec else settings.asr_backend
+        location = (
+            safe_api_url(settings.asr_api_base_url)
+            if settings.asr_backend == "generic_asr_api"
+            else settings.asr_device.upper()
+        )
+        return f"{label} · `{settings.asr_model}` · {location}"
+    if kind == "translation":
+        preset = PROVIDER_PRESETS.get(settings.translation_provider, {})
+        label = str(preset.get("label", settings.translation_provider))
+        base_url = settings.translation_base_url or str(preset.get("base_url", ""))
+        return f"{label} · `{settings.translation_model}` · {safe_api_url(base_url)}"
+    if kind == "tts":
+        spec = TTS_BACKENDS.get(settings.tts_backend)
+        label = spec.label if spec else settings.tts_backend
+        location = (
+            safe_api_url(settings.tts_api_base_url)
+            if spec is not None and spec.runtime == "http" and settings.tts_backend != "edge_tts"
+            else (
+                "Microsoft 在线服务"
+                if settings.tts_backend == "edge_tts"
+                else settings.tts_device.upper()
+            )
+        )
+        return f"{label} · `{settings.tts_model}` · {location}"
+    raise ValueError(f"未知后端类型：{kind}")
+
+
+def _backend_usage_markdown(
+    kind: str,
+    manifest: Any,
+    selected_backend: Any,
+    selected_model: Any,
+    selected_url: Any = "",
+) -> str:
+    try:
+        current, scope = _settings_in_effect(manifest)
+        current_summary = _backend_summary(kind, current)
+    except Exception as exc:
+        logger.warning("读取当前后端设置失败：%s", exc)
+        scope = "当前项目"
+        current_summary = f"无法读取：{_safe_error(exc)}"
+
+    selected = current.model_copy(deep=True) if "current" in locals() else ProjectSettings()
+    if kind == "asr":
+        selected.asr_backend = str(selected_backend or selected.asr_backend)  # type: ignore[assignment]
+        selected.asr_model = str(selected_model or selected.asr_model)
+        selected.asr_api_base_url = str(selected_url or selected.asr_api_base_url)
+    elif kind == "translation":
+        selected.translation_provider = str(selected_backend or selected.translation_provider)
+        selected.translation_model = str(selected_model or selected.translation_model)
+        selected.translation_base_url = str(selected_url or selected.translation_base_url)
+    elif kind == "tts":
+        selected.tts_backend = str(selected_backend or selected.tts_backend)  # type: ignore[assignment]
+        selected.tts_model = str(selected_model or selected.tts_model)
+        selected.tts_api_base_url = str(selected_url or selected.tts_api_base_url)
+    selected_summary = _backend_summary(kind, selected)
+    if selected_summary == current_summary:
+        return f"### 目前正在使用\n**{scope}：** {current_summary}"
+    return (
+        "### 目前正在使用\n"
+        f"**{scope}：** {current_summary}\n\n"
+        f"**准备保存：** {selected_summary}\n\n"
+        "点击页面底部的“保存设置”后生效。"
+    )
+
+
 def _translation_prompt_language_update(
     language: Any,
     current_prompt: Any,
@@ -1580,6 +1669,7 @@ def build_app() -> Any:
                     with gr.Tab("批量处理", id="autoflow-workspace"):
                         gr.Markdown(
                             "批量处理适合一次处理一个 DLsite 作品目录中的多条音轨。"
+                            "不需要逐个上传文件，程序会扫描整个文件夹。"
                             "扫描后先确认本作品的选项，再加入队列；程序会按队列完成识别、翻译、"
                             "配音、混音、字幕和成品整理。"
                         )
@@ -1590,7 +1680,7 @@ def build_app() -> Any:
                             gr.Markdown("### 1 · 扫描作品")
                             with gr.Row(elem_classes=["mobile-stack"]):
                                 autoflow_folder = gr.Textbox(
-                                    label="作品文件夹",
+                                    label="包含音频的作品文件夹",
                                     placeholder=r"例如 D:\DLsite\RJxxxxxx",
                                     scale=4,
                                 )
@@ -1626,8 +1716,13 @@ def build_app() -> Any:
                                     scale=1,
                                 )
                             gr.Markdown(
+                                "#### 本次将处理的音轨",
+                                elem_classes=["autoflow-section-title"],
+                            )
+                            gr.Markdown(
                                 "拖动音轨卡片可以调整顺序；触屏或键盘操作时也可以使用右侧的上下按钮。"
-                                "字幕会自动匹配并判断语言，也可以在每条音轨中更换或关闭。"
+                                "台本或字幕会自动匹配并判断语言，也可以在每条音轨中更换、关闭，"
+                                "或让 ASR 重新确定时间轴。"
                             )
                             autoflow_tracks = gr.HTML(
                                 value=[],
@@ -1652,7 +1747,7 @@ def build_app() -> Any:
                                 value="dubbing",
                                 info=(
                                     "仅生成字幕会完成识别和必要的翻译，但不会选择参考音频、"
-                                    "运行 TTS（语音合成）或混音。"
+                                    "运行 TTS（语音合成）或混音；成品始终包含 SRT 和 LRC。"
                                 ),
                             )
                             with gr.Row(elem_classes=["mobile-stack"]):
@@ -1814,6 +1909,15 @@ def build_app() -> Any:
                                 scale=3,
                             )
                             autoflow_open_output_button = gr.Button("打开输出目录", scale=1)
+                        autoflow_output_files = gr.Dataframe(
+                            headers=["作品", "格式", "字幕路径"],
+                            datatype=["str", "str", "str"],
+                            value=[],
+                            interactive=False,
+                            wrap=True,
+                            column_count=3,
+                            label="本次任务输出字幕",
+                        )
                         with gr.Accordion("运行日志", open=False):
                             autoflow_log = gr.Textbox(
                                 label="自动处理日志",
@@ -1826,9 +1930,8 @@ def build_app() -> Any:
 
             with gr.Tab("设置", id="settings"):
                 gr.Markdown(
-                    "这里保存新项目的默认设置。已经打开的项目仍使用自己的设置；需要更新时，"
-                    "请点击页面底部的“保存并应用到当前项目”。API 密钥保存在程序目录的"
-                    " `.asmr-dubber/config/secrets.json`。"
+                    "保存后会作为以后新建项目的默认设置；如果当前已打开项目，也会立即应用到"
+                    "当前项目。API 密钥保存在程序目录的 `.asmr-dubber/config/secrets.json`。"
                 )
                 settings_status = gr.Textbox(
                     label="设置状态",
@@ -1928,6 +2031,15 @@ def build_app() -> Any:
                         )
 
                     with gr.Tab("ASR（语音识别）", id="asr"):
+                        asr_usage = gr.Markdown(
+                            _backend_usage_markdown(
+                                "asr",
+                                "",
+                                asr_stored.asr_backend,
+                                asr_stored.asr_model,
+                                asr_stored.asr_api_base_url,
+                            )
+                        )
                         gr.Markdown("### 新建项目")
                         settings_components["default_source_language"] = gr.Radio(
                             label="新建媒体项目的音频语言",
@@ -1988,6 +2100,12 @@ def build_app() -> Any:
                             with gr.Row():
                                 save_asr_api_key_button = gr.Button("保存 ASR API 密钥")
                                 clear_asr_api_key_button = gr.Button("清除 ASR API 密钥")
+                                test_asr_api_button = gr.Button(
+                                    "测试当前 ASR API", variant="primary"
+                                )
+                            asr_api_test_status = gr.Markdown(
+                                "测试会发送一段很短的静音音频，不会修改项目。"
+                            )
                         asr_help = gr.Markdown(f"{asr_spec.help}\n\n{asr_spec.setup}")
                         with gr.Row():
                             settings_components["asr_device"] = gr.Dropdown(
@@ -2163,6 +2281,15 @@ def build_app() -> Any:
                             )
 
                     with gr.Tab("翻译", id="translation"):
+                        translation_usage = gr.Markdown(
+                            _backend_usage_markdown(
+                                "translation",
+                                "",
+                                stored.translation_provider,
+                                stored.translation_model,
+                                stored.translation_base_url,
+                            )
+                        )
                         settings_components["translation_provider"] = gr.Dropdown(
                             label="翻译服务",
                             choices=[
@@ -2279,8 +2406,23 @@ def build_app() -> Any:
                             with gr.Row():
                                 save_translation_key_button = gr.Button("保存当前服务密钥")
                                 clear_translation_key_button = gr.Button("清除当前服务密钥")
+                                test_translation_api_button = gr.Button(
+                                    "测试当前翻译 API", variant="primary"
+                                )
+                            translation_api_test_status = gr.Markdown(
+                                "测试会发送一句短文本，可能产生极少量 API 用量。"
+                            )
 
                     with gr.Tab("TTS（语音合成）", id="tts"):
+                        tts_usage = gr.Markdown(
+                            _backend_usage_markdown(
+                                "tts",
+                                "",
+                                stored.tts_backend,
+                                stored.tts_model,
+                                stored.tts_api_base_url,
+                            )
+                        )
                         settings_components["tts_backend"] = gr.Dropdown(
                             label="TTS（语音合成）后端",
                             choices=[
@@ -2494,6 +2636,15 @@ def build_app() -> Any:
                         with gr.Row(visible=tts_spec.api_key) as tts_key_buttons:
                             save_tts_key_button = gr.Button("保存当前 TTS 服务密钥")
                             clear_tts_key_button = gr.Button("清除当前 TTS 服务密钥")
+                        test_tts_api_button = gr.Button(
+                            "测试当前 TTS 服务",
+                            variant="primary",
+                            visible=tts_spec.runtime == "http",
+                        )
+                        tts_api_test_status = gr.Markdown(
+                            "测试会用当前项目生成一句短音频，完成后立即清理测试文件。",
+                            visible=tts_spec.runtime == "http",
+                        )
 
                         with gr.Group(visible=stored.tts_backend == "indextts2") as index_group:
                             gr.Markdown("### IndexTTS2 参数")
@@ -2905,13 +3056,7 @@ def build_app() -> Any:
                                 info="只作为视频任务的初始值；批量页扫描后可以改选作品图片。",
                             )
 
-                with gr.Row():
-                    save_defaults_button = gr.Button(
-                        "仅保存为以后新项目默认值", variant="secondary"
-                    )
-                    apply_project_settings_button = gr.Button(
-                        "保存并应用到当前项目", variant="primary"
-                    )
+                save_settings_button = gr.Button("保存设置", variant="primary")
 
             with gr.Tab("日志与诊断", id="logs"):
                 gr.Markdown(
@@ -3207,6 +3352,7 @@ def build_app() -> Any:
                     getattr(evt, "track_id", ""),
                     getattr(evt, "transcript", ""),
                     getattr(evt, "language", ""),
+                    getattr(evt, "mode", "direct"),
                 )
                 return view.source_payloads, view.track_items, view.summary
             except Exception as exc:
@@ -3394,6 +3540,7 @@ def build_app() -> Any:
                 autoflow_controller,
             ):
                 choices = [(Path(path).name, path) for path in outputs]
+                subtitle_rows = subtitle_output_rows(outputs) if done else []
                 queue_update: Any = gr.update()
                 reference_updates: tuple[Any, ...] = tuple(gr.update() for _ in range(9))
                 if reference_event:
@@ -3483,6 +3630,7 @@ def build_app() -> Any:
                         choices=choices,
                         value=choices[0][1] if choices else None,
                     ),
+                    subtitle_rows,
                     queue_update,
                     *reference_updates,
                 )
@@ -3871,6 +4019,7 @@ def build_app() -> Any:
                 autoflow_log,
                 autoflow_status,
                 autoflow_output_selection,
+                autoflow_output_files,
                 autoflow_queue_list,
                 autoflow_reference_state,
                 autoflow_reference_panel,
@@ -3939,6 +4088,92 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+
+        asr_usage_inputs = [
+            project_path,
+            settings_components["asr_backend"],
+            settings_components["asr_model"],
+            settings_components["asr_api_base_url"],
+        ]
+        translation_usage_inputs = [
+            project_path,
+            settings_components["translation_provider"],
+            settings_components["translation_model"],
+            settings_components["translation_base_url"],
+        ]
+        tts_usage_inputs = [
+            project_path,
+            settings_components["tts_backend"],
+            settings_components["tts_model"],
+            settings_components["tts_api_base_url"],
+        ]
+
+        def asr_usage_update(manifest: Any, backend: Any, model: Any, url: Any) -> str:
+            return _backend_usage_markdown("asr", manifest, backend, model, url)
+
+        def translation_usage_update(manifest: Any, provider_id: Any, model: Any, url: Any) -> str:
+            return _backend_usage_markdown("translation", manifest, provider_id, model, url)
+
+        def tts_usage_update(manifest: Any, backend: Any, model: Any, url: Any) -> str:
+            return _backend_usage_markdown("tts", manifest, backend, model, url)
+
+        project_path.change(
+            asr_usage_update,
+            inputs=asr_usage_inputs,
+            outputs=[asr_usage],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        project_path.change(
+            translation_usage_update,
+            inputs=translation_usage_inputs,
+            outputs=[translation_usage],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        project_path.change(
+            tts_usage_update,
+            inputs=tts_usage_inputs,
+            outputs=[tts_usage],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        for component in (
+            settings_components["asr_backend"],
+            settings_components["asr_model"],
+            settings_components["asr_api_base_url"],
+        ):
+            component.change(
+                asr_usage_update,
+                inputs=asr_usage_inputs,
+                outputs=[asr_usage],
+                api_name=_PRIVATE_API,
+                queue=False,
+            )
+        for component in (
+            settings_components["translation_provider"],
+            settings_components["translation_model"],
+            settings_components["translation_base_url"],
+        ):
+            component.change(
+                translation_usage_update,
+                inputs=translation_usage_inputs,
+                outputs=[translation_usage],
+                api_name=_PRIVATE_API,
+                queue=False,
+            )
+        for component in (
+            settings_components["tts_backend"],
+            settings_components["tts_model"],
+            settings_components["tts_api_base_url"],
+        ):
+            component.change(
+                tts_usage_update,
+                inputs=tts_usage_inputs,
+                outputs=[tts_usage],
+                api_name=_PRIVATE_API,
+                queue=False,
+            )
 
         source_language_event = settings_components["default_source_language"].change(
             _source_language_backend_update,
@@ -4194,6 +4429,27 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+        tts_backend_event.then(
+            lambda backend: (
+                gr.update(
+                    visible=(
+                        str(backend or "") in TTS_BACKENDS
+                        and TTS_BACKENDS[str(backend)].runtime == "http"
+                    )
+                ),
+                gr.update(
+                    value="测试会用当前项目生成一句短音频，完成后立即清理测试文件。",
+                    visible=(
+                        str(backend or "") in TTS_BACKENDS
+                        and TTS_BACKENDS[str(backend)].runtime == "http"
+                    ),
+                ),
+            ),
+            inputs=[settings_components["tts_backend"]],
+            outputs=[test_tts_api_button, tts_api_test_status],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
         settings_components["tts_voice"].change(
             lambda: (gr.update(value=None, visible=False), ""),
             outputs=[edge_tts_preview_audio, edge_tts_preview_status],
@@ -4313,38 +4569,57 @@ def build_app() -> Any:
                 values[-1],
             )
 
-        def save_defaults_callback(*values: Any) -> str:
-            try:
-                settings = parse_form(*values)
-                path = save_user_settings(settings)
-                return (
-                    f"新项目默认值已保存：{path}\n"
-                    "当前已打开的项目和已经扫描的批量任务没有改变；"
-                    "需要时请点击“保存并应用到当前项目”。"
-                )
-            except Exception as exc:
-                return f"保存设置失败：{_safe_error(exc)}"
-
         def apply_settings_callback(manifest: str, *values: Any) -> tuple[Any, ...]:
             try:
                 settings = parse_form(*values)
             except Exception as exc:
                 message = f"设置校验失败：{_safe_error(exc)}"
-                return message, *_empty_project_updates(message)
+                return (
+                    message,
+                    *[gr.update() for _ in common_outputs],
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                )
             try:
                 path = save_user_settings(settings)
             except Exception as exc:
                 message = f"保存新项目默认值失败：{_safe_error(exc)}"
-                return message, *_empty_project_updates(message)
+                return (
+                    message,
+                    *[gr.update() for _ in common_outputs],
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                )
 
             normalized_manifest = str(manifest or "").strip()
             if not normalized_manifest:
-                message = (
-                    f"请先新建或打开项目。\n新项目默认值已保存：{path}；当前没有可应用的项目。"
-                )
+                message = f"设置已保存：{path}\n以后新建的项目将使用这些设置。"
                 return (
                     message,
-                    *_empty_project_updates("请先新建或打开项目。默认设置已保存。"),
+                    *[gr.update() for _ in common_outputs],
+                    _backend_usage_markdown(
+                        "asr",
+                        "",
+                        settings.asr_backend,
+                        settings.asr_model,
+                        settings.asr_api_base_url,
+                    ),
+                    _backend_usage_markdown(
+                        "translation",
+                        "",
+                        settings.translation_provider,
+                        settings.translation_model,
+                        settings.translation_base_url,
+                    ),
+                    _backend_usage_markdown(
+                        "tts",
+                        "",
+                        settings.tts_backend,
+                        settings.tts_model,
+                        settings.tts_api_base_url,
+                    ),
                 )
 
             try:
@@ -4354,30 +4629,105 @@ def build_app() -> Any:
                 settings_message = f"新项目默认值已保存：{path}\n{project_message}"
                 return (
                     settings_message,
-                    *_empty_project_updates(project_message),
+                    *[gr.update() for _ in common_outputs],
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
                 )
 
-            settings_message = f"新项目默认值已保存：{path}\n{project_view.status}"
+            settings_message = f"设置已保存：{path}\n{project_view.status}"
             return (
                 settings_message,
                 *_view_values(project_view),
+                _backend_usage_markdown(
+                    "asr",
+                    normalized_manifest,
+                    settings.asr_backend,
+                    settings.asr_model,
+                    settings.asr_api_base_url,
+                ),
+                _backend_usage_markdown(
+                    "translation",
+                    normalized_manifest,
+                    settings.translation_provider,
+                    settings.translation_model,
+                    settings.translation_base_url,
+                ),
+                _backend_usage_markdown(
+                    "tts",
+                    normalized_manifest,
+                    settings.tts_backend,
+                    settings.tts_model,
+                    settings.tts_api_base_url,
+                ),
             )
 
-        save_defaults_button.click(
-            save_defaults_callback,
-            inputs=form_inputs,
-            outputs=[settings_status],
-            api_name="save_default_settings",
-            **runtime_options,
-        )
-        apply_project_settings_button.click(
+        save_settings_button.click(
             apply_settings_callback,
             inputs=[project_path, *form_inputs],
             outputs=[
                 settings_status,
                 *common_outputs,
+                asr_usage,
+                translation_usage,
+                tts_usage,
             ],
-            api_name="apply_settings_to_project",
+            api_name="save_settings",
+            **runtime_options,
+        )
+
+        def test_asr_api_callback(key: str, *values: Any) -> str:
+            try:
+                settings = _settings_from_form(field_names, values, None, None)
+                return test_asr_api(settings, key)
+            except Exception as exc:
+                logger.exception("ASR API 测试失败")
+                return (
+                    f"ASR API 测试失败：{_safe_error(exc)}\n\n"
+                    f"详细信息已写入日志：`{application_log_path()}`"
+                )
+
+        def test_translation_api_callback(key: str, *values: Any) -> str:
+            try:
+                settings = _settings_from_form(field_names, values, None, None)
+                return test_translation_api(settings, key)
+            except Exception as exc:
+                logger.exception("翻译 API 测试失败")
+                return (
+                    f"翻译 API 测试失败：{_safe_error(exc)}\n\n"
+                    f"详细信息已写入日志：`{application_log_path()}`"
+                )
+
+        def test_tts_api_callback(manifest: str, key: str, *values: Any) -> str:
+            try:
+                settings = _settings_from_form(field_names, values, None, None)
+                return test_tts_api(manifest, settings, key)
+            except Exception as exc:
+                logger.exception("TTS API 测试失败")
+                return (
+                    f"TTS 服务测试失败：{_safe_error(exc)}\n\n"
+                    f"详细信息已写入日志：`{application_log_path()}`"
+                )
+
+        test_asr_api_button.click(
+            test_asr_api_callback,
+            inputs=[asr_api_key, *field_components],
+            outputs=[asr_api_test_status],
+            api_name="test_asr_api",
+            **runtime_options,
+        )
+        test_translation_api_button.click(
+            test_translation_api_callback,
+            inputs=[translation_key, *field_components],
+            outputs=[translation_api_test_status],
+            api_name="test_translation_api",
+            **runtime_options,
+        )
+        test_tts_api_button.click(
+            test_tts_api_callback,
+            inputs=[project_path, tts_key, *field_components],
+            outputs=[tts_api_test_status],
+            api_name="test_tts_api",
             **runtime_options,
         )
 

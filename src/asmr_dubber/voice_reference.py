@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,8 +21,10 @@ STABLE_CLONE_MODES = {
 }
 
 _INDEX_REFERENCE_MIN_SECONDS = 1.0
-_INDEX_REFERENCE_CACHE_VERSION = "index-reference-v2-min-1s"
+_INDEX_REFERENCE_CACHE_VERSION = "index-reference-v3-quality-fallback"
 _INDEX_REFERENCE_DURATION_TOLERANCE = 0.01
+_REFERENCE_TEXT = re.compile(r"[\w\u3040-\u30ff\u3400-\u9fff]", re.UNICODE)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,31 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
         key=lambda sentence: (
             sentence.end_seconds - sentence.start_seconds,
             -sentence.start_seconds,
+        ),
+    )
+
+
+def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sentence | None:
+    """Choose a deterministic project reference that is not the rejected sentence."""
+
+    configured = project.settings.tts_reference_sentence_id
+    if configured and configured != sentence.id:
+        selected = next((item for item in project.sentences if item.id == configured), None)
+        if selected is not None and (selected.source_text.strip() or selected.zh_text.strip()):
+            return selected
+    candidates = [
+        item
+        for item in project.sentences
+        if item.id != sentence.id and (item.source_text.strip() or item.zh_text.strip())
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            item.end_seconds - item.start_seconds,
+            len(_REFERENCE_TEXT.findall(item.source_text or item.zh_text)),
+            -item.start_seconds,
         ),
     )
 
@@ -216,6 +246,68 @@ def _valid_cached_index_reference(path: Path) -> bool:
     return duration + _INDEX_REFERENCE_DURATION_TOLERANCE >= _INDEX_REFERENCE_MIN_SECONDS
 
 
+def _index_reference_is_usable(sentence: Sentence, path: Path) -> bool:
+    """Reject only clearly invalid current-sentence references, not quiet ASMR speech."""
+
+    text = sentence.source_text.strip() or sentence.zh_text.strip()
+    text_units = len(_REFERENCE_TEXT.findall(text))
+    if text_units == 0:
+        return False
+    try:
+        with sf.SoundFile(path) as audio:
+            peak = 0.0
+            sum_squares = 0.0
+            sample_count = 0
+            for block in audio.blocks(blocksize=max(1, int(audio.samplerate)), dtype="float32"):
+                if block.size == 0:
+                    continue
+                absolute = abs(block)
+                peak = max(peak, float(absolute.max(initial=0.0)))
+                sum_squares += float((block.astype("float64") ** 2).sum())
+                sample_count += int(block.size)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if sample_count == 0:
+        return False
+    rms = math.sqrt(sum_squares / sample_count)
+    # The limits are intentionally far below normal whisper levels. They only
+    # catch empty/zero-filled slices and avoid classifying quiet ASMR as silence.
+    return peak >= 2e-5 and rms >= 2e-6
+
+
+def _fallback_index_reference(
+    project: DubProject,
+    project_dir: Path,
+    source: Path,
+    sentence: Sentence,
+    reference: VoiceReference,
+    *,
+    role: str,
+) -> VoiceReference:
+    if _index_reference_is_usable(sentence, reference.path):
+        return reference
+    fallback = fallback_reference_sentence(project, sentence)
+    if fallback is None:
+        logger.warning(
+            "%s 的 IndexTTS2 %s参考无效，但项目中没有可用的统一参考句", sentence.id, role
+        )
+        return reference
+    logger.warning(
+        "%s 的 IndexTTS2 %s参考明显无效，自动改用项目参考句 %s",
+        sentence.id,
+        role,
+        fallback.id,
+    )
+    return _index_sentence_reference(
+        project,
+        project_dir,
+        source,
+        fallback,
+        role=role,
+        shared=True,
+    )
+
+
 def _index_sentence_reference(
     project: DubProject,
     project_dir: Path,
@@ -275,13 +367,23 @@ def prepare_index_speaker_reference(
         )
     shared = source_id == "project_reference"
     reference_sentence = shared_reference_sentence(project) if shared else sentence
-    return _index_sentence_reference(
+    reference = _index_sentence_reference(
         project,
         project_dir,
         source,
         reference_sentence,
         role="speaker",
         shared=shared,
+    )
+    if shared:
+        return reference
+    return _fallback_index_reference(
+        project,
+        project_dir,
+        source,
+        sentence,
+        reference,
+        role="speaker",
     )
 
 
@@ -309,11 +411,21 @@ def prepare_index_emotion_reference(
         and speaker_reference.sentence.id == reference_sentence.id
     ):
         return speaker_reference
-    return _index_sentence_reference(
+    reference = _index_sentence_reference(
         project,
         project_dir,
         source,
         reference_sentence,
         role="emotion",
         shared=shared,
+    )
+    if shared:
+        return reference
+    return _fallback_index_reference(
+        project,
+        project_dir,
+        source,
+        sentence,
+        reference,
+        role="emotion",
     )

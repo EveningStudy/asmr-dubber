@@ -65,6 +65,7 @@ _RESERVED_WINDOWS_NAMES = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+_SCRIPT_VISIBLE_CHARACTER = re.compile(r"[^\s，。！？、；：,.!?;:'\"“”‘’（）()\[\]{}<>《》…—-]")
 
 
 def _safe_name(value: str) -> str:
@@ -77,6 +78,36 @@ def _safe_name(value: str) -> str:
     if normalized.partition(".")[0].upper() in _RESERVED_WINDOWS_NAMES:
         normalized = f"_{normalized}"
     return normalized
+
+
+def _chinese_script_timing_warnings(
+    sentences: list[Sentence],
+    *,
+    maximum_speed: float,
+) -> list[dict[str, object]]:
+    """Flag obvious text/window mismatches without changing ASR time ranges."""
+
+    warnings: list[dict[str, object]] = []
+    for sentence in sentences:
+        text = sentence.zh_text.strip()
+        units = len(_SCRIPT_VISIBLE_CHARACTER.findall(text))
+        window = max(0.001, sentence.end_seconds - sentence.start_seconds)
+        # Five visible Chinese characters per second is deliberately
+        # conservative. Only warn when the estimate still exceeds the user's
+        # configured maximum mix-time acceleration.
+        estimated = units / 5.0
+        required_speed = estimated / window
+        if units >= 8 and required_speed > maximum_speed:
+            warnings.append(
+                {
+                    "id": sentence.id,
+                    "text_characters": units,
+                    "window_seconds": round(window, 3),
+                    "estimated_required_speed": round(required_speed, 2),
+                    "maximum_auto_speed": maximum_speed,
+                }
+            )
+    return warnings
 
 
 def output_filename(project: DubProject, project_dir: Path) -> str:
@@ -209,17 +240,7 @@ def _reconcile_untimed_script(
             progress=progress,
             cancel_event=cancel_event,
         )
-        target: Literal["source", "zh"] = "source"
-        if script_language == "zh":
-            _translate_project_impl(
-                working,
-                working_dir,
-                api_key=key,
-                force=True,
-                progress=progress,
-                cancel_event=cancel_event,
-            )
-            target = "zh"
+        target: Literal["source", "zh"] = "zh" if script_language == "zh" else "source"
         corrections, report = reconcile_script_sentences(
             working.sentences,
             script_lines,
@@ -238,10 +259,11 @@ def _reconcile_untimed_script(
             cancel_event=cancel_event,
         )
         fallback_ids: list[str] = []
+        unmatched_ids: list[str] = []
         for sentence in working.sentences:
             candidate = sentence.source_text if target == "source" else sentence.zh_text
             corrected = str(corrections.get(sentence.id, "")).strip()
-            if not corrected and candidate.strip():
+            if target == "source" and not corrected and candidate.strip():
                 # A malformed or over-aggressive empty answer must not silently
                 # delete a real ASR/translation line.
                 corrected = candidate.strip()
@@ -252,15 +274,157 @@ def _reconcile_untimed_script(
                 sentence.status = "pending" if corrected else "skipped_filler"
             else:
                 sentence.zh_text = corrected
-                sentence.status = "translated" if corrected else "skipped_filler"
-            sentence.enabled = bool(corrected)
+                sentence.status = "translated" if corrected else "pending"
+                if not corrected and sentence.source_text.strip():
+                    unmatched_ids.append(sentence.id)
+            sentence.enabled = bool(sentence.source_text.strip() or sentence.zh_text.strip())
             sentence.tts_file = None
             sentence.tts_cache_key = None
             sentence.tts_duration_seconds = None
             sentence.error = None
         if fallback_ids:
             report.append({"fallback_ids": fallback_ids, "reason": "模型返回空文本，保留候选文本"})
+        if unmatched_ids:
+            report.append(
+                {
+                    "unmatched_ids": unmatched_ids,
+                    "reason": "中文台本没有可靠匹配；后续只翻译这些缺失句子",
+                }
+            )
+        timing_warnings = _chinese_script_timing_warnings(
+            working.sentences,
+            maximum_speed=project.settings.chinese_max_auto_speed,
+        )
+        if target == "zh" and timing_warnings:
+            report.append(
+                {
+                    "timing_warnings": timing_warnings,
+                    "reason": "部分中文台本相对 ASR 时间窗过长，配音可能达到最大加速后仍有重叠",
+                }
+            )
         return [item.model_copy(deep=True) for item in working.sentences], report
+
+
+def reconcile_analyzed_project_script(
+    project: DubProject,
+    project_dir: Path,
+    *,
+    transcript_path: str | Path,
+    script_language: TranscriptLanguage,
+    start_seconds: float,
+    end_seconds: float,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> dict[str, object]:
+    """Map one track's script onto existing ASR ranges without trusting file timing."""
+
+    if script_language not in {"ja", "en", "zh"}:
+        raise ProjectError("台本语言必须是日语、英语或中文。")
+    selected = [
+        sentence
+        for sentence in project.sentences
+        if start_seconds <= (sentence.start_seconds + sentence.end_seconds) / 2 < end_seconds
+    ]
+    if not selected:
+        raise ProjectError("这条音轨的时间范围内没有 ASR 句子，无法校对台本。")
+    parsed = parse_transcript(
+        duration_seconds=max(0.001, end_seconds - start_seconds),
+        path=transcript_path,
+        language=script_language,
+        use_embedded_timing=False,
+    )
+    script_lines = [
+        sentence.zh_text if script_language == "zh" else sentence.source_text
+        for sentence in parsed.sentences
+    ]
+    provider = project.settings.translation_provider
+    if provider not in LLM_RECONCILIATION_PROVIDERS:
+        raise ProjectError(
+            "ASR 定时的台本校对需要大模型翻译服务；请先在设置中选择 DeepSeek、百炼、"
+            "豆包、商汤、OpenAI、Claude、Gemini 或本地/自定义 OpenAI-compatible。"
+        )
+    preset = PROVIDER_PRESETS.get(provider)
+    if preset is None:
+        raise ProjectError(f"未知翻译服务：{provider}")
+    key = resolve_api_key(provider)
+    base_url = project.settings.translation_base_url.strip() or str(preset["base_url"])
+    target: Literal["source", "zh"] = "zh" if script_language == "zh" else "source"
+    corrections, report = reconcile_script_sentences(
+        selected,
+        script_lines,
+        source_language=project.source_language,
+        target=target,
+        provider=provider,
+        api_key=key,
+        model=project.settings.translation_model,
+        base_url=base_url,
+        temperature=project.settings.translation_temperature,
+        top_p=project.settings.translation_top_p,
+        max_output_tokens=project.settings.translation_max_output_tokens,
+        extra_body=project.settings.translation_extra_body,
+        job_id=(
+            f"asmr_{project.source.sha256[:18]}_script_"
+            f"{round(start_seconds * 1000)}_{round(end_seconds * 1000)}"
+        ),
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    matched = 0
+    unmatched: list[str] = []
+    for sentence in selected:
+        corrected = str(corrections.get(sentence.id, "")).strip()
+        if target == "source":
+            if corrected:
+                sentence.source_text = corrected
+                matched += 1
+            sentence.zh_text = ""
+            sentence.status = "pending" if sentence.source_text.strip() else "skipped_filler"
+        elif corrected:
+            sentence.zh_text = corrected
+            sentence.status = "translated"
+            matched += 1
+        else:
+            unmatched.append(sentence.id)
+            if not sentence.zh_text:
+                sentence.status = "pending"
+        sentence.enabled = bool(sentence.source_text.strip() or sentence.zh_text.strip())
+        sentence.tts_file = None
+        sentence.tts_cache_key = None
+        sentence.tts_duration_seconds = None
+        sentence.error = None
+
+    project.chinese_stem_file = None
+    project.output_file = None
+    project.output_video_file = None
+    project.subtitle_srt_file = None
+    project.subtitle_lrc_file = None
+    project.subtitle_video_file = None
+    timing_warnings = (
+        _chinese_script_timing_warnings(
+            selected,
+            maximum_speed=project.settings.chinese_max_auto_speed,
+        )
+        if target == "zh"
+        else []
+    )
+    if timing_warnings:
+        report.append(
+            {
+                "timing_warnings": timing_warnings,
+                "reason": "部分中文台本相对 ASR 时间窗过长，配音可能达到最大加速后仍有重叠",
+            }
+        )
+    save_project(project, project_dir)
+    export_transcript(project, project_dir)
+    return {
+        "path": str(Path(transcript_path).expanduser().resolve()),
+        "language": script_language,
+        "asr_sentences": len(selected),
+        "matched_sentences": matched,
+        "unmatched_ids": unmatched,
+        "timing_warning_ids": [str(item["id"]) for item in timing_warnings],
+        "report": report,
+    }
 
 
 def import_project_transcript(
@@ -271,6 +435,7 @@ def import_project_transcript(
     pasted_text: str = "",
     plain_timing: str = "estimate",
     script_language: str = "ja",
+    use_embedded_timing: bool = True,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> dict[str, object]:
@@ -294,6 +459,7 @@ def import_project_transcript(
         path=transcript_path,
         pasted_text=pasted_text,
         language=cast(TranscriptLanguage, script_language),
+        use_embedded_timing=use_embedded_timing,
     )
     sentences = [sentence.model_copy(deep=True) for sentence in parsed.sentences]
     alignment_report: list[dict[str, object]] = []

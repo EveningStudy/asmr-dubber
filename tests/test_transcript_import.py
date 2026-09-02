@@ -6,7 +6,7 @@ import pytest
 import asmr_dubber.pipeline as pipeline
 from asmr_dubber.audio import sha256_file
 from asmr_dubber.errors import ProjectError
-from asmr_dubber.models import AudioInfo, DubProject
+from asmr_dubber.models import AudioInfo, DubProject, Sentence
 from asmr_dubber.transcript_import import parse_transcript
 
 
@@ -52,6 +52,20 @@ def test_imports_lrc_and_derives_end_times() -> None:
     assert parsed.source_format == "LRC"
     assert parsed.sentences[0].end_seconds == pytest.approx(4.5)
     assert parsed.sentences[1].end_seconds == pytest.approx(8.0)
+
+
+def test_timed_subtitle_can_be_read_as_untimed_script() -> None:
+    parsed = parse_transcript(
+        duration_seconds=20,
+        pasted_text="[00:01.00]第一句\n[00:04.50]第二句\n",
+        language="zh",
+        use_embedded_timing=False,
+    )
+
+    assert parsed.timed is False
+    assert parsed.source_format == "LRC（仅文字）"
+    assert [item.zh_text for item in parsed.sentences] == ["第一句", "第二句"]
+    assert parsed.sentences[0].start_seconds == pytest.approx(0.0)
 
 
 def test_plain_script_uses_each_line_and_estimates_by_text_length() -> None:
@@ -270,15 +284,14 @@ def test_untimed_chinese_script_reconciles_translation_without_changing_source_l
             Sentence(id="s000001", start_seconds=2.0, end_seconds=4.0, source_text="おやすみ。")
         ]
 
-    def fake_translate(working: DubProject, *_args: object, **_kwargs: object) -> None:
-        working.sentences[0].zh_text = "晚安。"
-        working.sentences[0].status = "translated"
+    def unexpected_translate(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("中文台本校对不应先完整翻译 ASR 结果")
 
     def fake_reconcile(*_args: object, **_kwargs: object) -> tuple[dict[str, str], list[dict]]:
         return {"s000001": "好好休息，晚安。"}, []
 
     monkeypatch.setattr(pipeline, "_analyze_project_impl", fake_analyze)
-    monkeypatch.setattr(pipeline, "_translate_project_impl", fake_translate)
+    monkeypatch.setattr(pipeline, "_translate_project_impl", unexpected_translate)
     monkeypatch.setattr(pipeline, "reconcile_script_sentences", fake_reconcile)
     monkeypatch.setattr(pipeline, "resolve_api_key", lambda *_args, **_kwargs: "test-key")
 
@@ -295,3 +308,42 @@ def test_untimed_chinese_script_reconciles_translation_without_changing_source_l
     assert project.sentences[0].source_text == "おやすみ。"
     assert project.sentences[0].zh_text == "好好休息，晚安。"
     assert project.sentences[0].start_seconds == pytest.approx(2.0)
+
+
+def test_chinese_script_reconciliation_reports_text_that_cannot_fit_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _import_project(tmp_path)
+    project.sentences = [
+        Sentence(
+            id="s000001",
+            start_seconds=0.0,
+            end_seconds=1.0,
+            source_text="短い台詞。",
+        )
+    ]
+    transcript = tmp_path / "script.txt"
+    transcript.write_text("这是一句明显无法在一秒时间窗口内正常说完的中文台词。", encoding="utf-8")
+    monkeypatch.setattr(
+        pipeline,
+        "reconcile_script_sentences",
+        lambda *_args, **_kwargs: (
+            {"s000001": "这是一句明显无法在一秒时间窗口内正常说完的中文台词。"},
+            [],
+        ),
+    )
+    monkeypatch.setattr(pipeline, "resolve_api_key", lambda *_args, **_kwargs: "test-key")
+
+    result = pipeline.reconcile_analyzed_project_script(
+        project,
+        tmp_path,
+        transcript_path=transcript,
+        script_language="zh",
+        start_seconds=0.0,
+        end_seconds=2.0,
+    )
+
+    assert result["timing_warning_ids"] == ["s000001"]
+    assert project.sentences[0].source_text == "短い台詞。"
+    assert project.sentences[0].zh_text == "这是一句明显无法在一秒时间窗口内正常说完的中文台词。"

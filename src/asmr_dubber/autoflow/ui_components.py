@@ -15,10 +15,20 @@ TRACK_LIST_TEMPLATE = r"""
       <div class="af-path">{{path}}</div>
       <div class="af-track-controls">
         <label>
-          <span>字幕文件</span>
+          <span>台本或字幕文件</span>
           <select data-role="subtitle">
             {{#each transcript_choices}}
-            <option value="{{value}}" data-language="{{language}}" {{#if selected}}selected{{/if}}>
+            <option value="{{value}}" data-language="{{language}}" data-timed="{{timed}}" {{#if selected}}selected{{/if}}>
+              {{label}}
+            </option>
+            {{/each}}
+          </select>
+        </label>
+        <label>
+          <span>时间轴</span>
+          <select data-role="timing" {{#if has_subtitle}}{{else}}disabled{{/if}}>
+            {{#each timing_choices}}
+            <option value="{{value}}" {{#if selected}}selected{{/if}} {{#if disabled}}disabled{{/if}}>
               {{label}}
             </option>
             {{/each}}
@@ -74,7 +84,7 @@ TRACK_LIST_CSS = r"""
   font-size: .78rem;
 }
 .af-path { margin-top: .2rem; color: var(--body-text-color-subdued); overflow-wrap: anywhere; }
-.af-track-controls { display: grid; grid-template-columns: minmax(0, 2fr) minmax(7rem, 1fr); gap: .65rem; margin-top: .65rem; }
+.af-track-controls { display: grid; grid-template-columns: minmax(0, 2fr) minmax(7rem, 1fr) minmax(12rem, 1.4fr); gap: .65rem; margin-top: .65rem; }
 .af-track-controls label { display: grid; gap: .25rem; color: var(--body-text-color-subdued); font-size: .82rem; }
 .af-track-controls select {
   width: 100%;
@@ -160,15 +170,23 @@ const bindTrackList = () => {
     if (!control || !item || !list.contains(item)) return;
     const subtitle = item.querySelector('[data-role="subtitle"]');
     const language = item.querySelector('[data-role="language"]');
+    const timing = item.querySelector('[data-role="timing"]');
     if (control.dataset.role === 'subtitle') {
       const selected = subtitle.selectedOptions[0];
+      const hasSubtitle = Boolean(subtitle.value);
+      const isTimed = selected?.dataset.timed === 'true';
       language.disabled = !subtitle.value;
       if (subtitle.value && selected?.dataset.language) language.value = selected.dataset.language;
+      timing.disabled = !hasSubtitle;
+      const direct = timing.querySelector('option[value="direct"]');
+      if (direct) direct.disabled = !isTimed;
+      timing.value = isTimed ? 'direct' : 'asr_reconcile';
     }
     trigger('track_subtitle', {
       track_id: item.dataset.itemId,
       transcript: subtitle.value,
-      language: language.value
+      language: language.value,
+      mode: timing.value
     });
   };
 };

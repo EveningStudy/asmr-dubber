@@ -23,7 +23,20 @@ AUDIO_EXTENSIONS = {
 }
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 TIMED_TRANSCRIPT_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".lrc"}
-TRANSCRIPT_EXTENSIONS = TIMED_TRANSCRIPT_EXTENSIONS
+PLAIN_SCRIPT_EXTENSIONS = {".txt"}
+TRANSCRIPT_EXTENSIONS = TIMED_TRANSCRIPT_EXTENSIONS | PLAIN_SCRIPT_EXTENSIONS
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".webm",
+    ".mov",
+    ".avi",
+    ".wmv",
+    ".m4v",
+    ".flv",
+    ".ts",
+    ".m2ts",
+}
 
 _LOSSLESS = {".wav", ".flac", ".ape"}
 _FORMAT_SCORE = {
@@ -276,6 +289,7 @@ class ScanResult:
     transcripts: tuple[TranscriptCandidate, ...]
     documents: tuple[Path, ...]
     audio_count: int
+    videos: tuple[Path, ...] = ()
 
 
 def _pair_transcript(
@@ -397,6 +411,7 @@ def scan_work(
     audio_paths: list[Path] = []
     transcript_paths: list[Path] = []
     images: list[Path] = []
+    videos: list[Path] = []
     documents: list[Path] = []
     excluded = {
         "autoflow输出",
@@ -428,6 +443,8 @@ def scan_work(
             documents.append(path.resolve())
         elif suffix in IMAGE_EXTENSIONS:
             images.append(path.resolve())
+        elif suffix in VIDEO_EXTENSIONS:
+            videos.append(path.resolve())
 
     transcripts = tuple(
         TranscriptCandidate(
@@ -533,6 +550,12 @@ def scan_work(
             )
         ),
         audio_count=len(audio_paths),
+        videos=tuple(
+            sorted(
+                videos,
+                key=lambda item: natural_key(item.relative_to(root).as_posix()),
+            )
+        ),
     )
 
 

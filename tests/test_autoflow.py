@@ -23,6 +23,7 @@ from asmr_dubber.autoflow.ui_services import (
     replace_plan_in_queue,
     scan_for_ui,
     set_track_subtitle_for_ui,
+    subtitle_output_rows,
     toggle_plan_rebuild,
 )
 from asmr_dubber.errors import ProjectError
@@ -82,7 +83,8 @@ def test_autoflow_scan_prefers_configured_format_and_previews_bonus(tmp_path: Pa
         for choice in item["transcript_choices"]
         if choice["value"]
     }
-    assert all(not value.endswith((".txt", ".pdf")) for value in subtitle_values)
+    assert any(value.endswith(".txt") for value in subtitle_values)
+    assert all(not value.endswith(".pdf") for value in subtitle_values)
 
     view = preview_edition_for_ui(
         work,
@@ -93,6 +95,63 @@ def test_autoflow_scan_prefers_configured_format_and_previews_bonus(tmp_path: Pa
     assert len(view.track_items) == 3
     assert view.track_items[-1]["category"] == "特典"
     assert "3 条音轨" in view.summary
+
+
+def test_autoflow_video_only_folder_has_specific_guidance(tmp_path: Path) -> None:
+    work = tmp_path / "只有视频"
+    work.mkdir()
+    (work / "01.mp4").write_bytes(b"video")
+
+    with pytest.raises(ProjectError, match=r"检测到视频文件.*单个视频请使用‘单个作品’"):
+        scan_for_ui(work, settings=UserSettings())
+
+
+def test_autoflow_plain_script_uses_asr_timing_and_timed_subtitle_can_opt_in(
+    tmp_path: Path,
+) -> None:
+    work = _work(tmp_path)
+    scanned = scan_for_ui(work, settings=UserSettings())
+    track = scanned.track_items[0]
+
+    plain = set_track_subtitle_for_ui(
+        work,
+        scanned.source_payloads,
+        track["id"],
+        "WAV/Track01 開場.txt",
+        "zh",
+        "direct",
+        settings=UserSettings(),
+    )
+    plain_source = engine.deserialize_audio_source(plain.source_payloads[0])
+    assert plain_source.transcript_timed is False
+    assert plain_source.transcript_mode == engine.TRANSCRIPT_MODE_ASR_RECONCILE
+
+    timed = set_track_subtitle_for_ui(
+        work,
+        plain.source_payloads,
+        track["id"],
+        "WAV/Track01 開場.wav.vtt",
+        "ja",
+        "asr_reconcile",
+        settings=UserSettings(),
+    )
+    timed_source = engine.deserialize_audio_source(timed.source_payloads[0])
+    assert timed_source.transcript_timed is True
+    assert timed_source.transcript_mode == engine.TRANSCRIPT_MODE_ASR_RECONCILE
+
+
+def test_subtitle_output_rows_lists_srt_and_lrc_paths(tmp_path: Path) -> None:
+    output = tmp_path / "AutoFlow输出"
+    nested = output / "合并版"
+    nested.mkdir(parents=True)
+    (nested / "双语版.srt").write_text("srt", encoding="utf-8")
+    (nested / "双语版.lrc").write_text("lrc", encoding="utf-8")
+    (nested / "双语版.mp4").write_bytes(b"video")
+
+    rows = subtitle_output_rows([str(output)])
+
+    assert [row[1] for row in rows] == ["LRC", "SRT"]
+    assert all(Path(row[2]).is_file() for row in rows)
 
 
 def test_autoflow_reference_wait_defaults_to_one_minute_and_can_be_disabled() -> None:
@@ -600,6 +659,121 @@ def test_single_timed_chinese_subtitle_is_imported_without_asr_overlay(
     assert result["language"] == "zh"
     assert captured["script_language"] == "zh"
     assert captured["transcript_path"] == transcript.resolve()
+
+
+def test_single_timed_chinese_subtitle_can_use_asr_timing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = tmp_path / "Track01 中文.lrc"
+    transcript.write_text("[00:00.00]你好\n", encoding="utf-8")
+    project_json = tmp_path / "project.json"
+    project_json.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "asmr_dubber.models.load_project",
+        lambda _path: (SimpleNamespace(), tmp_path),
+    )
+
+    def fake_import(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "format": "LRC（仅文字）",
+            "language": "zh",
+            "timed": False,
+            "sentences": 1,
+            "script_reconciled": True,
+        }
+
+    monkeypatch.setattr("asmr_dubber.pipeline.import_project_transcript", fake_import)
+    result = engine.import_available_source_transcript(
+        SimpleNamespace(asmr_home=tmp_path),
+        project_json,
+        [
+            {
+                "transcript": str(transcript),
+                "transcript_language": "zh",
+                "transcript_timed": True,
+                "transcript_mode": engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+                "start_samples": 0,
+                "duration_samples": 2 * engine.SAMPLE_RATE,
+            }
+        ],
+    )
+
+    assert result["script_reconciled"] is True
+    assert captured["plain_timing"] == "script_review"
+    assert captured["use_embedded_timing"] is False
+
+
+def test_multitrack_plain_scripts_wait_for_asr_reconciliation(tmp_path: Path) -> None:
+    first = tmp_path / "01.txt"
+    second = tmp_path / "02.txt"
+    first.write_text("第一句。", encoding="utf-8")
+    second.write_text("第二句。", encoding="utf-8")
+
+    result = engine.import_available_source_transcript(
+        SimpleNamespace(asmr_home=tmp_path),
+        tmp_path / "project.json",
+        [
+            {
+                "transcript": str(first),
+                "transcript_language": "zh",
+                "transcript_timed": False,
+                "transcript_mode": engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+            },
+            {
+                "transcript": str(second),
+                "transcript_language": "zh",
+                "transcript_timed": False,
+                "transcript_mode": engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+            },
+        ],
+    )
+
+    assert result == {"kind": "reconcile_after_asr", "count": 2}
+
+
+def test_reconcile_timeline_scripts_uses_each_track_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "02.txt"
+    script.write_text("第二句。", encoding="utf-8")
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "asmr_dubber.models.load_project",
+        lambda _path: (SimpleNamespace(), tmp_path),
+    )
+
+    def fake_reconcile(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.append(dict(kwargs))
+        return {"matched_sentences": 1}
+
+    monkeypatch.setattr("asmr_dubber.pipeline.reconcile_analyzed_project_script", fake_reconcile)
+    results = engine.reconcile_timeline_scripts(
+        tmp_path / "project.json",
+        [
+            {
+                "transcript": str(script),
+                "transcript_language": "zh",
+                "transcript_mode": engine.TRANSCRIPT_MODE_DIRECT,
+                "start_samples": 0,
+                "duration_samples": engine.SAMPLE_RATE,
+            },
+            {
+                "transcript": str(script),
+                "transcript_language": "zh",
+                "transcript_mode": engine.TRANSCRIPT_MODE_ASR_RECONCILE,
+                "start_samples": 2 * engine.SAMPLE_RATE,
+                "duration_samples": 3 * engine.SAMPLE_RATE,
+            },
+        ],
+    )
+
+    assert results == [{"matched_sentences": 1}]
+    assert captured[0]["start_seconds"] == 2.0
+    assert captured[0]["end_seconds"] == 5.0
 
 
 def test_complete_multitrack_chinese_subtitles_replace_asr_timeline(

@@ -8,8 +8,8 @@ using System.Threading;
 [assembly: System.Reflection.AssemblyDescription("ASMR Dubber dependency installer and repair tool")]
 [assembly: System.Reflection.AssemblyCompany("ASMR Dubber contributors")]
 [assembly: System.Reflection.AssemblyProduct("ASMR Dubber")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.1.0")]
 
 namespace ASMRDubberSetup
 {
@@ -84,7 +84,7 @@ namespace ASMRDubberSetup
             Console.WriteLine("ASMR Dubber 依赖安装与修复");
             Console.WriteLine();
             Console.WriteLine(
-                "基础环境：" + (IsCoreInstalled(root) ? "已安装" : "未安装或不完整"));
+                "基础环境：" + (HasCoreFiles(root) ? "已安装" : "未安装或不完整"));
             Console.WriteLine(
                 "ASR（语音识别）· Parakeet："
                 + (IsParakeetInstalled(root) ? "已安装" : "未安装或不完整"));
@@ -99,9 +99,25 @@ namespace ASMRDubberSetup
             Console.WriteLine();
             Console.WriteLine("开始安装或修复 " + profile + "。");
             int exitCode = RunPowerShell(root, setupScript, "-Profile " + profile);
-            if (exitCode != 0 || !IsCoreInstalled(root))
+            if (exitCode != 0)
             {
                 throw new InvalidOperationException("安装脚本退出码 " + exitCode + "。");
+            }
+            if (!HasCoreFiles(root))
+            {
+                throw new InvalidOperationException(
+                    "安装脚本已完成，但基础环境文件仍不完整。请保留本窗口和安装日志后重新运行 Setup。");
+            }
+
+            string coreDiagnostic;
+            if (!CanImportCore(root, out coreDiagnostic))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine();
+                Console.WriteLine("安装脚本已成功完成，但启动器的附加导入检查未通过：" + coreDiagnostic);
+                Console.WriteLine(
+                    "这项附加检查不会把成功安装改判为失败；启动程序时仍会执行正式环境检查。");
+                Console.ResetColor();
             }
 
             Console.WriteLine();
@@ -147,38 +163,59 @@ namespace ASMRDubberSetup
             }
         }
 
-        private static bool IsCoreInstalled(string root)
+        private static bool HasCoreFiles(string root)
         {
             string python = Path.Combine(
                 root, ".asmr-dubber", "venv", "Scripts", "python.exe");
-            if (!File.Exists(python)
-                || !File.Exists(Path.Combine(
+            return File.Exists(python)
+                && File.Exists(Path.Combine(
                     root, ".asmr-dubber", "venv", "Scripts", "asmr-dubber.exe"))
-                || !Directory.Exists(Path.Combine(
-                    root, ".asmr-dubber", "venv", "Lib", "site-packages", "gradio")))
+                && Directory.Exists(Path.Combine(
+                    root, ".asmr-dubber", "venv", "Lib", "site-packages", "gradio"));
+        }
+
+        private static bool CanImportCore(string root, out string diagnostic)
+        {
+            string python = Path.Combine(
+                root, ".asmr-dubber", "venv", "Scripts", "python.exe");
+            if (!HasCoreFiles(root))
             {
+                diagnostic = "基础环境文件缺失";
                 return false;
             }
             try
             {
                 ProcessStartInfo info = new ProcessStartInfo();
                 info.FileName = python;
-                info.Arguments = "-c \"import asmr_dubber.ui, gradio, av, soundfile\"";
+                info.Arguments = "-c \"import asmr_dubber, gradio, av, soundfile\"";
                 info.WorkingDirectory = root;
                 info.UseShellExecute = false;
                 info.CreateNoWindow = true;
                 using (Process check = Process.Start(info))
                 {
-                    if (check == null || !check.WaitForExit(30000))
+                    if (check == null)
                     {
-                        if (check != null) check.Kill();
+                        diagnostic = "无法启动 Python 导入检查";
                         return false;
                     }
-                    return check.ExitCode == 0;
+                    if (!check.WaitForExit(120000))
+                    {
+                        check.Kill();
+                        diagnostic = "Python 导入检查超过 120 秒";
+                        return false;
+                    }
+                    if (check.ExitCode != 0)
+                    {
+                        diagnostic = "Python 导入检查退出码 " + check.ExitCode;
+                        return false;
+                    }
+                    diagnostic = "检查通过";
+                    return true;
                 }
             }
-            catch
+            catch (Exception exception)
             {
+                diagnostic = exception.Message;
                 return false;
             }
         }
@@ -330,7 +367,7 @@ namespace ASMRDubberSetup
                     "root=" + root,
                     "setup=" + File.Exists(Path.Combine(root, "scripts", "windows", "setup.ps1")),
                     "mirrors=" + File.Exists(Path.Combine(root, "mirrors.json")),
-                    "installed=" + IsCoreInstalled(root),
+                    "installed=" + HasCoreFiles(root),
                     "powershell=" + (FindPowerShell() ?? ""),
                 });
             File.WriteAllText(destination, result, new UTF8Encoding(false));

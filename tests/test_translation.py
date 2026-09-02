@@ -11,6 +11,7 @@ from asmr_dubber.errors import OperationCancelledError, TranslationError
 from asmr_dubber.models import Sentence
 from asmr_dubber.task_control import CancellationToken
 from asmr_dubber.translation import (
+    _validated_script_mapping,
     reconcile_script_sentences,
     translate_sentences,
     validate_script_reconciliation,
@@ -103,6 +104,36 @@ def test_validates_script_reconciliation_ids_and_empty_text() -> None:
     }
 
 
+def test_script_mapping_rejects_reused_or_backwards_script_ids() -> None:
+    available = [("p000001", "第一句。"), ("p000002", "第二句。")]
+    reused = '{"corrections":[{"id":"s000001","script_ids":["p000001"],"text":"第一句。"}]}'
+    with pytest.raises(TranslationError, match="重复分配"):
+        _validated_script_mapping(reused, ["s000001"], available, {"p000001"})
+
+    backwards = (
+        '{"corrections":['
+        '{"id":"s000001","script_ids":["p000002"],"text":"第二句。"},'
+        '{"id":"s000002","script_ids":["p000001"],"text":"第一句。"}]}'
+    )
+    with pytest.raises(TranslationError, match="顺序发生倒退"):
+        _validated_script_mapping(backwards, ["s000001", "s000002"], available, set())
+
+
+def test_script_mapping_uses_exact_script_instead_of_model_rewrite() -> None:
+    content = (
+        '{"corrections":[{"id":"s000001","script_ids":["p000001"],"text":"模型擅自改写的内容"}]}'
+    )
+    corrections, used = _validated_script_mapping(
+        content,
+        ["s000001"],
+        [("p000001", "台本原文。")],
+        set(),
+    )
+
+    assert corrections == {"s000001": "台本原文。"}
+    assert used == ["p000001"]
+
+
 def test_reconcile_script_sentences_keeps_asr_timing_and_uses_script_text() -> None:
     seen: dict[str, object] = {}
 
@@ -116,7 +147,10 @@ def test_reconcile_script_sentences_keeps_asr_timing_and_uses_script_text() -> N
                     {
                         "finish_reason": "stop",
                         "message": {
-                            "content": ('{"corrections":[{"id":"s000001","text":"台本の一文。"}]}')
+                            "content": (
+                                '{"corrections":[{"id":"s000001",'
+                                '"script_ids":["p000001"],"text":"台本の一文。"}]}'
+                            )
                         },
                     }
                 ]
@@ -149,6 +183,7 @@ def test_reconcile_script_sentences_keeps_asr_timing_and_uses_script_text() -> N
     assert isinstance(payload, dict)
     assert payload["thinking"] == {"type": "disabled"}
     assert "台本是文字校对的主要依据" in payload["messages"][0]["content"]
+    assert '"script_ids"' in payload["messages"][0]["content"]
     assert "台本の一文。" in json.dumps(payload, ensure_ascii=False)
     assert "{{RECOGNIZED_JSON}}" not in payload["messages"][0]["content"]
     assert "{{SCRIPT_JSON}}" not in payload["messages"][0]["content"]

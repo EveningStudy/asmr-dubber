@@ -261,6 +261,7 @@ def parse_transcript(
     path: str | Path | None = None,
     pasted_text: str = "",
     language: TranscriptLanguage = "ja",
+    use_embedded_timing: bool = True,
 ) -> TranscriptImport:
     if language not in {"ja", "en", "zh"}:
         raise ProjectError("台本语言必须是日语、英语或中文。")
@@ -284,11 +285,20 @@ def parse_transcript(
         cues = []
         source_format = "纯文本"
 
-    if cues:
+    if cues and use_embedded_timing:
         return TranscriptImport(
             sentences=_timed_sentences(cues, duration_seconds, language),
             source_format=source_format,
             timed=True,
+            source_text=text,
+            language=language,
+        )
+    if cues:
+        lines = [content for _start, _end, content in cues if content]
+        return TranscriptImport(
+            sentences=_estimated_sentences(lines, duration_seconds, language),
+            source_format=f"{source_format}（仅文字）",
+            timed=False,
             source_text=text,
             language=language,
         )
