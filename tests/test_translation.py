@@ -183,7 +183,7 @@ def test_reconcile_script_sentences_keeps_asr_timing_and_uses_script_text() -> N
     assert isinstance(payload, dict)
     assert payload["thinking"] == {"type": "disabled"}
     assert "台本是文字校对的主要依据" in payload["messages"][0]["content"]
-    assert '"script_ids"' in payload["messages"][0]["content"]
+    assert '"script_spans"' in payload["messages"][0]["content"]
     assert "台本の一文。" in json.dumps(payload, ensure_ascii=False)
     assert "{{RECOGNIZED_JSON}}" not in payload["messages"][0]["content"]
     assert "{{SCRIPT_JSON}}" not in payload["messages"][0]["content"]

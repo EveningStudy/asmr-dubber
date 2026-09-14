@@ -343,6 +343,8 @@ def load_app_config(path: Path = SETTINGS_FILE) -> AppConfig:
                 "preferred_audio_formats",
                 "bonus_policy",
                 "background_policy",
+                "original_hard_subtitles",
+                "timestamp_footer_position",
             } and not re.fullmatch(r"timestamp_footer_line_[1-5]", key):
                 print(f"警告：忽略 settings.txt 中的未知设置：{key}")
                 continue
@@ -410,11 +412,19 @@ def load_app_config(path: Path = SETTINGS_FILE) -> AppConfig:
     background_policy = values.get("background_policy", "ask").strip().casefold()
     if background_policy not in {"ask", "auto", "black"}:
         raise VideoPreparerError("background_policy 必须是 ask、auto 或 black。")
+    footer_position = values.get("timestamp_footer_position", "after").casefold()
+    if footer_position not in {"before", "after"}:
+        raise VideoPreparerError("timestamp_footer_position 必须是 before 或 after。")
+    hard_subtitles = values.get("original_hard_subtitles", "false").casefold()
+    if hard_subtitles not in {"true", "false"}:
+        raise VideoPreparerError("original_hard_subtitles 必须是 true 或 false。")
     return AppConfig(
         asmr_root=asmr_root,
         harmonized_volume_db=-abs(reduction),
         harmonized_delay_seconds=round(delay_minutes * 60),
         timestamp_footer="\n".join(line for line in footer_lines if line),
+        timestamp_footer_position=footer_position,
+        original_hard_subtitles=hard_subtitles == "true",
         output_folder_name=output_folder_name,
         default_output_layout=default_output_layout,
         preferred_audio_formats=preferred_formats,
@@ -1209,6 +1219,7 @@ def plan_identity(
     translate_work_title: bool = True,
     translate_track_titles: bool = True,
     subtitles_only: bool = False,
+    source_subtitles_only: bool = False,
 ) -> str:
     payload = {
         "source_folder": os.path.normcase(str(source_folder.resolve())),
@@ -1248,6 +1259,8 @@ def plan_identity(
         }
     if subtitles_only:
         payload["subtitles_only"] = True
+    if source_subtitles_only:
+        payload["source_subtitles_only"] = True
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
@@ -2972,6 +2985,7 @@ def render_static_bilingual_video(
     *,
     lead_seconds: int = 0,
     volume_db: float = 0.0,
+    require_hard_subtitles: bool = False,
 ) -> None:
     """Render a lightweight static video, preferring visible hard subtitles."""
 
@@ -3023,6 +3037,8 @@ def render_static_bilingual_video(
             os.replace(partial, destination)
         except VideoPreparerError:
             partial.unlink(missing_ok=True)
+            if require_hard_subtitles:
+                raise
             print("  当前 FFmpeg 无法烧录字幕，改为写入可选择的内嵌字幕轨。")
             remux_video_with_subtitle(paths, clean_video, subtitle_file, destination)
         finally:
@@ -3301,7 +3317,10 @@ def write_timestamp_document(state: dict[str, Any], folder: Path) -> Path:
     stored_footer = state.get("timestamp_footer")
     footer = DEFAULT_TIMESTAMP_FOOTER if stored_footer is None else str(stored_footer).strip()
     if footer:
-        lines.append(footer)
+        if state.get("timestamp_footer_position", "after") == "before":
+            lines[3:3] = [footer, ""]
+        else:
+            lines.append(footer)
     destination = folder / "时间戳.txt"
     atomic_write_text(destination, "\n".join(lines).rstrip() + "\n")
     return destination
@@ -3380,6 +3399,8 @@ def create_initial_state(
         "harmonized_volume_db": config.harmonized_volume_db,
         "harmonized_delay_seconds": config.harmonized_delay_seconds,
         "timestamp_footer": config.timestamp_footer,
+        "timestamp_footer_position": config.timestamp_footer_position,
+        "original_hard_subtitles": config.original_hard_subtitles,
         "reference_wait_seconds": max(0, int(config.reference_wait_seconds)),
         "status": "",
         "fingerprint": fingerprint(sources, background),
@@ -3464,6 +3485,13 @@ def execute_planned_job(
     current_fingerprint = fingerprint(sources, background)
 
     if state is not None and not rebuild:
+        if bool(state.get("original_hard_subtitles", False)) != config.original_hard_subtitles:
+            raise VideoPreparerError("原声硬字幕设置已改变；请明确选择重做，保留现有结果。")
+        if state.get("timestamp_footer_position", "after") != config.timestamp_footer_position:
+            state["timestamp_footer_position"] = config.timestamp_footer_position
+            if status_at_least(state, "completed"):
+                write_timestamp_document(state, output_folder)
+            save_state(state_file, state)
         if state.get("fingerprint") != current_fingerprint:
             raise VideoPreparerError(
                 f"{output_folder.name} 的源音频、字幕或背景发生变化；请使用 --rebuild 重做。"
@@ -3788,6 +3816,8 @@ def build_merged_outputs(
         "mode": mode,
         "harmonized_delay_seconds": int(config.harmonized_delay_seconds),
         "timestamp_footer": config.timestamp_footer,
+        "timestamp_footer_position": config.timestamp_footer_position,
+        "original_hard_subtitles": config.original_hard_subtitles,
         "timeline": timeline,
         "title_translations": dict(title_translations),
         "folder_name_original": source_folder.name,
@@ -3839,7 +3869,7 @@ def build_merged_outputs(
             "srt": str(srt),
             "lrc": str(lrc),
         }
-        if subtitles_only and embed_subtitles:
+        if (subtitles_only and embed_subtitles) or config.original_hard_subtitles:
             subtitle_destination = output_folder / "原声字幕版.mp4"
             render_static_bilingual_video(
                 paths,
@@ -3847,11 +3877,14 @@ def build_merged_outputs(
                 background,
                 srt,
                 subtitle_destination,
+                require_hard_subtitles=config.original_hard_subtitles,
                 lead_seconds=lead,
                 volume_db=volume,
             )
-            outputs["video"] = str(subtitle_destination)
-        elif not subtitles_only:
+            outputs["original_subtitle_video"] = str(subtitle_destination)
+            if subtitles_only:
+                outputs["video"] = str(subtitle_destination)
+        if not subtitles_only:
             if mixed_master is None:
                 raise VideoPreparerError("找不到可合并的双语音频。")
             bilingual_destination = output_folder / "双语版.mp4"
@@ -3894,6 +3927,7 @@ def write_smart_summary(
     title_translations: dict[str, str],
     footer: str,
     harmonized_delay_seconds: int,
+    footer_position: str = "after",
 ) -> tuple[Path, Path]:
     """Write a human-readable track index and a timeline reference."""
 
@@ -3955,8 +3989,12 @@ def write_smart_summary(
             )
         )
     if footer.strip():
-        lines.append(footer.strip())
-        timeline_lines.append(footer.strip())
+        if footer_position == "before":
+            lines[5:5] = [footer.strip(), ""]
+            timeline_lines[3:3] = [footer.strip(), ""]
+        else:
+            lines.append(footer.strip())
+            timeline_lines.append(footer.strip())
     index_file = output_root / "曲目清单.txt"
     timeline_file = output_root / "总时间戳.txt"
     atomic_write_text(index_file, "\n".join(lines).rstrip() + "\n")
@@ -3970,10 +4008,13 @@ def output_mapping_complete(
     mode: str,
     subtitles_only: bool = False,
     embed_subtitles: bool = True,
+    original_hard_subtitles: bool = False,
 ) -> bool:
     if not isinstance(outputs, dict):
         return False
     required = {"original", "srt", "lrc", "timestamps"}
+    if original_hard_subtitles and normalize_mode(mode) != MODE_AUDIO:
+        required.add("original_subtitle_video")
     if not subtitles_only:
         required.add("audio" if normalize_mode(mode) == MODE_AUDIO else "video")
     elif normalize_mode(mode) != MODE_AUDIO and embed_subtitles:
@@ -4465,6 +4506,12 @@ def execute_prepared_smart_plan(
 ) -> None:
     """Execute a previously configured smart task without asking plan questions."""
 
+    if plan.source_subtitles_only:
+        from .source_subtitles import execute_source_subtitles
+
+        execute_source_subtitles(paths, config, plan)
+        return
+
     folder = plan.folder
     output_root = plan.output_root
     edition_label = plan.edition_label
@@ -4653,11 +4700,25 @@ def execute_prepared_smart_plan(
                 mode=mode,
                 subtitles_only=subtitles_only,
                 embed_subtitles=embed_subtitles,
+                original_hard_subtitles=config.original_hard_subtitles,
             )
         ):
             print("\n合并成品已经完整，跳过重复生成。")
             merged_descriptor["outputs"] = dict(previous_merged["outputs"])
             merged_descriptor["status"] = "completed"
+            write_timestamp_document(
+                {
+                    "source_folder": str(folder),
+                    "mode": mode,
+                    "folder_name_translation": folder_translation,
+                    "title_translations": title_translations,
+                    "timeline": _timeline_from_states(states),
+                    "timestamp_footer": config.timestamp_footer,
+                    "timestamp_footer_position": config.timestamp_footer_position,
+                    "harmonized_delay_seconds": config.harmonized_delay_seconds,
+                },
+                Path(str(merged_descriptor["output"])),
+            )
         else:
             print("\n分轨项目已完成，正在从分轨结果生成合并成品（不会再次 ASR/TTS）……")
             merged_outputs = build_merged_outputs(
@@ -4716,6 +4777,7 @@ def execute_prepared_smart_plan(
         folder_translation=folder_translation,
         title_translations=title_translations,
         footer=config.timestamp_footer,
+        footer_position=config.timestamp_footer_position,
         harmonized_delay_seconds=config.harmonized_delay_seconds,
     )
     manifest["jobs"] = descriptors
@@ -4813,6 +4875,10 @@ def missing_resume_artifacts(state: dict[str, Any], folder: Path) -> list[Path]:
         require_file(project_json)
     if status_at_least(state, "outputs_ready"):
         outputs = state.get("outputs") or {}
+        if state.get("original_hard_subtitles") and normalize_mode(state["mode"]) != MODE_AUDIO:
+            require_file(
+                Path(str(outputs.get("original_subtitle_video") or folder / "原声字幕版.mp4"))
+            )
         subtitles_only = bool(state.get("subtitles_only", False))
         mode = normalize_mode(state["mode"])
         if not subtitles_only:
@@ -5092,7 +5158,8 @@ def execute_task(
                 background=(Path(str(state["background"])) if state.get("background") else None),
                 harmonized_delay_seconds=int(state["harmonized_delay_seconds"]),
                 harmonized_volume_db=float(state["harmonized_volume_db"]),
-                embed_subtitles=bool(state.get("embed_subtitles", True)),
+                embed_subtitles=bool(state.get("embed_subtitles", True))
+                and not bool(state.get("original_hard_subtitles", False)),
             )
         else:
             state["outputs"] = copy_final_outputs(
@@ -5104,6 +5171,34 @@ def execute_task(
                 harmonized_volume_db=float(state["harmonized_volume_db"]),
                 embed_subtitles=bool(state.get("embed_subtitles", True)),
             )
+        if (
+            bool(state.get("original_hard_subtitles", False))
+            and normalize_mode(state["mode"]) != MODE_AUDIO
+        ):
+            master_audio = Path(str(state.get("master_audio") or ""))
+            if not master_audio.is_file():
+                master_audio, _timeline = normalize_and_concat(
+                    paths, sources, Path(str(state["workspace"]))
+                )
+                state["master_audio"] = str(master_audio)
+            destination = folder / "原声字幕版.mp4"
+            render_static_bilingual_video(
+                paths,
+                master_audio,
+                Path(str(state["background"])) if state.get("background") else None,
+                Path(state["outputs"]["srt"]),
+                destination,
+                lead_seconds=int(state["harmonized_delay_seconds"])
+                if normalize_mode(state["mode"]) == MODE_VIDEO_HARMONIZED
+                else 0,
+                volume_db=float(state["harmonized_volume_db"])
+                if normalize_mode(state["mode"]) == MODE_VIDEO_HARMONIZED
+                else 0.0,
+                require_hard_subtitles=True,
+            )
+            state["outputs"]["original_subtitle_video"] = str(destination)
+            if subtitles_only:
+                state["outputs"]["video"] = str(destination)
         state["status"] = "outputs_ready"
         save_state(state_file, state)
 
@@ -5912,6 +6007,7 @@ def failed_task_payload(
         "translate_work_title": plan.translate_work_title,
         "translate_track_titles": plan.translate_track_titles,
         "subtitles_only": plan.subtitles_only,
+        "source_subtitles_only": plan.source_subtitles_only,
         "sources": [serialize_audio_source(item) for item in plan.sources],
     }
     if error:
@@ -5999,6 +6095,7 @@ def load_failed_task_plans() -> list[SmartTaskPlan]:
                     translate_work_title=bool(record.get("translate_work_title", True)),
                     translate_track_titles=bool(record.get("translate_track_titles", True)),
                     subtitles_only=bool(record.get("subtitles_only", False)),
+                    source_subtitles_only=bool(record.get("source_subtitles_only", False)),
                 )
             )
         except (TypeError, ValueError, OSError, VideoPreparerError):

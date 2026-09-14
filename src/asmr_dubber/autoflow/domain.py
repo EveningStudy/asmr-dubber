@@ -18,6 +18,8 @@ class AppConfig:
     harmonized_volume_db: float
     harmonized_delay_seconds: int
     timestamp_footer: str
+    original_hard_subtitles: bool = False
+    timestamp_footer_position: str = "after"
     output_folder_name: str = "AutoFlow输出"
     default_output_layout: str = "ask"
     preferred_audio_formats: tuple[str, ...] = (".wav", ".flac", ".ape", ".m4a", ".mp3")
@@ -74,6 +76,7 @@ class SmartTaskPlan:
     translate_work_title: bool = True
     translate_track_titles: bool = True
     subtitles_only: bool = False
+    source_subtitles_only: bool = False
 
 
 @dataclass(frozen=True)

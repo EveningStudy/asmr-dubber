@@ -873,7 +873,7 @@ def test_tts_settings_tab_reloads_the_current_project_backend(app, monkeypatch) 
     functions = [
         function for function in app.fns.values() if function.name == "refresh_tts_form_callback"
     ]
-    assert len(functions) == 2  # Page load + explicit load; never reset a draft on tab selection.
+    assert len(functions) == 1  # Explicit project load; page load hydrates the entire form.
     settings = ProjectSettings()
     settings.tts_backend = "indextts2_5"
     settings.tts_model = "IndexTTS-2.5"
@@ -950,31 +950,48 @@ def test_settings_default_scope_preserves_current_project(app, monkeypatch):
 
 
 def test_workflow_controls_follow_prerequisites(app):
-    fn = next(f.fn for f in app.fns.values() if f.name == "workflow_availability")
-    assert not any(item["interactive"] for item in fn("", []))
-    assert [item["interactive"] for item in fn("project.json", [])] == [
-        True,
-        False,
-        False,
-        False,
-        False,
+    buttons = [
+        c
+        for c in app.blocks.values()
+        if str(getattr(c, "value", "")).startswith(
+            (
+                "1 · 运行 ASR",
+                "2 · 翻译为中文",
+                "3 · 保存校对表格",
+                "4 · 生成中文配音",
+                "5 · 混音与输出",
+            )
+        )
     ]
-    assert all(
-        item["interactive"] for item in fn("project.json", [["s1", True, 0, 1, "source", "中文"]])
-    )
-    assert not fn("project.json", [["s1", "false", "0", "1", "source", "中文"]])[3]["interactive"]
+    assert len(buttons) == 5
+    assert all(c.interactive is False for c in buttons)
+    f = next(f for f in app.fns.values() if f.name == "workflow_availability")
+    assert len(f.inputs) == 1
+    assert not any(item["interactive"] for item in f.fn(""))
+    assert all(item["interactive"] for item in f.fn("project.json"))
 
 
-def test_sentence_table_avoids_mixed_datatype_reactive_loop(app):
+def test_sentence_table_uses_bounded_native_editor(app):
     table = next(
         component
         for component in app.blocks.values()
         if getattr(component, "label", None) == "句子校对表格"
     )
-    assert table.datatype == "str"
-    assert table.type == "array"
-    assert table.wrap is False
-    assert table.max_chars == 160
+    assert table.__class__.__name__ == "HTML"
+    assert "const size = 50" in table.js_on_load
+    assert "document.createElement" in table.js_on_load
+    assert "props.value = rows.slice()" in table.js_on_load
+    assert "table-layout:fixed" in table.css_template
+
+
+def test_sentence_table_does_not_send_whole_table_on_cell_edit(app):
+    table = next(c for c in app.blocks.values() if getattr(c, "label", None) == "句子校对表格")
+    events = [
+        d
+        for d in app.config["dependencies"]
+        if any(target[0] == table._id for target in d["targets"])
+    ]
+    assert events == []
 
 
 def test_review_feature_and_result_panel_have_explicit_experimental_warning(app):

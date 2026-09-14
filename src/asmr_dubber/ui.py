@@ -85,6 +85,8 @@ from .review_services import (
     undo_review,
     unlock_review,
 )
+from .runtime_health import BACKENDS as HEALTH_BACKENDS
+from .runtime_health import check_runtime_health, explain_runtime_error, repair_runtime_health
 from .runtime_manager import (
     asmr_vad_status,
     available_asr_review_choices,
@@ -99,12 +101,14 @@ from .runtime_manager import (
     recommended_stack_markdown,
     refresh_hardware,
 )
+from .sentence_editor import CSS as SENTENCE_EDITOR_CSS
+from .sentence_editor import JS as SENTENCE_EDITOR_JS
+from .sentence_editor import TEMPLATE as SENTENCE_EDITOR_TEMPLATE
 from .task_control import CancellationToken, cancellation_scope
 from .translation import default_translation_prompt
 from .ui_assets import _NATIVE_OUTPUT_AUDIO_JS as _NATIVE_OUTPUT_AUDIO_JS
 from .ui_assets import APP_CSS as APP_CSS
 from .ui_services import (
-    TABLE_HEADERS,
     ProjectView,
     analyze,
     apply_global_settings,
@@ -639,7 +643,7 @@ def _safe_error(exc: Exception) -> str:
             for item in validation_error.errors()[:8]
         )
         return f"设置校验失败：{details}"
-    return str(exc) or exc.__class__.__name__
+    return explain_runtime_error(str(exc) or exc.__class__.__name__)
 
 
 def _view_values(view: ProjectView) -> tuple[Any, ...]:
@@ -655,7 +659,19 @@ def _view_values(view: ProjectView) -> tuple[Any, ...]:
             f"**当前项目：** `{view.manifest}`  \n"
             f"**音频/台本语言：** {source_language_label(view.source_language)}"
         ),
-        view.rows,
+        [
+            [
+                "true"
+                if value is True
+                else "false"
+                if value is False
+                else ""
+                if value is None
+                else str(value)
+                for value in row
+            ]
+            for row in view.rows
+        ],
         _gr_update(value=view.output_audio, visible=bool(view.output_audio)),
         _gr_update(value=view.stem_audio, visible=bool(view.stem_audio)),
         _gr_update(value=view.output_video, visible=bool(view.output_video)),
@@ -831,6 +847,40 @@ def _settings_from_form(
             store_reference_audio(str(emotion_upload))
         )
     return UserSettings.model_validate(current)
+
+
+def _visibility_only(updates: Sequence[Any]) -> tuple[Any, ...]:
+    # Programmatic hydration must refresh choices/visibility without resetting saved values.
+    return tuple(
+        {key: value for key, value in item.items() if key != "value"}
+        if isinstance(item, dict)
+        else item
+        for item in updates
+    )
+
+
+def _settings_form_values(current: UserSettings, names: Sequence[str]) -> list[Any]:
+    aliases = {
+        "loudness_uniform_target_dbfs": current.chinese_target_active_rms_dbfs,
+        "loudness_source_ceiling_dbfs": current.chinese_target_active_rms_dbfs,
+        "loudness_raw_gain_db": current.chinese_gain_db,
+        "loudness_mode": _loudness_mode(
+            current.normalize_chinese_loudness, current.match_source_loudness
+        ),
+        "translation_prompt_drafts": _translation_prompt_drafts(current),
+        "translation_prompt": _translation_prompt_for_display(
+            current.translation_prompt_for(current.default_source_language),
+            current.default_source_language,
+        ),
+    }
+    emotions = ("happy", "angry", "sad", "afraid", "disgusted", "melancholic", "surprised", "calm")
+    aliases.update(
+        {
+            f"tts_index25_emotion_{name}": current.tts_index25_emotion_vector[i]
+            for i, name in enumerate(emotions)
+        }
+    )
+    return [aliases[name] if name in aliases else getattr(current, name) for name in names]
 
 
 def _provider_update(provider: Any) -> tuple[Any, ...]:
@@ -1517,36 +1567,37 @@ def build_app() -> Any:
                             equal_height=True,
                             elem_classes=["workflow-actions", "mobile-stack"],
                         ):
-                            asr_button = gr.Button("1 · 运行 ASR（语音识别）", variant="primary")
-                            translate_button = gr.Button("2 · 翻译为中文")
-                            save_table_button = gr.Button("3 · 保存校对表格")
+                            asr_button = gr.Button(
+                                "1 · 运行 ASR（语音识别）", variant="primary", interactive=False
+                            )
+                            translate_button = gr.Button("2 · 翻译为中文", interactive=False)
+                            save_table_button = gr.Button("3 · 保存校对表格", interactive=False)
                             synthesize_button = gr.Button(
                                 "4 · 生成中文配音",
                                 variant="primary",
+                                interactive=False,
                             )
-                            mix_button = gr.Button("5 · 混音与输出")
+                            mix_button = gr.Button("5 · 混音与输出", interactive=False)
                         cancel_task_button = gr.Button("取消当前执行", variant="stop")
                         status = gr.Markdown(
                             "请选择原始文件新建项目，或从最近项目中继续。",
                             elem_id="project-status",
                         )
 
-                        sentence_table = gr.Dataframe(
-                            headers=TABLE_HEADERS,
-                            datatype="str",
-                            type="array",
+                        sentence_table = gr.HTML(
                             value=[],
-                            interactive=True,
-                            wrap=False,
-                            max_chars=160,
-                            column_count=len(TABLE_HEADERS),
+                            html_template=SENTENCE_EDITOR_TEMPLATE,
+                            css_template=SENTENCE_EDITOR_CSS,
+                            js_on_load=SENTENCE_EDITOR_JS,
                             label="句子校对表格",
+                            show_label=True,
+                            container=True,
                             elem_classes=["sentence-table"],
                         )
                         gr.Markdown(
                             "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
-                            "保存后会删除该句。启用列填写 true/false 或 是/否；"
-                            "长文本仅在显示时收起，双击单元格可编辑完整内容。"
+                            "保存后会删除该句。每页显示 50 句，翻页不丢草稿；"
+                            "长文本可在输入框内滚动或拖高查看，保存不会截断。"
                         )
 
                         with gr.Accordion(
@@ -1715,12 +1766,23 @@ def build_app() -> Any:
                                 choices=[
                                     ("中文配音和字幕", "dubbing"),
                                     ("仅生成字幕（不配音）", "subtitles"),
+                                    (
+                                        "仅原文字幕文件（不翻译、不配音、不制作视频）",
+                                        "source_subtitles",
+                                    ),
                                 ],
                                 value="dubbing",
                                 info=(
-                                    "仅生成字幕会完成识别和必要的翻译，但不会选择参考音频、"
-                                    "运行 TTS（语音合成）或混音；成品始终包含 SRT 和 LRC。"
+                                    "仅生成字幕（不配音）仍可翻译并制作字幕视频；"
+                                    "仅原文字幕文件只导出 SRT/LRC，不翻译、不配音、不制作视频。"
+                                    "仅直用同语言时间轴字幕，其他台本用 ASR。"
                                 ),
+                            )
+                            source_subtitle_note = gr.Markdown(
+                                "仅原文字幕：不翻译、不配音、不制作视频。仅同语言的时间轴字幕直接导入；"
+                                "其他台本不做大模型校对，使用 ASR。"
+                                "成品是原文 SRT/LRC，项目副本用于重试。",
+                                visible=False,
                             )
                             with gr.Row(elem_classes=["mobile-stack"]):
                                 autoflow_mode = gr.Radio(
@@ -1923,6 +1985,34 @@ def build_app() -> Any:
                         recommendation = gr.Markdown(recommended_stack_markdown())
                         gr.Markdown(PROFILE_MARKDOWN, elem_classes=["profile-table"])
                         refresh_hardware_button = gr.Button("重新检测硬件与后端")
+                        with gr.Accordion("运行依赖检测与修复", open=True):
+                            gr.Markdown(
+                                "遇到缺 DLL、后端无法启动或 Python 依赖错误时使用。"
+                                "检测只运行启动/导入检查，不下载模型、不进行完整推理。"
+                                "修复不会删除项目、模型或已有成品，也不会自动重跑任务。"
+                            )
+                            health_backend = gr.Dropdown(
+                                choices=[(label, key) for key, label in HEALTH_BACKENDS.items()],
+                                value="parakeet_nemo",
+                                label="检测/修复的后端",
+                            )
+                            health_check = gr.Button("检测运行依赖")
+                            health_action = gr.Radio(
+                                choices=[
+                                    ("微软 VC++ x64 运行库（Windows）", "vc"),
+                                    ("所选后端环境（使用现有安装器）", "backend"),
+                                ],
+                                value="vc",
+                                label="修复范围",
+                            )
+                            health_confirm = gr.Checkbox(
+                                label="我确认执行所选修复：微软运行库从官方联网下载并验证签名，可能请求管理员权限；后端修复可能下载依赖、补齐缺失模型并替换环境。",
+                                value=False,
+                            )
+                            health_repair = gr.Button("安装/修复运行依赖")
+                            health_report = gr.Textbox(
+                                label="运行依赖检测与修复报告", lines=12, interactive=False
+                            )
                         gr.Markdown("### ASR（语音识别）后端")
                         asr_catalog = gr.Dataframe(
                             headers=CATALOG_HEADERS,
@@ -3206,11 +3296,24 @@ def build_app() -> Any:
                                 value=stored.autoflow_harmonized_delay_minutes,
                                 info="在成品开头加入相同长度的空档，让作品内容整体后移。",
                             )
+                        settings_components["autoflow_original_hard_subtitles"] = gr.Checkbox(
+                            label="原声视频也编码硬字幕",
+                            value=stored.autoflow_original_hard_subtitles,
+                            info=(
+                                "视频任务另存原声字幕版 MP4，保留无字幕原声；"
+                                "烧录失败会报错，不回退软字幕。纯音频不受影响。"
+                            ),
+                        )
+                        settings_components["autoflow_timestamp_footer_position"] = gr.Radio(
+                            label="时间戳文档附加文字位置",
+                            choices=[("时间戳前", "before"), ("时间戳后", "after")],
+                            value=stored.autoflow_timestamp_footer_position,
+                        )
                         settings_components["autoflow_timestamp_footer"] = gr.Textbox(
                             label="时间戳文档页脚",
                             value=stored.autoflow_timestamp_footer,
                             lines=5,
-                            info="会写在总时间戳和分轨时间戳文档末尾；留空则不添加。所有作品共用。",
+                            info="按上方选择写在时间戳前或后；留空则不添加。所有作品共用。",
                         )
                         gr.Markdown("#### 标题文字")
                         with gr.Row(elem_classes=["mobile-stack"]):
@@ -3306,47 +3409,18 @@ def build_app() -> Any:
             mix_button,
         ]
 
-        def workflow_availability(manifest: str, table: Any) -> tuple[Any, ...]:
+        def workflow_availability(manifest: str) -> tuple[Any, ...]:
+            # Do not observe the table at all: Gradio serializes its data even
+            # for frontend callbacks. Each explicit operation validates its input.
             opened = bool(str(manifest or "").strip())
-            rows = table.get("data", []) if isinstance(table, dict) else table
-            if hasattr(rows, "values"):
-                rows = rows.values.tolist()
-            rows = rows if isinstance(rows, list) else []
-            has_text = any(
-                len(row) >= 6
-                and str(row[1]).strip().casefold() in {"true", "1", "yes", "是"}
-                and str(row[5] or "").strip()
-                for row in rows
-            )
-            return tuple(
-                gr.update(interactive=enabled)
-                for enabled in (
-                    opened,
-                    opened and bool(rows),
-                    opened and bool(rows),
-                    opened and has_text,
-                    opened and has_text,
-                )
-            )
+            return tuple(gr.update(interactive=opened) for _ in workflow_buttons)
 
-        app.load(
-            lambda: tuple(gr.update(interactive=False) for _ in workflow_buttons),
-            outputs=workflow_buttons,
-            queue=False,
-            api_name=_PRIVATE_API,
-        )
         project_path.change(
             workflow_availability,
-            inputs=[project_path, sentence_table],
+            inputs=[project_path],
             outputs=workflow_buttons,
             queue=False,
-            api_name=_PRIVATE_API,
-        )
-        sentence_table.change(
-            workflow_availability,
-            inputs=[project_path, sentence_table],
-            outputs=workflow_buttons,
-            queue=False,
+            show_progress="hidden",
             api_name=_PRIVATE_API,
         )
         common_outputs = [
@@ -3694,6 +3768,7 @@ def build_app() -> Any:
                     embed_subtitles,
                     rebuild,
                     str(task_content or "dubbing") == "subtitles",
+                    str(task_content or "dubbing") == "source_subtitles",
                 )
                 selected = str(editing_plan_id or "").strip()
                 items = (
@@ -3781,7 +3856,13 @@ def build_app() -> Any:
                     view.selection_summary,
                     gr.update(value=view.mode),
                     gr.update(value=view.layout),
-                    gr.update(value="subtitles" if view.subtitles_only else "dubbing"),
+                    gr.update(
+                        value="source_subtitles"
+                        if view.source_subtitles_only
+                        else "subtitles"
+                        if view.subtitles_only
+                        else "dubbing"
+                    ),
                     gr.update(
                         choices=view.background_choices,
                         value=view.selected_background,
@@ -4390,7 +4471,9 @@ def build_app() -> Any:
         def autoflow_video_options_callback(mode: Any, task_content: Any) -> tuple[Any, Any]:
             subtitles_only = str(task_content or "dubbing") == "subtitles"
             return (
-                gr.update(visible=str(mode or "audio") != "audio"),
+                gr.update(
+                    visible=str(mode or "audio") != "audio" and task_content != "source_subtitles"
+                ),
                 gr.update(
                     label=("让原声视频带字幕" if subtitles_only else "在视频中内嵌双语字幕"),
                     info=(
@@ -4414,6 +4497,17 @@ def build_app() -> Any:
             outputs=[autoflow_video_group, autoflow_embed_subtitles],
             api_name=_PRIVATE_API,
             queue=False,
+        )
+        autoflow_task_content.change(
+            lambda content: (
+                gr.update(visible=content != "source_subtitles"),
+                gr.update(visible=content != "source_subtitles"),
+                gr.update(visible=content == "source_subtitles"),
+            ),
+            inputs=[autoflow_task_content],
+            outputs=[autoflow_mode, autoflow_selection_summary, source_subtitle_note],
+            queue=False,
+            api_name=_PRIVATE_API,
         )
         autoflow_add_button.click(
             autoflow_add_callback,
@@ -4687,7 +4781,7 @@ def build_app() -> Any:
                 queue=False,
             )
 
-        source_language_event = settings_components["default_source_language"].change(
+        source_language_event = settings_components["default_source_language"].input(
             _source_language_backend_update,
             inputs=[
                 settings_components["default_source_language"],
@@ -4764,8 +4858,41 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
-        settings_components["asr_backend"].change(
+        settings_components["asr_backend"].input(
             _asr_backend_update,
+            inputs=[
+                settings_components["asr_backend"],
+                settings_components["asr_vad_mode"],
+                settings_components["default_source_language"],
+            ],
+            outputs=[
+                settings_components["asr_model"],
+                settings_components["asr_api_base_url"],
+                settings_components["asr_api_extra_body"],
+                asr_api_group,
+                asr_help,
+                settings_components["asr_compute_type"],
+                settings_components["asr_beam_size"],
+                settings_components["asr_condition_on_previous_text"],
+                settings_components["asr_initial_prompt"],
+                settings_components["asr_timeout_seconds"],
+                settings_components["asr_chunk_seconds"],
+                settings_components["asr_parakeet_decoder"],
+                settings_components["asr_kotoba_chunk_seconds"],
+                settings_components["asr_vad_mode"],
+                settings_components["asr_vad_min_silence_ms"],
+                settings_components["asr_asmr_vad_threshold"],
+                settings_components["asr_asmr_vad_min_speech_ms"],
+                settings_components["asr_asmr_vad_min_silence_ms"],
+                settings_components["asr_asmr_vad_speech_pad_ms"],
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["asr_backend"].change(
+            lambda backend, vad, language: _visibility_only(
+                _asr_backend_update(backend, vad, language)
+            ),
             inputs=[
                 settings_components["asr_backend"],
                 settings_components["asr_vad_mode"],
@@ -4832,8 +4959,23 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
-        settings_components["translation_provider"].change(
+        settings_components["translation_provider"].input(
             _provider_update,
+            inputs=[settings_components["translation_provider"]],
+            outputs=[
+                settings_components["translation_model"],
+                settings_components["translation_base_url"],
+                translation_help,
+                translation_key_status,
+                llm_translation_group,
+                deepl_translation_group,
+                microsoft_translation_group,
+            ],
+            api_name=_PRIVATE_API,
+            queue=False,
+        )
+        settings_components["translation_provider"].change(
+            lambda provider: _visibility_only(_provider_update(provider)),
             inputs=[settings_components["translation_provider"]],
             outputs=[
                 settings_components["translation_model"],
@@ -5144,11 +5286,59 @@ def build_app() -> Any:
                 )
 
         tts_refresh_outputs = [settings_status, *tts_form_components, tts_usage]
+
         # build_app() lives for the process; hydration must read disk per page load.
+        def refresh_settings_form_callback() -> tuple[Any, ...]:
+            current = load_user_settings()
+            values = _settings_form_values(current, field_names)
+            updates = [gr.update(value=value) for value in values]
+            choices, models, text_priority, timestamps, time_priority = _review_control_state(
+                current.to_project_settings(source_language=current.default_source_language),
+                current.default_source_language,
+            )
+            review_updates = {
+                "asr_review_enabled": gr.update(value=current.asr_review_enabled and bool(models)),
+                "asr_review_models": gr.update(choices=choices, value=models),
+                "asr_review_text_priority_model": gr.update(
+                    choices=choices, value=text_priority or None
+                ),
+                "asr_review_timestamp_priority_model": gr.update(
+                    choices=timestamps, value=time_priority or None
+                ),
+            }
+            for name, update in review_updates.items():
+                updates[field_names.index(name)] = update
+            return (
+                *updates,
+                current.default_source_language,
+                _source_language_backend_update(
+                    current.default_source_language, current.asr_backend
+                )[1],
+                _backend_usage_markdown(
+                    "asr", "", current.asr_backend, current.asr_model, current.asr_api_base_url
+                ),
+                _backend_usage_markdown(
+                    "translation",
+                    "",
+                    current.translation_provider,
+                    current.translation_model,
+                    current.translation_base_url,
+                ),
+                _backend_usage_markdown(
+                    "tts", "", current.tts_backend, current.tts_model, current.tts_api_base_url
+                ),
+            )
+
         app.load(
-            refresh_tts_form_callback,
-            inputs=[project_path],
-            outputs=tts_refresh_outputs,
+            refresh_settings_form_callback,
+            outputs=[
+                *field_components,
+                active_prompt_language,
+                source_language_help,
+                asr_usage,
+                translation_usage,
+                tts_usage,
+            ],
             api_name=_PRIVATE_API,
             queue=False,
             show_progress="hidden",
@@ -5566,6 +5756,38 @@ def build_app() -> Any:
             tts_available,
             *availability_outputs,
         ]
+
+        def health_callback(backend: str) -> str:
+            try:
+                return check_runtime_health(backend)
+            except Exception as exc:
+                return "检测未完成：" + _safe_error(exc)
+
+        def health_repair_callback(backend: str, action: str, confirmed: bool) -> Iterator[str]:
+            yield "正在处理所选修复；微软安装界面若已打开，请在本机操作。请勿同时运行模型任务。"
+            try:
+                yield repair_runtime_health(backend, action, confirmed)
+            except Exception as exc:
+                yield "修复未完成：" + _safe_error(exc)
+
+        health_check.click(
+            health_callback,
+            inputs=[health_backend],
+            outputs=[health_report],
+            api_name=_PRIVATE_API,
+            **runtime_options,
+        )
+        health_repair.click(
+            health_repair_callback,
+            inputs=[health_backend, health_action, health_confirm],
+            outputs=[health_report],
+            api_name=_PRIVATE_API,
+            **runtime_options,
+        )
+        for selection in (health_backend, health_action):
+            selection.change(
+                lambda: False, outputs=[health_confirm], queue=False, api_name=_PRIVATE_API
+            )
         install_asr_button.click(
             install_callback,
             inputs=[install_asr_choice, *availability_inputs],

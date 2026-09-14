@@ -89,4 +89,4 @@ def test_view_does_not_decode_media_to_return_table(monkeypatch):
         "",
         "ok",
     )
-    assert ui._view_values(view)[2] == view.rows
+    assert ui._view_values(view)[2] == [["s1", "true", "0", "1", "source", ""]]

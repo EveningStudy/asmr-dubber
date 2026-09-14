@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib.resources import files
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -25,6 +26,7 @@ from .languages import (
     source_language_label,
 )
 from .models import Sentence
+from .storage import atomic_write_text
 from .task_control import (
     CancellationSignal,
     check_cancelled,
@@ -70,12 +72,20 @@ class TranslationEnvelope(BaseModel):
     translations: list[TranslationItem] = Field(min_length=1)
 
 
+class ScriptSpan(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    id: str
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+
+
 class ScriptCorrection(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     id: str
     text: str
     script_ids: list[str] = Field(default_factory=list)
+    script_spans: list[ScriptSpan] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -369,6 +379,92 @@ def _validated_script_mapping(
     if positions != sorted(positions):
         raise TranslationError("台本映射顺序发生倒退。")
     return corrections, selected_ids
+
+
+def _validated_script_spans(
+    content: str,
+    recognized: list[Sentence],
+    available: list[tuple[str, str]],
+    consumed_ends: dict[str, int],
+) -> tuple[dict[str, str], dict[str, int], list[dict[str, object]]]:
+    """Allocate disjoint literal ranges; time boundaries always remain ASR-owned."""
+    validate_script_reconciliation(content, [s.id for s in recognized])
+    envelope = ScriptCorrectionEnvelope.model_validate(_extract_json(content))
+    lookup = dict(available)
+    order = {key: i for i, (key, _) in enumerate(available)}
+    ends = dict(consumed_ends)
+    owners: dict[str, str] = {}
+    last_position = max((order[key] for key in consumed_ends if key in order), default=-1)
+    result: dict[str, str] = {}
+    allocations: list[dict[str, object]] = []
+    for item, sentence in zip(envelope.corrections, recognized, strict=True):
+        spans = item.script_spans
+        if spans and item.script_ids:
+            raise TranslationError(
+                f"{item.id} 同时返回 script_ids 和 script_spans，请只用 script_spans。"
+            )
+        if not spans:
+            if item.script_ids and not item.text:
+                # An empty correction means no reliable match. Do not consume
+                # an entire line merely because the model repeated its id.
+                item.script_ids = []
+            # Compatibility with older responses. A single literal prefix can be
+            # split without trusting model-authored text or duplicating the full line.
+            spans = []
+            for key in item.script_ids:
+                text = lookup.get(key, "")
+                start = ends.get(key, 0)
+                remaining = text[start:]
+                if len(item.script_ids) == 1 and item.text and remaining.startswith(item.text):
+                    end = start + len(item.text)
+                else:
+                    start, end = 0, len(text)
+                spans.append(ScriptSpan(id=key, start=start, end=max(1, end)))
+        if item.text and not spans:
+            raise TranslationError(
+                f"{item.id} 返回文字但没有台本范围；无匹配时返回空文字和空范围。"
+            )
+        parts: list[str] = []
+        previous_part_id: str | None = None
+        for span in spans:
+            text = lookup.get(span.id)
+            context = f"{item.id}（{sentence.start_seconds:.2f}–{sentence.end_seconds:.2f} 秒）"
+            if text is None:
+                raise TranslationError(f"{context} 引用了窗口外台本 {span.id}。")
+            position = order[span.id]
+            if position < last_position:
+                raise TranslationError(f"{context} 的台本 {span.id} 映射顺序倒退。")
+            previous_end = ends.get(span.id, 0)
+            if last_position >= 0 and position > last_position:
+                previous_key = available[last_position][0]
+                if ends.get(previous_key, 0) < len(lookup[previous_key]):
+                    raise TranslationError(
+                        f"台本 {previous_key} 尚有未分配的文字，请先完成该台本再使用 {span.id}。"
+                    )
+            if span.start < previous_end:
+                owner = owners.get(span.id, "前一批识别区间")
+                raise TranslationError(
+                    f"台本 {span.id} 被重复分配：{owner} 与 {context}；"
+                    f"已使用 [0,{previous_end})，本次 [{span.start},{span.end})。"
+                    "应分配互不重叠的原文范围，不得把同一全文写进两句。"
+                )
+            if span.start != previous_end or span.end > len(text) or span.end <= span.start:
+                raise TranslationError(
+                    f"{context} 的 {span.id} 范围无效；下一个起点应为 {previous_end}，"
+                    f"终点应大于起点且不超过 {len(text)}。"
+                )
+            if previous_part_id == span.id:
+                parts[-1] += text[span.start : span.end]
+            else:
+                parts.append(text[span.start : span.end])
+            previous_part_id = span.id
+            ends[span.id] = span.end
+            owners[span.id] = context
+            last_position = position
+            allocations.append({"sentence_id": item.id, **span.model_dump()})
+        separator = "" if any(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", p) for p in parts) else " "
+        result[item.id] = separator.join(parts).strip()
+    return result, ends, allocations
 
 
 class DeepSeekTranslator:
@@ -835,12 +931,12 @@ def _script_reconciliation_messages(
     source_language: SourceLanguage,
     target: Literal["source", "zh"],
     attempt: int,
+    last_error: str = "",
+    consumed_ends: dict[str, int] | None = None,
 ) -> list[dict[str, str]]:
     output_label = source_language_label(source_language) if target == "source" else "中文"
     retry_note = (
-        ""
-        if attempt == 1
-        else f"这是第 {attempt} 次校验重试。必须返回全部识别 id，且顺序完全一致。"
+        "" if attempt == 1 else f"这是第 {attempt} 次校验重试。请修正以下具体错误：{last_error}"
     )
     recognized_payload = []
     for sentence in batch.recognized:
@@ -853,7 +949,15 @@ def _script_reconciliation_messages(
         if target == "zh":
             item["translation"] = sentence.zh_text
         recognized_payload.append(item)
-    script_payload = [{"id": line_id, "text": text} for line_id, text in batch.script]
+    script_payload = [
+        {
+            "id": line_id,
+            "text": text,
+            "length": len(text),
+            "available_start": (consumed_ends or {}).get(line_id, 0),
+        }
+        for line_id, text in batch.script
+    ]
     recognized_json = json.dumps(recognized_payload, ensure_ascii=False, separators=(",", ":"))
     script_json = json.dumps(script_payload, ensure_ascii=False, separators=(",", ":"))
     system = (
@@ -868,7 +972,7 @@ def _script_reconciliation_messages(
         + json.dumps(
             {
                 "corrections": [
-                    {"id": sentence.id, "script_ids": [], "text": ""}
+                    {"id": sentence.id, "script_spans": [], "text": ""}
                     for sentence in batch.recognized
                 ]
             },
@@ -902,6 +1006,8 @@ def reconcile_script_sentences(
     client: httpx.Client | None = None,
     cancel_event: CancellationSignal | None = None,
     extra_body: str = "{}",
+    diagnostic_path: Path | None = None,
+    script_source: str = "",
 ) -> tuple[dict[str, str], list[dict[str, object]]]:
     """Use an LLM to map an untimed script onto ASR timing without changing time ranges."""
 
@@ -915,9 +1021,14 @@ def reconcile_script_sentences(
         raise TranslationError("台本中没有可供校对的文字。")
     recognized_batches = _recognized_script_batches(recognized)
     script_items = [(f"p{index:06d}", text) for index, text in enumerate(fragments, start=1)]
+    script_lookup = dict(script_items)
     script_position = {script_id: index for index, (script_id, _text) in enumerate(script_items)}
     script_cursor = 0
     consumed_script_ids: set[str] = set()
+    consumed_ends: dict[str, int] = {}
+    origins = []
+    for line_number, line in enumerate(script_lines, start=1):
+        origins.extend([line_number] * len(_script_fragments([line])))
     translator = LLMTranslator(
         provider=provider,
         api_key=api_key,
@@ -949,6 +1060,9 @@ def reconcile_script_sentences(
                 last_error: Exception | None = None
                 result: dict[str, str] | None = None
                 selected_script_ids: list[str] = []
+                new_ends: dict[str, int] = {}
+                allocations: list[dict[str, object]] = []
+                content = ""
                 for attempt in range(1, 4):
                     check_cancelled(cancel_event)
                     messages = _script_reconciliation_messages(
@@ -956,6 +1070,8 @@ def reconcile_script_sentences(
                         source_language=source_language,
                         target=target,
                         attempt=attempt,
+                        last_error=str(last_error or ""),
+                        consumed_ends=consumed_ends,
                     )
                     # Anthropic and Gemini use this field as their system instruction;
                     # OpenAI-compatible providers also receive the explicit system message.
@@ -968,12 +1084,13 @@ def reconcile_script_sentences(
                             )
                         if not content.strip():
                             raise TranslationError("台本校对模型返回了空内容。")
-                        result, selected_script_ids = _validated_script_mapping(
+                        result, new_ends, allocations = _validated_script_spans(
                             content,
-                            expected_ids,
+                            batch.recognized,
                             available_script,
-                            consumed_script_ids,
+                            consumed_ends,
                         )
+                        selected_script_ids = list(dict.fromkeys(str(a["id"]) for a in allocations))
                         break
                     except (_NonRetryableTranslationError, _OutputLengthTranslationError):
                         raise
@@ -984,21 +1101,63 @@ def reconcile_script_sentences(
                     if attempt < 3:
                         time.sleep(min(8.0, attempt * 1.5 + random.uniform(0.0, 0.5)))
                 if result is None:
+                    ids_in_error = re.findall(r"\bp\d{6}\b", str(last_error))
+                    locations = [
+                        f"{key}=导入后第 {origins[script_position[key]]} 行"
+                        for key in dict.fromkeys(ids_in_error)
+                        if key in script_position
+                    ]
+                    diagnostic = {
+                        "source": script_source,
+                        "batch": index + 1,
+                        "error": str(last_error),
+                        "recognized": [s.model_dump() for s in batch.recognized],
+                        "script": [
+                            {"id": key, "parsed_line": origins[script_position[key]], "text": text}
+                            for key, text in batch.script
+                        ],
+                        "response": content,
+                        "completed_batches": report,
+                    }
+                    if diagnostic_path is not None:
+                        diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+                        atomic_write_text(
+                            diagnostic_path, json.dumps(diagnostic, ensure_ascii=False, indent=2)
+                        )
                     raise TranslationError(
                         f"台本校对第 {index + 1}/{len(recognized_batches)} 批失败：{last_error}"
+                        + ("\n台本位置：" + "；".join(locations) if locations else "")
+                        + (
+                            f"\n详细台本、冲突时间与模型结果：{diagnostic_path}"
+                            if diagnostic_path
+                            else ""
+                        )
                     ) from last_error
                 corrections.update(result)
-                consumed_script_ids.update(selected_script_ids)
+                consumed_ends = new_ends
+                consumed_script_ids.update(
+                    key for key in selected_script_ids if new_ends[key] == len(script_lookup[key])
+                )
                 if selected_script_ids:
-                    script_cursor = (
-                        max(script_position[script_id] for script_id in selected_script_ids) + 1
-                    )
+                    last_key = selected_script_ids[-1]
+                    script_cursor = script_position[last_key] + (last_key in consumed_script_ids)
                 report.append(
                     {
                         "recognized_ids": expected_ids,
+                        "recognized": [
+                            {
+                                "id": s.id,
+                                "start": s.start_seconds,
+                                "end": s.end_seconds,
+                                "original": s.source_text,
+                            }
+                            for s in batch.recognized
+                        ],
                         "available_script_ids": [line_id for line_id, _ in batch.script],
                         "consumed_script_ids": selected_script_ids,
                         "corrections": result,
+                        "allocations": allocations,
+                        "script_source": script_source,
                     }
                 )
                 if on_batch:
@@ -1015,10 +1174,34 @@ def reconcile_script_sentences(
     unused = [
         script_id for script_id, _text in script_items if script_id not in consumed_script_ids
     ]
+    if not any(corrections.values()):
+        if diagnostic_path is not None:
+            diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                diagnostic_path,
+                json.dumps(
+                    {"error": "未匹配到任何台本文字", "batches": report, "script": script_items},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            )
+        raise TranslationError(
+            "台本没有可靠匹配到任何识别区间；未应用空结果，请核对音轨、台本和语言。"
+            + (f"详细报告：{diagnostic_path}" if diagnostic_path else "")
+        )
     if unused:
         report.append(
             {
                 "unused_script_ids": unused,
+                "remaining_script": [
+                    {
+                        "id": key,
+                        "start": consumed_ends.get(key, 0),
+                        "text": text[consumed_ends.get(key, 0) :],
+                    }
+                    for key, text in script_items
+                    if key in unused
+                ],
                 "reason": "这些台本片段没有可靠匹配到 ASR 时间区间，需要人工检查",
             }
         )

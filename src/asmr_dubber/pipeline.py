@@ -194,6 +194,7 @@ def _reconcile_untimed_script(
     *,
     script_lines: list[str],
     script_language: TranscriptLanguage,
+    script_source: str = "",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[Sentence], list[dict[str, object]]]:
@@ -257,19 +258,17 @@ def _reconcile_untimed_script(
             max_output_tokens=project.settings.translation_max_output_tokens,
             extra_body=project.settings.translation_extra_body,
             job_id=f"asmr_{project.source.sha256[:24]}_script",
+            diagnostic_path=project_dir / "imports" / "script-reconciliation-error.json",
+            script_source=script_source,
             progress=progress,
             cancel_event=cancel_event,
         )
-        fallback_ids: list[str] = []
         unmatched_ids: list[str] = []
         for sentence in working.sentences:
             candidate = sentence.source_text if target == "source" else sentence.zh_text
             corrected = str(corrections.get(sentence.id, "")).strip()
             if target == "source" and not corrected and candidate.strip():
-                # A malformed or over-aggressive empty answer must not silently
-                # delete a real ASR/translation line.
-                corrected = candidate.strip()
-                fallback_ids.append(sentence.id)
+                unmatched_ids.append(sentence.id)
             if target == "source":
                 sentence.source_text = corrected
                 sentence.zh_text = ""
@@ -284,13 +283,13 @@ def _reconcile_untimed_script(
             sentence.tts_cache_key = None
             sentence.tts_duration_seconds = None
             sentence.error = None
-        if fallback_ids:
-            report.append({"fallback_ids": fallback_ids, "reason": "模型返回空文本，保留候选文本"})
         if unmatched_ids:
             report.append(
                 {
                     "unmatched_ids": unmatched_ids,
-                    "reason": "中文台本没有可靠匹配；后续只翻译这些缺失句子",
+                    "reason": "中文台本没有可靠匹配；后续只翻译这些缺失句子"
+                    if target == "zh"
+                    else "台本没有可靠匹配；只采用台本文字，不自动混入 ASR 原文，需人工核对",
                 }
             )
         timing_warnings = _chinese_script_timing_warnings(
@@ -369,6 +368,10 @@ def reconcile_analyzed_project_script(
             f"asmr_{project.source.sha256[:18]}_script_"
             f"{round(start_seconds * 1000)}_{round(end_seconds * 1000)}"
         ),
+        diagnostic_path=project_dir
+        / "imports"
+        / f"script-reconciliation-{round(start_seconds * 1000)}-error.json",
+        script_source=str(transcript_path),
         progress=progress,
         cancel_event=cancel_event,
     )
@@ -378,8 +381,10 @@ def reconcile_analyzed_project_script(
         corrected = str(corrections.get(sentence.id, "")).strip()
         if target == "source":
             if corrected:
-                sentence.source_text = corrected
                 matched += 1
+            else:
+                unmatched.append(sentence.id)
+            sentence.source_text = corrected
             sentence.zh_text = ""
             sentence.status = "pending" if sentence.source_text.strip() else "skipped_filler"
         elif corrected:
@@ -479,6 +484,7 @@ def import_project_transcript(
             project_dir,
             script_lines=script_lines,
             script_language=cast(TranscriptLanguage, script_language),
+            script_source=str(transcript_path) if transcript_path else "粘贴台本",
             progress=progress,
             cancel_event=cancel_event,
         )
