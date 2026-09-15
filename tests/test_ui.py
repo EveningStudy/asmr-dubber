@@ -417,7 +417,7 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app) -> N
 
     values = [str(getattr(component, "value", "") or "") for component in components]
     assert any("选项只影响刚刚扫描的这个作品" in value for value in values)
-    assert any("固定规则（所有作品共用）" in value for value in values)
+    assert any("文件与字幕输出" in value for value in values)
     assert any("新作品默认值（可在批量处理页逐个覆盖）" in value for value in values)
 
     components_by_label = {getattr(component, "label", None): component for component in components}
