@@ -29,7 +29,9 @@ def make_work(tmp_path):
 
 
 def make_plan(work, layout="both"):
-    settings = UserSettings()
+    settings = UserSettings(
+        autoflow_subtitle_language="source", autoflow_subtitle_naming="standard"
+    )
     scanned = scan_for_ui(work, settings=settings)
     payload = build_plan_for_ui(
         work,
@@ -54,7 +56,7 @@ def test_new_plan_serialization_identity_and_queue(tmp_path):
     assert plan.subtitles_only and plan.source_subtitles_only
     assert plan.mode == "audio" and not plan.embed_subtitles and plan.background is None
     assert not plan.translate_work_title and not plan.translate_track_titles
-    assert queue_items_for_ui([payload])[0]["mode"] == "仅原文字幕文件"
+    assert queue_items_for_ui([payload])[0]["mode"] == "仅字幕文件 · 原文"
     assert edit_plan_for_ui([payload], plan.plan_id, settings=UserSettings()).source_subtitles_only
     assert e.failed_task_payload(plan)["source_subtitles_only"] is True
     normal_id = e.plan_identity(

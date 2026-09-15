@@ -77,6 +77,9 @@ class SmartTaskPlan:
     translate_track_titles: bool = True
     subtitles_only: bool = False
     source_subtitles_only: bool = False
+    subtitle_language: str = "source"
+    subtitle_naming: str = "standard"
+    subtitle_custom_name: str = "字幕"
 
 
 @dataclass(frozen=True)

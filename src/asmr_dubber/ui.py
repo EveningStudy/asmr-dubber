@@ -1758,35 +1758,43 @@ def build_app() -> Any:
                             autoflow_selection_summary = gr.Markdown("扫描后会在这里列出音轨。")
 
                             gr.Markdown(
-                                "#### 成品类型与组织",
+                                "#### 处理目标与输出",
                                 elem_classes=["autoflow-section-title"],
                             )
                             autoflow_task_content = gr.Radio(
-                                label="处理内容",
+                                label="1 · 选择处理目标",
                                 choices=[
                                     ("中文配音和字幕", "dubbing"),
-                                    ("仅生成字幕（不配音）", "subtitles"),
+                                    ("原声音视频 + 双语字幕（不配音）", "subtitles"),
                                     (
-                                        "仅原文字幕文件（不翻译、不配音、不制作视频）",
+                                        "仅字幕文件（不生成音频或视频）",
                                         "source_subtitles",
                                     ),
                                 ],
                                 value="dubbing",
                                 info=(
-                                    "仅生成字幕（不配音）仍可翻译并制作字幕视频；"
-                                    "仅原文字幕文件只导出 SRT/LRC，不翻译、不配音、不制作视频。"
-                                    "仅直用同语言时间轴字幕，其他台本用 ASR。"
+                                    "需要同名翻译字幕请选择“仅字幕文件”，再选择字幕内容。"
+                                    "命名规则在“设置 → 自动处理 → 字幕文件”中配置。"
                                 ),
                             )
                             source_subtitle_note = gr.Markdown(
-                                "仅原文字幕：不翻译、不配音、不制作视频。仅同语言的时间轴字幕直接导入；"
-                                "其他台本不做大模型校对，使用 ASR。"
-                                "成品是原文 SRT/LRC，项目副本用于重试。",
+                                "只输出 SRT/LRC；仅原文跳过翻译，双语和仅译文使用翻译设置。"
+                                "保留项目副本用于重试，不输出音视频成品，不修改源字幕。",
+                                visible=False,
+                            )
+                            autoflow_subtitle_language = gr.Radio(
+                                label="2 · 字幕内容",
+                                choices=[
+                                    ("双语（原文 + 中文）", "bilingual"),
+                                    ("仅原文", "source"),
+                                    ("仅译文（中文）", "zh"),
+                                ],
+                                value=stored.autoflow_subtitle_language,
                                 visible=False,
                             )
                             with gr.Row(elem_classes=["mobile-stack"]):
                                 autoflow_mode = gr.Radio(
-                                    label="输出类型",
+                                    label="音视频格式（仅音视频任务）",
                                     choices=[
                                         (label, value)
                                         for value, label in AUTOFLOW_MODE_LABELS.items()
@@ -1798,7 +1806,7 @@ def build_app() -> Any:
                                     ),
                                 )
                                 autoflow_layout = gr.Radio(
-                                    label="成品组织",
+                                    label="输出组织（分轨字幕可沿用音频原名）",
                                     choices=[
                                         (label, value)
                                         for value, label in AUTOFLOW_LAYOUT_LABELS.items()
@@ -1841,7 +1849,7 @@ def build_app() -> Any:
                                     ),
                                 )
 
-                            with gr.Accordion("重做选项（通常不需要）", open=False):
+                            with gr.Accordion("已有结果处理（更换输出选项时请确认）", open=True):
                                 autoflow_rebuild = gr.Checkbox(
                                     label="重做并替换本工具生成的旧结果",
                                     value=False,
@@ -3245,7 +3253,7 @@ def build_app() -> Any:
                             elem_id="autoflow-settings-note",
                         )
 
-                        gr.Markdown("### 固定规则（所有作品共用）")
+                        gr.Markdown("### 文件与字幕输出")
                         settings_components["autoflow_output_folder_name"] = gr.Textbox(
                             label="成品输出文件夹名称",
                             value=stored.autoflow_output_folder_name,
@@ -3262,71 +3270,102 @@ def build_app() -> Any:
                                 "只会选其中存在的一种。"
                             ),
                         )
-                        gr.Markdown("#### 参考音频选择")
-                        settings_components["autoflow_reference_wait_enabled"] = gr.Checkbox(
-                            label="处理到参考音频时等待手动选择",
-                            value=stored.autoflow_reference_wait_enabled,
-                            info=(
-                                "开启后，批量队列会显示选择器并提醒；关闭后直接使用"
-                                "自动推荐的项目片段。"
-                            ),
-                        )
-                        with gr.Group(
-                            visible=stored.autoflow_reference_wait_enabled
-                        ) as autoflow_reference_wait_group:
-                            settings_components["autoflow_reference_wait_seconds"] = gr.Number(
-                                label="每个作品最多等待（秒）",
-                                value=stored.autoflow_reference_wait_seconds,
-                                minimum=1,
-                                maximum=3600,
-                                precision=0,
-                                info="默认 60 秒。到时未选择会自动继续，不会把队列判为失败。",
+                        with gr.Accordion("字幕文件：默认内容与命名", open=True):
+                            settings_components["autoflow_subtitle_language"] = gr.Radio(
+                                label="仅字幕文件的默认内容",
+                                choices=[
+                                    ("双语（原文 + 中文）", "bilingual"),
+                                    ("仅原文", "source"),
+                                    ("仅译文（中文）", "zh"),
+                                ],
+                                value=stored.autoflow_subtitle_language,
+                                info="在批量页可以按作品修改；译文使用“翻译”页的服务。",
                             )
-                        gr.Markdown("#### 和谐静态视频")
-                        with gr.Row(elem_classes=["mobile-stack"]):
-                            settings_components["autoflow_harmonized_volume_reduction_db"] = (
-                                gr.Number(
-                                    label="原声降低音量（dB）",
-                                    value=stored.autoflow_harmonized_volume_reduction_db,
-                                    info="填写正数；只影响选择“和谐静态视频”的任务。",
+                            settings_components["autoflow_subtitle_naming"] = gr.Radio(
+                                label="字幕文件命名（仅字幕文件模式）",
+                                choices=[
+                                    ("沿用音频原名", "original"),
+                                    ("按字幕内容命名", "standard"),
+                                    ("自定义名称", "custom"),
+                                ],
+                                value=stored.autoflow_subtitle_naming,
+                                info="分轨沿用音频名，多个音轨合并使用作品文件夹名。输出到成品目录，不覆盖源字幕。",
+                            )
+                            settings_components["autoflow_subtitle_custom_name"] = gr.Textbox(
+                                label="自定义字幕名称（不含扩展名）",
+                                value=stored.autoflow_subtitle_custom_name,
+                                visible=stored.autoflow_subtitle_naming == "custom",
+                            )
+                        with gr.Accordion("配音专用：参考音频", open=False):
+                            settings_components["autoflow_reference_wait_enabled"] = gr.Checkbox(
+                                label="处理到参考音频时等待手动选择",
+                                value=stored.autoflow_reference_wait_enabled,
+                                info=(
+                                    "开启后，批量队列会显示选择器并提醒；关闭后直接使用"
+                                    "自动推荐的项目片段。"
+                                ),
+                            )
+                            with gr.Group(
+                                visible=stored.autoflow_reference_wait_enabled
+                            ) as autoflow_reference_wait_group:
+                                settings_components["autoflow_reference_wait_seconds"] = gr.Number(
+                                    label="每个作品最多等待（秒）",
+                                    value=stored.autoflow_reference_wait_seconds,
+                                    minimum=1,
+                                    maximum=3600,
+                                    precision=0,
+                                    info="默认 60 秒。到时未选择会自动继续，不会把队列判为失败。",
                                 )
+                        with gr.Accordion("视频专用：和谐模式与硬字幕", open=False):
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                settings_components["autoflow_harmonized_volume_reduction_db"] = (
+                                    gr.Number(
+                                        label="原声降低音量（dB）",
+                                        value=stored.autoflow_harmonized_volume_reduction_db,
+                                        info="填写正数；只影响选择“和谐静态视频”的任务。",
+                                    )
+                                )
+                                settings_components["autoflow_harmonized_delay_minutes"] = (
+                                    gr.Number(
+                                        label="原声、配音和字幕整体延后（分钟）",
+                                        value=stored.autoflow_harmonized_delay_minutes,
+                                        info="在成品开头加入相同长度的空档，让作品内容整体后移。",
+                                    )
+                                )
+                            settings_components["autoflow_original_hard_subtitles"] = gr.Checkbox(
+                                label="原声视频也编码硬字幕",
+                                value=stored.autoflow_original_hard_subtitles,
+                                info=(
+                                    "视频任务另存原声字幕版 MP4，保留无字幕原声；"
+                                    "烧录失败会报错，不回退软字幕。纯音频不受影响。"
+                                ),
                             )
-                            settings_components["autoflow_harmonized_delay_minutes"] = gr.Number(
-                                label="原声、配音和字幕整体延后（分钟）",
-                                value=stored.autoflow_harmonized_delay_minutes,
-                                info="在成品开头加入相同长度的空档，让作品内容整体后移。",
+                        with gr.Accordion("时间戳文档与标题（不影响字幕正文翻译）", open=False):
+                            settings_components["autoflow_timestamp_footer_position"] = gr.Radio(
+                                label="时间戳文档附加文字位置",
+                                choices=[("时间戳前", "before"), ("时间戳后", "after")],
+                                value=stored.autoflow_timestamp_footer_position,
                             )
-                        settings_components["autoflow_original_hard_subtitles"] = gr.Checkbox(
-                            label="原声视频也编码硬字幕",
-                            value=stored.autoflow_original_hard_subtitles,
-                            info=(
-                                "视频任务另存原声字幕版 MP4，保留无字幕原声；"
-                                "烧录失败会报错，不回退软字幕。纯音频不受影响。"
-                            ),
-                        )
-                        settings_components["autoflow_timestamp_footer_position"] = gr.Radio(
-                            label="时间戳文档附加文字位置",
-                            choices=[("时间戳前", "before"), ("时间戳后", "after")],
-                            value=stored.autoflow_timestamp_footer_position,
-                        )
-                        settings_components["autoflow_timestamp_footer"] = gr.Textbox(
-                            label="时间戳文档页脚",
-                            value=stored.autoflow_timestamp_footer,
-                            lines=5,
-                            info="按上方选择写在时间戳前或后；留空则不添加。所有作品共用。",
-                        )
-                        gr.Markdown("#### 标题文字")
-                        with gr.Row(elem_classes=["mobile-stack"]):
-                            settings_components["autoflow_translate_work_title"] = gr.Checkbox(
-                                label="翻译作品文件夹名称",
-                                value=stored.autoflow_translate_work_title,
-                                info="用于成品标题和时间戳文档；关闭后保留原文件夹名称。",
+                            settings_components["autoflow_timestamp_footer"] = gr.Textbox(
+                                label="时间戳文档页脚",
+                                value=stored.autoflow_timestamp_footer,
+                                lines=5,
+                                info="按上方选择写在时间戳前或后；留空则不添加。所有作品共用。",
                             )
-                            settings_components["autoflow_translate_track_titles"] = gr.Checkbox(
-                                label="翻译音轨标题",
-                                value=stored.autoflow_translate_track_titles,
-                                info="用于分轨文件名和曲目清单；关闭后保留原音轨标题。",
-                            )
+                            gr.Markdown("#### 标题文字")
+                            with gr.Row(elem_classes=["mobile-stack"]):
+                                settings_components["autoflow_translate_work_title"] = gr.Checkbox(
+                                    label="翻译作品文件夹名称",
+                                    value=stored.autoflow_translate_work_title,
+                                    info="用于成品标题和时间戳文档；关闭后保留原文件夹名称。",
+                                )
+                                settings_components["autoflow_translate_track_titles"] = (
+                                    gr.Checkbox(
+                                        label="翻译音轨标题",
+                                        value=stored.autoflow_translate_track_titles,
+                                        info="用于分轨文件名和曲目清单；关闭后保留原音轨标题。",
+                                    )
+                                )
 
                         gr.Markdown("### 新作品默认值（可在批量处理页逐个覆盖）")
                         with gr.Row(elem_classes=["mobile-stack"]):
@@ -3756,6 +3795,7 @@ def build_app() -> Any:
             embed_subtitles: bool,
             rebuild: bool,
             task_content: Any,
+            subtitle_language: str,
         ) -> tuple[Any, ...]:
             try:
                 plan = build_plan_for_ui(
@@ -3769,6 +3809,7 @@ def build_app() -> Any:
                     rebuild,
                     str(task_content or "dubbing") == "subtitles",
                     str(task_content or "dubbing") == "source_subtitles",
+                    subtitle_language,
                 )
                 selected = str(editing_plan_id or "").strip()
                 items = (
@@ -3788,6 +3829,7 @@ def build_app() -> Any:
                 )
             except Exception as exc:
                 logger.exception("加入自动处理队列失败")
+                gr.Warning(f"未加入队列：{_safe_error(exc)}", duration=15)
                 items = [dict(item) for item in (queue_payload or []) if isinstance(item, dict)]
                 return (
                     *_autoflow_queue_updates(items, f"无法保存队列任务：{_safe_error(exc)}"),
@@ -3856,6 +3898,7 @@ def build_app() -> Any:
                     view.selection_summary,
                     gr.update(value=view.mode),
                     gr.update(value=view.layout),
+                    gr.update(value=view.subtitle_language),
                     gr.update(
                         value="source_subtitles"
                         if view.source_subtitles_only
@@ -3891,7 +3934,7 @@ def build_app() -> Any:
             except Exception as exc:
                 logger.exception("载入自动处理队列任务失败")
                 return (
-                    *(gr.update() for _index in range(18)),
+                    *(gr.update() for _index in range(19)),
                     f"无法编辑队列任务：{_safe_error(exc)}",
                 )
 
@@ -4503,9 +4546,15 @@ def build_app() -> Any:
                 gr.update(visible=content != "source_subtitles"),
                 gr.update(visible=content != "source_subtitles"),
                 gr.update(visible=content == "source_subtitles"),
+                gr.update(visible=content == "source_subtitles"),
             ),
             inputs=[autoflow_task_content],
-            outputs=[autoflow_mode, autoflow_selection_summary, source_subtitle_note],
+            outputs=[
+                autoflow_mode,
+                autoflow_selection_summary,
+                source_subtitle_note,
+                autoflow_subtitle_language,
+            ],
             queue=False,
             api_name=_PRIVATE_API,
         )
@@ -4523,6 +4572,7 @@ def build_app() -> Any:
                 autoflow_embed_subtitles,
                 autoflow_rebuild,
                 autoflow_task_content,
+                autoflow_subtitle_language,
             ],
             outputs=[
                 autoflow_queue_state,
@@ -4592,6 +4642,7 @@ def build_app() -> Any:
                 autoflow_selection_summary,
                 autoflow_mode,
                 autoflow_layout,
+                autoflow_subtitle_language,
                 autoflow_task_content,
                 autoflow_background,
                 autoflow_background_preview,
@@ -5229,6 +5280,26 @@ def build_app() -> Any:
             queue=False,
         )
 
+        settings_components["autoflow_subtitle_naming"].change(
+            lambda naming: gr.update(visible=naming == "custom"),
+            inputs=[settings_components["autoflow_subtitle_naming"]],
+            outputs=[settings_components["autoflow_subtitle_custom_name"]],
+            queue=False,
+            api_name=_PRIVATE_API,
+        )
+        settings_components["autoflow_subtitle_language"].input(
+            lambda language: language,
+            inputs=[settings_components["autoflow_subtitle_language"]],
+            outputs=[autoflow_subtitle_language],
+            queue=False,
+            api_name=_PRIVATE_API,
+        )
+        app.load(
+            lambda: load_user_settings().autoflow_subtitle_language,
+            outputs=[autoflow_subtitle_language],
+            queue=False,
+            api_name=_PRIVATE_API,
+        )
         field_names = list(settings_components)
         field_components = [settings_components[name] for name in field_names]
         form_inputs = [*field_components, external_speaker_upload, external_emotion_upload]

@@ -59,7 +59,7 @@ Windows 完整本地 GPU 环境以 NVIDIA Turing 或更新架构为支持范围�
 
 ## 下载
 
-Windows 用户从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)下载带版本号的压缩包，例如 `ASMR-Dubber-windows-portable-v1.5.0.zip`。完整解压到最终使用位置后运行 Setup；GitHub 便携包不含大型模型，打包流程可包含 Python 和核心依赖 wheel，首次启动仍需建立环境。ModelScope 完整包与源码包不是同一种制品，应按下载页清单区分。
+Windows 用户从[GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest)下载带版本号的压缩包，例如 `ASMR-Dubber-windows-portable-v1.5.1.zip`。完整解压到最终使用位置后运行 Setup；GitHub 便携包不含大型模型，打包流程可包含 Python 和核心依赖 wheel，首次启动仍需建立环境。ModelScope 完整包与源码包不是同一种制品，应按下载页清单区分。
 
 ## 三种安装方案
 

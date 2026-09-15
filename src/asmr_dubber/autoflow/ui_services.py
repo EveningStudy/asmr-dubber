@@ -76,6 +76,7 @@ class AutoFlowEditView:
     embed_subtitles: bool
     subtitles_only: bool
     source_subtitles_only: bool
+    subtitle_language: str
     rebuild: bool
     plan_id: str
 
@@ -558,6 +559,9 @@ def serialize_plan(plan: engine.SmartTaskPlan) -> dict[str, Any]:
         "translate_track_titles": plan.translate_track_titles,
         "subtitles_only": plan.subtitles_only,
         "source_subtitles_only": plan.source_subtitles_only,
+        "subtitle_language": plan.subtitle_language,
+        "subtitle_naming": plan.subtitle_naming,
+        "subtitle_custom_name": plan.subtitle_custom_name,
     }
 
 
@@ -588,11 +592,20 @@ def deserialize_plan(payload: Any) -> engine.SmartTaskPlan:
             translate_track_titles=bool(payload.get("translate_track_titles", True)),
             subtitles_only=bool(payload.get("subtitles_only", False)),
             source_subtitles_only=bool(payload.get("source_subtitles_only", False)),
+            subtitle_language=str(payload.get("subtitle_language", "source")),
+            subtitle_naming=str(payload.get("subtitle_naming", "standard")),
+            subtitle_custom_name=str(payload.get("subtitle_custom_name", "字幕")),
         )
     except (KeyError, TypeError, ValueError, OSError, engine.VideoPreparerError) as exc:
         raise ProjectError(f"自动处理队列数据无效：{exc}") from exc
     if not plan.sources:
         raise ProjectError("自动处理任务没有音轨。")
+    if plan.subtitle_language not in {"source", "zh", "bilingual"} or plan.subtitle_naming not in {
+        "original",
+        "standard",
+        "custom",
+    }:
+        raise ProjectError("字幕内容或命名方式无效。")
     return plan
 
 
@@ -612,7 +625,9 @@ def _guard_output_replacement(plan: engine.SmartTaskPlan) -> None:
     )
     if generated_exists and previous_plan != plan.plan_id and not plan.rebuild:
         raise ProjectError(
-            "输出目录里已有另一套自动处理结果。需要替换时，请勾选“重做并替换本工具生成的旧结果”。"
+            f"输出目录已有其他选项生成的结果：{output_root}。"
+            "如需替换，请先备份，再勾选按钮上方的“重做并替换本工具生成的旧结果”，重新加入队列。"
+            "如需保留旧结果，请在“设置 → 自动处理”更改成品输出文件夹名称并保存后再加入。"
         )
 
 
@@ -676,11 +691,23 @@ def build_plan_for_ui(
     rebuild: bool,
     subtitles_only: bool = False,
     source_subtitles_only: bool = False,
+    subtitle_language: str | None = None,
     *,
     settings: UserSettings | None = None,
 ) -> dict[str, Any]:
     folder = _clean_folder(folder_value)
     current = settings or load_user_settings()
+    selected_subtitle_language = subtitle_language or current.autoflow_subtitle_language
+    if selected_subtitle_language not in {"source", "zh", "bilingual"}:
+        raise ProjectError("字幕内容只能选择双语、仅原文或仅译文。")
+    custom_name = current.autoflow_subtitle_custom_name.strip()
+    if current.autoflow_subtitle_naming == "custom" and (
+        not custom_name
+        or custom_name in {".", ".."}
+        or custom_name.endswith((" ", "."))
+        or any(ord(c) < 32 or c in '<>:"/\\|?*' for c in custom_name)
+    ):
+        raise ProjectError("自定义字幕名称必须是有效文件名，不要填写路径或扩展名。")
     config = config_from_settings(current)
     scan = _scan(folder, config)
     label, _default_sources, edition = _sources_for_edition(
@@ -711,6 +738,9 @@ def build_plan_for_ui(
         and not source_subtitles_only,
         subtitles_only=bool(subtitles_only),
         source_subtitles_only=bool(source_subtitles_only),
+        subtitle_language=selected_subtitle_language,
+        subtitle_naming=current.autoflow_subtitle_naming,
+        subtitle_custom_name=custom_name,
     )
     plan = engine.SmartTaskPlan(
         folder=folder,
@@ -730,6 +760,9 @@ def build_plan_for_ui(
         and not source_subtitles_only,
         subtitles_only=bool(subtitles_only),
         source_subtitles_only=bool(source_subtitles_only),
+        subtitle_language=selected_subtitle_language,
+        subtitle_naming=current.autoflow_subtitle_naming,
+        subtitle_custom_name=custom_name,
     )
     _guard_output_replacement(plan)
     return serialize_plan(plan)
@@ -818,7 +851,8 @@ def queue_rows(queue_payload: Any) -> list[list[Any]]:
                 index,
                 plan.folder.name,
                 len(plan.sources),
-                "仅原文字幕文件"
+                "仅字幕文件 · "
+                + {"source": "原文", "zh": "译文", "bilingual": "双语"}[plan.subtitle_language]
                 if plan.source_subtitles_only
                 else f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
                 LAYOUT_LABELS[plan.layout],
@@ -846,7 +880,8 @@ def queue_items_for_ui(
                 "position": index,
                 "work": plan.folder.name,
                 "tracks": len(plan.sources),
-                "mode": "仅原文字幕文件"
+                "mode": "仅字幕文件 · "
+                + {"source": "原文", "zh": "译文", "bilingual": "双语"}[plan.subtitle_language]
                 if plan.source_subtitles_only
                 else f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
                 "layout": LAYOUT_LABELS[plan.layout],
@@ -945,6 +980,7 @@ def edit_plan_for_ui(
         embed_subtitles=plan.embed_subtitles,
         subtitles_only=plan.subtitles_only,
         source_subtitles_only=plan.source_subtitles_only,
+        subtitle_language=plan.subtitle_language,
         rebuild=plan.rebuild,
         plan_id=plan.plan_id,
     )

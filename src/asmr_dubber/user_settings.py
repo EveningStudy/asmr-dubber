@@ -188,6 +188,9 @@ class UserSettings(ProjectSettings):
     autoflow_include_bonus: bool = False
     autoflow_background_policy: Literal["auto", "black"] = "auto"
     autoflow_embed_subtitles: bool = True
+    autoflow_subtitle_language: Literal["bilingual", "source", "zh"] = "bilingual"
+    autoflow_subtitle_naming: Literal["original", "standard", "custom"] = "original"
+    autoflow_subtitle_custom_name: str = "字幕"
     autoflow_original_hard_subtitles: bool = False
     autoflow_timestamp_footer_position: Literal["before", "after"] = "after"
     autoflow_translate_work_title: bool = True

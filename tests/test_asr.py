@@ -474,6 +474,7 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
 
     command = calls[0]
     assert command[command.index("--backend") + 1] == "parakeet"
+    assert command.count("--no-punctuation") == 1
     assert command[command.index("--cache-dir") + 1] == str(portable / "cache" / "crispasr")
     assert command[command.index("-vm") + 1] == "silero"
     assert "-f" not in command

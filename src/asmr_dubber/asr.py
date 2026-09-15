@@ -683,6 +683,8 @@ def _transcribe_parakeet(
         str(executable),
         "--backend",
         "parakeet",
+        # Optional FireRedPunc must not be implicitly downloaded during ASR.
+        "--no-punctuation",
         "--cache-dir",
         command_path(cache_directory),
         "-m",

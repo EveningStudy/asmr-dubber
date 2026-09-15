@@ -1220,6 +1220,9 @@ def plan_identity(
     translate_track_titles: bool = True,
     subtitles_only: bool = False,
     source_subtitles_only: bool = False,
+    subtitle_language: str = "source",
+    subtitle_naming: str = "standard",
+    subtitle_custom_name: str = "字幕",
 ) -> str:
     payload = {
         "source_folder": os.path.normcase(str(source_folder.resolve())),
@@ -1261,6 +1264,12 @@ def plan_identity(
         payload["subtitles_only"] = True
     if source_subtitles_only:
         payload["source_subtitles_only"] = True
+        if (subtitle_language, subtitle_naming, subtitle_custom_name) != (
+            "source",
+            "standard",
+            "字幕",
+        ):
+            payload["subtitle_options"] = [subtitle_language, subtitle_naming, subtitle_custom_name]
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
@@ -6008,6 +6017,9 @@ def failed_task_payload(
         "translate_track_titles": plan.translate_track_titles,
         "subtitles_only": plan.subtitles_only,
         "source_subtitles_only": plan.source_subtitles_only,
+        "subtitle_language": plan.subtitle_language,
+        "subtitle_naming": plan.subtitle_naming,
+        "subtitle_custom_name": plan.subtitle_custom_name,
         "sources": [serialize_audio_source(item) for item in plan.sources],
     }
     if error:
@@ -6096,6 +6108,9 @@ def load_failed_task_plans() -> list[SmartTaskPlan]:
                     translate_track_titles=bool(record.get("translate_track_titles", True)),
                     subtitles_only=bool(record.get("subtitles_only", False)),
                     source_subtitles_only=bool(record.get("source_subtitles_only", False)),
+                    subtitle_language=str(record.get("subtitle_language", "source")),
+                    subtitle_naming=str(record.get("subtitle_naming", "standard")),
+                    subtitle_custom_name=str(record.get("subtitle_custom_name", "字幕")),
                 )
             )
         except (TypeError, ValueError, OSError, VideoPreparerError):
