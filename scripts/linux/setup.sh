@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+export ASMR_DUBBER_UI_LANGUAGE="${2:-${ASMR_DUBBER_UI_LANGUAGE:-zh}}"
+source "$ROOT/scripts/linux/setup-language.sh"
 
 PROFILE="${1:-推荐}"
 case "$PROFILE" in
@@ -11,13 +13,13 @@ case "$PROFILE" in
   Advanced) PROFILE="进阶" ;;
   基础|推荐|进阶) ;;
   *)
-    echo "用法：bash scripts/linux/setup.sh [基础|推荐|进阶]" >&2
+    setup_echo "用法：bash scripts/linux/setup.sh [基础|推荐|进阶]" >&2
     exit 2
     ;;
 esac
 if [[ "$(uname -s)" != "Linux" || "$(getconf LONG_BIT)" != "64" ]] || \
   [[ "$(uname -m)" != "x86_64" ]]; then
-  echo "错误：Linux 安装脚本只支持 x86_64 64 位 Linux；Windows 请双击 ASMR-Dubber.exe。" >&2
+  setup_echo "错误：Linux 安装脚本只支持 x86_64 64 位 Linux；Windows 请双击 ASMR-Dubber.exe。" >&2
   exit 1
 fi
 
@@ -43,42 +45,42 @@ mkdir -p "$UV_DIR" "$DATA_ROOT" "$CONFIG_ROOT"
 export UV_UNMANAGED_INSTALL="$UV_DIR"
 export UV_NO_MODIFY_PATH=1
 
-echo "ASMR Dubber · Linux 安装"
-echo "项目目录：$ROOT"
-echo "数据目录：$DATA_ROOT"
-echo "安装配置：$PROFILE"
+setup_echo "ASMR Dubber · Linux 安装"
+setup_echo "项目目录：$ROOT"
+setup_echo "数据目录：$DATA_ROOT"
+setup_echo "安装配置：$PROFILE"
 if asmr_external_downloads_allowed "$ROOT"; then
-  echo "下载策略：ModelScope 优先；已显式允许海外备用源。"
+  setup_echo "下载策略：ModelScope 优先；已显式允许海外备用源。"
 else
-  echo "下载策略：ModelScope 优先；GitHub/Hugging Face/官方海外源已关闭。"
+  setup_echo "下载策略：ModelScope 优先；GitHub/Hugging Face/官方海外源已关闭。"
 fi
 if [[ -n "${ASMR_DUBBER_LOCAL_CACHE_ROOTS:-}" ]]; then
-  echo "只读本地缓存：$ASMR_DUBBER_LOCAL_CACHE_ROOTS"
+  setup_echo "只读本地缓存：$ASMR_DUBBER_LOCAL_CACHE_ROOTS"
 fi
 case "$PROFILE" in
   基础)
-    echo "预计安装后占用：约 2 GB；建议安装前至少有 5 GB 可用空间"
+    setup_echo "预计安装后占用：约 2 GB；建议安装前至少有 5 GB 可用空间"
     ;;
   推荐)
-    echo "预计安装后占用：约 24–28 GB；建议安装前至少有 35 GB 可用空间"
+    setup_echo "预计安装后占用：约 24–28 GB；建议安装前至少有 35 GB 可用空间"
     ;;
   进阶)
-    echo "预计安装后占用：约 33–39 GB；建议安装前至少有 50 GB 可用空间"
-    echo "固定 ASR 模型：Parakeet CTC 1.1B JA GAL、Parakeet TDT/CTC 0.6B JA"
-    echo "固定 ASR 模型：kotoba-tech/kotoba-whisper-v2.2"
-    echo "固定 ASR 模型：Systran/faster-whisper-large-v2"
-    echo "固定 VAD 模型：TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
-    echo "固定时间戳模型：Qwen/Qwen3-ForcedAligner-0.6B（阿里 Qwen）"
-    echo "固定 TTS 模型：IndexTTS2 checkpoints（仅 NVIDIA GPU）"
-    echo "不会自动安装 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它识别模型"
+    setup_echo "预计安装后占用：约 33–39 GB；建议安装前至少有 50 GB 可用空间"
+    setup_echo "固定 ASR 模型：Parakeet CTC 1.1B JA GAL、Parakeet TDT/CTC 0.6B JA"
+    setup_echo "固定 ASR 模型：kotoba-tech/kotoba-whisper-v2.2"
+    setup_echo "固定 ASR 模型：Systran/faster-whisper-large-v2"
+    setup_echo "固定 VAD 模型：TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
+    setup_echo "固定时间戳模型：Qwen/Qwen3-ForcedAligner-0.6B（阿里 Qwen）"
+    setup_echo "固定 TTS 模型：IndexTTS2 checkpoints（仅 NVIDIA GPU）"
+    setup_echo "不会自动安装 Kotoba v2.0/v2.1、Faster-Whisper large-v3 或其它识别模型"
     ;;
 esac
 if [[ "$PROFILE" != 基础 ]]; then
-  echo "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS（语音合成），实际占用将减少。"
+  setup_echo "未检测到 NVIDIA GPU 时会跳过需要 CUDA 的 TTS（语音合成），实际占用将减少。"
 fi
 
 if [[ ! -x "$UV" ]]; then
-  echo "正在从 ModelScope 优先源安装 uv..."
+  setup_echo "正在从 ModelScope 优先源安装 uv..."
   UV_ARCHIVE="$BOOTSTRAP/uv-x86_64-unknown-linux-gnu.tar.gz"
   UV_SHA256="04bc7d180d6138bf6dc08387acf507a823f397a98fea55da36b0ccc7fbce3b68"
   UV_READY=0
@@ -106,11 +108,11 @@ if [[ ! -x "$UV" ]]; then
   done < <(asmr_mirror_list "$ROOT" uv_archives_linux)
 fi
 if [[ ! -x "$UV" ]]; then
-  echo "错误：uv 安装失败：$UV" >&2
+  setup_echo "错误：uv 安装失败：$UV" >&2
   exit 1
 fi
 
-echo "正在准备 Python 3.12..."
+setup_echo "正在准备 Python 3.12..."
 asmr_install_python_runtime \
   "$ROOT" \
   "3.12.13" \
@@ -152,15 +154,15 @@ case "$PROFILE" in
     ;;
 esac
 
-echo "正在安装应用依赖：$EXTRA"
+setup_echo "正在安装应用依赖：$EXTRA"
 install_from_pypi() {
   local index
   while IFS= read -r index; do
-    echo "使用软件源：$index"
+    setup_echo "使用软件源：$index"
     if "$UV" "$@" --default-index "$index"; then
       return 0
     fi
-    echo "当前软件源失败，自动切换。" >&2
+    setup_echo "当前软件源失败，自动切换。" >&2
   done < <(asmr_mirror_list "$ROOT" pypi_indexes)
   return 1
 }
@@ -169,17 +171,17 @@ if asmr_prepare_wheelhouse \
   "ASMR-Dubber-Linux-Wheelhouse-v0.4.0.tar.gz" \
   "linux_application_wheelhouse_archives" \
   "linux_application_wheelhouse_checksums"; then
-  echo "使用 ModelScope 应用依赖 wheelhouse：$ASMR_WHEELHOUSE_RESULT"
+  setup_echo "使用 ModelScope 应用依赖 wheelhouse：$ASMR_WHEELHOUSE_RESULT"
   if ! "$UV" pip install --python "$VENV/bin/python" --editable "$EXTRA" \
     "setuptools>=78.1.1,<82" --offline --find-links "$ASMR_WHEELHOUSE_RESULT"; then
-    echo "ModelScope wheelhouse 早于当前依赖定义，使用配置中的国内软件源补齐应用依赖。"
+    setup_echo "ModelScope wheelhouse 早于当前依赖定义，使用配置中的国内软件源补齐应用依赖。"
     install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
     install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
   fi
 else
   WHEELHOUSE_STATUS=$?
   if [[ "$WHEELHOUSE_STATUS" == 2 ]]; then
-    echo "错误：ModelScope wheelhouse 已发布但不完整，拒绝静默切换。" >&2
+    setup_echo "错误：ModelScope wheelhouse 已发布但不完整，拒绝静默切换。" >&2
     exit 1
   fi
   install_from_pypi pip install --python "$VENV/bin/python" --editable "$EXTRA"
@@ -190,13 +192,13 @@ else
 fi
 if ! "$VENV/bin/python" -c \
   "import asmr_dubber.ui, av, edge_tts, gradio, httpx, soundfile, setuptools"; then
-  echo "错误：基础应用或在线/API 客户端安装后仍不完整。" >&2
+  setup_echo "错误：基础应用或在线/API 客户端安装后仍不完整。" >&2
   exit 1
 fi
 "$VENV/bin/python" -m compileall -q -f "$ROOT/src/asmr_dubber"
 
 if [[ "$PROFILE" != 基础 ]]; then
-  echo "正在检测并导入当前档位的本地模型包..."
+  setup_echo "正在检测并导入当前档位的本地模型包..."
   PACK_ARGUMENTS=(import-model-packs --all)
   case "$PROFILE" in
     推荐)
@@ -217,7 +219,7 @@ if [[ "$PROFILE" != 基础 ]]; then
       ;;
   esac
   if ! bash "$ROOT/scripts/linux/run-cli.sh" "${PACK_ARGUMENTS[@]}"; then
-    echo "错误：本地模型包扫描或导入失败；请检查 model-packs 目录中的压缩包。" >&2
+    setup_echo "错误：本地模型包扫描或导入失败；请检查 model-packs 目录中的压缩包。" >&2
     exit 1
   fi
 fi
@@ -247,17 +249,17 @@ link_av_library libswresample.so.6 'libswresample-*.so.6.*'
 link_av_library libswscale.so.9 'libswscale-*.so.9.*'
 
 if [[ "$INSTALL_ADVANCED_MODELS" == 1 ]]; then
-  echo "正在准备 ASR（语音识别）：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
+  setup_echo "正在准备 ASR（语音识别）：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
   bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend 进阶语音识别
 fi
 
 if [[ "$INSTALL_PARAKEET" == 1 ]]; then
-  echo "正在安装推荐 ASR（语音识别）：Parakeet 日语..."
+  setup_echo "正在安装推荐 ASR（语音识别）：Parakeet 日语..."
   if [[ "$HAS_NVIDIA" == 1 ]]; then
-    echo "正在准备 Parakeet 的便携 CUDA 13 运行库..."
+    setup_echo "正在准备 Parakeet 的便携 CUDA 13 运行库..."
     if ! install_from_pypi pip install --python "$VENV/bin/python" \
       "nvidia-cuda-runtime>=13,<14" "nvidia-cublas>=13,<14"; then
-      echo "CUDA 运行库安装失败；Parakeet 将使用 CPU 运行时。" >&2
+      setup_echo "CUDA 运行库安装失败；Parakeet 将使用 CPU 运行时。" >&2
       export ASMR_DUBBER_PARAKEET_FORCE_CPU=1
     fi
   fi
@@ -265,13 +267,13 @@ if [[ "$INSTALL_PARAKEET" == 1 ]]; then
 fi
 
 if [[ "$INSTALL_RECOMMENDED_TTS" == 1 ]]; then
-  echo "正在安装推荐 TTS（语音合成）：IndexTTS2（约需 20 GB）..."
+  setup_echo "正在安装推荐 TTS（语音合成）：IndexTTS2（约需 20 GB）..."
   bash "$ROOT/scripts/linux/install-indextts2.sh"
 fi
 
-echo "正在执行环境检查..."
+setup_echo "正在执行环境检查..."
 if ! bash "$ROOT/scripts/linux/run-cli.sh" doctor --no-network; then
-  echo "提示：核心程序已安装，但所选本地模型尚未全部可用；请在设置 → 设备与模型中查看。" >&2
+  setup_echo "提示：核心程序已安装，但所选本地模型尚未全部可用；请在设置 → 设备与模型中查看。" >&2
 fi
 echo
-echo "安装完成。运行 bash $ROOT/scripts/linux/run-ui.sh 启动界面。"
+setup_echo "安装完成。运行 bash $ROOT/scripts/linux/run-ui.sh 启动界面。"

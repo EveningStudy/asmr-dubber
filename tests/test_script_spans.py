@@ -170,11 +170,8 @@ def test_failure_report_has_text_locations_and_conflict_times(tmp_path, monkeypa
         )
 
     diagnostic = tmp_path / "imports" / "script-error.json"
-    with (
-        httpx.Client(transport=httpx.MockTransport(handler)) as client,
-        pytest.raises(TranslationError, match="导入后第 1 行"),
-    ):
-        tr.reconcile_script_sentences(
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        corrections, batches = tr.reconcile_script_sentences(
             sentences(2),
             ["はい。"],
             source_language="ja",
@@ -185,7 +182,94 @@ def test_failure_report_has_text_locations_and_conflict_times(tmp_path, monkeypa
             client=client,
             diagnostic_path=diagnostic,
         )
+    assert corrections == {s.id: s.source_text for s in sentences(2)}
+    assert batches[0]["needs_review_ids"] == ["s000001", "s000002"]
     report = json.loads(diagnostic.read_text(encoding="utf-8"))
     assert report["script"][0]["text"] == "はい。"
     assert "s000001" in report["error"] and "s000002" in report["error"]
     assert report["recognized"][1]["start_seconds"] == 2
+
+
+def test_literal_quotes_compute_offsets_and_record_explicit_skip():
+    content = response(
+        [
+            {
+                "id": "s000001",
+                "text": "ignored",
+                "script_quotes": [{"id": "p000001", "quote": "はい。", "skip_before": "（笑う）"}],
+            },
+            {
+                "id": "s000002",
+                "text": "ignored",
+                "script_quotes": [{"id": "p000001", "quote": "はい。"}],
+            },
+        ]
+    )
+    result, ends, allocations = tr._validated_script_spans(
+        content,
+        sentences(2),
+        [("p000001", "（笑う）はい。はい。")],
+        {},
+    )
+    assert list(result.values()) == ["はい。", "はい。"]
+    assert allocations[0]["start"] == 4
+    assert allocations[1]["start"] == 7
+    assert allocations[0]["skipped_before"]["text"] == "（笑う）"
+    assert ends == {"p000001": 10}
+
+
+@pytest.mark.parametrize("quote,skip", [("改写", ""), ("はい。", "假的"), ("はい。", "")])
+def test_quotes_cannot_invent_or_implicitly_skip(quote, skip):
+    with pytest.raises(TranslationError):
+        tr._validated_script_spans(
+            response(
+                [
+                    {
+                        "id": "s000001",
+                        "text": quote,
+                        "script_quotes": [{"id": "p000001", "quote": quote, "skip_before": skip}],
+                    }
+                ]
+            ),
+            sentences(1),
+            [("p000001", "（笑う）はい。")],
+            {},
+        )
+
+
+def test_single_sentence_retry_recovers_bad_batch(monkeypatch):
+    monkeypatch.setattr(tr.time, "sleep", lambda _: None)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) <= 3:
+            content = response([item("s000001", 0, 99), item("s000002", 0, 99)])
+        else:
+            sid = f"s{len(calls) - 3:06d}"
+            content = response(
+                [
+                    {
+                        "id": sid,
+                        "text": "はい。",
+                        "script_quotes": [{"id": "p000001", "quote": "はい。"}],
+                    }
+                ]
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result, report = tr.reconcile_script_sentences(
+            sentences(2),
+            ["はい。はい。"],
+            source_language="ja",
+            target="source",
+            provider="deepseek",
+            api_key="test",
+            model="test",
+            client=client,
+        )
+    # Fragment splitting gives each full sentence its own ID; second retry must
+    # not reuse the first fragment. It remains explicitly pending human review.
+    assert result["s000001"] == "はい。"
+    assert report[0]["needs_review_ids"] == ["s000002"]

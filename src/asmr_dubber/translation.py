@@ -79,6 +79,15 @@ class ScriptSpan(BaseModel):
     end: int = Field(gt=0)
 
 
+class ScriptQuote(BaseModel):
+    """Model selects literal text; Python, not the model, counts characters."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    id: str
+    quote: str = Field(min_length=1)
+    skip_before: str = ""
+
+
 class ScriptCorrection(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -86,6 +95,7 @@ class ScriptCorrection(BaseModel):
     text: str
     script_ids: list[str] = Field(default_factory=list)
     script_spans: list[ScriptSpan] = Field(default_factory=list)
+    script_quotes: list[ScriptQuote] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -399,6 +409,46 @@ def _validated_script_spans(
     allocations: list[dict[str, object]] = []
     for item, sentence in zip(envelope.corrections, recognized, strict=True):
         spans = item.script_spans
+        skipped: list[dict[str, object]] = []
+        if item.script_quotes:
+            if spans or item.script_ids:
+                raise TranslationError(f"{item.id} 不得混用 script_quotes 与旧范围字段。")
+            quote_ends = dict(ends)
+            quote_position = last_position
+            spans = []
+            for selection in item.script_quotes:
+                text = lookup.get(selection.id)
+                if text is None:
+                    raise TranslationError(f"{item.id} 引用了窗口外台本 {selection.id}。")
+                position = order[selection.id]
+                if position < quote_position:
+                    raise TranslationError(f"{item.id} 台本顺序倒退。")
+                if quote_position >= 0 and position > quote_position:
+                    previous_key = available[quote_position][0]
+                    if quote_ends.get(previous_key, 0) < len(lookup[previous_key]):
+                        raise TranslationError(f"台本 {previous_key} 尚有未分配的文字。")
+                start = quote_ends.get(selection.id, 0)
+                # An explicit literal skip is auditable and avoids ambiguous find().
+                literal = selection.skip_before + selection.quote
+                if not text.startswith(literal, start):
+                    raise TranslationError(
+                        f"{item.id} 的 {selection.id} 引文不是剩余台本的原文前缀；"
+                        f"从 {start} 开始的原文为 {text[start:]!r}。不得编造或重复分配。"
+                    )
+                if selection.skip_before:
+                    skipped.append(
+                        {
+                            "id": selection.id,
+                            "start": start,
+                            "end": start + len(selection.skip_before),
+                            "text": selection.skip_before,
+                        }
+                    )
+                quote_start = start + len(selection.skip_before)
+                quote_end = quote_start + len(selection.quote)
+                spans.append(ScriptSpan(id=selection.id, start=quote_start, end=quote_end))
+                quote_ends[selection.id] = quote_end
+                quote_position = position
         if spans and item.script_ids:
             raise TranslationError(
                 f"{item.id} 同时返回 script_ids 和 script_spans，请只用 script_spans。"
@@ -448,10 +498,25 @@ def _validated_script_spans(
                     f"已使用 [0,{previous_end})，本次 [{span.start},{span.end})。"
                     "应分配互不重叠的原文范围，不得把同一全文写进两句。"
                 )
-            if span.start != previous_end or span.end > len(text) or span.end <= span.start:
+            explicit_skip = next(
+                (
+                    entry
+                    for entry in skipped
+                    if entry["id"] == span.id
+                    and entry["start"] == previous_end
+                    and entry["end"] == span.start
+                ),
+                None,
+            )
+            if (
+                (span.start != previous_end and explicit_skip is None)
+                or span.end > len(text)
+                or span.end <= span.start
+            ):
                 raise TranslationError(
                     f"{context} 的 {span.id} 范围无效；下一个起点应为 {previous_end}，"
-                    f"终点应大于起点且不超过 {len(text)}。"
+                    f"终点应大于起点且不超过 {len(text)}；"
+                    f"实际 [{span.start},{span.end})，台本原文：{text!r}。"
                 )
             if previous_part_id == span.id:
                 parts[-1] += text[span.start : span.end]
@@ -461,7 +526,10 @@ def _validated_script_spans(
             ends[span.id] = span.end
             owners[span.id] = context
             last_position = position
-            allocations.append({"sentence_id": item.id, **span.model_dump()})
+            allocation: dict[str, object] = {"sentence_id": item.id, **span.model_dump()}
+            if explicit_skip is not None:
+                allocation["skipped_before"] = explicit_skip
+            allocations.append(allocation)
         separator = "" if any(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", p) for p in parts) else " "
         result[item.id] = separator.join(parts).strip()
     return result, ends, allocations
@@ -972,7 +1040,7 @@ def _script_reconciliation_messages(
         + json.dumps(
             {
                 "corrections": [
-                    {"id": sentence.id, "script_spans": [], "text": ""}
+                    {"id": sentence.id, "script_quotes": [], "text": ""}
                     for sentence in batch.recognized
                 ]
             },
@@ -1063,6 +1131,7 @@ def reconcile_script_sentences(
                 new_ends: dict[str, int] = {}
                 allocations: list[dict[str, object]] = []
                 content = ""
+                review_ids: list[str] = []
                 for attempt in range(1, 4):
                     check_cancelled(cancel_event)
                     messages = _script_reconciliation_messages(
@@ -1101,6 +1170,9 @@ def reconcile_script_sentences(
                     if attempt < 3:
                         time.sleep(min(8.0, attempt * 1.5 + random.uniform(0.0, 0.5)))
                 if result is None:
+                    # Transport/auth failures must not be reported as a successful review.
+                    if not isinstance(last_error, TranslationError):
+                        raise TranslationError(f"台本校对请求失败：{last_error}") from last_error
                     ids_in_error = re.findall(r"\bp\d{6}\b", str(last_error))
                     locations = [
                         f"{key}=导入后第 {origins[script_position[key]]} 行"
@@ -1124,15 +1196,42 @@ def reconcile_script_sentences(
                         atomic_write_text(
                             diagnostic_path, json.dumps(diagnostic, ensure_ascii=False, indent=2)
                         )
-                    raise TranslationError(
-                        f"台本校对第 {index + 1}/{len(recognized_batches)} 批失败：{last_error}"
-                        + ("\n台本位置：" + "；".join(locations) if locations else "")
-                        + (
-                            f"\n详细台本、冲突时间与模型结果：{diagnostic_path}"
-                            if diagnostic_path
-                            else ""
+                    logger.warning("台本校对降级为逐句重试；位置：%s；详见项目诊断", locations)
+                    result, new_ends, allocations = {}, dict(consumed_ends), []
+                    for sentence in batch.recognized:
+                        check_cancelled(cancel_event)
+                        messages = _script_reconciliation_messages(
+                            ScriptReconciliationBatch([sentence], available_script),
+                            source_language=source_language,
+                            target=target,
+                            attempt=2,
+                            last_error=str(last_error),
+                            consumed_ends=new_ends,
                         )
-                    ) from last_error
+                        translator.system_prompt = messages[0]["content"]
+                        single_content, limited = translator._request(messages, job_id)
+                        if limited:
+                            raise _OutputLengthTranslationError("台本逐句校对达到输出长度上限。")
+                        try:
+                            single, next_ends, assigned = _validated_script_spans(
+                                single_content,
+                                [sentence],
+                                available_script,
+                                new_ends,
+                            )
+                            if not single.get(sentence.id):
+                                raise TranslationError("逐句重试没有可靠匹配")
+                        except TranslationError:
+                            review_ids.append(sentence.id)
+                            result[sentence.id] = (
+                                sentence.source_text if target == "source" else sentence.zh_text
+                            )
+                            logger.warning("%s 待人工校对，保留原文；详见项目诊断", sentence.id)
+                        else:
+                            result.update(single)
+                            new_ends = next_ends
+                            allocations.extend(assigned)
+                    selected_script_ids = list(dict.fromkeys(str(a["id"]) for a in allocations))
                 corrections.update(result)
                 consumed_ends = new_ends
                 consumed_script_ids.update(
@@ -1158,13 +1257,15 @@ def reconcile_script_sentences(
                         "corrections": result,
                         "allocations": allocations,
                         "script_source": script_source,
+                        "needs_review_ids": review_ids,
                     }
                 )
                 if on_batch:
                     on_batch()
                 if progress:
                     progress(
-                        f"台本校对第 {index + 1}/{len(recognized_batches)} 批完成",
+                        f"台本校对第 {index + 1}/{len(recognized_batches)} 批完成"
+                        + (f"；{len(review_ids)} 句待人工校对，已保留原文" if review_ids else ""),
                         index + 1,
                         len(recognized_batches),
                     )
@@ -1174,7 +1275,7 @@ def reconcile_script_sentences(
     unused = [
         script_id for script_id, _text in script_items if script_id not in consumed_script_ids
     ]
-    if not any(corrections.values()):
+    if not any(corrections.values()) and not any(entry.get("needs_review_ids") for entry in report):
         if diagnostic_path is not None:
             diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(

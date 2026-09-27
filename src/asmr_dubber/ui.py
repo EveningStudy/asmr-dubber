@@ -1432,6 +1432,11 @@ def build_app() -> Any:
 
     with gr.Blocks(title=f"ASMR Dubber {__version__}") as app:
         gr.HTML(
+            '<nav aria-label="Interface language" data-no-i18n>'
+            '<button type="button" data-ui-language="zh">中文</button> · '
+            '<button type="button" data-ui-language="en">English</button></nav>'
+        )
+        gr.HTML(
             "<header><h1>ASMR Dubber</h1>"
             f"<p>音频识别、翻译、中文配音与字幕制作 · {__version__}</p></header>",
             elem_id="asmr-dubber-product-marker",
@@ -1598,6 +1603,9 @@ def build_app() -> Any:
                             "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
                             "保存后会删除该句。每页显示 50 句，翻页不丢草稿；"
                             "长文本可在输入框内滚动或拖高查看，保存不会截断。"
+                            "右侧可逐句控制原声和中文配音：音量 0 dB 表示沿用设置，"
+                            "原声开关可选沿用设置/保留/关闭（仅人声分离开启时生效）。"
+                            "播放开关不删除文字或 TTS 缓存，修改后保存并重新混音即可。"
                         )
 
                         with gr.Accordion(
@@ -2100,6 +2108,11 @@ def build_app() -> Any:
                             value=stored.pypi_index_url,
                             placeholder="https://pypi.org/simple",
                         )
+
+                    with gr.Tab("人声分离（实验性）", id="separation"):
+                        from .separation_ui import build_controls
+
+                        separation_visibility = build_controls(gr, stored, settings_components)
 
                     with gr.Tab("ASR（语音识别）", id="asr"):
                         asr_usage = gr.Markdown(
@@ -3039,6 +3052,9 @@ def build_app() -> Any:
                             )
 
                     with gr.Tab("混音与字幕", id="mix-subtitles"):
+                        from .separation_ui import build_mix_controls
+
+                        mix_visibility = build_mix_controls(gr, stored, settings_components)
                         with gr.Row():
                             settings_components["chinese_dubbing_offset_ms"] = gr.Number(
                                 label="中文配音整体偏移（毫秒）",
@@ -3233,9 +3249,12 @@ def build_app() -> Any:
                         )
                         with gr.Row():
                             settings_components["subtitle_max_chars_per_line"] = gr.Number(
-                                label="每行最多字符",
+                                label="每行最多字符（8–500）",
                                 value=stored.subtitle_max_chars_per_line,
                                 precision=0,
+                                minimum=8,
+                                maximum=500,
+                                info="换行上限，不合并不同句子。已有项目请选择「仅当前项目」或「两者」，保存后重新生成字幕。",
                             )
                             settings_components["subtitle_min_duration_seconds"] = gr.Number(
                                 label="最短显示秒数",
@@ -5413,7 +5432,7 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
             show_progress="hidden",
-        )
+        ).then(**separation_visibility).then(**mix_visibility)
         # No automatic form hydration: an opened project must not overwrite drafts.
         load_tts_settings_button.click(
             refresh_tts_form_callback,
@@ -5488,7 +5507,10 @@ def build_app() -> Any:
 
             normalized_manifest = str(manifest or "").strip()
             if not normalized_manifest or scope == "defaults":
-                message = f"设置已保存：{path}\n以后新建的项目将使用这些设置。"
+                message = (
+                    f"设置已保存：{path}\n以后新建的项目将使用这些设置；当前项目不会变化。"
+                    f"\n字幕每行上限：{settings.subtitle_max_chars_per_line} 字符。"
+                )
                 return (
                     message,
                     *[gr.update() for _ in common_outputs],
@@ -5515,7 +5537,11 @@ def build_app() -> Any:
                     ),
                 )
 
-            settings_message = f"设置已保存：{path}\n{project_view.status}"
+            settings_message = (
+                f"设置已保存：{path}\n{project_view.status}"
+                f"\n当前项目字幕每行上限：{settings.subtitle_max_chars_per_line} 字符；"
+                "需要重新生成字幕，已有文件不会自动改写。"
+            )
             project_updates = list(_view_values(project_view))
             project_updates[2] = gr.update()  # Preserve unsaved sentence-table edits.
             return (
@@ -5949,6 +5975,9 @@ def build_app() -> Any:
             api_name=_PRIVATE_API,
             queue=False,
         )
+        from .localization import language_script
+
+        app.load(fn=None, js=language_script(), api_name=_PRIVATE_API, queue=False)
     return app
 
 
@@ -5988,7 +6017,10 @@ def launch(host: str = "127.0.0.1", port: int = 7860) -> None:
     # launch parameters while retaining the security-critical allowlist/auth.
     accepted = inspect.signature(app.launch).parameters
     launch_kwargs = {key: value for key, value in launch_kwargs.items() if key in accepted}
-    app.queue(default_concurrency_limit=1, max_size=8).launch(**launch_kwargs)
+    # Keep long-running project mutations serialized by their explicit
+    # ``runtime_mutation`` concurrency group, while allowing unrelated UI
+    # callbacks (tab/settings refreshes and lightweight validation) to respond.
+    app.queue(default_concurrency_limit=2, max_size=8).launch(**launch_kwargs)
 
 
 def main() -> None:

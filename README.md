@@ -1,3 +1,5 @@
+中文 | [English](README.en.md)
+
 # ASMR Dubber
 
 [![GitHub Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
@@ -50,6 +52,10 @@ IndexTTS-2.5 为按需安装项，不属于以上方案。英语本地识别需�
 
 ## 按你的素材选择流程
 
+网页顶部 **中文 / English** 可直接切换界面，默认中文；Setup 也可选择语言。[English documentation](docs/en/INDEX.md)。
+
+仅字幕文件支持双语、仅原文和仅译文，并可沿用音频原名。
+
 | 手上有什么 | 最短制作路线 |
 |---|---|
 | 只有日语／英语音频或视频 | 新建项目 → ASR → 校对原文 → 翻译 → 配音 → 混音 |
@@ -60,19 +66,15 @@ IndexTTS-2.5 为按需安装项，不属于以上方案。英语本地识别需�
 
 详见[使用指南](docs/USER_GUIDE.md)和[完全依据已有字幕制作](docs/SUBTITLE_WORKFLOW.md)。字幕齐全是指每条所选音轨都有对应文件，不要求字幕覆盖音乐、停顿等每一秒。
 
+### 混音
+
+混音时可选 **RTF（原声空间线索迁移）**，将原录音的立体声空间线索迁移到中文配音。操作和参数见[音频处理](docs/EXPERIMENTAL_AUDIO.md)。
+
 ### 设置保存到哪里
 
 “设置保存范围”有三个选项：**仅新项目默认值／仅当前项目／两者**。默认只保存新项目默认值；要改变已打开的项目，必须选择“仅当前项目”或“两者”。API Key 使用各服务自己的保存按钮。
 
 切换页签保留未保存草稿；刷新浏览器会丢弃草稿并开启新的页面会话，已有项目需重新打开。程序重启会重新加载运行环境，不等同于刷新网页。详见[配置作用范围](docs/CONFIGURATION.md#默认设置和项目设置)。
-
-### 多模型复核不是必选步骤
-
-**实验性，效果可能不如单模型。** 新版先独立保存主稿，再让所选模型复听相同音频片段。默认只提出建议，不覆盖主稿、不依赖 LLM；可试听、比较、采纳、保留和撤销。它不保证提高识别准确率。
-
-![复核面板的用途说明、候选差异与试听操作](assets/tutorials/review-proposals.png)
-
-查看[多模型复核图文教程](docs/AUDIO_REVIEW_TUTORIAL.md)。原文台本的 LLM 重新定时校对是另一个功能，不要混淆。
 
 ## 能用哪些后端
 
@@ -94,17 +96,21 @@ Edge TTS 不需要密钥，但需要联网且不克隆音色。其它云服务�
 - 重试会复用满足条件的缓存；不要为排障直接删除整个 `.asmr-dubber`。
 - 重做批量结果可能替换旧成品，先备份再明确选择重做。
 - Key 明文保存在 `.asmr-dubber/config/secrets.json`。不要共享配置目录或未经脱敏的日志。
-- 原文字幕、中文台本、音色参考会按所选服务发送；本地多模型复核本身不调用翻译 API。
+- 原文字幕、中文台本、音色参考会按所选服务发送。
 
 详见[排障指南](docs/TROUBLESHOOTING.md)、[安全策略](SECURITY.md)和[支持入口](SUPPORT.md)。
 
 ## 文档导航
 
-从[文档索引](docs/INDEX.md)选择入口：
+[完整文档索引](docs/INDEX.md)
 
-- 用户：[安装](docs/INSTALLATION.md) · [使用](docs/USER_GUIDE.md) · [字幕优先](docs/SUBTITLE_WORKFLOW.md) · [复核图文教程](docs/AUDIO_REVIEW_TUTORIAL.md)
-- 配置：[参数参考](docs/CONFIGURATION.md) · [后端](docs/BACKENDS.md) · [CLI](docs/CLI.md) · [排障](docs/TROUBLESHOOTING.md)
-- 维护：[架构](docs/ARCHITECTURE.md) · [贡献](CONTRIBUTING.md) · [制品维护](docs/MODELSCOPE_UPLOADS.md) · [发布与验证记录](docs/RELEASE.md)
+| 分类 | 入口 |
+|---|---|
+| 开始使用 | [安装](docs/INSTALLATION.md) · [使用指南与批量处理](docs/USER_GUIDE.md) |
+| 字幕与音频 | [已有字幕制作](docs/SUBTITLE_WORKFLOW.md) · [音频处理：RTF、分离与逐句混音](docs/EXPERIMENTAL_AUDIO.md) |
+| 配置与排障 | [配置参考](docs/CONFIGURATION.md) · [后端](docs/BACKENDS.md) · [CLI](docs/CLI.md) · [排障](docs/TROUBLESHOOTING.md) · [支持](SUPPORT.md) |
+| 开发与维护 | [贡献](CONTRIBUTING.md) · [架构](docs/ARCHITECTURE.md) · [Prompt](docs/PROMPTS.md) · [制品维护](docs/MODELSCOPE_UPLOADS.md) · [发布记录](docs/RELEASE.md) |
+| 安全与许可 | [安全策略](SECURITY.md) · [第三方声明](docs/THIRD_PARTY_NOTICES.md) · [行为准则](CODE_OF_CONDUCT.md) |
 
 ## 许可
 

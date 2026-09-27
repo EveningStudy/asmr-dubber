@@ -19,7 +19,7 @@ from .constants import MAX_CHINESE_AUTO_SPEED
 from .environment import ffmpeg_executable
 from .errors import AsmrDubberError, OperationCancelledError, ProjectError
 from .filtering import has_speakable_text
-from .models import AudioInfo, Sentence
+from .models import AudioInfo, ProjectSettings, Sentence
 from .storage import require_disk_space
 from .task_control import (
     check_cancelled,
@@ -45,6 +45,7 @@ class StemEvent:
     speed_factor: float = 1.0
     effective_duration_seconds: float | None = None
     remaining_overlap_seconds: float = 0.0
+    gain_db: float = 0.0
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -370,6 +371,14 @@ def sentence_events(
             sentence.tts_file,
             f"句子 {sentence.id} 的中文音频",
         )
+        if not sentence.chinese_audio_enabled:
+            available.append(sentence)
+            sentence_by_id[sentence.id] = sentence
+            audio_paths[sentence.id] = audio_path
+            durations[sentence.id] = (
+                sentence.tts_duration_seconds or sentence.end_seconds - sentence.start_seconds
+            )
+            continue
         if not audio_path.is_file():
             raise ProjectError(f"句子 {sentence.id} 的中文音频不存在：{audio_path}")
         try:
@@ -400,8 +409,10 @@ def sentence_events(
             speed_factor=timing.speed_factor,
             effective_duration_seconds=timing.effective_duration_seconds,
             remaining_overlap_seconds=timing.remaining_overlap_seconds,
+            gain_db=sentence_by_id[timing.sentence_id].chinese_audio_gain_db,
         )
         for timing in timings
+        if sentence_by_id[timing.sentence_id].chinese_audio_enabled
     ]
 
 
@@ -554,6 +565,8 @@ def build_chinese_stem(
     fade_ms: float = 8.0,
     channel_routing: str = "auto",
     progress: Progress | None = None,
+    spatial_reference_path: Path | None = None,
+    spatial_settings: ProjectSettings | None = None,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     rate = source_info.sample_rate
@@ -677,12 +690,24 @@ def build_chinese_stem(
                         )
                     stem.seek(start_frame)
                     current = stem.read(len(usable), dtype="float32", always_2d=True)
-                    values = _route_mono_to_channels(
-                        usable,
-                        channels,
-                        source_info.channel_layout,
-                        channel_routing,
-                    )
+                    if spatial_reference_path is not None:
+                        from .experimental_mix import spatialize_clip
+
+                        if channels != 2:
+                            raise ProjectError("RTF 仅支持双声道原音频。")
+                        if spatial_settings is None:
+                            raise ProjectError("RTF 参数未提供。")
+                        values = spatialize_clip(
+                            clip, rate, event, spatial_reference_path, spatial_settings
+                        )[clip_offset:]
+                    else:
+                        values = _route_mono_to_channels(
+                            usable,
+                            channels,
+                            source_info.channel_layout,
+                            channel_routing,
+                        )
+                    values = values * np.float32(10 ** (event.gain_db / 20))
                     stem.seek(start_frame)
                     stem.write(
                         _sum_with_peak_ceiling(

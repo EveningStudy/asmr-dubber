@@ -347,3 +347,43 @@ def test_chinese_script_reconciliation_reports_text_that_cannot_fit_window(
     assert result["timing_warning_ids"] == ["s000001"]
     assert project.sentences[0].source_text == "短い台詞。"
     assert project.sentences[0].zh_text == "这是一句明显无法在一秒时间窗口内正常说完的中文台词。"
+
+
+def test_failed_script_review_preserves_sentence_and_marks_diagnostics(tmp_path, monkeypatch):
+    from asmr_dubber.ui_services import diagnostics
+
+    project = _import_project(tmp_path)
+    project.sentences = [
+        Sentence(
+            id="s000001",
+            start_seconds=0,
+            end_seconds=1,
+            source_text="元の台詞",
+            zh_text="已有译文",
+            tts_file="tts/kept.wav",
+        )
+    ]
+    transcript = tmp_path / "script.txt"
+    transcript.write_text("台本", encoding="utf-8")
+    monkeypatch.setattr(
+        pipeline,
+        "reconcile_script_sentences",
+        lambda *a, **kw: (
+            {"s000001": "元の台詞"},
+            [{"needs_review_ids": ["s000001"]}],
+        ),
+    )
+    monkeypatch.setattr(pipeline, "resolve_api_key", lambda *a, **kw: "test")
+    result = pipeline.reconcile_analyzed_project_script(
+        project,
+        tmp_path,
+        transcript_path=transcript,
+        script_language="ja",
+        start_seconds=0,
+        end_seconds=2,
+    )
+    assert result["matched_sentences"] == 0
+    assert result["unmatched_ids"] == ["s000001"]
+    assert project.sentences[0].zh_text == "已有译文"
+    assert project.sentences[0].tts_file == "tts/kept.wav"
+    assert "台本待人工校对" in diagnostics(project)

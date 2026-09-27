@@ -1,3 +1,7 @@
+中文 | [English](en/MODELSCOPE_UPLOADS.md)
+
+[文档索引](INDEX.md) · [README](../README.md)
+
 # ModelScope 制品维护
 
 本文面向发布维护者。普通用户不需要上传任何文件，只需运行 Setup 或使用离线模型包。

@@ -1,3 +1,5 @@
+中文 | [English](CODE_OF_CONDUCT.en.md)
+
 # 社区行为准则
 
 ## 我们的承诺

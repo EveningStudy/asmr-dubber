@@ -39,13 +39,17 @@ TABLE_HEADERS = [
     "结束（秒）",
     "原文",
     "中文译文",
+    "原声开关（仅分离时）",
+    "原声音量微调（dB）",
+    "播放中文配音",
+    "中文音量微调（dB）",
 ]
-TABLE_TYPES = ["str", "bool", "number", "number", "str", "str"]
+TABLE_TYPES = ["str", "bool", "number", "number", "str", "str", "str", "number", "bool", "number"]
 
 _ASR_AFFECTING_SETTINGS = frozenset(
     name
     for name in ProjectSettings.model_fields
-    if name.startswith(("asr_", "translation_"))
+    if name.startswith(("asr_", "translation_", "separation_"))
     or name in {"pause_split_seconds", "max_sentence_seconds", "skip_japanese_fillers"}
 )
 
@@ -121,6 +125,14 @@ def project_rows(project: DubProject) -> list[list[Any]]:
             sentence.end_seconds,
             sentence.source_text,
             sentence.zh_text,
+            "default"
+            if sentence.original_audio_enabled is None
+            else "on"
+            if sentence.original_audio_enabled
+            else "off",
+            sentence.original_audio_gain_db,
+            sentence.chinese_audio_enabled,
+            sentence.chinese_audio_gain_db,
         ]
         for sentence in project.sentences
     ]
@@ -134,7 +146,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
     parsed: list[Sentence] = []
     seen: set[str] = set()
     for index, row in enumerate(rows, start=1):
-        if len(row) != len(TABLE_HEADERS):
+        if len(row) not in {6, len(TABLE_HEADERS)}:
             raise ProjectError(f"第 {index} 行列数错误，应为 {len(TABLE_HEADERS)} 列。")
         sentence_id = _text(row[0], f"第 {index} 行句子 ID", required=True)
         source_text = _text(row[4], f"{sentence_id} 源文")
@@ -160,13 +172,27 @@ def apply_table(project: DubProject, table: Any) -> bool:
             "source_text": source_text,
             "zh_text": zh_text,
         }
+        if len(row) == len(TABLE_HEADERS):
+            source_switch = str(row[6] or "default").strip().lower()
+            if source_switch not in {"default", "on", "off"}:
+                raise ProjectError(f"{sentence_id} 原声开关必须为 default/on/off。")
+            source_gain = _number(row[7], f"{sentence_id} 原声音量")
+            chinese_gain = _number(row[9], f"{sentence_id} 中文音量")
+            if not -60 <= source_gain <= 12 or not -60 <= chinese_gain <= 12:
+                raise ProjectError("逐句音量微调必须在 -60 到 +12 dB 之间。")
+            payload.update(
+                original_audio_enabled={"default": None, "on": True, "off": False}[source_switch],
+                original_audio_gain_db=source_gain,
+                chinese_audio_enabled=_boolean(row[8], f"{sentence_id} 中文播放"),
+                chinese_audio_gain_db=chinese_gain,
+            )
         if old is None:
             parsed.append(Sentence(**payload))
             continue
         material_changed = any(
             getattr(old, field) != value
             for field, value in payload.items()
-            if field not in {"id", "enabled"}
+            if field in {"start_seconds", "end_seconds", "source_text", "zh_text"}
         )
         updated = old.model_copy(update=payload)
         if material_changed:
@@ -341,6 +367,13 @@ def diagnostics(project: DubProject) -> str:
     errors = [f"{item.id}：{item.error}" for item in project.sentences if item.error]
     if errors:
         lines.append("最近错误：\n" + "\n".join(errors[:8]))
+    review = [
+        f"{item.id}：{item.script_review_note}"
+        for item in project.sentences
+        if item.script_review_note
+    ]
+    if review:
+        lines.append(f"台本待人工校对（{len(review)} 句）：\n" + "\n".join(review))
     if project.migration_warnings:
         lines.append("项目迁移提示：\n" + "\n".join(project.migration_warnings))
     if project.asr_settings_dirty:
@@ -625,6 +658,7 @@ def subtitles(
 
 
 def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectView:
+    settings.validate_mix_dependencies()
     project, directory = pipeline.reload_project(project_path)
     previous = project.settings.model_dump()
     project.settings = settings_for_source_language(
@@ -641,7 +675,7 @@ def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectV
     asr_changed = bool(_ASR_AFFECTING_SETTINGS.intersection(changed_fields))
     if changed_fields:
         affects_audio = any(
-            name.startswith(("tts_", "chinese_", "mix_"))
+            name.startswith(("tts_", "chinese_", "mix_", "separation_", "spatial_"))
             or name
             in {
                 "normalize_chinese_loudness",

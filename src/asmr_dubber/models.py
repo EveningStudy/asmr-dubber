@@ -6,7 +6,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from .constants import (
     DEFAULT_ALIGNER_MODEL,
@@ -72,7 +80,12 @@ class Sentence(BaseModel):
     tts_cache_key: str | None = None
     status: str = "pending"
     error: str | None = None
+    script_review_note: str | None = None
     review_locked: bool = False
+    original_audio_enabled: bool | None = None
+    original_audio_gain_db: float = Field(default=0, ge=-60, le=12)
+    chinese_audio_enabled: bool = True
+    chinese_audio_gain_db: float = Field(default=0, ge=-60, le=12)
 
     @field_validator("source_text", "zh_text")
     @classmethod
@@ -98,6 +111,125 @@ class Sentence(BaseModel):
 
 class ProjectSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
+
+    def validate_mix_dependencies(self) -> None:
+        if self.separation_mix_mode == "replace" and not self.separation_enabled:
+            raise ProjectError("中文替换需要开启人声分离。请改回双语，或先开启人声分离后保存。")
+
+    separation_enabled: bool = False
+    separation_backend: Literal["local", "replicate", "http"] = "local"
+    separation_model: str = "vocals_mel_band_roformer.ckpt"
+    separation_device: Literal["cuda", "cpu"] = "cuda"
+    separation_chunk_seconds: float = Field(default=30, ge=5, le=300)
+    separation_overlap_seconds: float = Field(default=1, ge=0, le=3)
+    separation_timeout_seconds: float = Field(default=1800, ge=30, le=14400)
+    separation_use_autocast: bool = True
+    separation_normalization: float = Field(default=1, gt=0, le=1)
+    separation_vocal_stem: str = "Vocals"
+    separation_common_params: str = (
+        '{"invert_using_spec":false,"use_torch_compile":false,'
+        '"use_native_fp16":false,"amplification_threshold":0.0}'
+    )
+    separation_mdx_params: str = (
+        '{"hop_length":1024,"segment_size":256,"overlap":0.25,'
+        '"batch_size":1,"enable_denoise":false}'
+    )
+    separation_vr_params: str = (
+        '{"batch_size":1,"window_size":512,"aggression":5,'
+        '"enable_tta":false,"enable_post_process":false,'
+        '"post_process_threshold":0.2,"high_end_process":false}'
+    )
+    separation_demucs_params: str = (
+        '{"segment_size":"Default","shifts":2,"overlap":0.25,"segments_enabled":true}'
+    )
+    separation_mdxc_params: str = (
+        '{"segment_size":256,"override_model_segment_size":true,'
+        '"batch_size":1,"overlap":4,"pitch_shift":0}'
+    )
+    separation_api_url: str = ""
+    separation_api_model: str = ""
+    separation_api_audio_field: str = "audio"
+    separation_api_output_field: str = "vocals"
+    separation_api_params: str = "{}"
+    separation_cloud_consent: bool = False
+    separation_mix_mode: Literal["bilingual", "replace"] = "bilingual"
+    separation_keep_original: Literal["none", "unvoiced", "manual"] = "none"
+    separation_keep_ids: str = ""
+    separation_keep_padding_ms: float = Field(default=40, ge=0, le=500)
+    spatial_rtf_enabled: bool = False
+    spatial_rtf_strength: float = Field(default=1, ge=0, le=1)
+    spatial_rtf_level_strength: float = Field(default=0.7, ge=0, le=1)
+    spatial_rtf_color_strength: float = Field(default=0.35, ge=0, le=1)
+    spatial_rtf_fft_size: Literal[0, 1024, 2048, 4096, 8192] = 0
+    spatial_rtf_hop_divisor: Literal[4, 8, 16] = 8
+    spatial_rtf_block_seconds: float = Field(default=10, ge=1, le=30)
+
+    @field_validator(
+        "separation_mdx_params",
+        "separation_vr_params",
+        "separation_demucs_params",
+        "separation_mdxc_params",
+        "separation_api_params",
+        "separation_common_params",
+    )
+    @classmethod
+    def separation_json_object(cls, value: str, info: ValidationInfo) -> str:
+        parsed = json.loads(value or "{}")
+        if not isinstance(parsed, dict):
+            raise ValueError("分离参数必须为 JSON 对象。")
+        allowed = {
+            "separation_common_params": {
+                "invert_using_spec",
+                "use_torch_compile",
+                "use_native_fp16",
+                "amplification_threshold",
+            },
+            "separation_mdx_params": {
+                "hop_length",
+                "segment_size",
+                "overlap",
+                "batch_size",
+                "enable_denoise",
+            },
+            "separation_vr_params": {
+                "batch_size",
+                "window_size",
+                "aggression",
+                "enable_tta",
+                "enable_post_process",
+                "post_process_threshold",
+                "high_end_process",
+            },
+            "separation_demucs_params": {"segment_size", "shifts", "overlap", "segments_enabled"},
+            "separation_mdxc_params": {
+                "segment_size",
+                "override_model_segment_size",
+                "batch_size",
+                "overlap",
+                "pitch_shift",
+            },
+        }.get(info.field_name or "")
+        if allowed is not None and parsed.keys() - allowed:
+            raise ValueError("不支持的分离参数：" + ", ".join(sorted(parsed.keys() - allowed)))
+        if allowed is not None:
+            for key, parameter in parsed.items():
+                if (
+                    key in {"batch_size", "window_size", "hop_length", "segment_size"}
+                    and parameter != "Default"
+                ) and (
+                    isinstance(parameter, bool) or not isinstance(parameter, int) or parameter < 1
+                ):
+                    raise ValueError(f"{key} 必须是正整数。")
+                if key == "overlap":
+                    minimum, maximum = (
+                        (1, 32) if info.field_name == "separation_mdxc_params" else (0, 0.99)
+                    )
+                    if (
+                        not isinstance(parameter, (int, float))
+                        or not minimum <= parameter <= maximum
+                    ):
+                        raise ValueError(f"overlap 必须在 {minimum} 到 {maximum} 之间。")
+        return json.dumps(parsed, ensure_ascii=False)
 
     asr_backend: Literal[
         "generic_asr_api",
@@ -275,7 +407,7 @@ class ProjectSettings(BaseModel):
     reference_padding_seconds: float = Field(default=0.0, ge=0.0, le=2.0)
     random_seed: int = Field(default=20260722, ge=0)
     subtitle_timeline: Literal["source", "dubbing"] = "source"
-    subtitle_max_chars_per_line: int = Field(default=22, ge=8, le=60)
+    subtitle_max_chars_per_line: int = Field(default=22, ge=8, le=500)
     subtitle_min_duration_seconds: float = Field(default=1.0, ge=0.2, le=10.0)
     subtitle_max_cps: float = Field(default=18.0, ge=5.0, le=40.0)
 
@@ -410,7 +542,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.5.1"
+    app_version: str = "1.6.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -492,6 +624,7 @@ def load_project(path: str | os.PathLike[str] | None) -> tuple[DubProject, Path]
 
 
 def save_project(project: DubProject, project_dir: str | os.PathLike[str]) -> Path:
+    project.settings.validate_mix_dependencies()
     ids = [sentence.id.casefold() for sentence in project.sentences]
     if len(ids) != len(set(ids)):
         raise ProjectError("sentence IDs must be unique (case insensitive)")
@@ -602,7 +735,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.5.1"
+        payload["app_version"] = "1.6.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

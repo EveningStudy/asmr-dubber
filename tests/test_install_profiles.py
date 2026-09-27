@@ -179,7 +179,7 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
     )
 
     api_install = windows.index('"edge-tts==7.2.8"')
-    application_install = windows.index('Write-Host "正在安装应用依赖')
+    application_install = windows.index('Write-SetupHost "正在安装应用依赖')
     assert application_install < api_install
     assert f'"edge-tts=={edge_version}"' in windows
     assert '"httpx>=0.28.0"' in windows
@@ -369,7 +369,7 @@ def test_windows_recommended_prefers_verified_modelscope_dependency_pack() -> No
     helper = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(encoding="utf-8")
     importer = (ROOT / "scripts/import_windows_dependency_pack.py").read_text(encoding="utf-8")
     assert setup.index("Import-ASMRDubberRecommendedDependencies") < setup.index(
-        'Write-Host "正在安装应用依赖'
+        'Write-SetupHost "正在安装应用依赖'
     )
     assert "windows_recommended_dependency_archives" in helper
     assert "Get-ASMRDubberFileSha256 -Path $Archive" in helper
@@ -449,8 +449,8 @@ def test_windows_setup_does_not_turn_a_successful_install_into_exit_code_zero_fa
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("1.5.1.0")' in source
-        assert 'AssemblyFileVersion("1.5.1.0")' in source
+        assert 'AssemblyVersion("1.6.0.0")' in source
+        assert 'AssemblyFileVersion("1.6.0.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

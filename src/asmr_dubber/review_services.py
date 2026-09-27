@@ -274,9 +274,14 @@ def retry_review(
 
         export_transcript(project, directory)
         previous = rows_fingerprint(project.sentences)
-        audio = make_analysis_copy(
-            verify_source(directory, project.source), directory / "analysis/asr_16k_mono.wav"
-        )
+        source = verify_source(directory, project.source)
+        if project.settings.separation_enabled:
+            from .separation import ensure_separation
+
+            source, _ = ensure_separation(project, directory, source, progress)
+            audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
+        else:
+            audio = make_analysis_copy(source, directory / "analysis/asr_16k_mono.wav")
         try:
             project.sentences = run_audio_review(
                 audio,
@@ -310,7 +315,13 @@ def align_review(
         apply_table(project, table)
         save_project(project, directory)
         source = verify_source(directory, project.source)
-        audio = make_analysis_copy(source, directory / "analysis/asr_16k_mono.wav")
+        if project.settings.separation_enabled:
+            from .separation import ensure_separation
+
+            source, _ = ensure_separation(project, directory, source, progress)
+            audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
+        else:
+            audio = make_analysis_copy(source, directory / "analysis/asr_16k_mono.wav")
         original = {row.id: row for row in project.sentences}
         proposed = [row.model_copy(deep=True) for row in project.sentences]
         identities = {id(row): row.id for row in proposed}

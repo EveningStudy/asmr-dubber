@@ -1,4 +1,14 @@
+中文 | [English](en/INSTALLATION.md)
+
+[文档索引](INDEX.md) · [README](../README.md)
+
 # 安装指南
+
+## 语言
+
+Linux 安装主流程可用 `bash scripts/linux/setup.sh Recommended en` 选择英文，省略语言参数默认中文。
+
+Windows Setup 启动后可选中文（默认）或 English；命令行可用 `ASMR-Dubber-Setup.exe --lang=en` / `--lang=zh`。安装方案选择时输入 `L` 可切换语言。网页顶部可独立切换中英文，不需要重启程序；语言不改变安装方案、模型或项目内容。第三方安装器、底层工具和原始日志保留其原始语言，便于排障。
 
 这份指南面向第一次安装 ASMR Dubber 的用户。程序采用便携目录，不需要管理员权限；只要当前账户能写入解压目录，运行环境、模型、缓存和项目都会放在该目录下。
 

@@ -16,8 +16,8 @@ TEMPLATE = """
     <button type="button" data-action="add">添加句子</button>
   </div>
   <div class="editor-scroll">
-    <table><colgroup><col style="width:100px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:350px"><col style="width:350px"></colgroup>
-      <thead><tr><th>句子 ID</th><th>启用中文处理</th><th>开始（秒）</th><th>结束（秒）</th><th>原文</th><th>中文译文</th></tr></thead>
+    <table><colgroup><col style="width:100px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:350px"><col style="width:350px"><col style="width:140px"><col style="width:110px"><col style="width:110px"><col style="width:110px"></colgroup>
+      <thead><tr><th>句子 ID</th><th>启用中文处理</th><th>开始（秒）</th><th>结束（秒）</th><th>原文</th><th>中文译文</th><th>原声开关<br>仅分离时生效</th><th>原声微调 dB</th><th>播放中文配音</th><th>中文微调 dB</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -31,11 +31,11 @@ CSS = """
 .editor-toolbar label { display:flex; gap:4px; align-items:center; }
 .editor-toolbar input { width:90px; }
 .editor-scroll { overflow:auto; max-height:600px; }
-table { table-layout:fixed; border-collapse:collapse; width:1110px; }
+table { table-layout:fixed; border-collapse:collapse; width:1580px; }
 th { position:sticky; top:0; background:var(--block-background-fill); z-index:1; }
 th, td { border:1px solid var(--border-color-primary); padding:5px; vertical-align:top; }
-textarea, input { background:var(--input-background-fill); color:var(--body-text-color); border:1px solid var(--border-color-primary); border-radius:4px; padding:5px; }
-td input:not([type=checkbox]), td textarea { width:100%; box-sizing:border-box; font:inherit; }
+textarea, input, select { background:var(--input-background-fill); color:var(--body-text-color); border:1px solid var(--border-color-primary); border-radius:4px; padding:5px; }
+td input:not([type=checkbox]), td textarea, td select { width:100%; box-sizing:border-box; font:inherit; }
 td input[type=checkbox] { appearance:auto !important; width:18px; height:18px; accent-color:var(--color-accent); }
 textarea { height:64px; resize:vertical; white-space:pre-wrap; }
 button { padding:6px 10px; border:1px solid var(--border-color-primary); border-radius:5px; background:var(--button-secondary-background-fill); color:var(--body-text-color); }
@@ -68,15 +68,21 @@ const render = () => {
   const fragment = document.createDocumentFragment();
   for (let i=page*size; i<Math.min(rows.length,(page+1)*size); i++) {
     const tr = document.createElement('tr'); tr.dataset.row = String(i);
-    for(let col=0; col<6; col++) {
+    for(let col=0; col<10; col++) {
       const td = document.createElement('td');
       if(col===0) { td.textContent = text(rows[i][col]); }
       else {
-        const field = document.createElement(col>=4 ? 'textarea' : 'input');
+        const field = document.createElement(col===6 ? 'select' : (col===4||col===5) ? 'textarea' : 'input');
         field.dataset.row = String(i); field.dataset.col = String(col);
-        field.setAttribute('aria-label', `${text(rows[i][0])} ${['ID','启用中文处理','开始秒数','结束秒数','原文','中文译文'][col]}`);
-        if(col===1) {field.type='checkbox';field.checked=enabled(rows[i][col]);}
-        else {field.value=text(rows[i][col]);if(col<4)field.inputMode='decimal';}
+        field.setAttribute('aria-label', `${text(rows[i][0])} ${['ID','启用中文处理','开始秒数','结束秒数','原文','中文译文','原声开关','原声音量微调','播放中文配音','中文音量微调'][col]}`);
+        if(col===6) {
+          for(const [value,label] of [['default','沿用设置'],['on','保留原声'],['off','关闭原声']]) {
+            const option=document.createElement('option');option.value=value;option.textContent=label;field.append(option);
+          }
+          field.value=rows[i][col]||'default';
+        }
+        else if(col===1||col===8) {field.type='checkbox';field.checked=enabled(rows[i][col]);}
+        else {field.value=text(rows[i][col]);if(col<4||col===7||col===9)field.inputMode='decimal';}
         td.append(field);
       }
       tr.append(td);
@@ -91,7 +97,7 @@ element.addEventListener('input', event => {
   const i=Number(field.dataset.row), col=Number(field.dataset.col);
   if(!rows[i])return;
   rows[i]=rows[i].slice();
-  rows[i][col]=col===1 ? (field.checked ? 'true':'false') : field.value;
+  rows[i][col]=(col===1||col===8) ? (field.checked ? 'true':'false') : field.value;
   publish();
 });
 element.addEventListener('click', event => {
@@ -113,14 +119,14 @@ element.addEventListener('click', event => {
     let number=rows.length+1, id;
     do {id='s'+String(number++).padStart(6,'0');} while(used.has(id));
     const start=rows.length ? Number(rows[rows.length-1][3])||0 : 0;
-    rows.push([id,'true',String(start),String(start+1),'','']);
+    rows.push([id,'true',String(start),String(start+1),'','','default','0','true','0']);
     page=Math.floor((rows.length-1)/size);publish();
   }
   render();
   element.querySelector('.editor-scroll').scrollTop=0;
 });
 const receive = () => {
-  rows=(Array.isArray(props.value) ? props.value : []).map(row=>row.map(text));
+  rows=(Array.isArray(props.value) ? props.value : []).map(row=>{const values=row.map(text);return values.length===6 ? [...values,'default','0','true','0'] : values;});
   render();status(rows.length ? '已载入项目句子。修改后请保存。' : '尚无句子。');
 };
 receive();watch('value',receive);

@@ -264,7 +264,21 @@ def _reconcile_untimed_script(
             cancel_event=cancel_event,
         )
         unmatched_ids: list[str] = []
+        review_ids = {
+            str(sid)
+            for entry in report
+            if isinstance(ids := entry.get("needs_review_ids"), list)
+            for sid in ids
+        }
         for sentence in working.sentences:
+            sentence.script_review_note = (
+                "台本校对未确认，保留原识别/译文，请人工校对。"
+                if sentence.id in review_ids
+                else None
+            )
+            if sentence.id in review_ids:
+                unmatched_ids.append(sentence.id)
+                continue
             candidate = sentence.source_text if target == "source" else sentence.zh_text
             corrected = str(corrections.get(sentence.id, "")).strip()
             if target == "source" and not corrected and candidate.strip():
@@ -377,7 +391,19 @@ def reconcile_analyzed_project_script(
     )
     matched = 0
     unmatched: list[str] = []
+    review_ids = {
+        str(sid)
+        for entry in report
+        if isinstance(ids := entry.get("needs_review_ids"), list)
+        for sid in ids
+    }
     for sentence in selected:
+        sentence.script_review_note = (
+            "台本校对未确认，保留原识别/译文，请人工校对。" if sentence.id in review_ids else None
+        )
+        if sentence.id in review_ids:
+            unmatched.append(sentence.id)
+            continue
         corrected = str(corrections.get(sentence.id, "")).strip()
         if target == "source":
             if corrected:
@@ -577,7 +603,13 @@ def _analyze_project_impl(
             progress(f"已存在 {len(project.sentences)} 句识别缓存", 1, 1)
         return
     source = verify_source(project_dir, project.source)
-    analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
+    if project.settings.separation_enabled:
+        from .separation import ensure_separation
+
+        vocals, _background = ensure_separation(project, project_dir, source, progress)
+        analysis = make_analysis_copy(vocals, vocals.parent / "asr_16k_mono.wav")
+    else:
+        analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     sentences, language = transcribe_source(
         analysis,
@@ -966,10 +998,26 @@ def _mix_project_impl(
     check_cancelled(cancel_event)
     require_supported_platform()
     source = verify_source(project_dir, project.source)
+    if project.settings.spatial_rtf_enabled and project.source.channels != 2:
+        raise ProjectError("RTF 处理，仅支持双声道原音频；请关闭 RTF 后继续。")
+    mixing_source = source
+    if project.settings.separation_enabled:
+        from .experimental_mix import compose_replacement_bed
+        from .separation import ensure_separation
+
+        vocals, background = ensure_separation(project, project_dir, source, progress)
+        if project.settings.separation_mix_mode == "replace" or any(
+            s.original_audio_enabled is not None or s.original_audio_gain_db != 0
+            for s in project.sentences
+        ):
+            mixing_source = compose_replacement_bed(project, project_dir, vocals, background)
+    elif project.settings.separation_mix_mode == "replace":
+        raise ProjectError("中文替换模式必须开启人声分离；不会静默改成原声叠加。")
     missing = [
         sentence.id
         for sentence in project.sentences
         if sentence.enabled
+        and sentence.chinese_audio_enabled
         and sentence.zh_text
         and has_speakable_text(sentence.zh_text)
         and (not sentence.tts_file or sentence.tts_cache_key != tts_cache_key(project, sentence))
@@ -985,7 +1033,7 @@ def _mix_project_impl(
         project.settings.chinese_max_auto_speed,
         project.settings.chinese_dubbing_timing_mode,
     )
-    if not events:
+    if not events and not any(not s.chinese_audio_enabled for s in project.sentences):
         raise ProjectError("没有可混入的中文配音。")
     output_mode = project.settings.mix_output_mode
     keep_stem = output_mode in {"stem", "both"}
@@ -1001,6 +1049,14 @@ def _mix_project_impl(
     )
     if progress:
         progress("按对应源语言句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
+    spatial_kwargs = {}
+    if project.settings.spatial_rtf_enabled:
+        from .experimental_mix import stereo_reference
+
+        spatial_kwargs = {
+            "spatial_reference_path": stereo_reference(source, project_dir),
+            "spatial_settings": project.settings,
+        }
     build_chinese_stem(
         destination=stem,
         events=events,
@@ -1018,6 +1074,7 @@ def _mix_project_impl(
         fade_ms=project.settings.chinese_fade_ms,
         channel_routing=project.settings.chinese_channel_routing,
         progress=progress,
+        **spatial_kwargs,
     )
     check_cancelled(cancel_event)
     mixed_output: Path | None = None
@@ -1025,7 +1082,7 @@ def _mix_project_impl(
         if progress:
             progress("正在把中文克隆音轨加入原音轨，并执行最终峰值保护", 0, 1)
         mix_original_and_stem(
-            source,
+            mixing_source,
             stem,
             output,
             project.source,

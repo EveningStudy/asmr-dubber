@@ -1,3 +1,7 @@
+中文 | [English](en/THIRD_PARTY_NOTICES.md)
+
+[文档索引](INDEX.md) · [README](../README.md)
+
 # 第三方软件、模型与服务
 
 ASMR Dubber 自身代码采用[MIT License](../LICENSE)。这个许可证只覆盖本仓库有权许可的代码，不自动覆盖模型权重、第三方运行时、输入作品、参考声音、云服务或生成内容。

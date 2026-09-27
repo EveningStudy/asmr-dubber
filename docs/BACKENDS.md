@@ -1,3 +1,7 @@
+中文 | [English](en/BACKENDS.md)
+
+[文档索引](INDEX.md) · [README](../README.md)
+
 # 后端指南
 
 ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS-2.5、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。

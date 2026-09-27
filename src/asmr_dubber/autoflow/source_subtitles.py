@@ -66,12 +66,16 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
             state["analyzed"] = False
             e.save_state(state_path, state)
         if not state.get("analyzed"):
-            # Only source-language timed subtitles bypass ASR. Translation, if
-            # requested, runs after source text is ready; inputs remain untouched.
+            # Source subtitles provide the original text. Chinese subtitles can
+            # directly satisfy Chinese-only output without inventing source text.
+            # Bilingual/source output still needs the actual source language.
             use_transcript = (
                 source.transcript_path is not None
                 and source.transcript_timed
-                and source.transcript_language == source.source_language
+                and (
+                    source.transcript_language == source.source_language
+                    or (language == "zh" and source.transcript_language == "zh")
+                )
                 and source.transcript_mode == e.TRANSCRIPT_MODE_DIRECT
             )
             if use_transcript:
@@ -80,12 +84,12 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
                     project,
                     directory,
                     transcript_path=source.transcript_path,
-                    script_language=source.source_language,
+                    script_language=source.transcript_language or source.source_language,
                     use_embedded_timing=True,
                 )
             else:
                 if source.transcript_path:
-                    print("仅字幕文件：所选台本非原文时间轴字幕，本模式使用 ASR 后按所选语言输出。")
+                    print("仅字幕文件：所选台本不能直接提供本次所需的文字与时间轴，先运行 ASR。")
                 e.run_asmr_cli(paths, "analyze", str(project_json))
             state["analyzed"] = True
             e.save_state(state_path, state)
@@ -96,7 +100,9 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         if project_data.settings.subtitle_timeline != "source":
             project_data.settings.subtitle_timeline = "source"
             save_project(project_data, directory)
-        if language != "source":
+        if language != "source" and any(
+            sentence.enabled and not sentence.zh_text for sentence in project_data.sentences
+        ):
             e.run_asmr_cli(paths, "translate", str(project_json))
         e.run_asmr_cli(paths, "subtitles", str(project_json), "--language", language)
         project = e.read_project(project_json)

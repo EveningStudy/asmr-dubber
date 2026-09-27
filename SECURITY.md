@@ -1,3 +1,5 @@
+中文 | [English](SECURITY.en.md)
+
 # 安全策略
 
 ## 报告安全问题

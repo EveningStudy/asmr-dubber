@@ -13,6 +13,28 @@ from asmr_dubber.pipeline import generate_subtitles
 from asmr_dubber.subtitles import write_subtitle_files
 
 
+@pytest.mark.parametrize("width", [40, 60, 80, 120, 500])
+def test_custom_line_width_persists_and_controls_srt_lrc(tmp_path, width):
+    from asmr_dubber.models import ProjectSettings
+
+    settings = ProjectSettings(subtitle_max_chars_per_line=width)
+    restored = ProjectSettings.model_validate_json(settings.model_dump_json())
+    text = "字" * (width + 5)
+    srt, lrc = write_subtitle_files(
+        [
+            Sentence(id="s1", start_seconds=0, end_seconds=60, source_text=text),
+        ],
+        tmp_path,
+        "source",
+        maximum_chars=restored.subtitle_max_chars_per_line,
+    )
+    assert srt.read_text(encoding="utf-8").splitlines()[2:] == ["字" * width, "字" * 5]
+    assert [line.split("]", 1)[1] for line in lrc.read_text(encoding="utf-8").splitlines()] == [
+        "字" * width,
+        "字" * 5,
+    ]
+
+
 def _sentences() -> list[Sentence]:
     return [
         Sentence(

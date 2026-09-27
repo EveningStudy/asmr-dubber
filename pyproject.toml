@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asmr-dubber"
-version = "1.5.1"
+version = "1.6.0"
 description = "Japanese or English ASMR to Chinese voice-cloned dubbing for Windows and Linux"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -99,8 +99,15 @@ include = [
   "/mirrors.json",
   "/modelscope-artifacts.lock.json",
   "/README.md",
+  "/README.en.md",
   "/CONTRIBUTING.md",
+  "/CONTRIBUTING.en.md",
   "/SECURITY.md",
+  "/SECURITY.en.md",
+  "/SUPPORT.md",
+  "/SUPPORT.en.md",
+  "/CODE_OF_CONDUCT.md",
+  "/CODE_OF_CONDUCT.en.md",
   "/LICENSE",
   "/docs",
   "/.github",

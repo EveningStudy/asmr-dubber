@@ -408,6 +408,7 @@ def load_user_settings() -> UserSettings:
 
 
 def save_user_settings(settings: UserSettings) -> Path:
+    settings.validate_mix_dependencies()
     path = config_dir() / "settings.json"
     _write_private_json(path, _portable_json_payload(settings.model_dump()))
     return path

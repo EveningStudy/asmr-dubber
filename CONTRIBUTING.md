@@ -1,3 +1,5 @@
+中文 | [English](CONTRIBUTING.en.md)
+
 # 贡献指南
 
 感谢你愿意改进 ASMR Dubber。开始写代码前，请先阅读[架构说明](docs/ARCHITECTURE.md)和与你

@@ -12,14 +12,16 @@
    不要为了强行匹配而编造、翻译或复制识别台词。
 4. 呼吸、笑声、呻吟、亲吻声、纯音效和没有交际作用的填充音，不应写进字幕；对应的 text
    可以是空字符串。保留有明确语义的短应答、呼唤和感叹。
-5. 每个结果通过 script_spans 列出 {id,start,end}，并把引用的台本原文原样填写到 text。
-   start/end 是 Python 字符索引：从 0 开始，包含 start、不包含 end；标点和空格也算字符。
-   第一次引用从 available_start 开始，后续引用从上次 end 开始，end 不超过 length。
-   不要改动音频时间，不能通过字符比例猜时间。整条引用用 start=available_start,end=length。
-   没有可靠对应项时，script_spans 使用空数组，text 使用空字符串。不要同时输出 script_ids。
+5. 每个结果通过 script_quotes 列出 {id,quote,skip_before}，quote 必须是台本的逐字原文。
+   不要计算字符索引，不要输出 script_spans 或 script_ids；字符位置由程序计算。
+   从 available_start 开始，后续引用紧接上次引用末尾；不要重复已分配文字。
+   如有未朗读的舞台说明，使用 skip_before 逐字列出本次 quote 前要跳过的文字，
+   不跳过时填空字符串。skip_before + quote 必须是剩余原文的连续前缀。
+   不能跳过后再回头分配。没有可靠对应项时返回空 script_quotes 和空 text。
+   不要改动音频时间，不能通过字符比例猜时间。
 6. 只输出{{OUTPUT_LABEL}}，不要翻译，不要输出解释、注释、Markdown 或其它字段。
 7. 只输出严格 JSON：
-{"corrections":[{"id":"s000001","script_spans":[{"id":"p000001","start":0,"end":3}],"text":"はい。"}]}
+{"corrections":[{"id":"s000001","script_quotes":[{"id":"p000001","quote":"はい。","skip_before":""}],"text":"はい。"}]}
 
 {{RETRY_NOTE}}
 

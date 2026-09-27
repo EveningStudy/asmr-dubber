@@ -1,3 +1,7 @@
+中文 | [English](en/ARCHITECTURE.md)
+
+[文档索引](INDEX.md) · [README](../README.md)
+
 # 架构说明
 
 本文面向维护者和准备扩展代码的开发者。用户操作请从[使用指南](USER_GUIDE.md)开始。
