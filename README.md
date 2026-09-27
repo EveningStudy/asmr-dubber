@@ -11,15 +11,23 @@
 
 ## 演示
 
-建议戴耳机试听。点击波形打开 WAV 音频。
+建议戴耳机试听。
 
-| 素材 1 · RTF | 素材 2 · RTF |
-| --- | --- |
-| [![试听素材 1：RTF](assets/demos/demo-1-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-1-rtf.wav) | [![试听素材 2：RTF](assets/demos/demo-2-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-2-rtf.wav) |
+### 素材 1 · RTF
 
-| 素材 3 · RTF | 素材 3 · RTF + 人声分离 |
-| --- | --- |
-| [![试听素材 3：RTF](assets/demos/demo-3-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf.wav) | [![试听素材 3：RTF + 人声分离](assets/demos/demo-3-rtf-separated.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf-separated.wav) |
+https://github.com/user-attachments/assets/2eddb029-1a6d-4daf-8f53-741b46141f4d
+
+### 素材 2 · RTF
+
+https://github.com/user-attachments/assets/8068b982-95c0-4561-8d18-f82cb8cebb6e
+
+### 素材 3 · RTF
+
+https://github.com/user-attachments/assets/4e7618af-ad3d-4931-9749-4b39816d01d8
+
+### 素材 3 · RTF + 人声分离
+
+https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
 [在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)。素材仅用于功能展示，如有侵权请联系删除。
 
