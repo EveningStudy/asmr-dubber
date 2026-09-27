@@ -11,11 +11,15 @@
 
 ## 演示
 
-https://github.com/user-attachments/assets/70d1af0d-a165-410e-a28d-2a5dbaa203dd
+建议戴耳机试听。点击波形打开 WAV 音频。
 
-https://github.com/user-attachments/assets/ca7884c7-9272-4b07-a527-5e7c0351758b
+| 素材 1 · RTF | 素材 2 · RTF |
+| --- | --- |
+| [![试听素材 1：RTF](assets/demos/demo-1-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-1-rtf.wav) | [![试听素材 2：RTF](assets/demos/demo-2-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-2-rtf.wav) |
 
-https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
+| 素材 3 · RTF | 素材 3 · RTF + 人声分离 |
+| --- | --- |
+| [![试听素材 3：RTF](assets/demos/demo-3-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf.wav) | [![试听素材 3：RTF + 人声分离](assets/demos/demo-3-rtf-separated.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf-separated.wav) |
 
 [在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)。素材仅用于功能展示，如有侵权请联系删除。
 

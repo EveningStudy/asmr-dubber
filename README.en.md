@@ -11,11 +11,15 @@ Turn Japanese or English audio/video into Chinese dubbing, bilingual audio and s
 
 ## Demo
 
-https://github.com/user-attachments/assets/70d1af0d-a165-410e-a28d-2a5dbaa203dd
+Headphones recommended. Click a waveform to open the WAV audio.
 
-https://github.com/user-attachments/assets/ca7884c7-9272-4b07-a527-5e7c0351758b
+| Sample 1 · RTF | Sample 2 · RTF |
+| --- | --- |
+| [![Listen to sample 1: RTF](assets/demos/demo-1-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-1-rtf.wav) | [![Listen to sample 2: RTF](assets/demos/demo-2-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-2-rtf.wav) |
 
-https://github.com/user-attachments/assets/d7106c36-8a5d-4aab-96b3-0f17d027d0d3
+| Sample 3 · RTF | Sample 3 · RTF + vocal separation |
+| --- | --- |
+| [![Listen to sample 3: RTF](assets/demos/demo-3-rtf.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf.wav) | [![Listen to sample 3: RTF + vocal separation](assets/demos/demo-3-rtf-separated.png)](https://raw.githubusercontent.com/EveningStudy/asmr-dubber/main/assets/demos/demo-3-rtf-separated.wav) |
 
 [Full demo on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Media is used for demonstration; contact the maintainer about rights concerns.
 
