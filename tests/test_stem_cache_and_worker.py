@@ -246,3 +246,44 @@ def test_worker_cancel_keeps_completed_results(tmp_path, worker_setup):
             timer.cancel()
     assert Path(completed["result"]).is_file()
     assert session.process.poll() is not None
+
+
+def test_worker_request_read_retries_transient_windows_lock(monkeypatch, tmp_path):
+    request = tmp_path / "request.json"
+    request.write_text('{"input": "chunk.wav"}', encoding="utf-8")
+    original = Path.read_text
+    attempts = {"count": 0}
+
+    def flaky_read(path, *args, **kwargs):
+        if path == request and attempts["count"] < 2:
+            attempts["count"] += 1
+            raise PermissionError(13, "file is being used")
+        return original(path, *args, **kwargs)
+
+    from asmr_dubber import separation_worker
+
+    monkeypatch.setattr(Path, "read_text", flaky_read)
+    item, payload = separation_worker._read_request_with_retry(request, timeout=1)
+    assert item == {"input": "chunk.wav"}
+    assert json.loads(payload) == item
+    assert attempts["count"] == 2
+
+
+def test_worker_request_remove_failure_does_not_require_reprocessing(monkeypatch, tmp_path):
+    request = tmp_path / "request.json"
+    request.write_text("{}", encoding="utf-8")
+    original_unlink = Path.unlink
+    attempts = {"count": 0}
+
+    def flaky_unlink(path, *args, **kwargs):
+        if path == request and attempts["count"] < 2:
+            attempts["count"] += 1
+            raise PermissionError(32, "sharing violation")
+        return original_unlink(path, *args, **kwargs)
+
+    from asmr_dubber import separation_worker
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    separation_worker._remove_request_with_retry(request, timeout=1)
+    assert not request.exists()
+    assert attempts["count"] == 2

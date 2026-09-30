@@ -1,8 +1,13 @@
-中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.1/docs/en/RELEASE.md)
+中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/en/RELEASE.md)
 
-# ASMR Dubber 1.6.1
+# ASMR Dubber 1.6.2
 
 ## 更新
+
+- 修复批量人声分离时请求文件短暂被占用导致 worker 退出的问题：请求读取与删除增加有限重试，避免重复处理分块，并校验返回的音频文件。
+- 保留已完成的分离分块；升级后重启程序，再重试失败任务。
+
+## 1.6.1 功能回顾
 
 - 人声分离在一次任务内只加载一次模型，保留分块、取消和断点恢复。
 - 双语版与替换配音版复用中文 RTF 音轨；音频、时间轴和相关参数变化时重新计算。各版本直接写入独立目录，减少中转副本。
@@ -14,13 +19,13 @@
 
 ## 下载与升级
 
-Windows 下载 `ASMR-Dubber-windows-portable-v1.6.1.zip`，完整解压后运行 `ASMR-Dubber-Setup.exe`，再运行 `ASMR-Dubber.exe`。请启用长路径并使用短且可写的目录。
+Windows 下载 `ASMR-Dubber-windows-portable-v1.6.2.zip`，完整解压后运行 `ASMR-Dubber-Setup.exe`，再运行 `ASMR-Dubber.exe`。请启用长路径并使用短且可写的目录。
 
 Linux x86_64 在源码根目录运行 `bash scripts/linux/setup.sh 推荐`，之后运行 `bash scripts/linux/run-ui.sh`。
 
 升级前停止任务并备份项目、配置与成品，保留 `.asmr-dubber` 和外部项目目录。更新后重启程序，仅刷新网页不会加载新代码。旧项目缓存不会自动删除；清理需手动确认。
 
-[使用指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.1/docs/USER_GUIDE.md) · [安装指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.1/docs/INSTALLATION.md)
+[使用指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/USER_GUIDE.md) · [安装指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/INSTALLATION.md)
 
 ## 验证范围
 

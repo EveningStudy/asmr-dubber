@@ -1,8 +1,13 @@
 [中文](../RELEASE.md) | English
 
-# ASMR Dubber 1.6.1
+# ASMR Dubber 1.6.2
 
 ## Changes
+
+- Fixed batch vocal-separation worker failures caused by temporarily locked request files. Reading and deletion use bounded retries, duplicate chunks are guarded, and returned audio files are validated.
+- Completed separation chunks are preserved. Restart the application after updating, then retry the failed task.
+
+## Features introduced in 1.6.1
 
 - Vocal separation loads its model once per processing pass, retaining chunk-based cancellation and recovery.
 - Bilingual and replacement mixes reuse the Chinese RTF stem. Audio, timing and relevant parameter changes invalidate the cache. Each variant writes directly to its own directory, reducing intermediate copies.
@@ -14,7 +19,7 @@
 
 ## Download and upgrade
 
-Windows: extract `ASMR-Dubber-windows-portable-v1.6.1.zip` completely, run `ASMR-Dubber-Setup.exe`, then `ASMR-Dubber.exe`. Enable long paths and use a short writable directory.
+Windows: extract `ASMR-Dubber-windows-portable-v1.6.2.zip` completely, run `ASMR-Dubber-Setup.exe`, then `ASMR-Dubber.exe`. Enable long paths and use a short writable directory.
 
 Linux x86_64: run `bash scripts/linux/setup.sh 推荐` from the source root, then `bash scripts/linux/run-ui.sh`.
 

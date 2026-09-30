@@ -11,6 +11,49 @@ import time
 from pathlib import Path
 
 
+def _read_request_with_retry(request: Path, timeout: float = 5.0) -> tuple[dict, str] | None:
+    """Read a request while Windows scanners/AV finish an atomic hand-off.
+
+    ``atomic_write_text`` replaces the request atomically, but a newly-created
+    file can still be briefly unavailable to another process on Windows.  Do
+    not turn that normal race into a worker crash, and do not remove a file
+    until its JSON has been parsed successfully.
+    """
+    deadline = time.monotonic() + timeout
+    delay = 0.02
+    while time.monotonic() < deadline:
+        try:
+            payload = request.read_text(encoding="utf-8")
+            item = json.loads(payload)
+            if not isinstance(item, dict):
+                raise ValueError("request must be a JSON object")
+            return item, payload
+        except FileNotFoundError:
+            return None
+        except (PermissionError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            time.sleep(delay)
+            delay = min(delay * 1.5, 0.2)
+    raise RuntimeError(f"分离请求文件在 {timeout:.1f} 秒内无法读取：{request}")
+
+
+def _remove_request_with_retry(request: Path, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    delay = 0.02
+    while request.exists() and time.monotonic() < deadline:
+        try:
+            request.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except (PermissionError, OSError):
+            time.sleep(delay)
+            delay = min(delay * 1.5, 0.2)
+    if request.exists():
+        # The in-memory digest guard in the serve loop prevents reprocessing;
+        # leave the file recoverable instead of failing the whole worker.
+        logging.getLogger(__name__).warning("分离请求文件暂时无法删除，跳过重复处理：%s", request)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("job", type=Path)
@@ -117,12 +160,23 @@ def main() -> None:
         raise RuntimeError("所选后端未使用 CUDA；请在设置中明确选择可用设备。")
     if job["action"] == "serve":
         request = Path(job["request"])
+        processed_payload = None
         while True:
             if not request.is_file():
                 time.sleep(0.05)
                 continue
-            item = json.loads(request.read_text(encoding="utf-8"))
-            request.unlink()
+            loaded = _read_request_with_retry(request)
+            if loaded is None:
+                continue
+            item, payload = loaded
+            if payload == processed_payload:
+                # A Windows file lock may outlive the processing call.  Do
+                # not run the same chunk twice while waiting for deletion.
+                _remove_request_with_retry(request)
+                time.sleep(0.05)
+                continue
+            processed_payload = payload
+            _remove_request_with_retry(request)
             if item.get("stop"):
                 return
             # audio-separator keeps the destination on both objects.

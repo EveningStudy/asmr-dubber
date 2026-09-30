@@ -38,6 +38,16 @@ DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt"
 logger = logging.getLogger(__name__)
 
 
+def _separation_result_ready(path: Path) -> bool:
+    """Only accept a fully-written worker result with an existing audio file."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        output = payload.get("vocals") if isinstance(payload, dict) else None
+        return isinstance(output, str) and Path(output).is_file()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        return False
+
+
 class SeparationSession:
     """One lazy worker per separation pass; each request retains its own timeout."""
 
@@ -78,7 +88,8 @@ class SeparationSession:
             )
         atomic_write_text(self.request, json.dumps(job))
         deadline = time.monotonic() + timeout
-        while not Path(job["result"]).is_file():
+        result_path = Path(job["result"])
+        while not _separation_result_ready(result_path):
             check_cancelled()
             if self.process.poll() is not None:
                 assert self.log is not None
