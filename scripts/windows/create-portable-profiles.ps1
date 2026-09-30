@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("核心", "推荐", "进阶", "Core", "Recommended", "Advanced")]
     [string[]]$Profiles = @("推荐"),
