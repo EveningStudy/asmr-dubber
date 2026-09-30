@@ -1,31 +1,27 @@
 [中文](../RELEASE.md) | English
 
-[Documentation index](INDEX.md) · [README](../../README.en.md)
+# ASMR Dubber 1.6.1
 
-# ASMR Dubber 1.6.0
+## Changes
 
-## Highlights
-
-- Chinese/English web UI with browser-local language selection; bilingual Setup, README and documentation.
-- Optional vocal separation using a local runtime or cloud interface. Original recordings and ordinary workflows are preserved.
-- RTF (original spatial cue transfer), bilingual/replacement mixing, original-vocal return and per-sentence gain/mute. Mix-only edits reuse valid TTS caches.
-- Untimed-script matching uses literal quotes instead of model-counted offsets. Invalid batches retry per sentence; unresolved matches retain existing text and flag manual review.
-- Subtitle line width supports 8–500 characters. Save scope and regeneration requirements are explicit.
-- Translation-only batch subtitles now use selected timed Chinese subtitles directly, without unnecessary ASR or translation API credentials.
-- Reduced repeated language-layer DOM scanning. Documentation navigation now includes audio processing consistently.
-
-Vocal separation and Chinese replacement remain off by default and marked experimental in the application. RTF is independent of separation and needs a stereo original reference. Short or silent references degrade gracefully rather than aborting the whole mix.
+- Vocal separation loads its model once per processing pass, retaining chunk-based cancellation and recovery.
+- Bilingual and replacement mixes reuse the Chinese RTF stem. Audio, timing and relevant parameter changes invalidate the cache. Each variant writes directly to its own directory, reducing intermediate copies.
+- Added **Settings → Storage & cleanup**: scan, select projects, then confirm. Safe caches, rebuildable caches and separated stems are distinct categories. Projects, source media, synthesized clips and final outputs are preserved; active or changed files are skipped.
+- Japanese, English and Chinese ASR inputs; Chinese or English dubbing targets, subject to the selected backend's capabilities.
+- Batch processing supports bilingual mixes, replacement dubs or both, alongside originals and subtitle-only outputs, using the selected RTF, separation and mixing settings.
+- Fixed propagation of batch IndexTTS version and external voice-reference settings. Reference timing and source text can be edited while waiting for selection.
+- Updated bilingual documentation, README demo explanations and cache-cleanup instructions.
 
 ## Download and upgrade
 
-Windows: extract `ASMR-Dubber-windows-portable-v1.6.0.zip` completely, run `ASMR-Dubber-Setup.exe`, then `ASMR-Dubber.exe`. Enable long paths and use a short writable directory.
+Windows: extract `ASMR-Dubber-windows-portable-v1.6.1.zip` completely, run `ASMR-Dubber-Setup.exe`, then `ASMR-Dubber.exe`. Enable long paths and use a short writable directory.
 
-Linux x86_64: run `bash scripts/linux/setup.sh 推荐 en`, then `bash scripts/linux/run-ui.sh`.
+Linux x86_64: run `bash scripts/linux/setup.sh 推荐` from the source root, then `bash scripts/linux/run-ui.sh`.
 
-Stop tasks and back up projects, settings and finished outputs before upgrading. Preserve `.asmr-dubber` and any external project directories. Restart the application after updating; browser refresh alone does not reload Python code. Re-export subtitles or remix only when the changed settings require it.
+Stop tasks and back up projects, settings and finished outputs before upgrading. Preserve `.asmr-dubber` and external project directories. Restart the application after updating; refreshing the browser does not load new code. Existing caches are not deleted automatically; cleanup requires confirmation.
 
-[Installation](INSTALLATION.md) · [User guide](USER_GUIDE.md) · [Audio processing](EXPERIMENTAL_AUDIO.md)
+[User guide](USER_GUIDE.md) · [Installation](INSTALLATION.md)
 
-## Validation scope
+## Verification scope
 
-Release checks include direct browser interaction and local media output inspection. These do not guarantee recognition, translation or synthesis quality for every model or input. Paid cloud services and a clean-machine installation are not covered by the local manual smoke check.
+Local checks covered real-model process reuse across separation chunks, cache hits, short-sample dual-variant mixing and subtitled video, and the browser scan/confirm/cleanup workflow. These checks do not establish long-job speedup ratios or guarantee every cloud service or hardware configuration.

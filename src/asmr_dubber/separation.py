@@ -6,9 +6,11 @@ import base64
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -29,10 +31,84 @@ from .models import DubProject, ProjectSettings
 from .platforms import isolated_runtime_environment, portable_home, virtualenv_executable
 from .runtime_manager import _run_streaming_process
 from .storage import atomic_write_text, exclusive_file_lock, require_disk_space
-from .task_control import check_cancelled, current_cancellation
+from .task_control import check_cancelled, current_cancellation, terminate_process_tree
 
 SEPARATOR_VERSION = "0.47.0"
 DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt"
+logger = logging.getLogger(__name__)
+
+
+class SeparationSession:
+    """One lazy worker per separation pass; each request retains its own timeout."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.process = None
+        self.log = None
+        self.temporary = None
+
+    def __enter__(self):
+        return self
+
+    def separate(self, job: dict, timeout: float) -> None:
+        check_cancelled()
+        if self.process is None:
+            self.temporary = tempfile.TemporaryDirectory(
+                dir=self.root, prefix="session-", ignore_cleanup_errors=True
+            )
+            folder = Path(self.temporary.name)
+            self.request = folder / "request.json"
+            config = {**job, "action": "serve", "request": str(self.request)}
+            config_path = folder / "job.json"
+            atomic_write_text(config_path, json.dumps(config))
+            self.log = (folder / "worker.log").open("w+b")
+            self.process = subprocess.Popen(
+                [
+                    str(runtime_python()),
+                    str(Path(__file__).with_name("separation_worker.py")),
+                    str(config_path),
+                ],
+                cwd=portable_home(),
+                env=worker_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=self.log,
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                start_new_session=os.name != "nt",
+            )
+        atomic_write_text(self.request, json.dumps(job))
+        deadline = time.monotonic() + timeout
+        while not Path(job["result"]).is_file():
+            check_cancelled()
+            if self.process.poll() is not None:
+                assert self.log is not None
+                self.log.seek(0, os.SEEK_END)
+                self.log.seek(max(0, self.log.tell() - 6000))
+                detail = self.log.read().decode("utf-8", errors="replace")
+                raise ProjectError(f"分离子进程失败（退出码 {self.process.returncode}）：{detail}")
+            if time.monotonic() >= deadline:
+                raise ProjectError("分离片段处理超时；已完成的分块保留，可继续重试。")
+            time.sleep(0.05)
+
+    def __exit__(self, exc_type, *_):
+        if self.process is not None:
+            if exc_type is None and self.process.poll() is None:
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    atomic_write_text(self.request, json.dumps({"stop": True}))
+                    self.process.wait(timeout=5)
+            terminate_process_tree(self.process)
+        if self.log is not None:
+            self.log.close()
+        if self.temporary is not None:
+            # Windows scanners/runtime teardown can briefly retain the log handle.
+            # A disposable log must not turn successfully separated audio into failure.
+            for _ in range(10):
+                self.temporary.cleanup()
+                if not Path(self.temporary.name).exists():
+                    break
+                time.sleep(0.1)
+            else:
+                logger.warning("分离日志暂时被占用，保留临时目录：%s", self.temporary.name)
 
 
 def runtime_python() -> Path:
@@ -376,6 +452,7 @@ def _ensure_separation_impl(
         )
         vp, bp = root / "vocals.partial.wav", root / "background.partial.wav"
         with (
+            SeparationSession(root) as session,
             sf.SoundFile(normalized) as original,
             sf.SoundFile(
                 vp, "w", samplerate=rate, channels=channels, format="RF64", subtype="FLOAT"
@@ -422,15 +499,7 @@ def _ensure_separation_impl(
                                 "vocal_stem": settings.separation_vocal_stem,
                                 "params": params,
                             }
-                            atomic_write_text(temp / "job.json", json.dumps(job))
-                            _run(
-                                [
-                                    str(runtime_python()),
-                                    str(Path(__file__).with_name("separation_worker.py")),
-                                    str(temp / "job.json"),
-                                ],
-                                settings.separation_timeout_seconds,
-                            )
+                            session.separate(job, settings.separation_timeout_seconds)
                             output = Path(
                                 json.loads((temp / "result.json").read_text(encoding="utf-8"))[
                                     "vocals"

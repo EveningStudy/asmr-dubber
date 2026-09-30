@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 
@@ -114,6 +115,25 @@ def main() -> None:
     separator.load_model(job["model"])
     if job.get("device") == "cuda" and str(separator.torch_device) != "cuda":
         raise RuntimeError("所选后端未使用 CUDA；请在设置中明确选择可用设备。")
+    if job["action"] == "serve":
+        request = Path(job["request"])
+        while True:
+            if not request.is_file():
+                time.sleep(0.05)
+                continue
+            item = json.loads(request.read_text(encoding="utf-8"))
+            request.unlink()
+            if item.get("stop"):
+                return
+            # audio-separator keeps the destination on both objects.
+            separator.output_dir = item["output"]
+            separator.model_instance.output_dir = item["output"]
+            separate_one(separator, {**job, **item})
+    else:
+        separate_one(separator, job)
+
+
+def separate_one(separator, job):
     files = separator.separate(job["input"])
     stem = job.get("vocal_stem", "Vocals").casefold()
     selected = [f for f in files if f"({stem})" in Path(f).stem.casefold()]
@@ -122,9 +142,10 @@ def main() -> None:
     candidate = Path(selected[0])
     if not candidate.is_absolute():
         candidate = Path(job["output"]) / candidate
-    Path(job["result"]).write_text(
-        json.dumps({"vocals": str(candidate.resolve())}), encoding="utf-8"
-    )
+    result = Path(job["result"])
+    temporary = result.with_suffix(".partial")
+    temporary.write_text(json.dumps({"vocals": str(candidate.resolve())}), encoding="utf-8")
+    os.replace(temporary, result)
 
 
 if __name__ == "__main__":

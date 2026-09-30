@@ -15,21 +15,29 @@ Headphones recommended.
 
 ### Sample 1 · RTF
 
+Bilingual audio: the Japanese original is retained and mixed with Chinese dubbing processed by RTF (original spatial-cue transfer).
+
 https://github.com/user-attachments/assets/2eddb029-1a6d-4daf-8f53-741b46141f4d
 
 ### Sample 2 · RTF
+
+Bilingual audio: RTF-processed Chinese dubbing is mixed with the retained Japanese original.
 
 https://github.com/user-attachments/assets/8068b982-95c0-4561-8d18-f82cb8cebb6e
 
 ### Sample 3 · RTF
 
+Bilingual audio: the Japanese original plus RTF-processed Chinese dubbing. Compare it with the vocal-separation version below.
+
 https://github.com/user-attachments/assets/4e7618af-ad3d-4931-9749-4b39816d01d8
 
 ### Sample 3 · RTF + vocal separation
 
+Chinese replacement dub: separate Japanese vocals from the background, recognize and translate the speech, then synthesize Chinese dubbing. RTF transfers spatial cues from the original to the dub before mixing it with the separated background. Separation may leave Japanese speech or alter sound effects; complete removal is not guaranteed.
+
 https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
-[Full demo on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Media is used for demonstration; contact the maintainer about rights concerns.
+[Watch the full demo of an older version on Bilibili; refer to this README for current information](https://www.bilibili.com/video/BV1f43G6YEov/). Media is used for demonstration; contact the maintainer about rights concerns.
 
 ## Install
 

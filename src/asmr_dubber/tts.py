@@ -133,6 +133,8 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
             else "supported-backends-v6-indextts25"
         ),
     }
+    if settings.tts_target_language != "zh":
+        payload["target_language"] = settings.tts_target_language
     if settings.tts_backend in {"indextts2_5", "indextts2"}:
         payload["index_references"] = _index_reference_payload(project, sentence)
         payload["reference_padding"] = settings.reference_padding_seconds
@@ -142,7 +144,7 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
             payload["index25"] = {
                 "model_path": settings.tts_index25_model_path,
                 "config_path": settings.tts_index25_config_path,
-                "language": settings.tts_index25_language,
+                "language": settings.tts_target_language,
                 "bf16": settings.tts_index25_use_bf16,
                 "cuda_kernel": settings.tts_index25_use_cuda_kernel,
                 "deepspeed": settings.tts_index25_use_deepspeed,

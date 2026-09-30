@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ class AppConfig:
     bonus_policy: str = "ask"
     background_policy: str = "ask"
     reference_wait_seconds: int = REFERENCE_SELECTION_TIMEOUT_SECONDS
+    output_policy: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

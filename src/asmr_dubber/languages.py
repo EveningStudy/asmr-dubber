@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Literal
 
 SourceLanguage = Literal["ja", "en", "zh"]
-SpeechSourceLanguage = Literal["ja", "en"]
+SpeechSourceLanguage = Literal["ja", "en", "zh"]
+TargetLanguage = Literal["zh", "en"]
 
 SOURCE_LANGUAGE_LABELS: dict[str, str] = {
     "ja": "日语",
@@ -18,9 +19,9 @@ QWEN_LANGUAGE_NAMES: dict[SourceLanguage, str] = {
 }
 
 MACHINE_TRANSLATION_LANGUAGE_CODES: dict[str, dict[SpeechSourceLanguage, str]] = {
-    "deepl": {"ja": "JA", "en": "EN"},
-    "google_translate": {"ja": "ja", "en": "en"},
-    "microsoft_translate": {"ja": "ja", "en": "en"},
+    "deepl": {"ja": "JA", "en": "EN", "zh": "ZH"},
+    "google_translate": {"ja": "ja", "en": "en", "zh": "zh-CN"},
+    "microsoft_translate": {"ja": "ja", "en": "en", "zh": "zh-Hans"},
 }
 
 

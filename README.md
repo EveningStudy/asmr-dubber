@@ -15,21 +15,29 @@
 
 ### 素材 1 · RTF
 
+双语音声：保留日语原声，叠加经过 RTF（原声空间线索迁移）处理的中文配音。
+
 https://github.com/user-attachments/assets/2eddb029-1a6d-4daf-8f53-741b46141f4d
 
 ### 素材 2 · RTF
+
+双语音声：保留日语原声，中文配音经 RTF 处理后与原声混合。
 
 https://github.com/user-attachments/assets/8068b982-95c0-4561-8d18-f82cb8cebb6e
 
 ### 素材 3 · RTF
 
+双语音声：保留日语原声，叠加经过 RTF 处理的中文配音，可与下方的人声分离版本对比试听。
+
 https://github.com/user-attachments/assets/4e7618af-ad3d-4931-9749-4b39816d01d8
 
 ### 素材 3 · RTF + 人声分离
 
+中文替换音声：先分离日语人声与背景，再识别、翻译并生成中文配音；中文配音经 RTF 迁移原声的空间线索后，与分离背景混合。分离可能残留日语或影响音效，不保证完全消除原人声。
+
 https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
-[在 B 站观看完整演示](https://www.bilibili.com/video/BV1f43G6YEov/)。素材仅用于功能展示，如有侵权请联系删除。
+[在 B 站观看旧版本的完整演示，以readme为准](https://www.bilibili.com/video/BV1f43G6YEov/)。素材仅用于功能展示，如有侵权请联系删除。
 
 ## 下载与启动
 

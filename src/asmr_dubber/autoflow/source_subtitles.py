@@ -62,6 +62,9 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
             project_json = e.create_asmr_project(
                 paths, source.path, source_language=source.source_language
             )
+            from .output_policy import configure_project
+
+            configure_project(project_json, config.output_policy, subtitles_only=True)
             state["project_json"] = str(project_json)
             state["analyzed"] = False
             e.save_state(state_path, state)

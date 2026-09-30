@@ -221,7 +221,9 @@ def prepare_voice_reference(
         path=destination,
         text=reference_sentence.source_text or reference_sentence.zh_text,
         identity=f"project:{identity}",
-        language=project.source_language if reference_sentence.source_text else "zh",
+        language=project.source_language
+        if reference_sentence.source_text
+        else project.settings.tts_target_language,
         sentence=reference_sentence,
     )
 
@@ -394,7 +396,9 @@ def _index_sentence_reference(
         path=destination,
         text=reference_sentence.source_text or reference_sentence.zh_text,
         identity=f"index-{role}:{identity}",
-        language=project.source_language if reference_sentence.source_text else "zh",
+        language=project.source_language
+        if reference_sentence.source_text
+        else project.settings.tts_target_language,
         sentence=reference_sentence,
     )
 

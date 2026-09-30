@@ -284,7 +284,7 @@ def test_autoflow_plan_preserves_track_order_and_per_track_subtitles(tmp_path: P
     assert queue_rows(queue)[0][1:5] == [
         "RJ测试作品",
         2,
-        "纯音频",
+        "双语成品 · 纯音频",
         "每条音轨分别处理并输出（不合并）",
     ]
     assert queue_choices(queue)[0][1] == plan.plan_id
@@ -327,7 +327,7 @@ def test_autoflow_subtitle_only_plan_is_persisted_and_has_distinct_identity(
     assert plan.subtitles_only is True
     assert plan.embed_subtitles is True
     assert plan.plan_id != deserialize_plan(regular).plan_id
-    assert queue_items_for_ui([subtitle_only])[0]["mode"] == "仅字幕 · 普通静态视频"
+    assert queue_items_for_ui([subtitle_only])[0]["mode"] == "原声 + 字幕 · 普通静态视频"
 
 
 def test_autoflow_subtitle_only_execution_skips_reference_tts_and_mix(

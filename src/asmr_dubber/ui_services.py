@@ -304,10 +304,13 @@ def preview_edge_tts_voice(voice: str) -> str:
     if not all(character.isalnum() or character == "-" for character in voice_id):
         raise ProjectError("Edge TTS 音色 ID 格式无效。")
 
+    preview_text = (
+        "Hello. This is an English voice preview."
+        if voice_id.startswith("en-")
+        else _EDGE_TTS_PREVIEW_TEXT
+    )
     spec = TTS_BACKENDS["edge_tts"]
-    identity = sha256(
-        f"{spec.default_model}|{voice_id}|{_EDGE_TTS_PREVIEW_TEXT}".encode()
-    ).hexdigest()[:20]
+    identity = sha256(f"{spec.default_model}|{voice_id}|{preview_text}".encode()).hexdigest()[:20]
     destination = ui_stage_directory() / "edge-tts-previews" / f"{identity}.mp3"
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -326,7 +329,7 @@ def preview_edge_tts_voice(voice: str) -> str:
 
             async def save_preview() -> None:
                 communicator = edge_tts.Communicate(
-                    _EDGE_TTS_PREVIEW_TEXT,
+                    preview_text,
                     voice=voice_id,
                 )
                 await communicator.save(str(temporary))
@@ -444,7 +447,7 @@ def create_project(
     source = Path(str(source_media or "")).expanduser().resolve()
     if not source.is_file():
         raise ProjectError("请先选择音频或视频。")
-    if source_language not in {"ja", "en"}:
+    if source_language not in {"ja", "en", "zh"}:
         raise ProjectError("新项目的音频语言必须是日语或英语。")
     defaults = load_user_settings()
     project, directory = pipeline.create_project(
@@ -485,8 +488,7 @@ def import_transcript_data(
     project, directory = pipeline.reload_project(project_path)
     if script_kind not in {"source", "zh"}:
         raise ProjectError("导入内容必须是原文台本或中文配音稿。")
-    if script_kind == "source" and project.source_language == "zh":
-        raise ProjectError("当前项目使用中文配音稿；如需导入原文，请按正确的音频语言新建项目。")
+
     script_language = "zh" if script_kind == "zh" else project.source_language
     result = pipeline.import_project_transcript(
         project,
@@ -669,6 +671,22 @@ def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectV
         project.source_language,
     )
     current = project.settings.model_dump()
+    if previous.get("tts_target_language", "zh") != current["tts_target_language"]:
+        # Preserve the old table before changing the meaning of the legacy zh_text column.
+        backup = (
+            directory
+            / f"translations-{previous.get('tts_target_language', 'zh')}-{project.revision}.json"
+        )
+        from .storage import atomic_write_text
+
+        atomic_write_text(backup, project.model_dump_json(indent=2))
+        for sentence in project.sentences:
+            sentence.zh_text = ""
+            sentence.tts_file = None
+            sentence.tts_cache_key = None
+            sentence.tts_duration_seconds = None
+            sentence.status = "pending"
+        project.translation_language = project.settings.tts_target_language
     changed_fields = sorted(
         name for name in ProjectSettings.model_fields if previous.get(name) != current.get(name)
     )
@@ -831,12 +849,28 @@ def select_reference(project_path: str, sentence_id: str) -> tuple[str, str | No
 def select_autoflow_project_reference(
     project_path: str,
     sentence_id: str,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+    source_text: str | None = None,
 ) -> tuple[str, str | None]:
     """Use one analyzed project sentence for the active AutoFlow task."""
 
     project, directory = pipeline.reload_project(project_path)
     if not any(item.id == sentence_id for item in project.sentences):
         raise ProjectError(f"项目中找不到参考句：{sentence_id}")
+    sentence = next(item for item in project.sentences if item.id == sentence_id)
+    start = sentence.start_seconds if start_seconds is None else float(start_seconds)
+    end = sentence.end_seconds if end_seconds is None else float(end_seconds)
+    if not (0 <= start < end <= project.source.duration_seconds):
+        raise ProjectError("参考范围必须在源音频内，且结束时间大于开始时间。")
+    if (start, end, source_text) != (sentence.start_seconds, sentence.end_seconds, None):
+        sentence.start_seconds = start
+        sentence.end_seconds = end
+        if source_text is not None:
+            sentence.source_text = str(source_text).strip()
+        sentence.tts_file = None
+        sentence.tts_cache_key = None
+        invalidate_outputs(project)
     project.settings.tts_reference_source = "project_sentence"
     project.settings.tts_reference_sentence_id = sentence_id
     if project.settings.tts_backend in {"indextts2_5", "indextts2"}:

@@ -169,15 +169,14 @@ def test_separation_chunks_reconstruct_and_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(separation, "_run_ffmpeg", convert)
     calls = []
 
-    def fake_run(command, timeout, log=None):
-        job = json.loads(Path(command[-1]).read_text())
+    def fake_run(self, job, timeout):
         calls.append(job)
         data, rate = sf.read(job["input"], always_2d=True)
         out = Path(job["output"]) / "out.wav"
         sf.write(out, data * 0.6, rate, subtype="FLOAT")
         Path(job["result"]).write_text(json.dumps({"vocals": str(out)}))
 
-    monkeypatch.setattr(separation, "_run", fake_run)
+    monkeypatch.setattr(separation.SeparationSession, "separate", fake_run)
     vocals, background = separation.ensure_separation(project, tmp_path, source)
     assert len(calls) == 3
     v, _ = sf.read(vocals, always_2d=True)

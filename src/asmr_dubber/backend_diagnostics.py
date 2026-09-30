@@ -132,7 +132,11 @@ def test_tts_api(project_path: str, settings: UserSettings, api_key: str = "") -
         candidates,
         key=lambda item: (item.end_seconds - item.start_seconds, -item.start_seconds),
     )
-    sentence.zh_text = "这是一次语音接口测试。"
+    sentence.zh_text = (
+        "This is a speech synthesis test."
+        if project.settings.tts_target_language == "en"
+        else "这是一次语音接口测试。"
+    )
     from .audio import verify_source
 
     source = verify_source(project_dir, project.source)

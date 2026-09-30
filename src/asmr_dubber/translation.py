@@ -180,19 +180,28 @@ _SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str, str]] = {
         "同项还有实义台词时只翻译台词，除此之外没有实义时将 zh 设为空字符串。",
     ),
     "en": ("英语", "英语中的 “uh”“um”“erm”", ""),
+    "zh": ("中文", "中文中的“呃”“嗯……”", ""),
 }
 
 
-def default_translation_prompt(source_language: SourceLanguage = "ja") -> str:
+def default_translation_prompt(
+    source_language: SourceLanguage = "ja", target_language: str = "zh"
+) -> str:
     """Render the packaged prompt for one source language."""
 
-    prompt_language: SpeechSourceLanguage = "en" if source_language == "en" else "ja"
+    prompt_language = source_language
     language, filler_examples, sound_rule = _SOURCE_PROMPT_VALUES[prompt_language]
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{SOURCE_LANGUAGE}}", language)
+    template = _SYSTEM_PROMPT_TEMPLATE
+    if target_language == "en":
+        template = template.replace("简体中文", "英语").replace("中文", "英语")
+    prompt = (
+        template.replace("{{SOURCE_LANGUAGE}}", language)
         .replace("{{FILLER_EXAMPLES}}", filler_examples)
         .replace("{{SOURCE_SPECIFIC_SOUND_RULE}}", sound_rule)
     )
+    if target_language == "en":
+        prompt += "\n输出英语台词。JSON 键 zh 是兼容字段名，不表示输出中文；不得修改键名。"
+    return prompt
 
 
 # Backward-compatible Japanese default for callers that imported this name.
@@ -1322,6 +1331,7 @@ class MachineTranslationAPI:
         timeout_seconds: float = 300.0,
         client: httpx.Client | None = None,
         source_language: SourceLanguage = "ja",
+        target_language: str = "zh",
     ) -> None:
         if not api_key.strip():
             raise TranslationError(f"{provider} 缺少 API Key。")
@@ -1331,7 +1341,8 @@ class MachineTranslationAPI:
         self.base_url = base_url.rstrip("/")
         self.deepl_formality = deepl_formality
         self.microsoft_region = microsoft_region.strip()
-        self.source_language = source_language
+        self.source_language: SourceLanguage = source_language
+        self.target_language = target_language
         self.client = client or logged_http_client(f"{provider} 翻译 API", timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -1353,16 +1364,14 @@ class MachineTranslationAPI:
         _job_id: str,
     ) -> dict[str, str]:
         texts = [sentence.source_text for sentence in chunk.sentences]
-        if self.source_language == "zh":
-            raise TranslationError("中文源文本不需要再次翻译为中文。")
         language_codes = MACHINE_TRANSLATION_LANGUAGE_CODES[self.provider]
-        source_code = language_codes["en" if self.source_language == "en" else "ja"]
+        source_code = language_codes[self.source_language]
         try:
             if self.provider == "deepl":
                 payload: dict[str, object] = {
                     "text": texts,
                     "source_lang": source_code,
-                    "target_lang": "ZH-HANS",
+                    "target_lang": "EN-US" if self.target_language == "en" else "ZH-HANS",
                     "model_type": self.model,
                 }
                 if self.deepl_formality != "default":
@@ -1384,7 +1393,7 @@ class MachineTranslationAPI:
                     json={
                         "q": texts,
                         "source": source_code,
-                        "target": "zh-CN",
+                        "target": "en" if self.target_language == "en" else "zh-CN",
                         "format": "text",
                         "model": self.model,
                     },
@@ -1403,7 +1412,11 @@ class MachineTranslationAPI:
                     headers["Ocp-Apim-Subscription-Region"] = self.microsoft_region
                 response = self.client.post(
                     f"{self.base_url}/translate",
-                    params={"api-version": "3.0", "from": source_code, "to": "zh-Hans"},
+                    params={
+                        "api-version": "3.0",
+                        "from": source_code,
+                        "to": "en" if self.target_language == "en" else "zh-Hans",
+                    },
                     headers=headers,
                     json=[{"Text": text} for text in texts],
                 )
@@ -1449,15 +1462,35 @@ def translate_sentences(
     client: httpx.Client | None = None,
     cancel_event: CancellationSignal | None = None,
     extra_body: str = "{}",
+    target_language: str = "zh",
 ) -> None:
     check_cancelled(cancel_event)
     pending = [sentence for sentence in sentences if sentence.enabled and not sentence.zh_text]
     if not pending:
         if progress:
-            progress("所有句子已有中文翻译", 1, 1)
+            progress("所有句子已有目标语言文本", 1, 1)
         return
-    if source_language == "zh":
-        raise TranslationError("中文源文本不需要再次翻译为中文。")
+    if source_language == target_language:
+        for sentence in pending:
+            sentence.zh_text = sentence.source_text
+            sentence.status = "translated"
+        if on_batch:
+            on_batch()
+        return
+    if (
+        not system_prompt.strip()
+        or system_prompt.strip() == default_translation_prompt(source_language).strip()
+    ):
+        system_prompt = default_translation_prompt(source_language, target_language)
+    elif target_language == "en":
+        system_prompt += (
+            "\n本次覆盖目标语言为英语，输入原文语言为"
+            + source_language_label(source_language)
+            + "；忽略此前输出中文的要求。"
+        )
+        system_prompt += "\n目标语言必须是英语；JSON 的 zh 字段存放英文译文，这是兼容字段名。"
+    if not system_prompt.strip():
+        system_prompt = default_translation_prompt(source_language, target_language)
     logger.info(
         "翻译后端开始：服务=%s 模型=%s 地址=%s 句数=%d 源语言=%s",
         provider,
@@ -1512,6 +1545,7 @@ def translate_sentences(
             microsoft_region=microsoft_region,
             client=client,
             source_language=source_language,
+            target_language=target_language,
         )
     else:
         raise TranslationError(f"未知翻译服务：{provider}")

@@ -317,8 +317,8 @@ def recognize_windows(
 ) -> Iterator[tuple[str, list[Sentence] | None, str | None]]:
     from .asr import _transcribe_parakeet, recognition_session, transcribe_source
 
-    if source_language == "zh":
-        raise ProjectError("音频复核只支持日语或英语源音频。")
+    if source_language not in {"ja", "en", "zh"}:
+        raise ProjectError("不支持的音频语言。")
 
     if settings.asr_backend == "parakeet_nemo" and jobs:
         results: dict[str, list[Sentence]] = {}

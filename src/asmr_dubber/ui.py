@@ -195,14 +195,14 @@ logger = logging.getLogger(__name__)
 
 
 def _speech_language(value: Any) -> SpeechSourceLanguage:
-    return "en" if str(value or "ja") == "en" else "ja"
+    return cast(SpeechSourceLanguage, str(value) if value in {"ja", "en", "zh"} else "ja")
 
 
 def _asr_backend_choices(
     language: SpeechSourceLanguage,
     settings: ProjectSettings | UserSettings | None = None,
 ) -> list[tuple[str, str]]:
-    if language == "en":
+    if language != "ja":
         allowed = {"faster_whisper", "generic_asr_api"}
         return [
             (spec.label, spec.id)
@@ -216,13 +216,14 @@ def _asr_models_for_language(
     backend_id: str,
     language: SpeechSourceLanguage,
 ) -> list[str]:
-    if language == "en":
+    if language != "ja":
         if backend_id != "faster_whisper":
             return list(ASR_BACKENDS[backend_id].models)
         return [
             model
             for model in ASR_BACKENDS[backend_id].models
             if not model.startswith("kotoba-tech/")
+            and not (language == "zh" and (model.endswith(".en") or "distil" in model.lower()))
         ]
     return list(ASR_BACKENDS[backend_id].models)
 
@@ -253,7 +254,7 @@ def _review_control_state(
     str | None,
 ]:
     review_choices = available_asr_review_choices(settings)
-    if source_language == "en":
+    if source_language != "ja":
         review_choices = [
             choice
             for choice in review_choices
@@ -269,7 +270,7 @@ def _review_control_state(
         text_priority = review_choices[0][1]
 
     timestamp_choices = available_timestamp_review_choices(settings)
-    if source_language == "en":
+    if source_language != "ja":
         timestamp_choices = [
             choice
             for choice in timestamp_choices
@@ -331,6 +332,10 @@ class ProjectTaskController:
         with self._lock:
             self.cancel_event.clear()
             self._active = label
+
+    def is_active(self) -> bool:
+        with self._lock:
+            return self._active is not None
 
     def finish(self, label: str) -> None:
         with self._lock:
@@ -771,7 +776,7 @@ def _settings_from_form(
     selected_language = str(
         form.get("default_source_language", current.get("default_source_language", "ja")) or "ja"
     )
-    if selected_language not in {"ja", "en"}:
+    if selected_language not in {"ja", "en", "zh"}:
         raise ValueError(f"未知音频语言：{selected_language}")
     prompt_drafts = form.pop("translation_prompt_drafts", None)
     displayed_prompt = form.pop("translation_prompt", None)
@@ -811,7 +816,7 @@ def _settings_from_form(
     if displayed_prompt is not None:
         drafts = dict(prompt_drafts) if isinstance(prompt_drafts, dict) else {}
         drafts[selected_language] = str(displayed_prompt or "")
-        for language in ("ja", "en"):
+        for language in ("ja", "en", "zh"):
             candidate = (
                 str(
                     drafts.get(
@@ -910,7 +915,7 @@ def _translation_prompt_drafts(settings: UserSettings) -> dict[str, str]:
             settings.translation_prompt_for(cast(SpeechSourceLanguage, language)),
             cast(SpeechSourceLanguage, language),
         )
-        for language in ("ja", "en")
+        for language in ("ja", "en", "zh")
     }
 
 
@@ -1015,15 +1020,15 @@ def _translation_prompt_language_update(
     drafts: Any,
     active_language: Any,
 ) -> tuple[Any, dict[str, str], str, str]:
-    selected = "en" if str(language or "ja") == "en" else "ja"
-    previous = "en" if str(active_language or "ja") == "en" else "ja"
+    selected = _speech_language(language)
+    previous = _speech_language(active_language)
     values = dict(drafts) if isinstance(drafts, dict) else {}
     values[previous] = str(current_prompt or "")
     prompt = str(values.get(selected) or default_translation_prompt(selected)).strip()
     values[selected] = prompt
     return (
         _gr_update(
-            label=f"翻译 Prompt（{source_language_label(selected)} → 中文）",
+            label=f"翻译 Prompt（{source_language_label(selected)} → 配音目标语言）",
             value=prompt,
         ),
         values,
@@ -1036,13 +1041,13 @@ def _reset_translation_prompt(
     language: Any,
     drafts: Any,
 ) -> tuple[Any, dict[str, str], str]:
-    selected = "en" if str(language or "ja") == "en" else "ja"
+    selected = _speech_language(language)
     prompt = default_translation_prompt(selected)
     values = dict(drafts) if isinstance(drafts, dict) else {}
     values[selected] = prompt
     return (
         _gr_update(
-            label=f"翻译 Prompt（{source_language_label(selected)} → 中文）",
+            label=f"翻译 Prompt（{source_language_label(selected)} → 配音目标语言）",
             value=prompt,
         ),
         values,
@@ -1095,12 +1100,15 @@ def _transcript_kind_update(script_kind: Any) -> Any:
 def _source_language_backend_update(language: Any, current_backend: Any) -> tuple[Any, str]:
     selected = _speech_language(language)
     backend_id = str(current_backend or "")
-    if selected == "en" or backend_id not in ASR_BACKENDS:
-        backend_id = "faster_whisper" if selected == "en" else "parakeet_nemo"
+    if backend_id not in ASR_BACKENDS or (
+        selected != "ja" and backend_id not in {"faster_whisper", "generic_asr_api"}
+    ):
+        backend_id = "faster_whisper" if selected != "ja" else "parakeet_nemo"
     note = (
-        "英语项目使用 Faster-Whisper 或通用 ASR API；日语专用的 Parakeet、"
+        "英语／中文项目使用 Faster-Whisper 或通用 ASR API；"
+        "日语专用的 Parakeet、"
         "Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
-        if selected == "en"
+        if selected != "ja"
         else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
     )
     return (
@@ -1116,7 +1124,7 @@ def _asr_backend_update(
 ) -> tuple[Any, ...]:
     language = _speech_language(source_language)
     backend_id = str(backend or "")
-    if language == "en":
+    if language != "ja" and backend_id not in {"faster_whisper", "generic_asr_api"}:
         backend_id = "faster_whisper"
     spec = ASR_BACKENDS.get(backend_id, ASR_BACKENDS["parakeet_nemo"])
     models = _asr_models_for_language(backend_id, language)
@@ -1199,7 +1207,7 @@ def _review_language_update(
     settings = load_user_settings()
     choices = available_asr_review_choices(settings)
     timestamps = available_timestamp_review_choices(settings)
-    if source_language == "en":
+    if source_language != "ja":
         choices = [
             choice
             for choice in choices
@@ -1438,7 +1446,7 @@ def build_app() -> Any:
         )
         gr.HTML(
             "<header><h1>ASMR Dubber</h1>"
-            f"<p>音频识别、翻译、中文配音与字幕制作 · {__version__}</p></header>",
+            f"<p>音频识别、翻译、目标语言配音与字幕制作 · {__version__}</p></header>",
             elem_id="asmr-dubber-product-marker",
         )
 
@@ -1487,7 +1495,7 @@ def build_app() -> Any:
                                 elem_id="project-summary",
                             )
                             new_source_language = gr.Radio(
-                                choices=[("日语", "ja"), ("英语", "en")],
+                                choices=[("日语", "ja"), ("英语", "en"), ("中文", "zh")],
                                 value=stored.default_source_language,
                                 label="本次新建项目的音频语言",
                             )
@@ -1507,7 +1515,7 @@ def build_app() -> Any:
                                 label="导入内容",
                                 choices=[
                                     ("原文台本或字幕（沿用当前项目语言，之后翻译）", "source"),
-                                    ("中文配音稿或中文字幕（直接配音）", "zh"),
+                                    ("目标语言配音稿或中文字幕（直接配音）", "zh"),
                                 ],
                                 value="source",
                             )
@@ -1603,7 +1611,7 @@ def build_app() -> Any:
                             "可以直接修改启用状态、时间、原文和中文。把一行的原文与中文都清空，"
                             "保存后会删除该句。每页显示 50 句，翻页不丢草稿；"
                             "长文本可在输入框内滚动或拖高查看，保存不会截断。"
-                            "右侧可逐句控制原声和中文配音：音量 0 dB 表示沿用设置，"
+                            "右侧可逐句控制原声和目标语言配音：音量 0 dB 表示沿用设置，"
                             "原声开关可选沿用设置/保留/关闭（仅人声分离开启时生效）。"
                             "播放开关不删除文字或 TTS 缓存，修改后保存并重新混音即可。"
                         )
@@ -1641,7 +1649,7 @@ def build_app() -> Any:
                                 label="字幕内容",
                                 choices=[
                                     ("原文 + 中文", "bilingual"),
-                                    ("仅中文", "zh"),
+                                    ("仅译文", "zh"),
                                     ("仅原文", "source"),
                                 ],
                                 value="bilingual",
@@ -1772,7 +1780,12 @@ def build_app() -> Any:
                             autoflow_task_content = gr.Radio(
                                 label="1 · 选择处理目标",
                                 choices=[
-                                    ("中文配音和字幕", "dubbing"),
+                                    ("双语成品 + 原声（沿用 RTF 设置）", "dubbing"),
+                                    (
+                                        "替换配音成品 + 原声（分离背景 + 配音，实验性，不推荐）",
+                                        "replacement",
+                                    ),
+                                    ("双语、替换配音两种成品 + 原声", "both"),
                                     ("原声音视频 + 双语字幕（不配音）", "subtitles"),
                                     (
                                         "仅字幕文件（不生成音频或视频）",
@@ -1781,6 +1794,8 @@ def build_app() -> Any:
                                 ],
                                 value="dubbing",
                                 info=(
+                                    "替换配音必须先在设置开启人声分离；"
+                                    "RTF 和原声回填沿用已保存的混音设置。配音语言由 TTS 设置决定。"
                                     "需要同名翻译字幕请选择“仅字幕文件”，再选择字幕内容。"
                                     "命名规则在“设置 → 自动处理 → 字幕文件”中配置。"
                                 ),
@@ -1793,12 +1808,12 @@ def build_app() -> Any:
                             autoflow_subtitle_language = gr.Radio(
                                 label="2 · 字幕内容",
                                 choices=[
-                                    ("双语（原文 + 中文）", "bilingual"),
+                                    ("双语（原文 + 译文）", "bilingual"),
                                     ("仅原文", "source"),
-                                    ("仅译文（中文）", "zh"),
+                                    ("仅译文（配音目标语言）", "zh"),
                                 ],
                                 value=stored.autoflow_subtitle_language,
-                                visible=False,
+                                visible=True,
                             )
                             with gr.Row(elem_classes=["mobile-stack"]):
                                 autoflow_mode = gr.Radio(
@@ -1892,7 +1907,7 @@ def build_app() -> Any:
                         autoflow_reference_state = gr.State({})
                         with gr.Accordion(
                             "当前作品的参考音频（可选）",
-                            open=False,
+                            open=True,
                             visible=False,
                             elem_id="autoflow-reference-panel",
                             elem_classes=["optional-section"],
@@ -1915,6 +1930,18 @@ def build_app() -> Any:
                             autoflow_reference_audio = gr.Audio(
                                 label="参考片段试听",
                                 interactive=False,
+                            )
+                            with gr.Row():
+                                autoflow_reference_start = gr.Number(
+                                    label="参考开始（秒）", interactive=True
+                                )
+                                autoflow_reference_end = gr.Number(
+                                    label="参考结束（秒）", interactive=True
+                                )
+                            autoflow_reference_text = gr.Textbox(
+                                label="参考片段原文",
+                                interactive=True,
+                                info="可修改时间范围与原文；点击“使用这个片段”时一起保存，再继续配音。",
                             )
                             gr.Markdown("也可以只为当前作品导入一段外部参考音频。")
                             with gr.Row(elem_classes=["mobile-stack"]):
@@ -2127,7 +2154,7 @@ def build_app() -> Any:
                         gr.Markdown("### 新建项目")
                         settings_components["default_source_language"] = gr.Radio(
                             label="新建媒体项目的音频语言",
-                            choices=[("日语", "ja"), ("英语", "en")],
+                            choices=[("日语", "ja"), ("英语", "en"), ("中文", "zh")],
                             value=selected_source_language,
                             info=(
                                 "新建项目时使用。当前已经打开的项目会保留自己的语言；"
@@ -2135,9 +2162,10 @@ def build_app() -> Any:
                             ),
                         )
                         source_language_help = gr.Markdown(
-                            "英语项目使用 Faster-Whisper 或通用 ASR API；日语专用的 Parakeet、"
+                            "英语／中文项目使用 Faster-Whisper 或通用 ASR API；"
+                            "日语专用的 Parakeet、"
                             "Kotoba-Whisper 和 ASMR VAD 会自动隐藏。"
-                            if selected_source_language == "en"
+                            if selected_source_language != "ja"
                             else "日语项目可以使用 Parakeet、Kotoba-Whisper 或 Faster-Whisper。"
                         )
                         gr.Markdown("### 识别方式")
@@ -2449,7 +2477,8 @@ def build_app() -> Any:
                             settings_components["translation_prompt"] = gr.Textbox(
                                 label=(
                                     "翻译 Prompt"
-                                    f"（{source_language_label(selected_source_language)} → 中文）"
+                                    f"（{source_language_label(selected_source_language)}"
+                                    " → 配音目标语言）"
                                 ),
                                 value=prompt_drafts[selected_source_language],
                                 lines=12,
@@ -2530,6 +2559,16 @@ def build_app() -> Any:
                                 stored.tts_model,
                                 stored.tts_api_base_url,
                             )
+                        )
+                        settings_components["tts_target_language"] = gr.Radio(
+                            label="配音目标语言",
+                            choices=[("中文", "zh"), ("English", "en")],
+                            value=stored.tts_target_language,
+                            info=(
+                                "同时决定翻译和配音语言；同语言跳过翻译。"
+                                "自定义 API 的语言能力由服务端决定。切换并应用到项目后，"
+                                "旧译文会备份并清空，需要重新翻译、配音。"
+                            ),
                         )
                         settings_components["tts_backend"] = gr.Dropdown(
                             label="TTS（语音合成）后端",
@@ -2790,7 +2829,8 @@ def build_app() -> Any:
                                             ("阿拉伯语", "ar"),
                                         ],
                                         value=stored.tts_index25_language,
-                                        info="中文配音通常保持“中文”；仅在文本实际为其它语言时切换。",
+                                        visible=False,
+                                        info="目标语言配音通常保持“中文”；仅在文本实际为其它语言时切换。",
                                     )
                                     settings_components["tts_index25_duration_factor"] = gr.Slider(
                                         label="时长倍率",
@@ -3244,7 +3284,7 @@ def build_app() -> Any:
                         gr.Markdown("### 字幕")
                         settings_components["subtitle_timeline"] = gr.Radio(
                             label="字幕时间轴",
-                            choices=[("原字幕时间", "source"), ("中文配音时间", "dubbing")],
+                            choices=[("原字幕时间", "source"), ("目标语言配音时间", "dubbing")],
                             value=stored.subtitle_timeline,
                         )
                         with gr.Row():
@@ -3293,9 +3333,9 @@ def build_app() -> Any:
                             settings_components["autoflow_subtitle_language"] = gr.Radio(
                                 label="仅字幕文件的默认内容",
                                 choices=[
-                                    ("双语（原文 + 中文）", "bilingual"),
+                                    ("双语（原文 + 译文）", "bilingual"),
                                     ("仅原文", "source"),
-                                    ("仅译文（中文）", "zh"),
+                                    ("仅译文（配音目标语言）", "zh"),
                                 ],
                                 value=stored.autoflow_subtitle_language,
                                 info="在批量页可以按作品修改；译文使用“翻译”页的服务。",
@@ -3428,6 +3468,14 @@ def build_app() -> Any:
                                 value=stored.autoflow_background_policy,
                                 info="只作为视频任务的初始值；批量页扫描后可以改选作品图片。",
                             )
+
+                    from .cache_cleanup_ui import build_controls as build_cache_controls
+
+                    build_cache_controls(
+                        gr,
+                        stored,
+                        lambda: task_controller.is_active() or autoflow_controller.is_active(),
+                    )
 
                 settings_scope = gr.Radio(
                     choices=[
@@ -3829,6 +3877,7 @@ def build_app() -> Any:
                     str(task_content or "dubbing") == "subtitles",
                     str(task_content or "dubbing") == "source_subtitles",
                     subtitle_language,
+                    task_content=str(task_content or "dubbing"),
                 )
                 selected = str(editing_plan_id or "").strip()
                 items = (
@@ -3923,7 +3972,16 @@ def build_app() -> Any:
                         if view.source_subtitles_only
                         else "subtitles"
                         if view.subtitles_only
-                        else "dubbing"
+                        else next(
+                            (
+                                item.get("edition", {})
+                                .get("output_policy", {})
+                                .get("content", "dubbing")
+                                for item in (queue_payload or [])
+                                if item.get("plan_id") == view.plan_id
+                            ),
+                            "dubbing",
+                        )
                     ),
                     gr.update(
                         choices=view.background_choices,
@@ -3933,7 +3991,7 @@ def build_app() -> Any:
                     gr.update(
                         value=view.embed_subtitles,
                         label=(
-                            "让原声视频带字幕" if view.subtitles_only else "在视频中内嵌双语字幕"
+                            "让原声视频带字幕" if view.subtitles_only else "在视频中内嵌所选字幕"
                         ),
                         info=(
                             "勾选后会另外生成原声字幕版 MP4；SRT 和 LRC 始终保留。"
@@ -4015,6 +4073,7 @@ def build_app() -> Any:
                             dict(reference_event),
                             gr.update(
                                 visible=True,
+                                open=True,
                                 label=f"{work} · 自选参考音频（可选）",
                             ),
                             picker_note,
@@ -4097,12 +4156,17 @@ def build_app() -> Any:
         def autoflow_reference_apply_callback(
             request: Any,
             sentence_id: Any,
+            start: Any,
+            end: Any,
+            text: Any,
         ) -> tuple[Any, Any]:
             try:
                 project_json = _active_autoflow_reference_project(request)
                 if not str(sentence_id or "").strip():
                     raise ValueError("请先选择一个项目片段。")
-                return select_autoflow_project_reference(project_json, str(sentence_id))
+                return select_autoflow_project_reference(
+                    project_json, str(sentence_id), start, end, text
+                )
             except Exception as exc:
                 logger.exception("保存批量任务项目参考音频失败")
                 return f"无法保存参考音频：{_safe_error(exc)}", gr.update()
@@ -4160,7 +4224,7 @@ def build_app() -> Any:
             inputs=[recent_project],
             outputs=common_outputs,
             api_name="open_project",
-            **runtime_options,
+            queue=False,
         )
         open_project_directory_button.click(
             open_project_directory_callback,
@@ -4222,7 +4286,7 @@ def build_app() -> Any:
             inputs=[project_path, sentence_table, project_revision],
             outputs=common_outputs,
             api_name="save_sentence_table",
-            **runtime_options,
+            queue=False,
         )
         synthesize_button.click(
             synthesize_callback,
@@ -4537,7 +4601,7 @@ def build_app() -> Any:
                     visible=str(mode or "audio") != "audio" and task_content != "source_subtitles"
                 ),
                 gr.update(
-                    label=("让原声视频带字幕" if subtitles_only else "在视频中内嵌双语字幕"),
+                    label=("让原声视频带字幕" if subtitles_only else "在视频中内嵌所选字幕"),
                     info=(
                         "勾选后会另外生成原声字幕版 MP4；SRT 和 LRC 始终保留。"
                         if subtitles_only
@@ -4565,7 +4629,7 @@ def build_app() -> Any:
                 gr.update(visible=content != "source_subtitles"),
                 gr.update(visible=content != "source_subtitles"),
                 gr.update(visible=content == "source_subtitles"),
-                gr.update(visible=content == "source_subtitles"),
+                gr.update(visible=True),
             ),
             inputs=[autoflow_task_content],
             outputs=[
@@ -4721,10 +4785,33 @@ def build_app() -> Any:
         )
         autoflow_reference_apply_button.click(
             autoflow_reference_apply_callback,
-            inputs=[autoflow_reference_state, autoflow_reference_sentence],
+            inputs=[
+                autoflow_reference_state,
+                autoflow_reference_sentence,
+                autoflow_reference_start,
+                autoflow_reference_end,
+                autoflow_reference_text,
+            ],
             outputs=[autoflow_reference_status, autoflow_reference_audio],
             api_name=_PRIVATE_API,
             queue=False,
+        )
+
+        def autoflow_reference_edit_values(request: Any, sentence_id: Any) -> tuple[Any, ...]:
+            try:
+                manifest = _active_autoflow_reference_project(request)
+                project, _ = load_project(manifest)
+                row = next(s for s in project.sentences if s.id == sentence_id)
+                return row.start_seconds, row.end_seconds, row.source_text
+            except Exception:
+                return None, None, ""
+
+        autoflow_reference_sentence.change(
+            autoflow_reference_edit_values,
+            inputs=[autoflow_reference_state, autoflow_reference_sentence],
+            outputs=[autoflow_reference_start, autoflow_reference_end, autoflow_reference_text],
+            queue=False,
+            api_name=_PRIVATE_API,
         )
         autoflow_reference_upload.change(
             lambda path: gr.update(value=path) if path else gr.update(),

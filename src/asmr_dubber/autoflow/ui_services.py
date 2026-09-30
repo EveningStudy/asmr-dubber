@@ -125,7 +125,10 @@ def config_from_settings(settings: UserSettings | None = None) -> engine.AppConf
     ):
         raise ProjectError("自动处理输出文件夹名称不符合 Windows 文件名规则。")
     return engine.AppConfig(
-        asmr_root=portable_home().parent.resolve(),
+        asmr_root=next(
+            (p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").is_file()),
+            portable_home().parent.resolve(),
+        ),
         harmonized_volume_db=-abs(current.autoflow_harmonized_volume_reduction_db),
         harmonized_delay_seconds=round(current.autoflow_harmonized_delay_minutes * 60),
         timestamp_footer=current.autoflow_timestamp_footer.strip(),
@@ -694,6 +697,7 @@ def build_plan_for_ui(
     subtitle_language: str | None = None,
     *,
     settings: UserSettings | None = None,
+    task_content: str | None = None,
 ) -> dict[str, Any]:
     folder = _clean_folder(folder_value)
     current = settings or load_user_settings()
@@ -719,6 +723,16 @@ def build_plan_for_ui(
     sources = _validated_sources_for_plan(scan, source_payloads)
     edition = dict(edition)
     edition["included_optional"] = any(source.category != "main" for source in sources)
+    from .output_policy import policy_for_settings
+
+    content = task_content or (
+        "source_subtitles"
+        if source_subtitles_only
+        else "subtitles"
+        if subtitles_only
+        else "dubbing"
+    )
+    edition["output_policy"] = policy_for_settings(current, content, selected_subtitle_language)
     mode = engine.MODE_AUDIO if source_subtitles_only else engine.normalize_mode(mode_value)
     subtitles_only = bool(subtitles_only or source_subtitles_only)
     layout = engine.normalize_layout(layout_value)
@@ -842,6 +856,16 @@ def toggle_plan_rebuild(queue_payload: Any, plan_id: Any) -> list[dict[str, Any]
     return queue
 
 
+def _plan_content_label(plan: engine.SmartTaskPlan) -> str:
+    content = plan.edition.get("output_policy", {}).get("content", "")
+    return {
+        "dubbing": "双语成品",
+        "replacement": "替换配音",
+        "both": "双语 + 替换配音",
+        "subtitles": "原声 + 字幕",
+    }.get(content, "原声 + 字幕" if plan.subtitles_only else "配音")
+
+
 def queue_rows(queue_payload: Any) -> list[list[Any]]:
     rows: list[list[Any]] = []
     for index, payload in enumerate(queue_payload or [], start=1):
@@ -854,7 +878,7 @@ def queue_rows(queue_payload: Any) -> list[list[Any]]:
                 "仅字幕文件 · "
                 + {"source": "原文", "zh": "译文", "bilingual": "双语"}[plan.subtitle_language]
                 if plan.source_subtitles_only
-                else f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
+                else f"{_plan_content_label(plan)} · {MODE_LABELS[plan.mode]}",
                 LAYOUT_LABELS[plan.layout],
                 str(plan.output_root),
             ]
@@ -883,7 +907,7 @@ def queue_items_for_ui(
                 "mode": "仅字幕文件 · "
                 + {"source": "原文", "zh": "译文", "bilingual": "双语"}[plan.subtitle_language]
                 if plan.source_subtitles_only
-                else f"{'仅字幕 · ' if plan.subtitles_only else ''}{MODE_LABELS[plan.mode]}",
+                else f"{_plan_content_label(plan)} · {MODE_LABELS[plan.mode]}",
                 "layout": LAYOUT_LABELS[plan.layout],
                 "output": plan.output_root.as_posix(),
                 "titles": (

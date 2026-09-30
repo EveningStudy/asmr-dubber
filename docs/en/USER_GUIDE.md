@@ -4,6 +4,44 @@
 
 # User guide
 
+## Project cache cleanup
+
+Open **Settings → Storage & cleanup**, choose a project directory, and click **Scan caches (no deletion)**. Review sizes and the file inventory, select projects, then confirm cleanup. Changing the directory or categories requires a new scan.
+
+- **Safe caches**: input copies and chunks whose completed separation outputs pass integrity checks. Selected by default; incomplete or damaged separation jobs retain their restart checkpoints.
+- **Rebuildable caches**: analysis audio, RTF references, dubbing stems and mix backgrounds. Future mixing may need to recompute them.
+- **Separated stems**: vocals and backgrounds. Future processing must rerun the separation model, which can take considerably longer.
+
+Projects, source media, corrected text, synthesized clips, final media, subtitles, models and runtimes are preserved. Locks protect active operations; files changed since scanning are skipped. Deletion is irreversible, but caches can be rebuilt. Cleanup is manual; it never deletes entire projects.
+
+Batch separation loads the model once per processing pass while retaining chunk-based recovery. Bilingual and replacement mixes write directly to separate output directories and reuse a Chinese RTF stem. Changes to synthesized audio, timing, loudness or RTF parameters invalidate that cache.
+
+## Input and dubbing languages
+
+ASR accepts Japanese, English, or Chinese. Use multilingual Faster-Whisper or a compatible ASR API for English/Chinese. **TTS → Dubbing language** selects Chinese or English for both translation and synthesis. Matching source/target languages bypass translation. Interface language is independent.
+
+Applying a different target language to a project backs up its old translations to `translations-language-revision.json`, then clears translation and sentence-audio references. Translate and synthesize again; source audio, recognition timestamps, and old audio files remain. IndexTTS 2/2.5 and GPT-SoVITS support English; custom APIs depend on the deployed model. Edge TTS automatically selects an English voice for English output; US/UK voices are also selectable.
+
+## Batch output choices
+
+Queue entries retain the selected TTS backend, model and reference settings. After changing the IndexTTS version or external voice, save new-project defaults (or both scopes), then edit and save existing queue entries. Current-project-only settings do not change batch defaults; started projects retain their own settings and results.
+
+While waiting for a reference, edit its start/end times and transcript directly in the picker. “Use this clip” saves the edits before continuing synthesis; timing edits also update that sentence in the project timeline. You can also open the project and save the review table while the batch is waiting. Save table edits before confirming a reference. Timeout still resumes processing automatically; increase the wait duration before lengthy edits.
+
+Under **Workspace → Batch processing**, select the audio result, then subtitle content, audio/video format, and track/merged layout.
+
+| Result | Processing |
+| --- | --- |
+| Bilingual mix + original | Original plus target-language dubbing; honors RTF settings |
+| Replacement dub + original | Separated background plus dubbing; separation required, experimental and not recommended |
+| Both mixes + original | Shares ASR, translation and TTS; renders and stores each mix separately |
+| Original media + subtitles | No TTS, separation or RTF; optional video subtitles |
+| Subtitle files only | SRT/LRC without media output; source-only subtitles skip translation |
+
+Every option supports bilingual, source-only, or translation-only subtitles. Translation-only uses the dubbing target language. Dubbing jobs still translate speech even when subtitles show only the source. Subtitle-file naming is configured in **Settings → AutoFlow → Subtitle files**.
+
+Queued jobs retain their target language, RTF, separation, mixing and original-speech retention settings. Edit and save the queue entry to adopt changed defaults. Replacement output may still contain separation leakage or deliberately retained original speech; audition before publishing.
+
 ## Start
 
 Run Setup once, then the launcher. Keep the terminal open while using the local web UI. Check Devices & models before selecting local backends. Interface language can be switched with 中文 / English; source-language and output-language settings are independent.

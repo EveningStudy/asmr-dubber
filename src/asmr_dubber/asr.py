@@ -314,7 +314,7 @@ def _transcribe_faster_whisper(
     try:
         model_source = settings.asr_model
         is_kotoba_faster = model_source == "kotoba-tech/kotoba-whisper-v2.0-faster"
-        if source_language == "en" and is_kotoba_faster:
+        if source_language != "ja" and is_kotoba_faster:
             raise AsmrDubberError(
                 "Kotoba-Whisper 是日语模型；英语项目请选择其它 Faster-Whisper 模型。"
             )
@@ -1046,7 +1046,7 @@ def transcribe_source(
 ) -> tuple[list[Sentence], str]:
     """Run one of the three deliberately supported recognition families."""
 
-    if source_language == "en" and settings.asr_backend not in {
+    if source_language != "ja" and settings.asr_backend not in {
         "faster_whisper",
         "generic_asr_api",
     }:

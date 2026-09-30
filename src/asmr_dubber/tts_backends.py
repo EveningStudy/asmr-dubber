@@ -503,7 +503,7 @@ def _synthesize_indextts25_batch(
             "text": sentence.zh_text,
             "voice": str(reference.path.resolve()),
             "output": str(output),
-            "language": settings.tts_index25_language,
+            "language": settings.tts_target_language,
             "emotion_weight": settings.tts_index_emo_alpha,
             "use_random": settings.tts_index25_use_random,
             "interval_silence_ms": settings.tts_index25_interval_silence_ms,
@@ -726,7 +726,7 @@ def _gpt_sovits_runner(
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         payload = {
             "text": sentence.zh_text,
-            "text_lang": "zh",
+            "text_lang": project.settings.tts_target_language,
             "ref_audio_path": str(reference.path),
             "prompt_lang": reference.language,
             "prompt_text": reference.text,
@@ -937,6 +937,10 @@ def _edge_tts_runner(
     from .audio import _run_ffmpeg
 
     voice = project.settings.tts_voice.strip() or TTS_BACKENDS["edge_tts"].default_voice
+    if project.settings.tts_target_language == "en" and not voice.startswith("en-"):
+        voice = "en-US-AriaNeural"
+    elif project.settings.tts_target_language == "zh" and voice.startswith("en-"):
+        voice = TTS_BACKENDS["edge_tts"].default_voice
     speed_percent = round((project.settings.tts_speed - 1.0) * 100)
     rate = f"{speed_percent:+d}%"
     edge_exceptions = getattr(edge_tts, "exceptions", None)
@@ -1087,7 +1091,11 @@ def _mimo_runner(
             audio["voice"] = reference_data_uri(reference)
         elif model == "mimo-v2.5-tts-voicedesign":
             if not style:
-                messages[0]["content"] = "温柔自然的中文女声，语速平稳。"
+                messages[0]["content"] = (
+                    "A gentle, natural English female voice at a steady pace."
+                    if project.settings.tts_target_language == "en"
+                    else "温柔自然的中文女声，语速平稳。"
+                )
             audio["optimize_text_preview"] = True
         else:
             audio["voice"] = (
@@ -1151,7 +1159,9 @@ def _minimax_runner(
                 "format": "wav",
                 "channel": 1,
             },
-            "language_boost": "Chinese",
+            "language_boost": "English"
+            if project.settings.tts_target_language == "en"
+            else "Chinese",
             "output_format": "hex",
             "subtitle_enable": False,
         }

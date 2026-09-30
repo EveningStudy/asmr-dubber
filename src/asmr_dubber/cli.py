@@ -213,8 +213,8 @@ def create_command(
 ) -> None:
     """从音频或视频建立项目并保存原始文件副本。"""
     try:
-        if source_language not in {"ja", "en"}:
-            raise ValueError("--source-language 只能是 ja 或 en。")
+        if source_language not in {"ja", "en", "zh"}:
+            raise ValueError("--source-language 只能是 ja、en 或 zh。")
         settings = load_user_settings().to_project_settings()
         if offset_ms is not None or max_speed is not None:
             values = settings.model_dump()
@@ -323,12 +323,17 @@ def synthesize_command(
 
 
 @app.command("mix")
-def mix_command(project_path: Annotated[Path, typer.Argument(exists=True)]) -> None:
+def mix_command(
+    project_path: Annotated[Path, typer.Argument(exists=True)],
+    output_variant: Annotated[str | None, typer.Option("--output-variant")] = None,
+) -> None:
     """将中文轨与原轨相加；视频项目同时保留画面并输出视频。"""
     try:
         project, directory = reload_project(project_path)
-        output = mix_project(project, directory, progress=ConsoleProgress())
-    except AsmrDubberError as exc:
+        output = mix_project(
+            project, directory, progress=ConsoleProgress(), output_variant=output_variant
+        )
+    except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
     console.print(f"[bold green]{output}[/bold green]")
     if project.output_video_file:
@@ -344,6 +349,7 @@ def subtitles_command(
         str,
         typer.Option("--language", "-l", help="bilingual、zh 或 source（ja 为兼容别名）"),
     ] = "bilingual",
+    output_variant: Annotated[str | None, typer.Option("--output-variant")] = None,
 ) -> None:
     """独立生成 SRT/LRC；视频项目同时生成带字幕视频。"""
     try:
@@ -357,6 +363,7 @@ def subtitles_command(
             directory,
             language=cast(SubtitleLanguage, language),
             progress=ConsoleProgress(),
+            output_variant=output_variant,
         )
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)
@@ -401,15 +408,12 @@ def run_command(
         selected = stages[first : last + 1]
         for stage in selected:
             if stage == "analyze":
-                if project.source_language == "zh":
-                    console.print("[dim]中文台本项目：跳过 ASR（语音识别）。[/dim]")
+                if project.sentences and not force:
+                    console.print("[dim]项目已有句子，保留现有时间轴。[/dim]")
                 else:
                     analyze_project(project, directory, force=force, progress=ConsoleProgress())
             elif stage == "translate":
-                if project.source_language == "zh":
-                    console.print("[dim]中文台本项目：跳过翻译。[/dim]")
-                else:
-                    translate_project(project, directory, force=force, progress=ConsoleProgress())
+                translate_project(project, directory, force=force, progress=ConsoleProgress())
             elif stage == "synthesize":
                 synthesize_project(project, directory, force=force, progress=ConsoleProgress())
             elif stage == "mix":
@@ -856,8 +860,8 @@ def verify_asr_command(
     token = uuid.uuid4().hex
     temporary = portable_home() / "temp" / f"verify-asr-{token}.wav"
     try:
-        if source_language not in {"ja", "en"}:
-            raise ValueError("--source-language 只能是 ja 或 en。")
+        if source_language not in {"ja", "en", "zh"}:
+            raise ValueError("--source-language 只能是 ja、en 或 zh。")
         analysis = make_analysis_copy(audio.resolve(), temporary)
         settings = ProjectSettings.model_validate(
             {

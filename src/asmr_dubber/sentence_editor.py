@@ -17,7 +17,7 @@ TEMPLATE = """
   </div>
   <div class="editor-scroll">
     <table><colgroup><col style="width:100px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:350px"><col style="width:350px"><col style="width:140px"><col style="width:110px"><col style="width:110px"><col style="width:110px"></colgroup>
-      <thead><tr><th>句子 ID</th><th>启用中文处理</th><th>开始（秒）</th><th>结束（秒）</th><th>原文</th><th>中文译文</th><th>原声开关<br>仅分离时生效</th><th>原声微调 dB</th><th>播放中文配音</th><th>中文微调 dB</th></tr></thead>
+      <thead><tr><th>句子 ID</th><th>启用配音处理</th><th>开始（秒）</th><th>结束（秒）</th><th>原文</th><th>译文／配音文本</th><th>原声开关<br>仅分离时生效</th><th>原声微调 dB</th><th>播放配音</th><th>配音微调 dB</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -74,7 +74,7 @@ const render = () => {
       else {
         const field = document.createElement(col===6 ? 'select' : (col===4||col===5) ? 'textarea' : 'input');
         field.dataset.row = String(i); field.dataset.col = String(col);
-        field.setAttribute('aria-label', `${text(rows[i][0])} ${['ID','启用中文处理','开始秒数','结束秒数','原文','中文译文','原声开关','原声音量微调','播放中文配音','中文音量微调'][col]}`);
+        field.setAttribute('aria-label', `${text(rows[i][0])} ${['ID','启用配音处理','开始秒数','结束秒数','原文','译文／配音文本','原声开关','原声音量微调','播放配音','配音音量微调'][col]}`);
         if(col===6) {
           for(const [value,label] of [['default','沿用设置'],['on','保留原声'],['off','关闭原声']]) {
             const option=document.createElement('option');option.value=value;option.textContent=label;field.append(option);

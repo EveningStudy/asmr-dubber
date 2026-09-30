@@ -465,7 +465,9 @@ def find_tool_paths(config: AppConfig) -> ToolPaths:
             "或设置环境变量 ASMR_DUBBER_ROOT。"
         )
 
-    asmr_home = asmr_root / ".asmr-dubber"
+    # Keep the launcher's explicit home: changing it can silently load another
+    # settings.json (including the default IndexTTS2 and empty references).
+    asmr_home = portable_home()
     platform_info = current_platform()
     if platform_info.is_windows:
         python_candidates = (
@@ -1806,7 +1808,7 @@ def render_delayed_existing_video(
             "-c:s",
             "mov_text",
             "-metadata:s:s:0",
-            "language=zho",
+            "language=und",
         ]
         if subtitle_input_index is not None
         else ["-sn"]
@@ -1910,7 +1912,7 @@ def create_asmr_project(
         "--projects-root",
         str(projects_root),
         "--source-language",
-        "en" if source_language == "en" else "ja",
+        source_language if source_language in {"ja", "en", "zh"} else "ja",
     )
     ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
     for raw_line in reversed(output.splitlines()):
@@ -1955,15 +1957,12 @@ def project_asset(project_json: Path, stored: Any) -> Path | None:
 
 
 def source_language_for_sources(sources: Sequence[AudioSource]) -> str:
-    """Choose the only ASR-compatible source language represented by a job.
-
-    ASMR Dubber currently accepts Japanese and English at project creation. A
-    Chinese timed script is imported later and changes the project language,
-    so Chinese-labelled files intentionally fall back to Japanese here.
-    """
+    """Use the common source language; retain Japanese as the mixed-edition fallback."""
 
     languages = {str(item.source_language).casefold() for item in sources}
-    return "en" if languages and languages == {"en"} else "ja"
+    return (
+        next(iter(languages)) if len(languages) == 1 and languages <= {"ja", "en", "zh"} else "ja"
+    )
 
 
 def ensure_autoflow_project_outputs(project_json: Path) -> None:
@@ -2017,10 +2016,16 @@ def project_has_external_reference(project_json: Path) -> bool:
     project = read_project(project_json)
     settings = project.get("settings") or {}
     source = str(settings.get("tts_reference_source") or "project_sentence").strip()
+    if settings.get("tts_backend") in {"indextts2", "indextts2_5"}:
+        source = str(settings.get("tts_index_speaker_source") or "current_sentence")
     if source != "external":
         return False
     audio = Path(str(settings.get("tts_external_reference_audio") or "")).expanduser()
-    return audio.is_file()
+    if not audio.is_file():
+        raise VideoPreparerError(
+            f"已选择外部音色参考，但文件不存在：{audio}。请重新选择，不会自动替换参考。"
+        )
+    return True
 
 
 def wait_for_reference(
@@ -2096,6 +2101,11 @@ def wait_for_reference(
         time.sleep(min(2.0, remaining))
 
 
+def project_target_language(project_json: Path) -> str:
+    project = read_project(project_json)
+    return str(project.get("settings", {}).get("tts_target_language") or "zh")
+
+
 def project_source_language(project_json: Path) -> str:
     project = read_project(project_json)
     return str(project.get("source_language") or "ja")
@@ -2106,12 +2116,21 @@ def extract_shared_reference(project_json: Path, destination: Path) -> dict[str,
 
     try:
         from asmr_dubber.models import load_project, save_project
-        from asmr_dubber.voice_reference import prepare_voice_reference, shared_reference_sentence
+        from asmr_dubber.voice_reference import (
+            prepare_index_speaker_reference,
+            prepare_voice_reference,
+            shared_reference_sentence,
+        )
 
         project, project_dir = load_project(project_json)
         sentence = shared_reference_sentence(project)
         source = (project_dir / project.source.path).resolve()
-        reference = prepare_voice_reference(project, project_dir, source, sentence)
+        prepare = (
+            prepare_index_speaker_reference
+            if project.settings.tts_backend in {"indextts2", "indextts2_5"}
+            else prepare_voice_reference
+        )
+        reference = prepare(project, project_dir, source, sentence)
         save_project(project, project_dir)
     except Exception as exc:
         raise VideoPreparerError(f"无法固化分轨共用参考音频：{exc}") from exc
@@ -2212,6 +2231,10 @@ def _replace_project_with_timed_transcripts(
             raise VideoPreparerError("已有字幕中没有可导入的有效台词。")
 
         project.sentences = combined
+        project.translation_language = project.settings.tts_target_language
+        if project.settings.tts_target_language == "en" and language == "zh":
+            for sentence in project.sentences:
+                sentence.zh_text = ""
         project.source_language = language
         project.settings = settings_for_source_language(project.settings, language)
         project.asr_language = f"自动导入的分轨{source_language_label(language)}时间轴字幕"
@@ -2560,7 +2583,7 @@ def remux_video_with_subtitle(
                     "-c:s",
                     "mov_text",
                     "-metadata:s:s:0",
-                    "language=zho",
+                    "language=und",
                     "-movflags",
                     "+faststart",
                     str(partial),
@@ -2634,6 +2657,7 @@ def copy_final_outputs(
     harmonized_delay_seconds: int,
     harmonized_volume_db: float,
     embed_subtitles: bool,
+    output_stem: str = "双语版",
 ) -> dict[str, str]:
     project = read_project(project_json)
     mode = normalize_mode(mode)
@@ -2648,7 +2672,7 @@ def copy_final_outputs(
             harmonized_delay_seconds=harmonized_delay_seconds,
         )
         audio_suffix = audio_source.suffix if audio_source.suffix else ".wav"
-        audio_destination = folder / f"双语版{audio_suffix}"
+        audio_destination = folder / f"{output_stem}{audio_suffix}"
         print("  正在把双语音频送回原文件夹……")
         atomic_copy(audio_source, audio_destination)
         return {
@@ -2684,7 +2708,7 @@ def copy_final_outputs(
         mode,
         harmonized_delay_seconds=harmonized_delay_seconds,
     )
-    video_destination = folder / "双语版.mp4"
+    video_destination = folder / f"{output_stem}.mp4"
     print("  正在把双语视频送回原文件夹……")
     if mode == MODE_VIDEO_HARMONIZED:
         render_delayed_existing_video(
@@ -3411,6 +3435,7 @@ def create_initial_state(
         "timestamp_footer_position": config.timestamp_footer_position,
         "original_hard_subtitles": config.original_hard_subtitles,
         "reference_wait_seconds": max(0, int(config.reference_wait_seconds)),
+        "output_policy": config.output_policy,
         "status": "",
         "fingerprint": fingerprint(sources, background),
         "background": str(background) if background else None,
@@ -3769,7 +3794,33 @@ def _subtitle_entries_from_states(
     return srt_entries, lrc_entries, delay_samples * 1000 // SAMPLE_RATE
 
 
-def build_merged_outputs(
+def build_merged_outputs(paths: ToolPaths, config: AppConfig, **kwargs: Any) -> dict[str, str]:
+    variants = config.output_policy.get("variants", [])
+    if not variants or kwargs.get("subtitles_only"):
+        return _build_merged_outputs(paths, config, **kwargs)
+    result: dict[str, str] = {}
+    for variant in variants:
+        selected = dict(kwargs)
+        selected["output_folder"] = kwargs["output_folder"] / (
+            "双语版" if variant == "bilingual" else "替换配音版"
+        )
+        selected["output_stem"] = "双语版" if variant == "bilingual" else "配音版"
+        selected["states"] = [
+            {
+                **state,
+                "project_mixed_audio": state["mix_variants"][variant]["audio"],
+                "outputs": state["mix_variants"][variant]["outputs"],
+            }
+            for state in kwargs["states"]
+        ]
+        outputs = _build_merged_outputs(paths, replace(config, output_policy={}), **selected)
+        if not result:
+            result.update(outputs)
+        result.update({f"{variant}_{key}": value for key, value in outputs.items()})
+    return result
+
+
+def _build_merged_outputs(
     paths: ToolPaths,
     config: AppConfig,
     *,
@@ -3783,6 +3834,7 @@ def build_merged_outputs(
     title_translations: dict[str, str],
     embed_subtitles: bool,
     subtitles_only: bool = False,
+    output_stem: str = "双语版",
 ) -> dict[str, str]:
     """Build the merged product from completed per-track projects."""
 
@@ -3838,12 +3890,12 @@ def build_merged_outputs(
     )
     srt = combine_srt_files(
         srt_entries,
-        output_folder / "双语版.srt",
+        output_folder / f"{output_stem}.srt",
         final_offset_ms=final_offset_ms,
     )
     lrc = combine_lrc_files(
         lrc_entries,
-        output_folder / "双语版.lrc",
+        output_folder / f"{output_stem}.lrc",
         final_offset_ms=final_offset_ms,
     )
 
@@ -3858,7 +3910,7 @@ def build_merged_outputs(
         if not subtitles_only:
             if mixed_master is None:
                 raise VideoPreparerError("找不到可合并的双语音频。")
-            mixed_destination = output_folder / "双语版.flac"
+            mixed_destination = output_folder / f"{output_stem}.flac"
             atomic_copy(mixed_master, mixed_destination)
             outputs["audio"] = str(mixed_destination)
     else:
@@ -3896,7 +3948,7 @@ def build_merged_outputs(
         if not subtitles_only:
             if mixed_master is None:
                 raise VideoPreparerError("找不到可合并的双语音频。")
-            bilingual_destination = output_folder / "双语版.mp4"
+            bilingual_destination = output_folder / f"{output_stem}.mp4"
             if embed_subtitles:
                 render_static_bilingual_video(
                     paths,
@@ -4028,7 +4080,11 @@ def output_mapping_complete(
         required.add("audio" if normalize_mode(mode) == MODE_AUDIO else "video")
     elif normalize_mode(mode) != MODE_AUDIO and embed_subtitles:
         required.add("video")
-    return all(Path(str(outputs.get(key) or "")).is_file() for key in required)
+    return all(Path(str(outputs.get(key) or "")).is_file() for key in required) and all(
+        Path(value).is_file()
+        for key, value in outputs.items()
+        if key.startswith(("bilingual_", "replace_"))
+    )
 
 
 TRANSCRIPT_LANGUAGE_LABELS = {
@@ -4515,6 +4571,7 @@ def execute_prepared_smart_plan(
 ) -> None:
     """Execute a previously configured smart task without asking plan questions."""
 
+    config = replace(config, output_policy=dict(plan.edition.get("output_policy") or {}))
     if plan.source_subtitles_only:
         from .source_subtitles import execute_source_subtitles
 
@@ -4884,6 +4941,9 @@ def missing_resume_artifacts(state: dict[str, Any], folder: Path) -> list[Path]:
         require_file(project_json)
     if status_at_least(state, "outputs_ready"):
         outputs = state.get("outputs") or {}
+        for key, value in outputs.items():
+            if key.startswith(("bilingual_", "replace_")):
+                require_file(Path(value))
         if state.get("original_hard_subtitles") and normalize_mode(state["mode"]) != MODE_AUDIO:
             require_file(
                 Path(str(outputs.get("original_subtitle_video") or folder / "原声字幕版.mp4"))
@@ -4978,6 +5038,13 @@ def execute_task(
         )
         state["project_json"] = str(project_json)
         ensure_autoflow_project_outputs(project_json)
+        from .output_policy import configure_project
+
+        configure_project(
+            project_json,
+            state.get("output_policy", {}),
+            subtitles_only=bool(state.get("subtitles_only")),
+        )
         state["status"] = "project_created"
         save_state(state_file, state)
 
@@ -5023,9 +5090,7 @@ def execute_task(
                     print("  已使用 ASR 时间轴校对台本文字；只会翻译没有匹配到中文的句子。")
                 else:
                     print("  已沿用文件时间轴，不再运行不必要的 ASR（语音识别）。")
-                state["status"] = (
-                    "awaiting_reference" if language == "zh" and not reconciled else "analyzed"
-                )
+                state["status"] = "analyzed"
                 save_state(state_file, state)
             elif kind in {"partial", "zh_overlay_partial"}:
                 print(
@@ -5081,10 +5146,11 @@ def execute_task(
         save_state(state_file, state)
 
     if not status_at_least(state, "awaiting_reference"):
-        if project_source_language(project_json) == "zh":
-            print("\n  当前是中文配音稿，跳过 ASR 与翻译。")
-        else:
-            print("\n  翻译日文……")
+        if project_source_language(project_json) != project_target_language(project_json) and (
+            state.get("output_policy", {}).get("subtitle") != "source"
+            or not state.get("subtitles_only")
+        ):
+            print("\n  准备目标语言文本……")
             run_asmr_cli(paths, "translate", str(project_json))
         state["status"] = "awaiting_reference"
         save_state(state_file, state)
@@ -5092,7 +5158,9 @@ def execute_task(
     subtitles_only = bool(state.get("subtitles_only", False))
     if not subtitles_only:
         if not status_at_least(state, "synthesized"):
-            if shared_reference is not None:
+            if project_has_external_reference(project_json):
+                print("\n  使用当前项目已配置的外部音色参考。")
+            elif shared_reference is not None:
                 apply_shared_reference(project_json, shared_reference)
                 print("\n  已复用本作品的统一音色参考，不需要再次选择。")
             else:
@@ -5129,7 +5197,12 @@ def execute_task(
             save_state(state_file, state)
 
         if not status_at_least(state, "mixed"):
-            run_asmr_cli(paths, "mix", str(project_json))
+            if state.get("output_policy", {}).get("variants"):
+                from .output_policy import render_variants
+
+                render_variants(paths, project_json, folder, state)
+            else:
+                run_asmr_cli(paths, "mix", str(project_json))
             project = read_project(project_json)
             mixed_audio = project_asset(project_json, project.get("output_file"))
             if mixed_audio is not None:
@@ -5137,8 +5210,17 @@ def execute_task(
             state["status"] = "mixed"
             save_state(state_file, state)
 
+    if not status_at_least(state, "subtitles_ready") and state.get("variant_outputs"):
+        state["status"] = "subtitles_ready"
+        save_state(state_file, state)
     if not status_at_least(state, "subtitles_ready"):
-        run_asmr_cli(paths, "subtitles", str(project_json), "--language", "bilingual")
+        run_asmr_cli(
+            paths,
+            "subtitles",
+            str(project_json),
+            "--language",
+            state.get("output_policy", {}).get("subtitle", "bilingual"),
+        )
         state["status"] = "subtitles_ready"
         save_state(state_file, state)
 
@@ -5170,6 +5252,11 @@ def execute_task(
                 embed_subtitles=bool(state.get("embed_subtitles", True))
                 and not bool(state.get("original_hard_subtitles", False)),
             )
+        elif state.get("variant_outputs"):
+            state["outputs"] = dict(state["variant_outputs"])
+            original_media = state.get("original_media") or state.get("original_video")
+            if original_media:
+                state["outputs"].setdefault("original", str(original_media))
         else:
             state["outputs"] = copy_final_outputs(
                 paths,

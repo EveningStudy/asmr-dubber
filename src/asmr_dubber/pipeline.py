@@ -122,7 +122,10 @@ def output_filename(project: DubProject, project_dir: Path) -> str:
         else project.settings.tts_clone_mode
     )
     tts_label = _safe_name(f"{project.settings.tts_backend}-{model_label}-{reference_label}")
-    return f"{_safe_name(source_label)}__{project.source_language}-zh__{tts_label}.wav"
+    return (
+        f"{_safe_name(source_label)}__{project.source_language}-"
+        f"{project.settings.tts_target_language}__{tts_label}.wav"
+    )
 
 
 def stem_output_filename(project: DubProject, project_dir: Path) -> str:
@@ -182,6 +185,7 @@ def create_project(
             source=info,
             source_language=source_language,
             settings=project_settings,
+            translation_language=project_settings.tts_target_language,
         )
         save_project(project, project_dir)
         export_transcript(project, project_dir)
@@ -553,6 +557,10 @@ def import_project_transcript(
     )
 
     project.sentences = sentences
+    project.translation_language = project.settings.tts_target_language
+    if project.settings.tts_target_language == "en" and parsed.language == "zh":
+        for sentence in project.sentences:
+            sentence.zh_text = ""
     if not reconciled:
         project.source_language = cast(SourceLanguage, parsed.language)
         project.settings = settings_for_source_language(project.settings, project.source_language)
@@ -591,8 +599,6 @@ def _analyze_project_impl(
 ) -> None:
     check_cancelled(cancel_event)
     require_supported_platform()
-    if project.source_language == "zh":
-        raise ProjectError("中文台本项目不需要运行 ASR（语音识别）。")
     project.settings = settings_for_source_language(project.settings, project.source_language)
     if force and any(row.review_locked for row in project.sentences):
         raise ProjectError(
@@ -673,6 +679,7 @@ def _analyze_project_impl(
     for index, sentence in enumerate(bounded_sentences, start=1):
         sentence.id = f"s{index:06d}"
     project.sentences = bounded_sentences
+    project.translation_language = project.settings.tts_target_language
     project.asr_language = language
     project.asr_settings_dirty = False
     project.chinese_stem_file = None
@@ -765,6 +772,17 @@ def _translate_project_impl(
     require_supported_platform()
     if not project.sentences:
         raise ProjectError("项目还没有句子；请先运行识别。")
+    if project.translation_language != project.settings.tts_target_language:
+        atomic_write_text(
+            project_dir / f"translations-{project.translation_language}-{project.revision}.json",
+            project.model_dump_json(indent=2),
+        )
+        for sentence in project.sentences:
+            sentence.zh_text = ""
+            sentence.tts_file = None
+            sentence.tts_cache_key = None
+        project.translation_language = project.settings.tts_target_language
+        save_project(project, project_dir)
     will_translate = force or any(
         sentence.enabled and not sentence.zh_text for sentence in project.sentences
     )
@@ -789,7 +807,11 @@ def _translate_project_impl(
     preset = PROVIDER_PRESETS.get(provider)
     if preset is None:
         raise ProjectError(f"未知翻译服务：{provider}")
-    key = resolve_api_key(provider, api_key)
+    key = (
+        resolve_api_key(provider, api_key)
+        if will_translate and project.source_language != project.settings.tts_target_language
+        else ""
+    )
     base_url = project.settings.translation_base_url.strip() or str(preset["base_url"])
 
     def checkpoint() -> None:
@@ -804,6 +826,7 @@ def _translate_project_impl(
         provider=provider,
         source_language=project.source_language,
         system_prompt=project.settings.translation_prompt,
+        target_language=project.settings.tts_target_language,
         temperature=project.settings.translation_temperature,
         top_p=project.settings.translation_top_p,
         max_output_tokens=project.settings.translation_max_output_tokens,
@@ -994,6 +1017,7 @@ def _mix_project_impl(
     project_dir: Path,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    output_variant: str | None = None,
 ) -> Path:
     check_cancelled(cancel_event)
     require_supported_platform()
@@ -1042,7 +1066,10 @@ def _mix_project_impl(
         if keep_stem
         else project_dir / "mix" / "chinese_stem_float32.wav"
     )
-    output = project_dir / "output" / output_filename(project, project_dir)
+    from .stem_cache import build_cached_stem, variant_directory
+
+    output_dir = variant_directory(project_dir, output_variant)
+    output = output_dir / output_filename(project, project_dir)
     loudness_reference = make_analysis_copy(
         source,
         project_dir / "analysis" / "asr_16k_mono.wav",
@@ -1057,7 +1084,12 @@ def _mix_project_impl(
             "spatial_reference_path": stereo_reference(source, project_dir),
             "spatial_settings": project.settings,
         }
-    build_chinese_stem(
+    stem_builder = (
+        (lambda **kwargs: build_cached_stem(build_chinese_stem, **kwargs))
+        if project.settings.spatial_rtf_enabled
+        else build_chinese_stem
+    )
+    stem_builder(
         destination=stem,
         events=events,
         source_info=project.source,
@@ -1094,6 +1126,9 @@ def _mix_project_impl(
         check_cancelled(cancel_event)
     if keep_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
+    elif project.settings.spatial_rtf_enabled:
+        # Retain one shared intermediate, never one copy per mix variant.
+        project.chinese_stem_file = None
     else:
         try:
             stem.unlink()
@@ -1116,7 +1151,7 @@ def _mix_project_impl(
         video_output = mux_mixed_video(
             source,
             mixed_output,
-            project_dir / "output" / output_video_filename(project, project_dir),
+            output_dir / output_video_filename(project, project_dir),
         )
         project.output_video_file = video_output.relative_to(project_dir).as_posix()
     save_project(project, project_dir)
@@ -1132,6 +1167,7 @@ def mix_project(
     project_dir: Path,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    output_variant: str | None = None,
 ) -> Path:
     with measure_stage(
         project_dir,
@@ -1146,6 +1182,7 @@ def mix_project(
             project_dir,
             progress=progress,
             cancel_event=cancel_event,
+            output_variant=output_variant,
         )
         metrics["output_bytes"] = output.stat().st_size
         if project.chinese_stem_file:
@@ -1174,18 +1211,22 @@ def generate_subtitles(
     language: SubtitleLanguage | Literal["ja"] = "bilingual",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    output_variant: str | None = None,
 ) -> tuple[Path, Path, Path | None]:
     """Create external subtitles and, for video projects, a subtitled video."""
     require_supported_platform()
     check_cancelled(cancel_event)
     normalized_language: SubtitleLanguage = "source" if language == "ja" else language
+    from .stem_cache import variant_directory
+
+    output_dir = variant_directory(project_dir, output_variant)
     source = verify_source(project_dir, project.source)
 
     if progress:
         progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
     srt, lrc = write_subtitle_files(
         project.sentences,
-        project_dir / "subtitles",
+        project_dir / "subtitles" / output_variant if output_variant else project_dir / "subtitles",
         normalized_language,
         timeline=project.settings.subtitle_timeline,
         maximum_chars=project.settings.subtitle_max_chars_per_line,
@@ -1209,8 +1250,7 @@ def generate_subtitles(
         video_output = render_subtitled_video(
             source,
             srt,
-            project_dir
-            / "output"
+            output_dir
             / subtitle_video_filename(
                 project_dir,
                 normalized_language,
@@ -1219,6 +1259,7 @@ def generate_subtitles(
             replacement_audio=mixed_audio,
             subtitle_language=normalized_language,
             source_language=project.source_language,
+            target_language=project.settings.tts_target_language,
         )
         check_cancelled(cancel_event)
     # Commit metadata only after every requested artifact succeeds. Cancellation

@@ -278,6 +278,7 @@ class ProjectSettings(BaseModel):
     translation_model: str = DEFAULT_TRANSLATION_MODEL
     translation_base_url: str = ""
     translation_prompt: str = ""
+    tts_target_language: Literal["zh", "en"] = "zh"
     translation_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     translation_top_p: float = Field(default=1.0, gt=0.0, le=1.0)
     translation_max_output_tokens: int = Field(default=16_384, ge=1_024, le=131_072)
@@ -511,11 +512,15 @@ def settings_for_source_language(
 ) -> ProjectSettings:
     """Return settings that cannot dispatch a source to a language-incompatible ASR."""
 
-    if source_language != "en":
+    if source_language == "ja":
         return settings
     values = settings.model_dump()
     model = str(values.get("asr_model", ""))
-    if values.get("asr_backend") != "faster_whisper" or model.startswith("kotoba-tech/"):
+    if (
+        values.get("asr_backend") not in {"faster_whisper", "generic_asr_api"}
+        or model.startswith("kotoba-tech/")
+        or (source_language == "zh" and (model.endswith(".en") or "distil" in model.lower()))
+    ):
         values["asr_backend"] = "faster_whisper"
         values["asr_model"] = "large-v2"
     primary = f"{values['asr_backend']}|{values['asr_model']}"
@@ -524,6 +529,12 @@ def settings_for_source_language(
         for item in values.get("asr_review_models") or []
         if str(item).startswith("faster_whisper|") and "kotoba-tech/kotoba-whisper" not in str(item)
     ]
+    if source_language == "zh":
+        review_models = [
+            item
+            for item in review_models
+            if not item.endswith(".en") and "distil" not in item.lower()
+        ]
     values["asr_review_models"] = review_models
     if not any(item != primary for item in review_models):
         values["asr_review_enabled"] = False
@@ -542,13 +553,14 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "1.6.0"
+    app_version: str = "1.6.1"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     source: AudioInfo
     source_language: SourceLanguage = "ja"
+    translation_language: Literal["zh", "en"] = "zh"
     settings: ProjectSettings = Field(default_factory=ProjectSettings)
     sentences: list[Sentence] = Field(default_factory=list)
     asr_language: str | None = None
@@ -735,7 +747,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "1.6.0"
+        payload["app_version"] = "1.6.1"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

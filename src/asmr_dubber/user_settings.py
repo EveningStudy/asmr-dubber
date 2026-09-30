@@ -182,6 +182,7 @@ class UserSettings(ProjectSettings):
     tts_device_selection_version: int = Field(default=0, ge=0)
     translation_prompt_ja: str = ""
     translation_prompt_en: str = ""
+    translation_prompt_zh: str = ""
     autoflow_output_folder_name: str = "AutoFlow输出"
     autoflow_default_mode: Literal["audio", "video_normal", "video_harmonized"] = "video_normal"
     autoflow_default_layout: Literal["merged", "separate", "both"] = "merged"
@@ -252,7 +253,7 @@ class UserSettings(ProjectSettings):
         return value
 
     def translation_prompt_for(self, source_language: SpeechSourceLanguage) -> str:
-        return self.translation_prompt_en if source_language == "en" else self.translation_prompt_ja
+        return getattr(self, f"translation_prompt_{source_language}")
 
     def to_project_settings(
         self,
@@ -269,9 +270,7 @@ class UserSettings(ProjectSettings):
             }
         )
         language = source_language or self.default_source_language
-        values["translation_prompt"] = (
-            "" if language == "zh" else self.translation_prompt_for(language)
-        )
+        values["translation_prompt"] = self.translation_prompt_for(language)
         return ProjectSettings.model_validate(values)
 
 
@@ -352,7 +351,8 @@ def _write_private_json_unlocked(path: Path, payload: dict[str, Any]) -> None:
 def load_user_settings() -> UserSettings:
     path = config_dir() / "settings.json"
     try:
-        settings = UserSettings.model_validate(_read_json(path))
+        payload = _read_json(path)
+        settings = UserSettings.model_validate(payload)
     except ValidationError as exc:
         raise ProjectError(f"本地设置校验失败 {path}: {exc}") from exc
     if settings.tts_backend in {"indextts2_5", "indextts2"}:
@@ -376,7 +376,7 @@ def load_user_settings() -> UserSettings:
         resources_ready = all((model_dir / name).is_file() for name in required_files) and all(
             (model_dir / name).is_dir() for name in required_dirs
         )
-        if not (runtime_ready and resources_ready):
+        if not (runtime_ready and resources_ready) and "tts_backend" not in payload:
             edge = TTS_BACKENDS["edge_tts"]
             settings = settings.model_copy(
                 update={
@@ -387,7 +387,7 @@ def load_user_settings() -> UserSettings:
                     "tts_device": "cpu",
                 }
             )
-        elif settings.tts_device_selection_version < 1:
+        elif runtime_ready and resources_ready and settings.tts_device_selection_version < 1:
             # Releases before 1.1.2 could save ``cpu`` merely because the
             # missing-runtime fallback had shown Edge TTS. Repair that stale
             # value once on NVIDIA systems, while preserving an explicit CPU
