@@ -7,7 +7,7 @@
 ![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-把日语或英语音频、视频制作成中文配音、双语音频和字幕。保留原声，识别、翻译、配音、混音可以分步执行，文字和时间可人工校对。
+将日语、英语或中文音频、视频制作成中文／英文配音、双语音频和字幕。支持音色克隆、批量处理与仅字幕导出；识别、翻译、配音、混音可以分步执行，文字和时间可人工校对。语言能力以所选后端为准。
 
 ## 演示
 
@@ -76,9 +76,11 @@ IndexTTS-2.5 为按需安装项，不属于以上方案。英语本地识别需�
 
 仅字幕文件支持双语、仅原文和仅译文，并可沿用音频原名。
 
+在 **ASR → 新建媒体项目的音频语言** 选择日语、英语或中文，在 **TTS → 配音目标语言** 选择中文或英文。批量可输出双语成品、替换配音成品或两者，并沿用 RTF 与混音设置；另有原声加字幕和仅字幕选项。详见[输入与配音语言](docs/USER_GUIDE.md#输入与配音语言)及[批量输出选择](docs/USER_GUIDE.md#批量输出选择)。
+
 | 手上有什么 | 最短制作路线 |
 |---|---|
-| 只有日语／英语音频或视频 | 新建项目 → ASR → 校对原文 → 翻译 → 配音 → 混音 |
+| 只有日语／英语／中文音频或视频 | 新建项目 → ASR → 校对原文 → 翻译 → 配音 → 混音；源语言与目标一致时跳过翻译 |
 | 已有原文时间轴字幕 | 新建项目 → 导入原文字幕 → 翻译 → 配音 → 混音 |
 | 已有中文字幕 | 新建项目 → 导入中文配音稿 → 配音 → 混音；不需要 ASR 或正文翻译 |
 | 只有 TXT 台本 | 导入并选择估算时间或 ASR 台本重新定时，之后人工检查 |
@@ -88,7 +90,7 @@ IndexTTS-2.5 为按需安装项，不属于以上方案。英语本地识别需�
 
 ### 混音
 
-混音时可选 **RTF（原声空间线索迁移）**，将原录音的立体声空间线索迁移到中文配音。操作和参数见[音频处理](docs/EXPERIMENTAL_AUDIO.md)。
+混音时可选 **RTF（原声空间线索迁移）**，将原录音的立体声空间线索迁移到目标语言配音。双语版与替换版共用有效的 RTF 配音音轨缓存，不重复计算；操作和参数见[音频处理](docs/EXPERIMENTAL_AUDIO.md)。
 
 ### 设置保存到哪里
 
@@ -100,7 +102,7 @@ IndexTTS-2.5 为按需安装项，不属于以上方案。英语本地识别需�
 
 | 环节 | 支持范围 |
 |---|---|
-| ASR | Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语／英语）、通用 ASR API |
+| ASR | Parakeet（日语）、Kotoba-Whisper（日语）、Faster-Whisper（日语／英语／中文，需对应多语言模型）、通用 ASR API |
 | 时间对齐 | 后端自带时间戳、Qwen3 ForcedAligner |
 | 本地配音 | IndexTTS2、按需安装的 IndexTTS-2.5 |
 | 在线配音 | Edge TTS、MiMo、MiniMax、IndexTTS2 API、GPT-SoVITS、CosyVoice、Fish、通用 TTS API |
@@ -111,6 +113,8 @@ Edge TTS 不需要密钥，但需要联网且不克隆音色。其它云服务�
 ## 数据、恢复与隐私
 
 默认数据在 `.asmr-dubber`：项目在 `projects`，设置与密钥在 `config`，模型与环境在 `models`／`runtimes`，批量状态在 `autoflow`。配置了外部项目目录时，需要另外备份那个目录。
+
+释放空间使用 **设置 → 存储与清理**：先扫描，再选择项目并确认。默认只选安全缓存；分析音频、RTF 中间轨和分离结果需单独选择，之后可能重新计算。不删除项目、源素材、逐句配音、成品或模型。见[项目缓存清理](docs/USER_GUIDE.md#项目缓存清理)。
 
 - 备份项目要复制整个项目目录，不是只有 `project.json`。
 - 重试会复用满足条件的缓存；不要为排障直接删除整个 `.asmr-dubber`。
@@ -129,6 +133,7 @@ Edge TTS 不需要密钥，但需要联网且不克隆音色。其它云服务�
 | 开始使用 | [安装](docs/INSTALLATION.md) · [使用指南与批量处理](docs/USER_GUIDE.md) |
 | 字幕与音频 | [已有字幕制作](docs/SUBTITLE_WORKFLOW.md) · [音频处理：RTF、分离与逐句混音](docs/EXPERIMENTAL_AUDIO.md) |
 | 配置与排障 | [配置参考](docs/CONFIGURATION.md) · [后端](docs/BACKENDS.md) · [CLI](docs/CLI.md) · [排障](docs/TROUBLESHOOTING.md) · [支持](SUPPORT.md) |
+| 存储与恢复 | [项目缓存清理](docs/USER_GUIDE.md#项目缓存清理) · [分离与 RTF 缓存](docs/EXPERIMENTAL_AUDIO.md#批量输出与缓存) |
 | 开发与维护 | [贡献](CONTRIBUTING.md) · [架构](docs/ARCHITECTURE.md) · [Prompt](docs/PROMPTS.md) · [制品维护](docs/MODELSCOPE_UPLOADS.md) · [发布记录](docs/RELEASE.md) |
 | 安全与许可 | [安全策略](SECURITY.md) · [第三方声明](docs/THIRD_PARTY_NOTICES.md) · [行为准则](CODE_OF_CONDUCT.md) |
 

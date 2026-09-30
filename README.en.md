@@ -7,7 +7,7 @@
 ![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624)
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Turn Japanese or English audio/video into Chinese dubbing, bilingual audio and subtitles. Recognition, translation, synthesis and mixing are separate stages; sentence text and timing remain editable.
+Turn Japanese, English or Chinese audio/video into Chinese or English dubbing, bilingual audio and subtitles. Supports voice cloning, batch processing and subtitle-only export. Recognition, translation, synthesis and mixing are separate stages; sentence text and timing remain editable. Language support depends on the selected backend.
 
 ## Demo
 
@@ -51,7 +51,7 @@ On Windows, download the portable ZIP from [Releases](https://github.com/Evening
 2. Run `ASMR-Dubber.exe` and keep its terminal open.
 3. Check **Settings → Devices & models**, then configure ASR, translation and TTS.
 
-Use **中文 / English** at the top of the web UI to switch interface language without restarting. This does not change the source language, prompts, Chinese dubbing target or project contents.
+Use **中文 / English** at the top of the web UI to switch interface language without restarting. This does not change the source language, prompts, dubbing target or project contents.
 
 No preinstalled Python, uv, Git, FFmpeg or CUDA Toolkit is required. Downloads need system `curl.exe`; local GPU inference needs a compatible NVIDIA driver. See [Installation](docs/en/INSTALLATION.md).
 
@@ -74,6 +74,8 @@ IndexTTS-2.5 is an optional installation, not part of these profiles. Local Engl
 
 ## Workflow
 
+Select Japanese, English or Chinese as the new-project source language in **ASR**, and Chinese or English as the **TTS dubbing language**. Batch jobs can produce bilingual mixes, replacement dubs or both, using the selected RTF and mixing settings; original media with subtitles and subtitle-only exports are also available. See [Input and dubbing languages](docs/en/USER_GUIDE.md#input-and-dubbing-languages) and [Batch output choices](docs/en/USER_GUIDE.md#batch-output-choices).
+
 | Input | Route |
 |---|---|
 | Audio/video only | Create → ASR → correct source text → translate → synthesize → mix |
@@ -91,13 +93,13 @@ IndexTTS-2.5 is an optional installation, not part of these profiles. Local Engl
 
 ### Mixing
 
-Mixing optionally uses **RTF (original spatial cue transfer)** to transfer stereo cues from the original recording to Chinese speech. See [Audio processing](docs/en/EXPERIMENTAL_AUDIO.md) for operation and parameters.
+Mixing optionally uses **RTF (original spatial cue transfer)** to transfer stereo cues from the original recording to the target-language dub. Bilingual and replacement mixes reuse a valid RTF dubbing stem rather than computing it twice. See [Audio processing](docs/en/EXPERIMENTAL_AUDIO.md) for operation and parameters.
 
 ## Backends
 
 | Stage | Supported interfaces |
 |---|---|
-| ASR | Parakeet (Japanese), Kotoba-Whisper (Japanese), Faster-Whisper (Japanese/English), generic ASR API |
+| ASR | Parakeet (Japanese), Kotoba-Whisper (Japanese), Faster-Whisper (Japanese/English/Chinese with a suitable multilingual model), generic ASR API |
 | Alignment | Backend timestamps, Qwen3 ForcedAligner |
 | Local TTS | IndexTTS2, optional IndexTTS-2.5 |
 | Online TTS | Edge, MiMo, MiniMax, IndexTTS2 API, GPT-SoVITS, CosyVoice, Fish, generic TTS API |
@@ -108,6 +110,8 @@ Edge needs internet but no key and does not clone voices. Other services need yo
 ## Data and recovery
 
 Default data lives in `.asmr-dubber`: projects, models, isolated runtimes, configuration, download caches and AutoFlow state. Back up the entire project directory, not just `project.json`. External project directories need separate backups. Retrying reuses valid caches; deleting the data directory is not routine troubleshooting.
+
+Use **Settings → Storage & cleanup** to reclaim space: scan, select projects, then confirm. Only safe caches are selected by default. Analysis audio, RTF intermediates and separated stems require explicit selection and may need rebuilding later. Projects, source media, synthesized clips, final outputs and models are preserved. See [Project cache cleanup](docs/en/USER_GUIDE.md#project-cache-cleanup).
 
 API keys are plaintext in `.asmr-dubber/config/secrets.json`. Translation sends text; ASR APIs send audio; external TTS/separation may upload reference audio. Check service terms and media rights before use. Do not publish private logs or projects without review.
 
@@ -120,6 +124,7 @@ API keys are plaintext in `.asmr-dubber/config/secrets.json`. Translation sends 
 | Getting started | [Installation](docs/en/INSTALLATION.md) · [User guide and batch processing](docs/en/USER_GUIDE.md) |
 | Subtitles and audio | [Existing-subtitle workflow](docs/en/SUBTITLE_WORKFLOW.md) · [Audio processing: RTF, separation and sentence mixing](docs/en/EXPERIMENTAL_AUDIO.md) |
 | Configuration and troubleshooting | [Configuration](docs/en/CONFIGURATION.md) · [Backends](docs/en/BACKENDS.md) · [CLI](docs/en/CLI.md) · [Troubleshooting](docs/en/TROUBLESHOOTING.md) · [Support](SUPPORT.en.md) |
+| Storage and recovery | [Project cache cleanup](docs/en/USER_GUIDE.md#project-cache-cleanup) · [Separation and RTF caches](docs/en/EXPERIMENTAL_AUDIO.md#batch-outputs-and-caches) |
 | Development and maintenance | [Contributing](CONTRIBUTING.en.md) · [Architecture](docs/en/ARCHITECTURE.md) · [Prompts](docs/en/PROMPTS.md) · [Artifact maintenance](docs/en/MODELSCOPE_UPLOADS.md) · [Release notes](docs/en/RELEASE.md) |
 | Security and licensing | [Security](SECURITY.en.md) · [Third-party notices](docs/en/THIRD_PARTY_NOTICES.md) · [Code of conduct](CODE_OF_CONDUCT.en.md) |
 

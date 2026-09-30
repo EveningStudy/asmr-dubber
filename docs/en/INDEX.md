@@ -11,6 +11,8 @@
 | Install, choose a profile and check the environment | [Installation](INSTALLATION.md) |
 | Single work: recognize → edit → translate → synthesize → export | [User guide](USER_GUIDE.md) |
 | Queue multiple tracks or works | [Batch processing](USER_GUIDE.md#batch-processing) |
+| Japanese/English/Chinese input, Chinese or English dubbing | [Input and dubbing languages](USER_GUIDE.md#input-and-dubbing-languages) |
+| Bilingual mixes, replacement dubs or both | [Batch output choices](USER_GUIDE.md#batch-output-choices) |
 
 ## Subtitles and audio
 
@@ -28,6 +30,7 @@ RTF (original spatial cue transfer) is an independent mixing option. Vocal separ
 | Goal | Reference |
 |---|---|
 | Parameters, defaults, project settings and save scope | [Configuration](CONFIGURATION.md) |
+| Reclaim project storage while preserving outputs and checkpoints | [Project cache cleanup](USER_GUIDE.md#project-cache-cleanup) · [Cache behavior](EXPERIMENTAL_AUDIO.md#batch-outputs-and-caches) |
 | Local models and cloud services | [Backends](BACKENDS.md) |
 | Command-line workflows and automation | [CLI](CLI.md) |
 | Installation failures, hangs, missing models, duplicate lines and recovery | [Troubleshooting](TROUBLESHOOTING.md) |

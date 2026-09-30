@@ -4,6 +4,8 @@
 
 # Audio processing: RTF, vocal separation and sentence mixing
 
+Some controls retain legacy Chinese-dubbing labels; selecting English as the TTS target applies the same processing to the English dub. See [Source and dubbing languages](CONFIGURATION.md#source-and-dubbing-languages) before switching targets.
+
 Separation and Chinese replacement are **experimental, not recommended**; both are off by default. Separation can damage whispers, breaths and mouth sounds, and Japanese speech may remain in the background. RTF can alter timbre, phase and proximity. Neither promises lossless replacement.
 
 ## Routing
@@ -47,6 +49,16 @@ Baseline: `vocals_mel_band_roformer.ckpt` by Kimberley Jensen. It is a music-voc
 Advanced JSON exposes inference parameters for the selected architecture, not arbitrary training/network configuration. The isolated ONNX environment uses CPU; the PyTorch RoFormer path can use CUDA. Check each model's license.
 
 Installation/download requires explicit consent. Sources are PyPI, PyTorch, GitHub and Hugging Face, separate from the ordinary Setup ModelScope policy. The default model is hash-pinned; other downloads record local integrity metadata. Inference refuses implicit downloads.
+
+## Batch outputs and caches
+
+Batch jobs can produce bilingual mixes, replacement dubs or both, using the separation, RTF, mixing and vocal-return settings saved with the queue entry. Replacement requires separation. Original-with-subtitles and subtitle-only jobs skip TTS, separation and RTF. See [Batch output choices](USER_GUIDE.md#batch-output-choices).
+
+- **Separation**: one model load per local processing pass, with sequential chunks. Cancellation/timeouts retain validated chunks; retries load the model once and process the missing parts. The model does not remain in GPU memory permanently between tasks.
+- **RTF**: both variants reuse a valid dubbing stem. Source references, synthesized clips, scheduling, gain and RTF parameters are checked; changes or corruption trigger rebuilding. Changing only the background mix does not require rebuilding identical dubbing audio.
+- **Outputs**: variants write directly to `output/bilingual/` and `output/replace/`, with matching subdirectories under `subtitles/`. No shared output file needs a full backup copy between variants. The user-selected final export directory may still contain separate copies.
+
+Source media, separated stems, RTF references and mixed outputs serve different purposes; do not delete them indiscriminately by size. Long uncompressed WAVs still consume substantial storage, and RTF reuse retains one rebuildable intermediate. Use **Settings → Storage & cleanup** to scan and confirm: safe cleanup retains final separated stems; removing separation results requires rerunning the model later. See [Cleanup categories](CONFIGURATION.md#storage-and-cleanup). Legacy output copies are not automatically removed.
 
 ## Cloud contracts
 

@@ -4,6 +4,34 @@
 
 # Configuration
 
+## Source and dubbing languages
+
+Interface language, source language and dubbing target are independent. **ASR → New-project source language** accepts Japanese, English or Chinese. Use multilingual Faster-Whisper or a compatible ASR API for English/Chinese. Changing the default source language does not relabel existing projects.
+
+**TTS → Dubbing language** selects Chinese (default) or English for both translation and synthesis. Matching source/target languages use the original text directly. Third-party TTS language support depends on the actual model/server. Some controls retain legacy Chinese-dubbing labels but apply to the current target-language dub.
+
+Applying a new target to an existing project backs up translations to `translations-language-revision.json`, then clears translated text and sentence-audio references. Translate and synthesize again; old audio files remain. Do not change the dubbing target merely to switch the interface language.
+
+## Storage and cleanup
+
+**Settings → Storage & cleanup** acts independently of the Save settings button. Scan a project root's immediate children or one project directory; it does not recursively search the entire drive.
+
+| Category | Default | Effect |
+|---|---|---|
+| Safe caches | Selected | Removes separation input copies/chunks only after completed stems pass integrity checks; retains vocals/background |
+| Rebuildable caches | Unselected | Removes analysis audio, RTF references/dubbing intermediates and mix backgrounds; rebuilt when needed |
+| Separated stems | Unselected | Removes completed vocals/background; future processing must rerun separation |
+
+Scan, select projects, then confirm. Changing the path/categories requires another scan. Active, changed or explicitly referenced files are protected; incomplete separation checkpoints remain. Projects, source media, corrected text, synthesized clips, final outputs, models and runtimes are preserved. No automatic cleanup or whole-project deletion is performed. Deletion is irreversible, but caches can be rebuilt. See [the workflow](USER_GUIDE.md#project-cache-cleanup).
+
+## Batch output settings
+
+Choose bilingual output, replacement dubbing, both, original media with subtitles, or subtitle files only; then select subtitle content, media format and separate/merged organization. Replacement dubbing requires separation; RTF follows mixing settings. See [Batch output choices](USER_GUIDE.md#batch-output-choices).
+
+Queue entries snapshot the TTS backend/model, target language, external voice reference and separation/RTF/mix settings. Save new defaults, then edit and save existing queue entries to adopt them. Saving only to the current project does not change batch defaults. Reference timing and source text can be edited while waiting for reference selection; save before continuing.
+
+Batch subtitle content and naming defaults are under **Settings → AutoFlow → Subtitle files**, not the single-project mixing panel. Subtitle-only output creates SRT/LRC without audio/video; source-only output skips translation. Original hard subtitles and timestamp-footer placement remain separate AutoFlow options.
+
 ## Scope and persistence
 
 Defaults live in `.asmr-dubber/config/settings.json`. A new project copies them into `project.json`; existing projects do not continuously inherit them.
@@ -18,7 +46,7 @@ Saving applies the whole settings draft, not only the visible tab. API keys have
 
 ASR/VAD/alignment/review changes mark recognition stale; they do not instantly erase the sentence table. Revision checks prevent an older browser session from overwriting newer saved work.
 
-Interface language is browser-local, defaults to Chinese and persists independently of project settings. It never changes prompts, source language, model IDs or Chinese dubbing targets.
+Interface language is browser-local, defaults to Chinese and persists independently of project settings. It never changes prompts, source language, model IDs or dubbing targets.
 
 ## General and devices
 
@@ -31,7 +59,7 @@ Device/model checks are static and do not load models. Available means dependenc
 | Control | Default / interpretation |
 |---|---|
 | Japanese backend | Parakeet CTC 1.1B JA GAL |
-| English local backend | Faster-Whisper |
+| English/Chinese local backend | Multilingual Faster-Whisper |
 | Device / precision | CUDA / float16; use compatible CPU settings when needed |
 | Batch / beam | 1 / 5; increasing uses more resources |
 | Pause split / maximum sentence | 0.55 s / 15 s |
@@ -64,7 +92,7 @@ Prompts are stored separately by source language. Extra JSON cannot override pro
 
 ## TTS
 
-IndexTTS2 is the default local choice; unavailable local files cause new projects to use Edge TTS. IndexTTS-2.5 is installed separately and does not replace IndexTTS2. Local timeout defaults to 600 s; HTTP concurrency defaults to 2, range 1–8.
+IndexTTS2 is the default local choice. An explicitly saved backend is retained even when its runtime is missing; install/repair it or choose another backend. Fresh configurations may fall back to Edge TTS when local dependencies are unavailable. IndexTTS-2.5 is installed separately and does not replace IndexTTS2. Local timeout defaults to 600 s; HTTP concurrency defaults to 2, range 1–8.
 
 | Backend | Reference / configuration |
 |---|---|
