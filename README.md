@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
 [在 B 站观看旧版本的介绍与演示](https://www.bilibili.com/video/BV1f43G6YEov/)。目前版本的使用请以文档为准。
 
-[更多音声示例](https://space.bilibili.com/3747523753675973)：一些使用本程序制作的音声实例，效果仅供参考，实际表现因素材、模型与参数设置而异。
+[更多音声示例](https://space.bilibili.com/3747523753675973)。一些使用本程序制作的音声实例，效果仅供参考，实际表现因素材、模型与参数设置而异。
 
 素材仅用于功能展示，如有侵权请联系删除。
 
