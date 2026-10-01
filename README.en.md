@@ -37,7 +37,7 @@ Chinese replacement dub: separate Japanese vocals from the background, recognize
 
 https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
-[Watch the full demo of an older version on Bilibili; refer to this README for current information](https://www.bilibili.com/video/BV1f43G6YEov/). Media is used for demonstration; contact the maintainer about rights concerns.
+[Watch the introduction and demo of an older version on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Please refer to documents for current information. Media is used for demonstration; contact the maintainer about rights concerns.
 
 ## Install
 
