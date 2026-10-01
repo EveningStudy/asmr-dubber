@@ -39,6 +39,8 @@ https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
 [在 B 站观看旧版本的完整演示，以readme为准](https://www.bilibili.com/video/BV1f43G6YEov/)。素材仅用于功能展示，如有侵权请联系删除。
 
+[更多实例音声（B 站主页）](https://space.bilibili.com/3747523753675973)：一些使用本程序制作的音声实例，效果仅供参考，实际表现因素材、模型与参数设置而异。
+
 ## 下载与启动
 
 Windows 从 [GitHub Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest) 下载便携 ZIP，完整解压到短且可写的路径，例如 `D:\Apps\ASMR-Dubber`：
