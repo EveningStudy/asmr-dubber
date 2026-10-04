@@ -3197,8 +3197,10 @@ def translate_titles(
     for item, sentence in zip(state["timeline"], sentences[1:], strict=True):
         title = sentence.zh_text.strip()
         key = str(item.get("relative_path") or item["filename"])
-        if not title and sentence.source_text.strip() and not re.search(
-            r"[\u3040-\u30ff\u3400-\u9fff]", sentence.source_text
+        if (
+            not title
+            and sentence.source_text.strip()
+            and not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", sentence.source_text)
         ):
             title = sentence.source_text.strip()
             print(f"标题翻译为空，保留原名称：{key} → {title}")

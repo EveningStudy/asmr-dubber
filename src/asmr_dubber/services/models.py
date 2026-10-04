@@ -131,8 +131,9 @@ def download(request, report, token):
             message = kwargs["desc"]
         percent = re.search(r"(?:下载|download).*?(\d+(?:\.\d+)?)%", str(message), re.I)
         curl = re.match(r"\s*(\d+)\s+[\d.]+[kMGT]?\s+\d+\s+[\d.]+[kMGT]?\s", str(message))
-        if percent or curl:
-            current, total = float((percent or curl).group(1)), 100
+        match = percent or curl
+        if match:
+            current, total = float(match.group(1)), 100
         if current is not None and total is not None:
             current_progress, total_progress = current, total
         report(message, current_progress, total_progress)
