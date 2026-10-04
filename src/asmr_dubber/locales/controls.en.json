@@ -101,5 +101,6 @@
   "标题翻译为空，保留原名称：{file} → {title}": "Empty title translation; keeping the original: {file} → {title}",
   "正文": "Main track",
   "特典": "Bonus track",
-  "样本": "Sample"
+  "样本": "Sample",
+  "已清理 {size}": "Cleared {size}"
 }

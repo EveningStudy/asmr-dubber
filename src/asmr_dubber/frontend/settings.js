@@ -12,7 +12,7 @@ export async function refreshStorage() {
 }
 async function cleanDialog(root,category) {
   const plan=await api('storage/scan',{root,categories:[category]});
-  dialog('清理缓存',`<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map(project=>`<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,'确认清理',async()=>{const selected=$$('.clean-project:checked').map(input=>input.value);const result=await api('storage/clean',{plan,selected,confirmed:true});notice(t('已清理 {count} 个文件',{count:result.removed})+(result.skipped.length?'\n'+result.skipped.join('\n'):''));await refreshStorage();});
+  dialog('清理缓存',`<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map(project=>`<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,'确认清理',async()=>{const selected=$$('.clean-project:checked').map(input=>input.value);const result=await api('storage/clean',{plan,selected,confirmed:true});notice(t('已清理 {size}',{size:size(result.removed)})+(result.skipped.length?'\n'+result.skipped.join('\n'):''));await refreshStorage();});
 }
 export async function refreshLogs() {
   const result=await api('logs/get');
