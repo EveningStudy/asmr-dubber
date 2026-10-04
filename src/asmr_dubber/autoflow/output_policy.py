@@ -23,7 +23,7 @@ def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) 
     selected = {
         key: value
         for key, value in values.items()
-        if key.startswith(("tts_", "separation_", "spatial_", "mix_", "chinese_"))
+        if key.startswith(("tts_", "separation_", "spatial_", "mix_", "chinese_", "replacement_"))
         or key in {"tts_target_language", "normalize_chinese_loudness", "match_source_loudness"}
     }
     # A sentence ID belongs to a single project, never to newly created tracks.

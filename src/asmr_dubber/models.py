@@ -400,6 +400,16 @@ class ProjectSettings(BaseModel):
     chinese_line_peak_dbfs: float = Field(default=-9.0, ge=-20.0, le=-1.0)
     chinese_stem_peak_dbfs: float = Field(default=-3.0, ge=-12.0, le=-0.1)
     chinese_fade_ms: float = Field(default=8.0, ge=0.0, le=100.0)
+    replacement_chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
+    replacement_normalize_chinese_loudness: bool = True
+    replacement_match_source_loudness: bool = True
+    replacement_chinese_relative_loudness_db: float = Field(default=0.0, ge=-24.0, le=24.0)
+    replacement_chinese_min_active_rms_dbfs: float = Field(default=-42.0, ge=-60.0, le=-20.0)
+    replacement_chinese_target_active_rms_dbfs: float = Field(default=-20.0, ge=-50.0, le=-16.0)
+    replacement_chinese_max_loudness_boost_db: float = Field(default=12.0, ge=0.0, le=30.0)
+    replacement_chinese_line_peak_dbfs: float = Field(default=-6.0, ge=-20.0, le=-1.0)
+    replacement_chinese_stem_peak_dbfs: float = Field(default=-3.0, ge=-12.0, le=-0.1)
+    replacement_chinese_fade_ms: float = Field(default=8.0, ge=0.0, le=100.0)
     chinese_channel_routing: Literal["auto", "all"] = "auto"
     mix_peak_protection: bool = True
     mix_peak_limit_dbfs: float = Field(default=-1.0, ge=-6.0, le=-0.1)
@@ -501,6 +511,13 @@ class ProjectSettings(BaseModel):
             and self.chinese_min_active_rms_dbfs > self.chinese_target_active_rms_dbfs
         ):
             raise ValueError("Chinese loudness floor must not exceed its ceiling")
+        if (
+            self.replacement_normalize_chinese_loudness
+            and self.replacement_match_source_loudness
+            and self.replacement_chinese_min_active_rms_dbfs
+            > self.replacement_chinese_target_active_rms_dbfs
+        ):
+            raise ValueError("Replacement Chinese loudness floor must not exceed its ceiling")
         if self.asr_review_enabled and not self.asr_review_models:
             raise ValueError("ASR review requires at least one comparison model")
         return self

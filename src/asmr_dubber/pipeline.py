@@ -1025,11 +1025,15 @@ def _mix_project_impl(
     if project.settings.spatial_rtf_enabled and project.source.channels != 2:
         raise ProjectError("RTF 处理，仅支持双声道原音频；请关闭 RTF 后继续。")
     mixing_source = source
+    replacing = project.settings.separation_mix_mode == "replace"
+    reference_source = source
     if project.settings.separation_enabled:
         from .experimental_mix import compose_replacement_bed
         from .separation import ensure_separation
 
         vocals, background = ensure_separation(project, project_dir, source, progress)
+        if replacing:
+            reference_source = vocals
         if project.settings.separation_mix_mode == "replace" or any(
             s.original_audio_enabled is not None or s.original_audio_gain_db != 0
             for s in project.sentences
@@ -1061,19 +1065,32 @@ def _mix_project_impl(
         raise ProjectError("没有可混入的中文配音。")
     output_mode = project.settings.mix_output_mode
     keep_stem = output_mode in {"stem", "both"}
-    stem = (
-        project_dir / "output" / stem_output_filename(project, project_dir)
-        if keep_stem
-        else project_dir / "mix" / "chinese_stem_float32.wav"
-    )
     from .stem_cache import build_cached_stem, variant_directory
 
     output_dir = variant_directory(project_dir, output_variant)
-    output = output_dir / output_filename(project, project_dir)
-    loudness_reference = make_analysis_copy(
-        source,
-        project_dir / "analysis" / "asr_16k_mono.wav",
+    stem = (
+        output_dir / stem_output_filename(project, project_dir)
+        if keep_stem
+        else project_dir
+        / "mix"
+        / ("replace" if replacing else "bilingual")
+        / "chinese_stem_float32.wav"
     )
+    output = output_dir / output_filename(project, project_dir)
+    if replacing:
+        from .audio import sha256_file
+
+        reference_key = sha256_file(reference_source)
+        receipt = project_dir / "analysis" / "replacement_loudness_source.sha256"
+        reference_audio = project_dir / "analysis" / "replacement_loudness_16k_mono.wav"
+        if not receipt.is_file() or receipt.read_text() != reference_key:
+            reference_audio.unlink(missing_ok=True)
+        loudness_reference = make_analysis_copy(reference_source, reference_audio)
+        atomic_write_text(receipt, reference_key)
+    else:
+        loudness_reference = make_analysis_copy(
+            source, project_dir / "analysis" / "asr_16k_mono.wav"
+        )
     if progress:
         progress("按对应源语言句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
     spatial_kwargs = {}
@@ -1089,21 +1106,31 @@ def _mix_project_impl(
         if project.settings.spatial_rtf_enabled
         else build_chinese_stem
     )
+    loudness_prefix = "replacement_" if replacing else ""
+
+    def loudness(name):
+        return getattr(project.settings, loudness_prefix + name)
+
+    spatial_kwargs = dict(spatial_kwargs)
+    if "spatial_settings" in spatial_kwargs:
+        spatial_kwargs["spatial_settings"] = project.settings.model_copy(
+            update={"chinese_line_peak_dbfs": loudness("chinese_line_peak_dbfs")}
+        )
     stem_builder(
         destination=stem,
         events=events,
         source_info=project.source,
-        chinese_gain_db=project.settings.chinese_gain_db,
-        normalize_loudness=project.settings.normalize_chinese_loudness,
+        chinese_gain_db=loudness("chinese_gain_db"),
+        normalize_loudness=loudness("normalize_chinese_loudness"),
         source_reference_path=loudness_reference,
-        match_source_loudness=project.settings.match_source_loudness,
-        relative_loudness_db=project.settings.chinese_relative_loudness_db,
-        minimum_active_rms_dbfs=project.settings.chinese_min_active_rms_dbfs,
-        target_active_rms_dbfs=project.settings.chinese_target_active_rms_dbfs,
-        max_loudness_boost_db=project.settings.chinese_max_loudness_boost_db,
-        line_peak_dbfs=project.settings.chinese_line_peak_dbfs,
-        stem_peak_dbfs=project.settings.chinese_stem_peak_dbfs,
-        fade_ms=project.settings.chinese_fade_ms,
+        match_source_loudness=loudness("match_source_loudness"),
+        relative_loudness_db=loudness("chinese_relative_loudness_db"),
+        minimum_active_rms_dbfs=loudness("chinese_min_active_rms_dbfs"),
+        target_active_rms_dbfs=loudness("chinese_target_active_rms_dbfs"),
+        max_loudness_boost_db=loudness("chinese_max_loudness_boost_db"),
+        line_peak_dbfs=loudness("chinese_line_peak_dbfs"),
+        stem_peak_dbfs=loudness("chinese_stem_peak_dbfs"),
+        fade_ms=loudness("chinese_fade_ms"),
         channel_routing=project.settings.chinese_channel_routing,
         progress=progress,
         **spatial_kwargs,
@@ -1127,7 +1154,7 @@ def _mix_project_impl(
     if keep_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
     elif project.settings.spatial_rtf_enabled:
-        # Retain one shared intermediate, never one copy per mix variant.
+        # Each mix keeps a separate validated intermediate for its own loudness settings.
         project.chinese_stem_file = None
     else:
         try:

@@ -24,6 +24,16 @@ Conflicting replacement/separation settings are rejected on save; the applicatio
 2. Translate, edit and synthesize normally. Voice-cloning references still use the original audio.
 3. Enable RTF if wanted, then mix. It uses matching stereo intervals to estimate relative level, spectrum and phase. No HRTF or Meta model is used.
 
+## Independent loudness for each mix
+
+The project's Export → More settings panel has separate bilingual and replacement loudness sections.
+
+- Bilingual keeps legacy loudness settings; its default offset is -8 dB relative to the original recording segment.
+- Replacement defaults to 0 dB relative to separated original vocals, with a -20 RMS dBFS matching ceiling and -6 dBFS sentence peak ceiling. Older projects without replacement settings receive these defaults.
+- Each section independently selects source matching, uniform loudness or raw TTS volume, with its own gain, bounds and peak protection. A 0 dB target remains subject to these limits.
+- Batch output applies the corresponding settings to each version. TTS is reused; final dubbing stems and loudness caches are independent.
+- Changes save automatically. Adjust project parameters and new-project defaults separately, then remix. TTS regeneration is unnecessary.
+
 ## Per-sentence controls
 
 The right side of the sentence editor contains original-vocal mode, original gain, Chinese playback and Chinese gain.

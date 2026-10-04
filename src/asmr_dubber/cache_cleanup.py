@@ -76,9 +76,15 @@ def _candidates(directory: Path, categories: list[str]) -> list[Path]:
             for name in (
                 "analysis/asr_16k_mono.wav",
                 "analysis/spatial-reference.wav",
+                "analysis/replacement_loudness_16k_mono.wav",
+                "analysis/replacement_loudness_source.sha256",
                 "mix/replacement-background.wav",
                 "mix/chinese_stem_float32.wav",
                 "mix/chinese_stem_float32.cache.json",
+                "mix/bilingual/chinese_stem_float32.wav",
+                "mix/bilingual/chinese_stem_float32.cache.json",
+                "mix/replace/chinese_stem_float32.wav",
+                "mix/replace/chinese_stem_float32.cache.json",
             )
         )
     separation = directory / "analysis/separation"

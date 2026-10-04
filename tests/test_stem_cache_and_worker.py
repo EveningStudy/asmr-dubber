@@ -65,7 +65,7 @@ def test_variant_paths_cannot_escape(tmp_path):
         variant_directory(tmp_path, "../../outside")
 
 
-def test_real_pipeline_variants_and_subtitles_share_rtf(tmp_path, monkeypatch):
+def test_real_pipeline_variants_use_independent_loudness_stems(tmp_path, monkeypatch):
     from asmr_dubber import pipeline
     from asmr_dubber.audio import _run_ffmpeg
     from asmr_dubber.models import Sentence, save_project
@@ -144,7 +144,7 @@ def test_real_pipeline_variants_and_subtitles_share_rtf(tmp_path, monkeypatch):
             assert output.is_file()
         if variant == "bilingual":
             first_outputs = {p: p.read_bytes() for p in (path, srt, lrc, subtitle_video)}
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert all(p.read_bytes() == contents for p, contents in first_outputs.items())
     assert not list((directory / "output").glob("*.wav"))
 
