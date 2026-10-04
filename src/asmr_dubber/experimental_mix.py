@@ -133,7 +133,20 @@ def spatialize_clip(
                         hop_divisor=settings.spatial_rtf_hop_divisor,
                     )
             except ValueError as exc:
-                raise ProjectError(f"{event.sentence_id} RTF 失败：{exc}") from exc
+                # Quiet ASMR phrases can pass the coarse RMS check but still
+                # contain no frame that is loud enough for reliable spatial
+                # cue estimation.  RTF is an enhancement, so one quiet
+                # reference block must not fail the whole batch item.  Keep
+                # the Chinese clip and apply only the safe level fallback.
+                if "参考片段电平过低" in str(exc):
+                    audio = _short_reference_fallback(
+                        mono[a:b],
+                        ref,
+                        settings.model_copy(update={"spatial_rtf_strength": 1.0}),
+                        event.sentence_id,
+                    )
+                else:
+                    raise ProjectError(f"{event.sentence_id} RTF 失败：{exc}") from exc
             # Leave overall loudness to the application's existing loudness controls.
             audio *= rms(mono[a:b]) / max(rms(audio), 1e-8)
             weight = np.ones(b - a, dtype=np.float32)

@@ -107,6 +107,27 @@ def test_rtf_block_processing_and_stem(tmp_path):
     assert rms(rendered[:, 0]) > rms(rendered[:, 1]) * 1.5
 
 
+def test_rtf_quiet_reference_block_degrades_without_failing_batch(tmp_path, caplog):
+    rate = 16000
+    rng = np.random.default_rng(23)
+    # Above the old coarse silence guard, but below the frame activity level
+    # required by spatial cue analysis. This used to abort the whole item.
+    quiet = rng.normal(0, 2e-7, rate * 2).astype(np.float32)
+    source = tmp_path / "quiet.wav"
+    sf.write(source, np.column_stack((quiet, quiet * 0.8)), rate, subtype="FLOAT")
+    mono = rng.normal(0, 0.01, rate).astype(np.float32)
+    result = spatialize_clip(
+        mono,
+        rate,
+        StemEvent("s000581", 0, source, 0, 2),
+        source,
+        ProjectSettings(),
+    )
+    assert result.shape == (rate, 2)
+    assert np.isfinite(result).all()
+    assert "RTF 降级" in caplog.text
+
+
 @pytest.mark.parametrize("policy,ids", [("none", ""), ("manual", "s1,s2"), ("unvoiced", "")])
 def test_replacement_never_doubles_background(tmp_path, policy, ids):
     rate = 16000
