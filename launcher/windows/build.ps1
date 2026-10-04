@@ -10,7 +10,7 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 . (Join-Path $ProjectRoot "scripts\mirrors.ps1")
 $Sources = @(
     @{
-        Source = Join-Path $PSScriptRoot "ASMRDubberLauncher.cs"
+        Source = @((Join-Path $PSScriptRoot "ASMRDubberLauncher.cs"), (Join-Path $PSScriptRoot "LauncherProcess.cs"))
         Output = if ($Output) { $Output } else { Join-Path $ProjectRoot "ASMR-Dubber.exe" }
     },
     @{
@@ -35,16 +35,15 @@ foreach ($Item in $Sources) {
     Remove-Item -Force -ErrorAction SilentlyContinue $TemporaryOutput
     try {
         $CompileExitCode = Invoke-ASMRDubberProcess -FilePath $Compiler `
-            -ArgumentList @(
+            -ArgumentList (@(
                 "/nologo",
                 "/target:exe",
                 "/optimize+",
                 "/codepage:65001",
                 "/out:$TemporaryOutput",
                 "/reference:System.dll",
-                "/reference:System.Core.dll",
-                $Item.Source
-            ) `
+                "/reference:System.Core.dll"
+            ) + @($Item.Source)) `
             -WorkingDirectory $ProjectRoot
         if ($CompileExitCode -ne 0 -or -not (Test-Path $TemporaryOutput)) {
             throw "Windows 启动器编译失败（退出码 $CompileExitCode）。"

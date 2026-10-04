@@ -19,13 +19,14 @@ using System.Threading;
 
 namespace ASMRDubberLauncher
 {
-    internal static class Program
+    internal static partial class Program
     {
         private const string ProductMarker = "asmr-dubber-product-marker";
         private static Process activeProcess;
         private static IntPtr jobHandle;
         private static bool stopping;
         private static bool ownsPortFile;
+        private static string applicationRoot;
         private static string localUrl = "http://127.0.0.1:7860";
 
         private static int Main(string[] args)
@@ -33,6 +34,7 @@ namespace ASMRDubberLauncher
             Console.OutputEncoding = new UTF8Encoding(false);
             Console.Title = "ASMR Dubber";
             string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
+            applicationRoot = root;
             string mutexName = "Local\\ASMRDubberPortableLauncher-" + ProjectPathHash(root);
 
             if (args.Length == 2 && args[0] == "--self-test")
@@ -99,16 +101,17 @@ namespace ASMRDubberLauncher
             }
 
             PrintHeader();
-            RepairPortablePaths(root);
             if (!IsInstalled(root))
             {
-                WriteError("程序依赖未安装、安装未完成或已经损坏。");
-                Console.WriteLine("请运行项目根目录的 ASMR-Dubber-Setup.exe 进行安装或修复。");
-                Console.WriteLine();
-                Console.WriteLine("按任意键关闭窗口。");
-                Console.ReadKey(true);
-                return 2;
+                WriteInfo("正在准备基础运行环境，模型可在界面内下载……");
+                activeProcess = StartPowerShell(root,
+                    Path.Combine(root, "scripts", "windows", "setup.ps1"), "-Profile Core");
+                activeProcess.WaitForExit();
+                if (activeProcess.ExitCode != 0)
+                    throw new InvalidOperationException("基础环境准备失败，请查看上方日志。");
+                activeProcess = null;
             }
+            RepairPortablePaths(root);
 
             int previousPort = ReadSavedPort(root);
             string previousUrl = UrlForPort(previousPort);
@@ -183,8 +186,7 @@ namespace ASMRDubberLauncher
             if (!File.Exists(python)
                 || !File.Exists(Path.Combine(
                     root, ".asmr-dubber", "venv", "Scripts", "asmr-dubber.exe"))
-                || !Directory.Exists(Path.Combine(
-                    root, ".asmr-dubber", "venv", "Lib", "site-packages", "gradio")))
+)
             {
                 return false;
             }
@@ -192,7 +194,7 @@ namespace ASMRDubberLauncher
             {
                 ProcessStartInfo info = new ProcessStartInfo();
                 info.FileName = python;
-                info.Arguments = "-c \"import asmr_dubber.ui, gradio, av, soundfile\"";
+                info.Arguments = "-c \"import asmr_dubber.http_server, av, soundfile\"";
                 info.WorkingDirectory = root;
                 info.UseShellExecute = false;
                 info.CreateNoWindow = true;
@@ -235,7 +237,7 @@ namespace ASMRDubberLauncher
                 if (repair.ExitCode != 0)
                 {
                     throw new InvalidOperationException(
-                        "项目内部可移动路径修复失败，请运行 ASMR-Dubber-Setup.exe。");
+                        "项目内部可移动路径修复失败，请查看日志后重新启动。");
                 }
             }
         }
@@ -272,39 +274,6 @@ namespace ASMRDubberLauncher
                 NativeMethods.AssignProcessToJobObject(jobHandle, process.Handle);
             }
             return process;
-        }
-
-        private static void InitializeChildProcessJob()
-        {
-            jobHandle = NativeMethods.CreateJobObject(IntPtr.Zero, null);
-            if (jobHandle == IntPtr.Zero)
-            {
-                return;
-            }
-
-            NativeMethods.JobObjectExtendedLimitInformation information =
-                new NativeMethods.JobObjectExtendedLimitInformation();
-            information.BasicLimitInformation.LimitFlags =
-                NativeMethods.JobObjectLimitKillOnJobClose;
-            int length = Marshal.SizeOf(information);
-            IntPtr pointer = Marshal.AllocHGlobal(length);
-            try
-            {
-                Marshal.StructureToPtr(information, pointer, false);
-                if (!NativeMethods.SetInformationJobObject(
-                    jobHandle,
-                    NativeMethods.JobObjectInfoClass.ExtendedLimitInformation,
-                    pointer,
-                    (uint)length))
-                {
-                    NativeMethods.CloseHandle(jobHandle);
-                    jobHandle = IntPtr.Zero;
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(pointer);
-            }
         }
 
         internal static string FindPowerShell()
@@ -356,6 +325,9 @@ namespace ASMRDubberLauncher
 
         private static void OpenBrowser(string url)
         {
+            string preferences = Path.Combine(applicationRoot, ".asmr-dubber", "config", "interface.json");
+            if (File.Exists(preferences) && System.Text.RegularExpressions.Regex.IsMatch(
+                File.ReadAllText(preferences), "\"open_browser\"\\s*:\\s*false")) return;
             try
             {
                 Process.Start(url);
@@ -455,54 +427,6 @@ namespace ASMRDubberLauncher
             throw new InvalidOperationException("找不到可用的本机网页端口（7860–7959）。");
         }
 
-        private static void CancelRequested(object sender, ConsoleCancelEventArgs e)
-        {
-            e.Cancel = true;
-            stopping = true;
-            Console.WriteLine();
-            WriteInfo("正在停止 ASMR Dubber……");
-            StopActiveProcessTree();
-        }
-
-        private static void StopActiveProcessTree()
-        {
-            Process process = activeProcess;
-            if (process == null)
-            {
-                return;
-            }
-            try
-            {
-                if (process.HasExited)
-                {
-                    return;
-                }
-                ProcessStartInfo stopInfo = new ProcessStartInfo();
-                stopInfo.FileName = "taskkill.exe";
-                stopInfo.Arguments = "/PID " + process.Id + " /T /F";
-                stopInfo.UseShellExecute = false;
-                stopInfo.CreateNoWindow = true;
-                using (Process stop = Process.Start(stopInfo))
-                {
-                    if (stop != null)
-                    {
-                        stop.WaitForExit(5000);
-                    }
-                }
-            }
-            catch
-            {
-                try
-                {
-                    process.Kill();
-                }
-                catch
-                {
-                    // The process may already have exited between checks.
-                }
-            }
-        }
-
         private static string Quote(string value)
         {
             return "\"" + value.Replace("\"", "\\\"") + "\"";
@@ -546,73 +470,5 @@ namespace ASMRDubberLauncher
             File.WriteAllText(destination, result, new UTF8Encoding(false));
         }
 
-        private static class NativeMethods
-        {
-            internal const uint JobObjectLimitKillOnJobClose = 0x00002000;
-
-            internal enum JobObjectInfoClass
-            {
-                ExtendedLimitInformation = 9,
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct IoCounters
-            {
-                internal ulong ReadOperationCount;
-                internal ulong WriteOperationCount;
-                internal ulong OtherOperationCount;
-                internal ulong ReadTransferCount;
-                internal ulong WriteTransferCount;
-                internal ulong OtherTransferCount;
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct BasicLimitInformation
-            {
-                internal long PerProcessUserTimeLimit;
-                internal long PerJobUserTimeLimit;
-                internal uint LimitFlags;
-                internal UIntPtr MinimumWorkingSetSize;
-                internal UIntPtr MaximumWorkingSetSize;
-                internal uint ActiveProcessLimit;
-                internal IntPtr Affinity;
-                internal uint PriorityClass;
-                internal uint SchedulingClass;
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct JobObjectExtendedLimitInformation
-            {
-                internal BasicLimitInformation BasicLimitInformation;
-                internal IoCounters IoInfo;
-                internal UIntPtr ProcessMemoryLimit;
-                internal UIntPtr JobMemoryLimit;
-                internal UIntPtr PeakProcessMemoryUsed;
-                internal UIntPtr PeakJobMemoryUsed;
-            }
-
-            [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-            internal static extern IntPtr CreateJobObject(
-                IntPtr jobAttributes,
-                string name);
-
-            [DllImport("kernel32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool SetInformationJobObject(
-                IntPtr job,
-                JobObjectInfoClass informationClass,
-                IntPtr information,
-                uint informationLength);
-
-            [DllImport("kernel32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool AssignProcessToJobObject(
-                IntPtr job,
-                IntPtr process);
-
-            [DllImport("kernel32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool CloseHandle(IntPtr handle);
-        }
     }
 }

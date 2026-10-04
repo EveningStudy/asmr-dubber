@@ -907,7 +907,7 @@ def ui_command(
     port: Annotated[int, typer.Option("--port")] = 7860,
 ) -> None:
     """启动本地浏览器界面。"""
-    from .ui import launch
+    from .server_startup import launch
 
     launch(host=host, port=port)
 

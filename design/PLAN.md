@@ -290,6 +290,7 @@
 - 暂无确认的新 bug；基线全部测试通过。发现后只记录，不顺手修改核心。
 
 ## 实际验证记录
+- 步骤 4：新启动器拆成两份 C#（均少于 500 行），编译成功；--self-test installed=True；已直接运行 ASMR-Dubber.exe，在 7860 启动原生 HTTP 界面。基础包构建脚本仅安装 Core，不预装模型。
 - 步骤 3：Playwright 使用本机 Edge（Browser plugin not available）；1440×1000 与 390×844；项目/模型/批量/设置及中英文切换，无浏览器运行错误。
 - 实际浏览器媒体流程：上传 japanese_smoke.mp3 → 导入中文字幕 → Edge TTS 在线真实合成一条 → 导出混音 WAV、配音轨 WAV、双语 SRT/LRC；四个下载均 HTTP 200。没有实跑 ASR、LLM 翻译、本地克隆模型。
 - 基线及步骤 1 pytest：646 passed, 3 skipped；步骤 1 提交 7686ecf。

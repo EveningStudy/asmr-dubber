@@ -17,7 +17,10 @@ $HuggingFaceEndpoints = @(Set-ASMRDubberHuggingFaceEnvironment `
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $Python = $Paths.Python
 if (-not (Test-Path $Python)) {
-    throw "尚未安装。请运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    & (Join-Path $PSScriptRoot "setup.ps1") -Profile Core
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Python)) {
+        throw "基础运行环境准备失败。"
+    }
 }
 $DataRoot = $Paths.Home
 . (Join-Path $Root "scripts\windows-runtime.ps1")
