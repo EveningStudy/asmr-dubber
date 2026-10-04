@@ -27,18 +27,15 @@ asmr_init_portable_environment() {
   export HF_DATASETS_CACHE="$ASMR_DUBBER_HOME/cache/huggingface/datasets"
   export PYTHONPYCACHEPREFIX="$ASMR_DUBBER_HOME/cache/pycache"
   export PYTHONNOUSERSITE=1
-  export GRADIO_TEMP_DIR="$ASMR_DUBBER_HOME/temp/gradio"
   export TMPDIR="$ASMR_DUBBER_HOME/temp"
   export TMP="$TMPDIR"
   export TEMP="$TMPDIR"
   export HF_HUB_DISABLE_TELEMETRY=1
   export HF_HUB_DISABLE_XET=1
-  export GRADIO_ANALYTICS_ENABLED=False
 
   mkdir -p \
     "$ASMR_DUBBER_CONFIG_DIR" \
     "$ASMR_DUBBER_UV_DIR" \
-    "$GRADIO_TEMP_DIR" \
     "$UV_CACHE_DIR" \
     "$HF_HOME" \
     "$MODELSCOPE_CACHE" \

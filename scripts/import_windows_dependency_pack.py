@@ -156,7 +156,7 @@ def _validate_staging(staging: Path) -> None:
     required = (
         "venv/Scripts/python.exe",
         "venv/Scripts/asmr-dubber.exe",
-        "venv/Lib/site-packages/gradio",
+        "venv/Lib/site-packages/pydantic",
         "runtimes/python/cpython-3.11.13-windows-x86_64-none/python.exe",
         "runtimes/index-tts/.venv/Scripts/python.exe",
         "runtimes/index-tts/.venv/Lib/site-packages/torch",

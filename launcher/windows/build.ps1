@@ -12,10 +12,6 @@ $Sources = @(
     @{
         Source = @((Join-Path $PSScriptRoot "ASMRDubberLauncher.cs"), (Join-Path $PSScriptRoot "LauncherProcess.cs"))
         Output = if ($Output) { $Output } else { Join-Path $ProjectRoot "ASMR-Dubber.exe" }
-    },
-    @{
-        Source = Join-Path $PSScriptRoot "ASMRDubberSetup.cs"
-        Output = Join-Path $ProjectRoot "ASMR-Dubber-Setup.exe"
     }
 )
 

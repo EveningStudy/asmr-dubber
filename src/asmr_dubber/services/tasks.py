@@ -122,7 +122,13 @@ class Tasks:
                 result = self.execute(request, report, token, reference)
                 check_cancelled(token)
             with self.lock:
-                self.items[identifier].update(status="completed", result=result, reference=None)
+                failure = result.get("error") if isinstance(result, dict) else None
+                self.items[identifier].update(
+                    status="failed" if failure else "completed",
+                    error=redact_sensitive(failure) if failure else None,
+                    result=result,
+                    reference=None,
+                )
         except (OperationCancelledError, InstallPausedError) as exc:
             with self.lock:
                 self.items[identifier].update(status="cancelled", message=str(exc), reference=None)
@@ -141,7 +147,7 @@ class Tasks:
     def cancel(self, identifier):
         with self.lock:
             token = self.tokens.get(identifier)
-            if token is None:
+            if token is None or self.items[identifier]["status"] not in ACTIVE:
                 return self.get(identifier)
             self.items[identifier]["status"] = "cancelling"
             self._save()

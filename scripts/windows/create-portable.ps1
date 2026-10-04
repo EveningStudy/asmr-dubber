@@ -23,6 +23,13 @@ try {
     foreach ($Name in @("src", "scripts", "launcher")) {
         Copy-Item -LiteralPath (Join-Path $Root $Name) -Destination $Package -Recurse
     }
+    Get-ChildItem -LiteralPath $Package -Directory -Filter "__pycache__" -Recurse | ForEach-Object {
+        $CachePath = [IO.Path]::GetFullPath($_.FullName)
+        if (-not $CachePath.StartsWith($Package + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "字节码目录超出打包目录。"
+        }
+        Remove-Item -LiteralPath $CachePath -Recurse -Force
+    }
     foreach ($Name in @("ASMR-Dubber.exe", "pyproject.toml", "uv.lock", "mirrors.json",
         "modelscope-artifacts.lock.json", "LICENSE", "README.md")) {
         Copy-Item -LiteralPath (Join-Path $Root $Name) -Destination $Package
@@ -48,6 +55,13 @@ try {
         if (Get-ChildItem (Join-Path $PackageHome "models") -Recurse -File | Select-Object -First 1) {
             throw "基础包不应包含模型权重。"
         }
+    }
+    foreach ($Name in @("cache", "temp", "logs")) {
+        $GeneratedPath = [IO.Path]::GetFullPath((Join-Path $PackageHome $Name))
+        if (-not $GeneratedPath.StartsWith($PackageHome + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "生成目录超出打包数据目录。"
+        }
+        Remove-Item -LiteralPath $GeneratedPath -Recurse -Force -ErrorAction SilentlyContinue
     }
     $Destination = Join-Path $OutputRoot "ASMR-Dubber-Windows-v$Version.zip"
     & $BasePython.FullName -m zipfile -c $Destination $Package

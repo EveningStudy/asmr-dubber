@@ -19,7 +19,7 @@ function Test-ASMRDubberApplicationRuntime {
     $Code = @"
 import sys
 try:
-    import asmr_dubber.ui, av, gradio, soundfile, setuptools
+    import asmr_dubber.ui, av, pydantic, soundfile, setuptools
 except Exception:
     sys.exit(1)
 "@

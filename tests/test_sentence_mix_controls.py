@@ -8,8 +8,8 @@ from asmr_dubber.audio import StemEvent, build_chinese_stem, probe_audio, senten
 from asmr_dubber.errors import ProjectError
 from asmr_dubber.experimental_mix import compose_replacement_bed
 from asmr_dubber.models import DubProject, ProjectSettings, Sentence
+from asmr_dubber.services.project_records import apply_table, project_rows
 from asmr_dubber.tts import tts_cache_key
-from asmr_dubber.ui_services import apply_table, project_rows
 
 
 def project_at(tmp_path):

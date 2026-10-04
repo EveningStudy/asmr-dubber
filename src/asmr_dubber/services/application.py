@@ -6,11 +6,11 @@ from .. import __version__, app_logging, backend_diagnostics, cache_cleanup, run
 from ..localization import catalog
 from ..models import load_project
 from ..platforms import portable_home
-from ..ui_services import preview_edge_tts_voice
 from ..user_settings import resolve_api_key, saved_service_key
 from . import models, parameters, settings
 from .batch import Batch
 from .media import MediaStore
+from .project_audio import preview_edge_tts_voice
 from .projects import Projects
 from .tasks import ACTIVE, Tasks
 
@@ -57,6 +57,9 @@ class Application:
 
     def _assert_ready(self, kind, resource):
         active = [task for task in self.tasks.list() if task["status"] in ACTIVE]
+        independent = {"preview_reference", "preview_edge", "health", "diagnostic"}
+        if kind not in independent and any(task["kind"] not in independent for task in active):
+            raise ValueError("Wait for the active operation to finish")
         if (kind == "batch" and active) or (
             any(task["kind"] == "batch" for task in active) and kind != "preview_reference"
         ):
@@ -65,6 +68,7 @@ class Application:
             task["resource"] == "models" for task in active
         ):
             raise ValueError("Wait for the active runtime operation to finish")
+
     def resume(self, identifier):
         with self.tasks.lock:
             task = self.tasks.get(identifier)
@@ -133,13 +137,18 @@ class Application:
 
     def storage(self):
         home = portable_home()
+        active = settings.current()
+        model_sizes = models.model_storage(active)
         roots = {
             "模型": home / "models",
-            "项目": Path(settings.current().projects_root or home / "projects"),
+            "项目": Path(active.projects_root or home / "projects"),
             "缓存": home / "cache",
         }
+        sizes = {label: models.directory_bytes(path) for label, path in roots.items()}
+        sizes["模型"] = model_sizes["total_bytes"]
+        sizes["缓存"] = max(0, sizes["缓存"] - model_sizes["cache_bytes"])
         return {
-            "sizes": {label: models.directory_bytes(path) for label, path in roots.items()},
+            "sizes": sizes,
             "root": str(roots["项目"]),
         }
 

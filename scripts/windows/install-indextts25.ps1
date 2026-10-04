@@ -43,7 +43,7 @@ if ($env:ASMR_DUBBER_REPAIR_CHILD -ne "1") {
 }
 
 if (-not (Test-Path $Uv)) {
-    throw "缺少 uv；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    throw "缺少 uv；请运行项目根目录的 ASMR-Dubber.exe 准备基础环境。"
 }
 New-Item -ItemType Directory -Force -Path $DataRoot, $DownloadRoot | Out-Null
 if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {

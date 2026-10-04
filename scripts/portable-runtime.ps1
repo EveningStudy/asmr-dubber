@@ -119,7 +119,6 @@ function Initialize-ASMRDubberPortableEnvironment {
             $ConfigRoot,
             $RuntimeRoot,
             $TempRoot,
-            (Join-Path $TempRoot "gradio"),
             (Join-Path $CacheRoot "matplotlib"),
             (Join-Path $CacheRoot "nltk"),
             (Join-Path $CacheRoot "pycache"),
@@ -150,14 +149,12 @@ function Initialize-ASMRDubberPortableEnvironment {
     $env:HF_DATASETS_CACHE = Join-Path $CacheRoot "huggingface\datasets"
     $env:PYTHONPYCACHEPREFIX = Join-Path $CacheRoot "pycache"
     $env:PYTHONNOUSERSITE = "1"
-    $env:GRADIO_TEMP_DIR = Join-Path $TempRoot "gradio"
     $env:TEMP = $TempRoot
     $env:TMP = $TempRoot
     $env:TMPDIR = $TempRoot
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
     $env:HF_HUB_DISABLE_TELEMETRY = "1"
-    $env:GRADIO_ANALYTICS_ENABLED = "False"
 
     Repair-ASMRDubberPortablePythonPaths `
         -Root $Root `

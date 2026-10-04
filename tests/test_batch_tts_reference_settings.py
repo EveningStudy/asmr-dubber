@@ -7,7 +7,6 @@ import soundfile as sf
 
 from asmr_dubber.autoflow import engine
 from asmr_dubber.autoflow.output_policy import configure_project, policy_for_settings
-from asmr_dubber.autoflow.ui_services import config_from_settings
 from asmr_dubber.models import (
     AudioInfo,
     DubProject,
@@ -16,7 +15,8 @@ from asmr_dubber.models import (
     load_project,
     save_project,
 )
-from asmr_dubber.ui_services import select_autoflow_project_reference
+from asmr_dubber.services.batch_configuration import config_from_settings
+from asmr_dubber.services.project_audio import select_autoflow_project_reference
 from asmr_dubber.user_settings import UserSettings, load_user_settings, save_user_settings
 
 
@@ -70,7 +70,7 @@ def test_queue_snapshots_backend_and_external_reference(tmp_path):
 
 def test_reference_edits_are_saved_before_confirmation(tmp_path, monkeypatch):
     manifest = make_project(tmp_path, tts_backend="indextts2_5")
-    monkeypatch.setattr("asmr_dubber.ui_services.reference_preview", lambda *args: None)
+    monkeypatch.setattr("asmr_dubber.services.project_audio.reference_preview", lambda *args: None)
     select_autoflow_project_reference(str(manifest), "s000001", 1.25, 5.75, "edited")
     loaded, _ = load_project(manifest)
     assert loaded.sentences[0].start_seconds == 1.25

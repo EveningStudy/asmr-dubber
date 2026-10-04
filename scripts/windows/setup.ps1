@@ -301,13 +301,13 @@ $InstallAdvancedModels = $false
 $InstallRecommendedTTS = $false
 $InstallParakeet = $false
 $Extra = switch ($Profile) {
-    "基础" { ".[ui]" }
+    "基础" { "." }
     "推荐" {
         $InstallParakeet = $true
         if ($NvidiaSmi) {
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
         }
-        ".[ui]"
+        "."
     }
     "进阶" {
         $InstallParakeet = $true
@@ -315,7 +315,7 @@ $Extra = switch ($Profile) {
         if ($NvidiaSmi) {
             $InstallRecommendedTTS = -not $SkipRecommendedTTS
         }
-        ".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
+        ".[asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
     }
 }
 
@@ -360,173 +360,5 @@ if ($InstallAdvancedModels -and $NvidiaSmi -and -not $AdvancedDependenciesReady)
     }
 }
 
-$BundledCoreWheelhouse = Join-Path $Root "vendor\windows-core-wheelhouse"
-$BundledCoreWheelsReady = (
-    (Test-Path -LiteralPath $BundledCoreWheelhouse -PathType Container) -and
-    [bool](Get-ChildItem -LiteralPath $BundledCoreWheelhouse `
-        -Filter "edge_tts-*.whl" -File -ErrorAction SilentlyContinue |
-        Select-Object -First 1) -and
-    [bool](Get-ChildItem -LiteralPath $BundledCoreWheelhouse `
-        -Filter "gradio-*.whl" -File -ErrorAction SilentlyContinue |
-        Select-Object -First 1) -and
-    [bool](Get-ChildItem -LiteralPath $BundledCoreWheelhouse `
-        -Filter "hatchling-*.whl" -File -ErrorAction SilentlyContinue |
-        Select-Object -First 1)
-)
-
-$ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime -PortableRoot $DataRoot
-if (-not $ApplicationDependenciesReady) {
-    Write-SetupHost "正在安装应用依赖：$Extra" -ForegroundColor Cyan
-    $ApplicationArguments = @(
-        "pip", "install", "--python", $Python, "--editable", $Extra,
-        "setuptools>=78.1.1,<82"
-    )
-    $ApplicationInstalled = $false
-    if ($BundledCoreWheelsReady) {
-        Write-SetupHost "使用便携包内置的基础应用 wheelhouse。" -ForegroundColor Green
-        try {
-            Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
-                -Wheelhouse $BundledCoreWheelhouse -Arguments $ApplicationArguments `
-                -FailureMessage "内置基础应用 wheelhouse 安装失败"
-            $ApplicationInstalled = $true
-        } catch {
-            Write-Warning "内置基础应用 wheelhouse 不完整，将继续尝试 ModelScope：$($_.Exception.Message)"
-        }
-    }
-    if (-not $ApplicationInstalled) {
-        $ApplicationWheelhouse = Get-ASMRDubberWheelhouse `
-            -Root $Root -PortableRoot $DataRoot -MirrorConfiguration $MirrorConfiguration `
-            -ArchiveName "ASMR-Dubber-Windows-Wheelhouse-v0.4.0.zip" `
-            -ArchiveMirrorName "windows_application_wheelhouse_archives" `
-            -ChecksumMirrorName "windows_application_wheelhouse_checksums"
-    } else {
-        $ApplicationWheelhouse = $null
-    }
-    if (-not $ApplicationInstalled -and $ApplicationWheelhouse) {
-        Write-SetupHost "使用 ModelScope 应用依赖 wheelhouse。" -ForegroundColor Green
-        try {
-            Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
-                -Wheelhouse $ApplicationWheelhouse -Arguments $ApplicationArguments `
-                -FailureMessage "应用依赖 wheelhouse 安装失败"
-            $ApplicationInstalled = $true
-        } catch {
-            Write-Warning (
-                "ModelScope 应用 wheelhouse 早于当前依赖定义，将使用配置中的" +
-                "国内软件源补齐应用依赖：$($_.Exception.Message)"
-            )
-        }
-    }
-    if (-not $ApplicationInstalled) {
-        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-            -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-            -Arguments @("pip", "install", "--python", $Python, "--editable", $Extra)
-        # PyTorch 2.11 requires setuptools <82. Upgrade existing portable environments
-        # to the newest compatible release instead of retaining an older installer.
-        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-            -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-            -Arguments @(
-                "pip", "install", "--python", $Python, "setuptools>=78.1.1,<82"
-            )
-    }
-} else {
-    Write-SetupHost "应用依赖已由 Windows 依赖包提供。" -ForegroundColor Green
-}
-
-$ApiClientsReady = Test-ASMRDubberApiClientRuntime -PortableRoot $DataRoot
-if (-not $ApiClientsReady) {
-    Write-SetupHost "正在安装在线翻译与 TTS（语音合成）API 客户端..." -ForegroundColor Cyan
-    $ApiClientArguments = @(
-        # Keep both direct imports explicit.  edge-tts does not own the
-        # project's HTTP client requirement, so installing only edge-tts can
-        # leave a fresh basic profile with a misleading "Checked 1 package"
-        # result and a failed post-install check.
-        "pip", "install", "--python", $Python,
-        "edge-tts==7.2.8", "httpx>=0.28.0"
-    )
-    $InstalledBundledApiClient = $false
-    if ($BundledCoreWheelsReady) {
-        Write-SetupHost "使用便携包内置的在线/API 客户端 wheelhouse。" -ForegroundColor Green
-        try {
-            Invoke-ASMRDubberUvOfflineWheelhouse -Uv $Uv -Root $Root `
-                -Wheelhouse $BundledCoreWheelhouse -Arguments $ApiClientArguments `
-                -FailureMessage "内置在线/API 客户端 wheelhouse 安装失败"
-            $InstalledBundledApiClient = $true
-        } catch {
-            Write-Warning "内置在线/API 客户端不可用，将使用国内软件源：$($_.Exception.Message)"
-        }
-    }
-    if (-not $InstalledBundledApiClient) {
-        Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
-            -Uv $Uv -Root $Root -MirrorName "pypi_indexes" -Preferred $PreferredIndex `
-            -Arguments $ApiClientArguments
-    }
-    if (-not (Test-ASMRDubberApiClientRuntime -PortableRoot $DataRoot)) {
-        throw "在线/API 客户端安装后仍不完整。"
-    }
-}
-if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot)) {
-    throw "基础应用或在线/API 客户端安装后仍不完整。"
-}
-Invoke-Checked -FilePath $Python `
-    -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `
-    -FailureMessage "应用字节码刷新失败"
-
-$LocalPackIds = switch ($Profile) {
-    "基础" { @() }
-    "推荐" { @("parakeet-ja-windows", "indextts2-checkpoints") }
-    "进阶" {
-        @(
-            "parakeet-ja-windows",
-            "indextts2-checkpoints",
-            "kotoba-whisper-v2.2",
-            "faster-whisper-large-v2",
-            "qwen3-forced-aligner",
-            "whisper-vad-asmr-onnx"
-        )
-    }
-}
-if ($Profile -ne "基础") {
-    Write-SetupHost "正在检测并导入当前档位的本地模型包..." -ForegroundColor Cyan
-    $ImportArguments = @("-m", "asmr_dubber.cli", "import-model-packs", "--all")
-    foreach ($PackId in @($LocalPackIds)) {
-        $ImportArguments += @("--pack-id", $PackId)
-    }
-    Invoke-Checked -FilePath $Python `
-        -ArgumentList $ImportArguments `
-        -FailureMessage "本地模型包扫描或导入失败；请检查 model-packs 目录中的压缩包"
-}
-
-if ($InstallAdvancedModels) {
-    Write-SetupHost (
-        "正在准备进阶分析模型：Kotoba-Whisper v2.2、Faster-Whisper large-v2、" +
-        "Qwen3 ForcedAligner 与日语 ASMR 专用 VAD..."
-    ) -ForegroundColor Cyan
-    Invoke-Checked -FilePath $Python `
-        -ArgumentList @(
-            "-m", "asmr_dubber.cli", "download-models", "--backend", "进阶语音识别"
-        ) `
-        -FailureMessage "进阶识别、VAD 与时间戳模型下载或校验失败"
-}
-
-if ($InstallParakeet) {
-    Write-SetupHost "正在安装推荐 ASR（语音识别）：Parakeet 日语..." -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "install-parakeet.ps1") -Variant Auto
-}
-
-if ($InstallRecommendedTTS) {
-    Write-SetupHost "正在安装推荐 TTS（语音合成）：IndexTTS2（约需 20 GB）..." -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "install-indextts2.ps1") `
-        -IndexUrl $PreferredIndex -HuggingFaceEndpoint $PreferredHuggingFace
-}
-
-Write-SetupHost "正在执行环境检查..." -ForegroundColor Cyan
-try {
-    Invoke-Checked -FilePath $Python `
-        -ArgumentList @("-m", "asmr_dubber.cli", "doctor", "--no-network") `
-        -FailureMessage "环境检查未完全通过"
-} catch {
-    Write-Warning "核心程序已经安装，但当前选择的本地模型尚未全部可用。请在设置 → 设备与模型中查看。"
-}
-
-Write-SetupHost ""
-Write-SetupHost "安装完成。运行项目根目录的 ASMR-Dubber.exe 启动界面。" -ForegroundColor Green
+. (Join-Path $PSScriptRoot "setup-application.ps1")
+. (Join-Path $PSScriptRoot "setup-models.ps1")

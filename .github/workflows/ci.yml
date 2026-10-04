@@ -27,8 +27,8 @@ jobs:
         with:
           version: "0.11.30"
           enable-cache: true
-      - name: Install core, UI, and development dependencies
-        run: uv sync --locked --extra ui --extra dev
+      - name: Install core and development dependencies
+        run: uv sync --locked --extra dev
       - name: Lint
         run: uv run --no-sync ruff check src tests scripts
       - name: Check formatting
@@ -43,11 +43,11 @@ jobs:
           -m "not integration and not slow and not network and not gpu and not linux"
       - name: Run local user workflow tests
         run: uv run --no-sync pytest tests/test_user_workflow.py -m "integration and not slow"
-      - name: Build UI graph
+      - name: Check native interface resources
         run: >-
           uv run --no-sync python -c
-          "from asmr_dubber.ui import build_app; app = build_app();
-          assert len(app.blocks) >= 1; print('UI build OK')"
+          "from importlib.resources import files; from asmr_dubber.api import API;
+          assert files('asmr_dubber').joinpath('frontend/index.html').is_file(); print('Native UI OK')"
       - name: Build Windows launcher
         if: runner.os == 'Windows'
         shell: pwsh
@@ -58,8 +58,6 @@ jobs:
         run: |
           ./ASMR-Dubber.exe --self-test "$env:RUNNER_TEMP\launcher-self-test.txt"
           Get-Content "$env:RUNNER_TEMP\launcher-self-test.txt"
-          ./ASMR-Dubber-Setup.exe --self-test "$env:RUNNER_TEMP\setup-self-test.txt"
-          Get-Content "$env:RUNNER_TEMP\setup-self-test.txt"
       - name: Build distributions
         run: uv build
       - name: Check distributions
@@ -78,7 +76,7 @@ jobs:
           version: "0.11.30"
           enable-cache: true
       - name: Install core, UI, and development dependencies
-        run: uv sync --locked --extra ui --extra dev
+        run: uv sync --locked --extra dev
       - name: Check Linux scripts
         run: bash -n scripts/linux/*.sh
       - name: Run Linux behavior tests

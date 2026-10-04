@@ -456,14 +456,14 @@ namespace ASMRDubberLauncher
         private static void WriteSelfTest(string root, string destination)
         {
             string run = Path.Combine(root, "scripts", "windows", "run-ui.ps1");
-            string installer = Path.Combine(root, "ASMR-Dubber-Setup.exe");
+            string frontend = Path.Combine(root, "src", "asmr_dubber", "frontend", "index.html");
             string result = string.Join(
                 Environment.NewLine,
                 new[]
                 {
                     "root=" + root,
                     "run=" + File.Exists(run),
-                    "setup_exe=" + File.Exists(installer),
+                    "frontend=" + File.Exists(frontend),
                     "installed=" + IsInstalled(root),
                     "powershell=" + (FindPowerShell() ?? ""),
                 });

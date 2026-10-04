@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-from .. import ui_services
+from ..errors import ProjectError
 from ..lifecycle import browser_revision_scope
 from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 from ..models import ProjectSettings, load_project
@@ -24,6 +24,7 @@ from ..user_settings import (
     service_key_status,
     store_reference_audio,
 )
+from . import project_operations
 
 
 class Settings(UserSettings):
@@ -41,8 +42,9 @@ def current():
 
 
 def update(changes, project=None, revision=None):
-    from .parameters import validate_changes
+    from .parameters import expand_changes, validate_changes
 
+    changes = expand_changes(changes)
     validate_changes(changes, project=bool(project))
     changes = dict(changes)
     for backend_key, model_key, registry in (
@@ -53,6 +55,11 @@ def update(changes, project=None, revision=None):
             spec = registry[changes[backend_key]]
             changes.setdefault(model_key, spec.default_model)
             if backend_key == "tts_backend":
+                if (
+                    spec.id in {"indextts2", "indextts2_5"}
+                    and changes[model_key] not in spec.models
+                ):
+                    changes[model_key] = spec.default_model
                 changes.setdefault("tts_voice", spec.default_voice)
     if "translation_provider" in changes and changes["translation_provider"] in PROVIDER_PRESETS:
         preset = PROVIDER_PRESETS[changes["translation_provider"]]
@@ -60,6 +67,11 @@ def update(changes, project=None, revision=None):
         changes.setdefault("translation_base_url", preset["base_url"])
     if project:
         active, _ = load_project(project)
+        selected_reference = changes.get("tts_reference_sentence_id")
+        if selected_reference and not any(
+            sentence.id == selected_reference for sentence in active.sentences
+        ):
+            raise ProjectError(f"项目中找不到参考句：{selected_reference}")
         payload = active.settings.model_dump()
         payload.update(changes)
         configured = ProjectSettings.model_validate(payload)
@@ -76,7 +88,11 @@ def update(changes, project=None, revision=None):
                 changes["translation_prompt"],
             )
         with browser_revision_scope(project, revision):
-            ui_services.apply_global_settings(project, defaults)
+            project_operations.apply_global_settings(project, defaults)
+            if "tts_reference_sentence_id" in changes:
+                from .project_audio import select_reference
+
+                select_reference(project, changes["tts_reference_sentence_id"] or "")
         return {"saved": True}
     directory = config_dir()
     directory.mkdir(parents=True, exist_ok=True)

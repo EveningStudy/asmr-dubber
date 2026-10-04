@@ -309,20 +309,21 @@ def test_http_cloud_contract(tmp_path, monkeypatch):
 
 
 def test_ui_experimental_controls_and_hydration(tmp_path, monkeypatch):
-    import asmr_dubber.ui as ui
-    from asmr_dubber.user_settings import UserSettings
+    from asmr_dubber.services import parameters, settings
 
     monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
-    settings = UserSettings()
-    monkeypatch.setattr(ui, "load_user_settings", lambda: settings)
-    app = ui.build_app()
-    tabs = [c.label for c in app.blocks.values() if type(c).__name__ == "Tab"]
-    assert tabs.index("常规") < tabs.index("人声分离（实验性）") < tabs.index("ASR（语音识别）")
-    fn = next(f for f in app.fns.values() if f.name == "refresh_settings_form_callback")
-    result = fn.fn()
-    values = {getattr(c, "label", ""): v for c, v in zip(fn.outputs, result, strict=True)}
-    assert values["启用人声分离（实验性，不推荐）"]["value"] is False
-    assert values["启用 RTF（原声空间线索迁移）"]["value"] is False
+    fields = {item["key"]: item for item in parameters.catalog()}
+    assert fields["separation_enabled"]["panel"] == "sep"
+    assert fields["asr_backend"]["panel"] == "asr"
+    assert fields["separation_enabled"]["label"] == "人声分离"
+    assert fields["spatial_rtf_enabled"]["label"] == "空间跟随"
+    from importlib.resources import files
+
+    html = files("asmr_dubber").joinpath("frontend/index.html").read_text(encoding="utf-8")
+    assert "实验性，效果可能不如单模型" in html
+    values = settings.current().model_dump()
+    assert values["separation_enabled"] is False
+    assert values["spatial_rtf_enabled"] is False
 
 
 def test_rtf_settings_do_not_invalidate_tts_cache(tmp_path):

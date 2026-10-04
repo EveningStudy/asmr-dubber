@@ -48,7 +48,7 @@ jobs:
           $coreRequirements = Join-Path $env:RUNNER_TEMP "windows-core-requirements.txt"
           New-Item -ItemType Directory -Force $uvDir, $pythonDir, $coreWheelhouse | Out-Null
           Copy-Item (Get-Command uv.exe).Source (Join-Path $uvDir "uv.exe") -Force
-          uv export --frozen --no-dev --extra ui --no-emit-project --no-hashes `
+          uv export --frozen --no-dev --no-emit-project --no-hashes `
             --format requirements.txt --output-file $coreRequirements
           if ($LASTEXITCODE -ne 0) {
             throw "Unable to export locked Windows core requirements."
@@ -72,7 +72,7 @@ jobs:
           $requiredWheels = @(
             "edge_tts-*.whl",
             "editables-*.whl",
-            "gradio-*.whl",
+            "pydantic-*.whl",
             "httpx-*.whl",
             "hatchling-*.whl"
           )
@@ -81,15 +81,15 @@ jobs:
               throw "Portable archive is missing required wheel: $pattern"
             }
           }
-          $smokeVenv = Join-Path $env:RUNNER_TEMP "windows-core-wheelhouse-smoke"
+          $smokeVenv = Join-Path $portable "venv"
           $smokePython = Join-Path $smokeVenv "Scripts\python.exe"
-          uv venv --python 3.12 $smokeVenv
+          uv venv --python 3.12 --relocatable $smokeVenv
           uv pip install --python $smokePython --offline --find-links $coreWheelhouse `
-            --editable "${staging}[ui]" "setuptools>=78.1.1,<82"
+            --editable "${staging}" "setuptools>=78.1.1,<82"
           if ($LASTEXITCODE -ne 0) {
             throw "Bundled Windows core wheelhouse failed its offline install smoke test."
           }
-          & $smokePython -c "import asmr_dubber.ui, edge_tts, gradio, httpx, setuptools"
+          & $smokePython -c "import asmr_dubber.ui, edge_tts, pydantic, httpx, setuptools"
           if ($LASTEXITCODE -ne 0) {
             throw "Bundled Windows core wheelhouse failed its runtime import smoke test."
           }

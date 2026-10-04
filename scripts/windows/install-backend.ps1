@@ -24,7 +24,7 @@ $DataRoot = $Paths.Home
 $Uv = $Paths.Uv
 $Python = $Paths.Python
 if (-not (Test-Path $Uv) -or -not (Test-Path $Python)) {
-    throw "缺少应用安装环境；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    throw "缺少应用安装环境；请运行项目根目录的 ASMR-Dubber.exe 准备基础环境。"
 }
 
 $env:UV_LINK_MODE = "copy"

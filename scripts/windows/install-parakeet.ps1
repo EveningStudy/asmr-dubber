@@ -29,7 +29,7 @@ New-Item -ItemType Directory -Force `
     -Path $RuntimeBin, $ModelRoot, $DownloadRoot | Out-Null
 
 if (-not (Test-Path $Python)) {
-    throw "缺少 Python 运行环境；请先运行项目根目录的 ASMR-Dubber-Setup.exe。"
+    throw "缺少 Python 运行环境；请运行项目根目录的 ASMR-Dubber.exe 准备基础环境。"
 }
 
 if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {

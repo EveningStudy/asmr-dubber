@@ -4,7 +4,7 @@ export const state = {boot: null, project: null, tasks: [], queue: [], page: 'ho
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function t(source, values = {}) {
   const label = state.boot?.labels[source] || source;
-  let text = state.language === 'en' ? state.boot?.locales[label] || state.boot?.locales[source] || label : label;
+  let text = state.language === 'en' ? state.boot?.locales[label] || state.boot?.locales[source] || label.split(' · ').map(part=>state.boot?.locales[part]||part).join(' · ') : label;
   for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, String(value));
   return text;
 }
@@ -75,7 +75,7 @@ export async function chooseFile(accept = '') {
 export function taskHTML(task) {
   const active = ['queued','running','cancelling'].includes(task.status);
   const ratio = task.total > 0 ? Math.min(100, task.current/task.total*100) : 0;
-  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}</div><div class="d">${esc(task.error || task.message)}</div><div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${task.id}">${t('暂停')}</button>` : ['cancelled','failed','interrupted'].includes(task.status) ? `<button class="btn" data-resume="${task.id}">${t('继续')}</button>` : ''}</div><details><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
+  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}</div><div class="d">${esc(task.error || task.message)}</div><div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${task.id}">${t('暂停')}</button>` : ['cancelled','failed','interrupted'].includes(task.status) ? `<button class="btn" data-resume="${task.id}">${t('继续')}</button>` : ''}</div><details id="task-log-${task.id}"${document.getElementById(`task-log-${task.id}`)?.open?' open':''}><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
 }
 export async function startTask(kind, extra = {}, project = true) {
   await flushSaves();

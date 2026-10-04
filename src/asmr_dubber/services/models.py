@@ -12,6 +12,7 @@ from ..model_packs import import_discovered_model_packs
 from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 from ..platforms import portable_home
 from ..separation import local_install_status, model_directory, prepare_local_model
+from . import model_status
 from .settings import current
 
 
@@ -21,6 +22,23 @@ def directory_bytes(path):
     return sum(
         file.stat().st_size for file in path.rglob("*") if file.is_file() and not file.is_symlink()
     )
+
+
+def model_storage(settings):
+    home = portable_home()
+    cache_roots = [home / "cache" / name / "hub" for name in ("huggingface", "modelscope")]
+    paths = [home / "models", model_directory(), *cache_roots]
+    paths.extend(
+        Path(value) for value in (settings.tts_model_path, settings.tts_index25_model_path) if value
+    )
+    roots = []
+    for path in sorted({path.resolve() for path in paths}, key=lambda path: len(path.parts)):
+        if not any(path.is_relative_to(root) for root in roots):
+            roots.append(path)
+    return {
+        "total_bytes": sum(directory_bytes(path) for path in roots),
+        "cache_bytes": sum(directory_bytes(path) for path in cache_roots),
+    }
 
 
 def catalog():
@@ -44,6 +62,15 @@ def catalog():
                 "vram_gb": spec.recommended_vram_gb or spec.minimum_vram_gb,
                 "state": status.state,
                 "detail": status.detail,
+                "installation": (
+                    model_status.indextts_installation_status(settings.tts_model_path)
+                    if spec.id == "indextts2"
+                    else model_status.indextts25_installation_status(
+                        settings.tts_index25_model_path
+                    )
+                    if spec.id == "indextts2_5"
+                    else status.detail
+                ),
                 "models": list(spec.models),
                 "recommended": spec.id in {"parakeet_nemo", "indextts2"},
             }
@@ -84,8 +111,9 @@ def catalog():
     return {
         "hardware": hardware,
         "free_bytes": disk.free,
-        "used_bytes": directory_bytes(home / "models"),
+        "used_bytes": model_storage(settings)["total_bytes"],
         "items": items,
+        "packs": model_status.offline_model_pack_markdown(),
     }
 
 

@@ -40,7 +40,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ui = ["gradio==6.17.3"]
 # Only the three supported recognition families live in the main environment.
 # IndexTTS2 is intentionally isolated and external synthesis services need no
 # extra Python stack in this application.
@@ -95,7 +94,6 @@ include = [
   "/launcher",
   "/assets",
   "/ASMR-Dubber.exe",
-  "/ASMR-Dubber-Setup.exe",
   "/mirrors.json",
   "/modelscope-artifacts.lock.json",
   "/README.md",

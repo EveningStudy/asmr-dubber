@@ -41,7 +41,7 @@ def _write_pack(path: Path, *, unsafe: bool = False) -> None:
     files = {
         "payload/venv/Scripts/python.exe": b"core-python",
         "payload/venv/Scripts/asmr-dubber.exe": b"launcher",
-        "payload/venv/Lib/site-packages/gradio/__init__.py": b"",
+        "payload/venv/Lib/site-packages/pydantic/__init__.py": b"",
         ("payload/runtimes/python/cpython-3.11.13-windows-x86_64-none/python.exe"): b"base-python",
         "payload/runtimes/index-tts/.venv/Scripts/python.exe": b"index-python",
         "payload/runtimes/index-tts/.venv/Lib/site-packages/torch/__init__.py": b"",
@@ -161,7 +161,7 @@ def _advanced_manifest() -> dict[str, object]:
 def _write_advanced_pack(path: Path, *, unsafe: bool = False) -> None:
     files = {
         "payload/venv/Scripts/python.exe": b"advanced-python",
-        "payload/venv/Lib/site-packages/gradio/__init__.py": b"",
+        "payload/venv/Lib/site-packages/pydantic/__init__.py": b"",
         "payload/venv/Lib/site-packages/torch/__init__.py": b"",
         "payload/venv/Lib/site-packages/torchaudio/__init__.py": b"",
         "payload/venv/Lib/site-packages/transformers/__init__.py": b"",

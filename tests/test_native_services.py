@@ -102,8 +102,10 @@ def test_table_preserves_sentence_controls_and_rejects_stale_save(application, t
 
 def test_sentence_patch_keeps_other_rows_and_rejects_unknown_sentence(application, tmp_path):
     project = create(application, tmp_path)
-    rows = [["s1", True, 0, 1, "hello", "你好", "off", -3, True, 2],
-            ["s2", True, 1, 2, "bye", "再见", "default", 0, True, 0]]
+    rows = [
+        ["s1", True, 0, 1, "hello", "你好", "off", -3, True, 2],
+        ["s2", True, 1, 2, "bye", "再见", "default", 0, True, 0],
+    ]
     saved = application.save_table(project["manifest"], rows, project["revision"])
     changed = [*rows[0]]
     changed[5] = "您好"
@@ -240,3 +242,115 @@ def test_model_delete_refuses_external_path(application, monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         models.remove("faster_whisper")
     assert (external / "weights.bin").read_bytes() == b"keep"
+
+
+def test_reference_setting_can_be_selected_cleared_and_rejects_missing_sentence(
+    application, monkeypatch, tmp_path
+):
+    from asmr_dubber.services import project_audio
+
+    monkeypatch.setattr(project_audio, "reference_preview", lambda *args: None)
+    project = create(application, tmp_path)
+    rows = [["s1", True, 0, 1, "hello", "你好", "default", 0, True, 0]]
+    project = application.save_table(project["manifest"], rows, project["revision"])
+    application.update_settings(
+        {"tts_reference_sentence_id": "s1"}, project["manifest"], project["revision"]
+    )
+    active, _ = load_project(project["manifest"])
+    assert active.settings.tts_reference_sentence_id == "s1"
+    application.update_settings(
+        {
+            "tts_reference_source": "external",
+            "tts_external_reference_audio": str(tmp_path / "source.wav"),
+        },
+        project["manifest"],
+        active.revision,
+    )
+    external = application.projects.get(project["manifest"])
+    assert external["reference_external"] is True
+    assert external["external_reference_url"].startswith("/media/")
+    active, _ = load_project(project["manifest"])
+    application.update_settings(
+        {"tts_reference_sentence_id": None}, project["manifest"], active.revision
+    )
+    active, _ = load_project(project["manifest"])
+    assert active.settings.tts_reference_sentence_id is None
+    before = active.model_dump()
+    with pytest.raises(ProjectError):
+        application.update_settings(
+            {"tts_reference_sentence_id": "missing"}, project["manifest"], active.revision
+        )
+    assert load_project(project["manifest"])[0].model_dump() == before
+
+
+def test_cancelling_terminal_task_during_worker_cleanup_preserves_its_state(tmp_path):
+    from asmr_dubber.task_control import CancellationToken
+
+    tasks = Tasks(lambda *args: {}, tmp_path / "tasks.json")
+    tasks.items["finished"] = {"id": "finished", "status": "cancelled"}
+    tasks.tokens["finished"] = CancellationToken()
+    assert tasks.cancel("finished")["status"] == "cancelled"
+    assert not tasks.tokens["finished"].is_set()
+
+
+@pytest.mark.parametrize("content", ["subtitles", "source_subtitles"])
+def test_batch_subtitle_content_sets_core_execution_flags(application, tmp_path, content):
+    folder = tmp_path / "subtitle-work"
+    folder.mkdir()
+    sf.write(folder / "01.wav", np.zeros(16000), 16000)
+    scan = application.batch.scan(str(folder))
+    queue = application.batch.save(
+        str(folder),
+        scan["selected_edition"],
+        scan["source_payloads"],
+        "video_normal",
+        "merged",
+        content=content,
+    )
+    assert queue[0]["subtitles_only"] is True
+    assert queue[0]["source_subtitles_only"] == (content == "source_subtitles")
+    assert queue[0]["edition"]["output_policy"]["content"] == content
+    if content == "source_subtitles":
+        assert queue[0]["mode"] == "audio"
+
+
+def test_failed_batch_retains_outputs_and_can_resume(application, monkeypatch):
+    from asmr_dubber.services import batch_queue
+
+    monkeypatch.setattr(batch_queue, "run_queue", lambda *args, **kwargs: (1, ["partial-output"]))
+    monkeypatch.setattr(batch_queue, "subtitle_output_rows", lambda *args: [])
+    task = application.start({"kind": "batch"})
+    failed = completed(application.tasks, task["id"])
+    assert failed["status"] == "failed"
+    assert failed["result"]["outputs"] == ["partial-output"]
+    assert failed["error"]
+    monkeypatch.setattr(batch_queue, "run_queue", lambda *args, **kwargs: (0, ["full-output"]))
+    application.resume(task["id"])
+    completed_task = completed(application.tasks, task["id"])
+    assert completed_task["status"] == "completed"
+    assert completed_task["result"]["outputs"] == ["full-output"]
+
+
+def test_model_storage_counts_checkpoints_and_cache_without_overlapping_totals(application):
+    from asmr_dubber.platforms import portable_home
+
+    home = portable_home()
+    application.update_settings(
+        {
+            "tts_model_path": str(home / "runtimes/index-tts/checkpoints"),
+            "tts_index25_model_path": str(home / "runtimes/index-tts-2.5/checkpoints"),
+        }
+    )
+    for relative, count in (
+        ("models/separation/weights.bin", 7),
+        ("runtimes/index-tts/checkpoints/weights.bin", 11),
+        ("cache/huggingface/hub/models--test/blobs/weights.bin", 13),
+        ("cache/downloads/temporary.zip", 17),
+    ):
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"a" * count)
+    result = models.model_storage(settings.current())
+    assert result == {"total_bytes": 31, "cache_bytes": 13}
+    assert application.storage()["sizes"]["模型"] == 31
+    assert application.storage()["sizes"]["缓存"] == 17

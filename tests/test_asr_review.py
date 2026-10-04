@@ -29,7 +29,7 @@ from asmr_dubber.models import (
     load_project,
     save_project,
 )
-from asmr_dubber.review_services import apply_review, undo_review
+from asmr_dubber.services.review import apply_review, undo_review
 
 
 def row(text: str, start: float = 1, end: float = 3, identifier: str = "s1") -> Sentence:
@@ -239,7 +239,7 @@ def test_apply_undo_and_stale_table_guard(tmp_path, monkeypatch):
     )
     report = json.loads(report_path.read_text(encoding="utf-8"))
     candidate = next(c for c in report["results"][0]["candidates"] if c["text"] == "こんばんは。")
-    monkeypatch.setattr("asmr_dubber.review_services.view", lambda p, *a: p)
+    monkeypatch.setattr("asmr_dubber.services.review.view", lambda p, *a: p)
     accepted = apply_review(str(tmp_path), "w000001", candidate["id"])
     assert (
         accepted.sentences[0].source_text == "こんばんは。" and accepted.sentences[0].review_locked
@@ -367,8 +367,8 @@ def test_english_word_boundaries_are_meaningful():
 
 def test_alignment_preserves_ids_text_and_rejects_large_drift(tmp_path, monkeypatch):
     from asmr_dubber.audio import probe_audio
-    from asmr_dubber.review_services import align_review
-    from asmr_dubber.ui_services import project_rows
+    from asmr_dubber.services.project_records import project_rows
+    from asmr_dubber.services.review import align_review
 
     source = audio(tmp_path)
     info = probe_audio(source)
@@ -387,8 +387,8 @@ def test_alignment_preserves_ids_text_and_rejects_large_drift(tmp_path, monkeypa
         return []
 
     monkeypatch.setattr("asmr_dubber.forced_alignment.align_sentences_with_qwen", align)
-    monkeypatch.setattr("asmr_dubber.review_services.view", lambda p, *args: p)
-    monkeypatch.setattr("asmr_dubber.review_services.portable_home", lambda: tmp_path)
+    monkeypatch.setattr("asmr_dubber.services.review.view", lambda p, *args: p)
+    monkeypatch.setattr("asmr_dubber.services.review.portable_home", lambda: tmp_path)
     result = align_review(str(tmp_path), project_rows(p))
     assert [(r.id, r.source_text) for r in result.sentences] == [
         ("s1", "第一句。"),

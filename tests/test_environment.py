@@ -89,7 +89,7 @@ def test_release_files_are_present() -> None:
     root = Path(__file__).parents[1]
     required = {
         "ASMR-Dubber.exe",
-        "ASMR-Dubber-Setup.exe",
+        "src/asmr_dubber/frontend/index.html",
         "mirrors.json",
         "README.md",
         "LICENSE",
@@ -103,7 +103,7 @@ def test_release_files_are_present() -> None:
         "scripts/linux/run-ui.sh",
         "scripts/windows/run-ui.ps1",
         "launcher/windows/ASMRDubberLauncher.cs",
-        "launcher/windows/ASMRDubberSetup.cs",
+        "launcher/windows/LauncherProcess.cs",
         "scripts/mirrors.ps1",
         "scripts/mirrors.sh",
         "scripts/portable-runtime.sh",
@@ -114,7 +114,7 @@ def test_release_files_are_present() -> None:
     assert not missing
 
 
-@pytest.mark.parametrize("name", ["ASMR-Dubber.exe", "ASMR-Dubber-Setup.exe"])
+@pytest.mark.parametrize("name", ["ASMR-Dubber.exe"])
 def test_windows_launchers_are_console_executables(name: str) -> None:
     data = (Path(__file__).parents[1] / name).read_bytes()
     assert data[:2] == b"MZ"

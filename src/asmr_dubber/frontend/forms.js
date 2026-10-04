@@ -7,10 +7,13 @@ export function renderForms() {
     const values = scope === 'proj' ? state.project?.settings : state.boot.settings;
     if (!values) { box.innerHTML = ''; return; }
     const language = scope === 'proj' ? state.project.source_language : values.default_source_language;
+    const conditions = {...values,source_language:language,asmr_vad_ready:state.boot.choices.asmr_vad_ready};
+    const matches = rule => Object.entries(rule).every(([key, allowed]) => allowed.includes(conditions[key]));
     const fields = state.boot.parameters.filter(parameter => panels.split(',').includes(parameter.panel)
       && (scope !== 'proj' || parameter.scope === 'project')
       && (part === 'all' || parameter.basic === (part === 'basic'))
-      && Object.entries(parameter.visible_when).every(([key, allowed]) => allowed.includes(values[key])));
+      && matches(parameter.visible_when)
+      && (!parameter.visible_any || parameter.visible_any.some(matches)));
     const groups = new Map();
     for (const parameter of fields) {
       const key = parameter.basic ? 'basic' : parameter.group;
@@ -25,25 +28,27 @@ export function renderForms() {
   });
 }
 function control(parameter, values, scope, language) {
-  const key = parameter.key, value = values[key], id = `${scope}-${key}-${Math.random().toString(36).slice(2)}`;
+  const key = parameter.key, id = `${scope}-${key}-${Math.random().toString(36).slice(2)}`;
+  const mapping = parameter.display_conditions || parameter.display_values;
+  const value = mapping ? Object.entries(mapping).find(([label,fields])=>Object.entries(fields).every(([name,v])=>values[name]===v))?.[0] : values[key];
   let choices = parameter.options, input;
-  if (key === 'asr_backend' && language !== 'ja') choices = choices.filter(item => ['faster_whisper','generic_asr_api'].includes(item[1]));
-  if (key === 'asr_model') choices = (state.boot.choices.asr[values.asr_backend]?.models || []).map(model => [model,model]);
-  if (key === 'tts_model') choices = (state.boot.choices.tts[values.tts_backend]?.models || []).map(model => [model,model]);
-  if (key === 'tts_voice') choices = (state.boot.choices.tts[values.tts_backend]?.voices || []).map(voice => [voice,voice]);
-  if (key === 'translation_model') choices = (state.boot.choices.translation[values.translation_provider]?.models || []).map(model => [model,model]);
-  if (key === 'asr_vad_mode' && language !== 'ja') choices = choices.filter(item => item[1] !== 'asmr');
-  if (choices?.length && !choices.some(item => String(item[1]) === String(value)) && value != null) choices = [[String(value),value], ...choices];
+  if (parameter.options_source) { const source=parameter.options_source; const list=state.boot.choices[source.domain][values[source.dependency]]?.[source.attribute]||[]; choices=(Array.isArray(list)?list:list[language]||[]).map(v=>[v,v]); }
+  if (parameter.display_options) choices=parameter.display_options;
+  if (parameter.options_when) {const conditions={...values,source_language:language,asmr_vad_ready:state.boot.choices.asmr_vad_ready};choices=choices.filter(([,v])=>!parameter.options_when[v]||Object.entries(parameter.options_when[v]).every(([k,allowed])=>allowed.includes(conditions[k])));}
+  if (parameter.type === 'array' && choices?.length) choices = [...choices, ...(value||[]).filter(v=>!choices.some(item=>item[1]===v)).map(v=>[v,v])];
+  else if (choices?.length && !choices.some(item => String(item[1]) === String(value)) && value != null) choices = [[String(value),value], ...choices];
   const data = `id="${id}" data-param="${key}" data-scope="${scope}"`;
-  if (parameter.type === 'boolean') input = `<button type="button" class="switch${value?' on':''}" role="switch" aria-checked="${!!value}" aria-label="${esc(t(parameter.label))}" ${data}></button>`;
-  else if (choices?.length && ['asr_model','tts_model','translation_model','tts_voice'].includes(key)) input = `<input type="text" list="${id}-options" value="${esc(value)}" ${data}><datalist id="${id}-options">${options(choices,value)}</datalist>`;
+  if (parameter.type === 'boolean'&&!parameter.display_options) input = `<button type="button" class="switch${value?' on':''}" role="switch" aria-checked="${!!value}" aria-label="${esc(t(parameter.label))}" ${data}></button>`;
+  else if (choices?.length && parameter.custom) input = `<input type="text" list="${id}-options" value="${esc(value)}" ${data}><datalist id="${id}-options">${options(choices,value)}</datalist>`;
+  else if (choices?.length && parameter.type==='array') input = `<select multiple ${data}>${choices.map(([label,v])=>`<option value="${esc(v)}"${value.includes(v)?' selected':''}>${esc(t(label))}</option>`).join('')}</select>`;
   else if (choices?.length) input = `<select aria-label="${esc(t(parameter.label))}" ${data}>${options(choices, value)}</select>`;
   else if (['number','integer'].includes(parameter.type)) input = `<span class="numf"><input type="number" value="${esc(value)}" step="${parameter.type==='integer'?'1':'any'}"${parameter.minimum!=null?` min="${parameter.minimum}"`:''}${parameter.maximum!=null?` max="${parameter.maximum}"`:''} ${data}></span>`;
-  else if (parameter.type === 'array' || key.includes('prompt') || key.endsWith('params') || key.endsWith('extra_body') || key === 'autoflow_timestamp_footer') input = `<textarea class="mono" rows="3" ${data}>${esc(parameter.type==='array'?JSON.stringify(value):value)}</textarea>`;
+  else if (parameter.type === 'array' || key.includes('prompt') || key.endsWith('params') || key.endsWith('extra_body') || key === 'autoflow_timestamp_footer') input = `<textarea class="mono" rows="3"${key.startsWith('translation_prompt')?` placeholder="${esc(state.boot.choices.translation_prompts[key.endsWith('_ja')?'ja':key.endsWith('_en')?'en':key.endsWith('_zh')?'zh':language]||'')}"`:''} ${data}>${esc(parameter.type==='array'?JSON.stringify(value):value)}</textarea>`;
   else input = `<input type="text" value="${esc(value)}" ${data}>`;
   if (key.endsWith('_audio')) input += `<button class="btn small" data-reference-upload="${key}" data-scope="${scope}">${t('选择文件')}</button>`;
   if (key === 'projects_root') input += `<button class="btn small" data-folder="${id}">${t('更改')}</button>`;
   if (key === 'tts_voice' && values.tts_backend === 'edge_tts') input += `<button class="btn small" data-preview-voice="${esc(value)}">${t('试听')}</button>`;
+  if (key.startsWith('translation_prompt')) input += `<button class="btn small" data-reset-param="${key}" data-scope="${scope}">${t('恢复内置 Prompt')}</button>`;
   return `<div class="field${input.startsWith('<textarea')?' col':''}"><label class="fl" for="${id}">${esc(t(parameter.label))}${parameter.hint?`<small>${esc(t(parameter.hint))}</small>`:''}</label><span class="control">${input}</span></div>`;
 }
 export function saveParameters(changes, scope) {
@@ -65,12 +70,14 @@ export function initializeForms() {
     if (!node.dataset.param) return;
     const parameter = state.boot.parameters.find(item => item.key === node.dataset.param);
     let value = node.value;
-    if (parameter.type === 'array') value = JSON.parse(value);
+    if (parameter.type === 'array') value = node.multiple ? [...node.selectedOptions].map(option=>option.value) : JSON.parse(value);
     else if (['number','integer'].includes(parameter.type)) value = Number(value);
     if (parameter.nullable && value === '') value = null;
     await saveParameters({[parameter.key]:value},node.dataset.scope);
   }));
   document.addEventListener('click', guard(async event => {
+    const reset = event.target.closest('[data-reset-param]');
+    if (reset) { await saveParameters({[reset.dataset.resetParam]:''},reset.dataset.scope); return; }
     const preview = event.target.closest('[data-preview-voice]');
     if (preview) { const task = await startTask('preview_edge',{voice:preview.dataset.previewVoice},false); window.dispatchEvent(new CustomEvent('preview-audio',{detail:task.id})); return; }
     const toggle = event.target.closest('button[data-param]');

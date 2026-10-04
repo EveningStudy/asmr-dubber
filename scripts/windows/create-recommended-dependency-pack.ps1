@@ -79,12 +79,12 @@ Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
     -Uv $Uv -Root $Root -MirrorName "pypi_indexes" `
     -Arguments @(
         "pip", "install", "--python", (Join-Path $CoreVenv "Scripts\python.exe"),
-        "--editable", "$Root[ui]", "setuptools>=78.1.1,<82"
+        "--editable", "$Root", "setuptools>=78.1.1,<82"
     )
 $CoreCheck = Invoke-ASMRDubberProcess -FilePath (Join-Path $CoreVenv "Scripts\python.exe") `
     -ArgumentList @(
         "-c",
-        "import asmr_dubber.ui, av, edge_tts, gradio, httpx, soundfile, setuptools"
+        "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools"
     ) `
     -WorkingDirectory $Root
 if ($CoreCheck -ne 0) { throw "基础/UI 环境检查失败。" }

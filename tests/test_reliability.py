@@ -12,11 +12,11 @@ import pytest
 import soundfile as sf
 from pydantic import ValidationError
 
-from asmr_dubber import ui_services
 from asmr_dubber.api_contracts import APIContractError, write_audio_response
 from asmr_dubber.errors import ProjectConflictError, SynthesisError
 from asmr_dubber.lifecycle import browser_revision_scope
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
+from asmr_dubber.services import project_audio, project_operations, project_records
 from asmr_dubber.tts import tts_cache_key, valid_tts_cache
 from asmr_dubber.voice_reference import VoiceReference, reference_selection_scope
 
@@ -82,14 +82,14 @@ def test_stale_browser_revision_preserves_saved_table(tmp_path, monkeypatch):
     p = project()
     save_project(p, tmp_path)
     revision = p.revision
-    stale = ui_services.project_rows(p)
-    edited = ui_services.project_rows(p)
+    stale = project_records.project_rows(p)
+    edited = project_records.project_rows(p)
     edited[0][5] = "已校对"
-    monkeypatch.setattr(ui_services, "view", lambda p, *a: p)
+    monkeypatch.setattr(project_operations, "view", lambda p, *a: p)
     with browser_revision_scope(str(tmp_path), revision):
-        ui_services.save_table(str(tmp_path), edited)
+        project_operations.save_table(str(tmp_path), edited)
     with pytest.raises(ProjectConflictError), browser_revision_scope(str(tmp_path), revision):
-        ui_services.save_table(str(tmp_path), stale)
+        project_operations.save_table(str(tmp_path), stale)
     assert load_project(tmp_path)[0].sentences[0].zh_text == "已校对"
 
 
@@ -143,8 +143,8 @@ def test_recent_stage_of_old_media_survives_cleanup(tmp_path, monkeypatch):
     source.write_bytes(b"audio")
     old = time.time() - 48 * 3600
     os.utime(source, (old, old))
-    staged = Path(ui_services.stage_for_ui(source))
-    ui_services.ui_stage_directory()
+    staged = Path(project_audio.stage_for_ui(source))
+    project_audio.ui_stage_directory()
     assert staged.is_file()
     assert source.stat().st_mtime == old
 
@@ -157,8 +157,8 @@ def test_subtitle_setting_change_invalidates_subtitles(tmp_path, monkeypatch):
     save_project(p, tmp_path)
     settings = UserSettings.model_validate(p.settings.model_dump())
     settings.subtitle_timeline = "dubbing" if p.settings.subtitle_timeline == "source" else "source"
-    monkeypatch.setattr(ui_services, "view", lambda p, *a: p)
-    ui_services.apply_global_settings(str(tmp_path), settings)
+    monkeypatch.setattr(project_operations, "view", lambda p, *a: p)
+    project_operations.apply_global_settings(str(tmp_path), settings)
     assert load_project(tmp_path)[0].subtitle_srt_file is None
 
 

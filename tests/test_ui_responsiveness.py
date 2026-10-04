@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 import time
+
+import pytest
 
 from asmr_dubber.asr_progress import model_heartbeat
 from asmr_dubber.asr_review import AudioWindow, _candidate, compare_window, recognize_windows
 from asmr_dubber.models import AudioInfo, DubProject, ProjectSettings, Sentence
-from asmr_dubber.ui_services import ProjectView, apply_table
+from asmr_dubber.services.project_records import apply_table
 
 
 def test_heartbeat_is_truthful_and_stops():
@@ -69,24 +69,38 @@ def test_text_table_keeps_booleans_numbers_and_full_content():
     assert project.sentences[499].end_seconds == 499.8
 
 
-def test_view_does_not_decode_media_to_return_table(monkeypatch):
-    import asmr_dubber.ui as ui
+def test_view_does_not_decode_media_to_return_table(monkeypatch, tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from asmr_dubber.audio import sha256_file
+    from asmr_dubber.models import save_project
+    from asmr_dubber.services import project_audio
+    from asmr_dubber.services.application import Application
+
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros(16000), 16000)
+    project = DubProject(
+        source=AudioInfo(
+            path=source.name,
+            sha256=sha256_file(source),
+            duration_seconds=1,
+            sample_rate=16000,
+            channels=1,
+        ),
+        sentences=[Sentence(id="s1", start_seconds=0, end_seconds=1, source_text="source")],
+    )
+    save_project(project, tmp_path)
 
     def picker(path, *, include_preview=True):
         assert not include_preview
         return [], None, None
 
-    monkeypatch.setattr(ui, "reference_picker", picker)
-    view = ProjectView(
-        "project.json",
-        "ja",
-        [["s1", True, 0, 1, "source", ""]],
-        None,
-        None,
-        None,
-        [],
-        None,
-        "",
-        "ok",
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(project_audio, "reference_picker", picker)
+    monkeypatch.setattr(
+        project_audio, "extract_reference", lambda *a: pytest.fail("must not decode")
     )
-    assert ui._view_values(view)[2] == [["s1", "true", "0", "1", "source", ""]]
+    result = Application().projects.get(str(tmp_path / "project.json"))
+    assert result["rows"] == [["s1", True, 0, 1, "source", "", "default", 0, True, 0]]
+    assert result["source"]["duration_seconds"] == 1

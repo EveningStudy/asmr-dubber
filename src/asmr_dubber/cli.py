@@ -590,7 +590,6 @@ def doctor_command(
         ("soundfile", "soundfile"),
         ("httpx", "httpx"),
         ("edge-tts", "edge_tts"),
-        ("gradio", "gradio"),
     ):
         try:
             version = importlib.metadata.version(distribution)
@@ -907,7 +906,7 @@ def ui_command(
     port: Annotated[int, typer.Option("--port")] = 7860,
 ) -> None:
     """启动本地浏览器界面。"""
-    from .server_startup import launch
+    from .ui import launch
 
     launch(host=host, port=port)
 

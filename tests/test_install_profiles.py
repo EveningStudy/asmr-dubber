@@ -95,7 +95,10 @@ $modern = @(Get-ASMRDubberCurlCommonArguments -CurlPath '{quote(modern_curl)}')
 
 
 def test_windows_setup_exposes_three_chinese_monotonic_profiles() -> None:
-    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    setup = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
 
     assert '"基础", "推荐", "进阶", "Core", "Recommended", "Advanced"' in setup
     assert '"Full"' not in setup
@@ -122,7 +125,10 @@ def test_windows_setup_exposes_three_chinese_monotonic_profiles() -> None:
 
 
 def test_windows_setup_reports_native_runtime_problems_without_stopping() -> None:
-    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    setup = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     report = _between(
         setup,
         "function Write-ASMRDubberNativeRuntimeReport {",
@@ -165,7 +171,10 @@ def test_linux_setup_exposes_same_three_chinese_profiles() -> None:
 
 
 def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
-    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
+    windows = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     runtime_checks = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(
         encoding="utf-8-sig"
     )
@@ -193,23 +202,26 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
     assert "Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot" in windows
     assert "edge_tts" in dependency_builder
     assert "httpx" in dependency_builder
-    assert "import asmr_dubber.ui, av, edge_tts, gradio, httpx" in linux
+    assert "import asmr_dubber.ui, av, edge_tts, pydantic, httpx" in linux
     assert "国内软件源补齐应用依赖" in windows
     assert "国内软件源补齐应用依赖" in linux
 
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "uv export --frozen --no-dev --extra ui" in release
+    assert "uv export --frozen --no-dev" in release
     assert "vendor\\windows-core-wheelhouse" in release
     assert "--only-binary=:all:" in release
-    assert "windows-core-wheelhouse-smoke" in release
+    assert 'Join-Path $portable "venv"' in release
     assert "--offline --find-links $coreWheelhouse" in release
-    assert "import asmr_dubber.ui, edge_tts, gradio, httpx, setuptools" in release
-    for required_wheel in ("edge_tts", "editables", "gradio", "httpx", "hatchling"):
+    assert "import asmr_dubber.ui, edge_tts, pydantic, httpx, setuptools" in release
+    for required_wheel in ("edge_tts", "editables", "pydantic", "httpx", "hatchling"):
         assert f'"{required_wheel}-*.whl"' in release
 
 
 def test_windows_setup_installs_application_before_validating_api_clients() -> None:
-    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
+    windows = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     application_install = windows.index(
         "$ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime"
     )
@@ -225,7 +237,10 @@ def test_windows_setup_installs_application_before_validating_api_clients() -> N
 
 
 def test_model_packs_are_imported_before_profile_downloads() -> None:
-    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    windows = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     linux = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
 
     for setup, advanced_download in (
@@ -238,7 +253,10 @@ def test_model_packs_are_imported_before_profile_downloads() -> None:
 
 
 def test_setup_imports_only_model_packs_belonging_to_the_selected_tier() -> None:
-    windows = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    windows = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     linux = (ROOT / "scripts/linux/setup.sh").read_text(encoding="utf-8")
 
     windows_packs = windows.split("$LocalPackIds = switch ($Profile)", 1)[1]
@@ -365,7 +383,10 @@ def test_windows_recommended_prefers_verified_modelscope_dependency_pack() -> No
         "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip"
     ]
 
-    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8")
+    setup = "\n".join(
+        (ROOT / "scripts/windows" / name).read_text(encoding="utf-8-sig")
+        for name in ("setup.ps1", "setup-application.ps1", "setup-models.ps1")
+    )
     helper = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(encoding="utf-8")
     importer = (ROOT / "scripts/import_windows_dependency_pack.py").read_text(encoding="utf-8")
     assert setup.index("Import-ASMRDubberRecommendedDependencies") < setup.index(
@@ -402,52 +423,43 @@ def test_windows_recommended_dependency_pack_builder_has_expected_components() -
 
 
 def test_windows_recommended_portable_builder_uses_verified_complete_payloads() -> None:
-    builder = (ROOT / "scripts/windows/create-recommended-portable.ps1").read_text(encoding="utf-8")
+    builder = (ROOT / "scripts/windows/create-portable.ps1").read_text(encoding="utf-8-sig")
     for component in (
-        "ASMR-Dubber-Windows-Recommended-Dependencies-v1.0.0.zip",
-        "ASMR-Dubber-ModelPack-parakeet-ja-windows-v0.2.1.zip",
-        "ASMR-Dubber-ModelPack-indextts2-checkpoints-v0.2.1.zip",
-        "doctor",
-        "--no-network",
+        "-Profile Core",
+        "runtimes\\python",
+        "bootstrap\\windows",
+        "frontend/index.html",
+        "venv\\Scripts\\python.exe",
     ):
         assert component in builder
-    assert "Get-ASMRDubberFileSha256 -Path $Pack.Path" in builder
+    assert "Get-FileHash -LiteralPath $Destination -Algorithm SHA256" in builder
+    assert "基础包不应包含模型权重" in builder
 
 
 def test_windows_setup_prompt_maps_all_profiles_and_shows_space() -> None:
-    source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
+    from asmr_dubber.model_registry import ASR_BACKENDS, TTS_BACKENDS
+    from asmr_dubber.services import models
 
-    assert 'if (input == "1") return "基础";' in source
-    assert 'if (input == "" || input == "2") return "推荐";' in source
-    assert 'if (input == "3") return "进阶";' in source
-    assert 'input == "4"' not in source
-    for estimate in ("约 2 GB", "约 24–28 GB", "约 33–39 GB"):
-        assert estimate in source
-    for model in (
-        "Parakeet CTC 1.1B JA GAL",
-        "Parakeet TDT/CTC 0.6B JA",
-        "Kotoba-Whisper v2.2",
-        "Faster-Whisper large-v2",
-        "日语 ASMR 专用 Whisper VAD ONNX",
-        "Qwen3 ForcedAligner 0.6B",
-        "IndexTTS2 checkpoints",
-    ):
-        assert model in source
+    source = (ROOT / "launcher/windows/ASMRDubberLauncher.cs").read_text(encoding="utf-8")
+    assert '"-Profile Core"' in source
+    assert "正在准备基础运行环境，模型可在界面内下载" in source
+    catalog = {item["id"]: item for item in models.catalog()["items"]}
+    for spec in (*ASR_BACKENDS.values(), *TTS_BACKENDS.values()):
+        if spec.installer:
+            assert catalog[spec.id]["disk_gb"] == spec.disk_gb
+            assert catalog[spec.id]["models"] == list(spec.models)
 
 
 def test_windows_setup_does_not_turn_a_successful_install_into_exit_code_zero_failure() -> None:
-    source = (ROOT / "launcher/windows/ASMRDubberSetup.cs").read_text(encoding="utf-8")
-
-    assert "if (exitCode != 0 || !IsCoreInstalled(root))" not in source
-    assert "if (exitCode != 0)" in source
-    assert "if (!HasCoreFiles(root))" in source
-    assert "if (!CanImportCore(root, out coreDiagnostic))" in source
-    assert "这项附加检查不会把成功安装改判为失败" in source
-    assert "check.WaitForExit(120000)" in source
+    source = (ROOT / "launcher/windows/ASMRDubberLauncher.cs").read_text(encoding="utf-8")
+    assert "if (activeProcess.ExitCode != 0)" in source
+    assert "基础环境准备失败，请查看上方日志" in source
+    assert "check.WaitForExit(30000)" in source
+    assert "return check.ExitCode == 0;" in source
 
 
 def test_windows_launcher_sources_match_release_version() -> None:
-    for name in ("ASMRDubberLauncher.cs", "ASMRDubberSetup.cs"):
+    for name in ("ASMRDubberLauncher.cs",):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
         assert 'AssemblyVersion("1.6.2.0")' in source
         assert 'AssemblyFileVersion("1.6.2.0")' in source
@@ -460,96 +472,3 @@ def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker
     assert "FindAvailablePort(7860, 100)" in source
     assert 'ProductMarker = "asmr-dubber-product-marker"' in source
     assert "body.IndexOf(ProductMarker" in source
-
-
-def test_advanced_dependency_pack_and_analysis_model_packs_are_reused() -> None:
-    mirrors = json.loads((ROOT / "mirrors.json").read_text(encoding="utf-8"))
-
-    assert mirrors["modelscope_artifacts"]["windows_advanced_dependency_archives"] == [
-        "https://modelscope.cn/models/EveningStudyW/"
-        "ASMR-Dubber-Windows-Advanced/resolve/master/"
-        "ASMR-Dubber-Windows-Advanced-Dependencies-v1.0.0.zip"
-    ]
-    assert "qwen3-forced-aligner" in mirrors["model_pack_sources"]
-    assert "whisper-vad-asmr-onnx" in mirrors["model_pack_sources"]
-
-    setup = (ROOT / "scripts/windows/setup.ps1").read_text(encoding="utf-8-sig")
-    dependencies = (ROOT / "scripts/windows/recommended-dependencies.ps1").read_text(
-        encoding="utf-8-sig"
-    )
-    assert "Import-ASMRDubberAdvancedDependencies" in setup
-    assert "qwen_asr" in dependencies
-    assert "onnxruntime" in dependencies
-    advanced_function = dependencies.split("function Import-ASMRDubberAdvancedDependencies", 1)[1]
-    assert (
-        "[switch]$MergeExisting"
-        in advanced_function.split("if (Test-ASMRDubberAdvancedDependencies", 1)[0]
-    )
-    assert "bafd2268de9a83bbf391ba8918d1798d24f703b023af70e8f623b2dbffc9a178" in (dependencies)
-
-
-def test_windows_powershell_scripts_are_compatible_with_legacy_utf8_detection() -> None:
-    scripts = sorted((ROOT / "scripts").rglob("*.ps1")) + sorted((ROOT / "launcher").rglob("*.ps1"))
-    assert scripts
-    for script in scripts:
-        assert script.read_bytes().startswith(b"\xef\xbb\xbf"), script
-        assert "utf8NoBOM" not in script.read_text(encoding="utf-8-sig")
-
-
-def test_windows_native_process_arguments_use_shared_quoting() -> None:
-    mirrors = (ROOT / "scripts/mirrors.ps1").read_text(encoding="utf-8")
-    assert "ConvertTo-ASMRDubberWindowsCommandLineArgument" in mirrors
-    assert "$StartInfo.Arguments = Join-ASMRDubberWindowsCommandLine" in mirrors
-
-    for relative in (
-        "scripts/windows/setup.ps1",
-        "scripts/windows/install-backend.ps1",
-        "scripts/windows/install-indextts2.ps1",
-        "scripts/windows/install-parakeet.ps1",
-        "scripts/windows/run-cli.ps1",
-    ):
-        source = (ROOT / relative).read_text(encoding="utf-8")
-        assert "ProcessStartInfo]::new" not in source
-
-
-def test_webui_backend_installer_resolves_project_root_and_reuses_setup_downloads() -> None:
-    source = (ROOT / "scripts/windows/install-backend.ps1").read_text(encoding="utf-8-sig")
-
-    assert 'Resolve-Path (Join-Path $PSScriptRoot "..\\..")' in source
-    assert "Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)" not in source
-    assert "Get-ASMRDubberWheelhouse" in source
-    assert "Invoke-ASMRDubberUvOfflineWheelhouse" in source
-    assert 'ArchiveMirrorName "windows_application_wheelhouse_archives"' in source
-    assert 'ArchiveMirrorName "windows_cuda_wheelhouse_archives"' in source
-    assert "Import-ASMRDubberAdvancedDependencies" in source
-    assert "-MergeExisting" in source
-
-
-def test_indextts25_is_webui_only_and_does_not_change_setup_profiles() -> None:
-    setup_files = (
-        "scripts/windows/setup.ps1",
-        "scripts/linux/setup.sh",
-        "scripts/windows/recommended-dependencies.ps1",
-        "scripts/windows/create-recommended-dependency-pack.ps1",
-        "scripts/import_windows_dependency_pack.py",
-    )
-    for relative in setup_files:
-        source = (ROOT / relative).read_text(encoding="utf-8-sig")
-        assert "indextts25" not in source.casefold()
-        assert "indextts2_5" not in source.casefold()
-        assert "indextts-2.5" not in source.casefold()
-
-    windows = (ROOT / "scripts/windows/install-indextts25.ps1").read_text(encoding="utf-8-sig")
-    linux = (ROOT / "scripts/linux/install-indextts25.sh").read_text(encoding="utf-8")
-    for source in (windows, linux):
-        assert "indextts2_5-checkpoints" in source
-        assert "requirements.txt" in source
-        assert "--offline" in source
-        assert "--no-index" in source
-        assert "indextts" in source
-    assert 'Join-Path $_.Directory.FullName "indextts"' in windows
-    assert 'Join-Path $IndexWheelhouse "requirements.txt"' in windows
-    assert '"--find-links", $IndexWheelhouse, "--requirement", $Requirements' in windows
-    assert 'test -d "$(dirname "$1")/indextts"' in linux
-    assert 'REQUIREMENTS="$ASMR_WHEELHOUSE_RESULT/requirements.txt"' in linux
-    assert '--requirement "$REQUIREMENTS"' in linux

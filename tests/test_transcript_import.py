@@ -350,7 +350,7 @@ def test_chinese_script_reconciliation_reports_text_that_cannot_fit_window(
 
 
 def test_failed_script_review_preserves_sentence_and_marks_diagnostics(tmp_path, monkeypatch):
-    from asmr_dubber.ui_services import diagnostics
+    from asmr_dubber.services.project_records import diagnostics
 
     project = _import_project(tmp_path)
     project.sentences = [

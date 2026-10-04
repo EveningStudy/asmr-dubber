@@ -9,15 +9,16 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from .asr_review import REVIEW_VERSION, replace_window, rows_fingerprint, run_audio_review
-from .audio import _run_ffmpeg, make_analysis_copy, verify_source
-from .errors import OperationCancelledError, ProjectError
-from .lifecycle import invalidate_outputs
-from .models import Sentence, load_project, save_project
-from .platforms import portable_home
-from .storage import atomic_write_text, exclusive_file_lock
-from .task_control import CancellationSignal
-from .ui_services import ProjectView, apply_table, ui_stage_directory, view
+from ..asr_review import REVIEW_VERSION, replace_window, rows_fingerprint, run_audio_review
+from ..audio import _run_ffmpeg, make_analysis_copy, verify_source
+from ..errors import OperationCancelledError, ProjectError
+from ..lifecycle import invalidate_outputs
+from ..models import Sentence, load_project, save_project
+from ..platforms import portable_home
+from ..storage import atomic_write_text, exclusive_file_lock
+from ..task_control import CancellationSignal
+from .project_audio import ui_stage_directory
+from .project_records import ProjectView, apply_table, view
 
 
 def _report(directory: Path) -> dict[str, Any]:
@@ -208,7 +209,7 @@ def apply_review(
         )
         save_project(project, directory)
         _save_report(directory, report)
-        from .pipeline import export_transcript
+        from ..pipeline import export_transcript
 
         export_transcript(project, directory)
     return view(
@@ -239,7 +240,7 @@ def undo_review(manifest: str, table: Any = None) -> ProjectView:
         invalidate_outputs(project)
         save_project(project, directory)
         _save_report(directory, report)
-        from .pipeline import export_transcript
+        from ..pipeline import export_transcript
 
         export_transcript(project, directory)
     return view(project, directory, "已撤销上一次复核操作。")
@@ -252,7 +253,7 @@ def unlock_review(manifest: str, table: Any = None) -> ProjectView:
     for row in project.sentences:
         row.review_locked = False
     save_project(project, directory)
-    from .pipeline import export_transcript
+    from ..pipeline import export_transcript
 
     export_transcript(project, directory)
     return view(project, directory, "已解除人工确认锁定；文字未改变，可以重新识别或复核。")
@@ -270,13 +271,13 @@ def retry_review(
     ):
         apply_table(project, table)
         save_project(project, directory)
-        from .pipeline import export_transcript
+        from ..pipeline import export_transcript
 
         export_transcript(project, directory)
         previous = rows_fingerprint(project.sentences)
         source = verify_source(directory, project.source)
         if project.settings.separation_enabled:
-            from .separation import ensure_separation
+            from ..separation import ensure_separation
 
             source, _ = ensure_separation(project, directory, source, progress)
             audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
@@ -305,7 +306,7 @@ def align_review(
     manifest: str, table: Any, progress: Any = None, cancel_event: CancellationSignal | None = None
 ) -> ProjectView:
     """Timestamp alignment is explicit and cannot serve as text-correctness evidence."""
-    from .forced_alignment import align_sentences_with_qwen
+    from ..forced_alignment import align_sentences_with_qwen
 
     project, directory = load_project(manifest)
     with (
@@ -316,7 +317,7 @@ def align_review(
         save_project(project, directory)
         source = verify_source(directory, project.source)
         if project.settings.separation_enabled:
-            from .separation import ensure_separation
+            from ..separation import ensure_separation
 
             source, _ = ensure_separation(project, directory, source, progress)
             audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
@@ -361,7 +362,7 @@ def align_review(
             ),
         )
         save_project(project, directory)
-        from .pipeline import export_transcript
+        from ..pipeline import export_transcript
 
         export_transcript(project, directory)
     return view(

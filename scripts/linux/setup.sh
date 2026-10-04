@@ -127,13 +127,13 @@ HAS_NVIDIA=0
 if command -v nvidia-smi >/dev/null 2>&1; then
   HAS_NVIDIA=1
 fi
-EXTRA=".[ui]"
+EXTRA="."
 INSTALL_ADVANCED_MODELS=0
 INSTALL_RECOMMENDED_TTS=0
 INSTALL_PARAKEET=0
 case "$PROFILE" in
   基础)
-    EXTRA=".[ui]"
+    EXTRA="."
     ;;
   推荐)
     INSTALL_PARAKEET=1
@@ -146,7 +146,7 @@ case "$PROFILE" in
   进阶)
     INSTALL_PARAKEET=1
     INSTALL_ADVANCED_MODELS=1
-    EXTRA=".[ui,asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
+    EXTRA=".[asr-faster-whisper,asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad]"
     if [[ "$HAS_NVIDIA" == 1 ]] \
       && [[ "${ASMR_DUBBER_SKIP_RECOMMENDED_TTS:-0}" != 1 ]]; then
       INSTALL_RECOMMENDED_TTS=1
@@ -191,7 +191,7 @@ else
   install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
 fi
 if ! "$VENV/bin/python" -c \
-  "import asmr_dubber.ui, av, edge_tts, gradio, httpx, soundfile, setuptools"; then
+  "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools"; then
   setup_echo "错误：基础应用或在线/API 客户端安装后仍不完整。" >&2
   exit 1
 fi

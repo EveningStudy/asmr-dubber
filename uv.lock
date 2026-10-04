@@ -161,9 +161,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
-ui = [
-    { name = "gradio" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -171,7 +168,6 @@ requires-dist = [
     { name = "av", specifier = ">=14.0,<17" },
     { name = "edge-tts", specifier = ">=7.2.7,<8" },
     { name = "faster-whisper", marker = "extra == 'asr-faster-whisper'", specifier = ">=1.2.1,<2" },
-    { name = "gradio", marker = "extra == 'ui'", specifier = "==6.17.3" },
     { name = "hf-xet", specifier = ">=1.1,<2" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "huggingface-hub", specifier = "==0.36.0" },
@@ -198,7 +194,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'asr-kotoba-whisper'", specifier = ">=4.57,<5" },
     { name = "typer", specifier = ">=0.15.0" },
 ]
-provides-extras = ["ui", "asr-faster-whisper", "asr-kotoba-whisper", "asr-forced-aligner", "asr-asmr-vad", "dev"]
+provides-extras = ["asr-faster-whisper", "asr-kotoba-whisper", "asr-forced-aligner", "asr-asmr-vad", "dev"]
 
 [[package]]
 name = "attrs"

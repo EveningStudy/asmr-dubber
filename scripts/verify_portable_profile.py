@@ -46,7 +46,7 @@ def validate(profile: str) -> dict[str, Any]:
         "errors": [],
     }
 
-    for module_name in ("asmr_dubber", "av", "gradio", "soundfile"):
+    for module_name in ("asmr_dubber", "av", "pydantic", "soundfile"):
         try:
             module = importlib.import_module(module_name)
             result["checks"][f"import:{module_name}"] = getattr(module, "__version__", "ok")

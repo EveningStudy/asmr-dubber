@@ -2,34 +2,33 @@ from types import SimpleNamespace
 
 import pytest
 
-from asmr_dubber import ui
 from asmr_dubber.autoflow import engine
-from asmr_dubber.autoflow.ui_services import config_from_settings
+from asmr_dubber.services import parameters, settings
+from asmr_dubber.services.batch_configuration import config_from_settings
 from asmr_dubber.user_settings import UserSettings
 
 
 def test_entire_form_reload_reads_disk_each_time(monkeypatch, tmp_path):
     monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
     current = UserSettings(asr_review_enabled=True, translation_model="custom-first")
-    monkeypatch.setattr(ui, "load_user_settings", lambda: current)
-    app = ui.build_app()
-    callback = next(f for f in app.fns.values() if f.name == "refresh_settings_form_callback")
+    monkeypatch.setattr(settings, "load_user_settings", lambda: current)
     current.asr_review_enabled = False
     current.translation_model = "custom-after"
     current.autoflow_original_hard_subtitles = True
     current.autoflow_timestamp_footer_position = "before"
-    result = callback.fn()
-    labels = {c.label: r for c, r in zip(callback.outputs, result, strict=True)}
-    assert labels["启用统一音频片段复核"]["value"] is False
-    assert labels["翻译模型"]["value"] == "custom-after"
-    assert labels["原声视频也编码硬字幕"]["value"] is True
-    assert labels["时间戳文档附加文字位置"]["value"] == "before"
-    assert len(result) == len(callback.outputs)
+    result = settings.current().model_dump()
+    assert result["asr_review_enabled"] is False
+    assert result["translation_model"] == "custom-after"
+    assert result["autoflow_original_hard_subtitles"] is True
+    assert result["autoflow_timestamp_footer_position"] == "before"
+    assert set(current.model_dump()) <= set(result)
 
 
 def test_programmatic_backend_hydration_preserves_values():
-    updates = ui._visibility_only(ui._asr_backend_update("faster_whisper"))
-    assert all("value" not in item for item in updates if isinstance(item, dict))
+    before = settings.current().model_dump()
+    parameters.catalog()
+    parameters.choices()
+    assert settings.current().model_dump() == before
 
 
 @pytest.mark.parametrize("position", ["before", "after"])

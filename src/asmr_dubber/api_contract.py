@@ -101,6 +101,8 @@ class TaskRequest(Request):
 
     @model_validator(mode="after")
     def required_fields(self):
+        if self.kind == "import" and self.script_kind == "zh" and self.timing == "qwen":
+            raise ValueError("Qwen timing requires a source transcript")
         if self.kind == "create" and not self.source:
             raise ValueError("source is required")
         project_actions = {

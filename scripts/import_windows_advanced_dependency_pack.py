@@ -139,7 +139,7 @@ def _extract(handle: zipfile.ZipFile, staging: Path) -> None:
 def _validate_staging(staging: Path) -> None:
     required = (
         "venv/Scripts/python.exe",
-        "venv/Lib/site-packages/gradio",
+        "venv/Lib/site-packages/pydantic",
         "venv/Lib/site-packages/torch",
         "venv/Lib/site-packages/torchaudio",
         "venv/Lib/site-packages/transformers",
