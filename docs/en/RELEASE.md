@@ -33,7 +33,3 @@ Upgrading from 1.x: close the program, delete the `src` folder and `ASMR-Dubber-
 On Linux x86_64, run `bash scripts/linux/setup.sh Core` from the source directory, then `bash scripts/linux/run-ui.sh`.
 
 [User guide](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/en/USER_GUIDE.md) · [Installation and models](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/en/INSTALLATION.md)
-
-## What was verified
-
-Run for real on one Windows machine with an NVIDIA GPU: model download and resume, recognition, translation, IndexTTS2 dubbing, bilingual and replacement exports, batch merging and cache cleanup. Other models, cloud services and hardware combinations were not individually verified. The automatic update can only be proven once the next version is released.

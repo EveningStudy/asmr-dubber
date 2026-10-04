@@ -142,6 +142,11 @@ jobs:
           from pathlib import Path
 
           notes = Path("docs/RELEASE.md").read_text(encoding="utf-8").strip()
+          # The language switch and the page heading only make sense inside the docs.
+          lines = notes.splitlines()
+          while lines and (not lines[0].strip() or lines[0].startswith(("中文 |", "# "))):
+              lines.pop(0)
+          notes = "\n".join(lines).strip()
           if not notes:
               raise SystemExit("docs/RELEASE.md is empty")
           Path("release-notes.md").write_text(notes + "\n", encoding="utf-8")
@@ -157,5 +162,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}"
           dist/*
           release-assets/ASMR-Dubber-windows-portable-v*.zip
+          --title "${GITHUB_REF_NAME}"
           --notes-file release-notes.md
           --verify-tag

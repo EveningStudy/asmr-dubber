@@ -33,7 +33,3 @@ Windows 下载 `ASMR-Dubber-windows-portable-v2.0.0.zip`，完整解压到一个
 Linux x86_64 在源码根目录运行 `bash scripts/linux/setup.sh 基础`，之后运行 `bash scripts/linux/run-ui.sh`。
 
 [使用手册](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/USER_GUIDE.md) · [安装与模型](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/INSTALLATION.md)
-
-## 验证范围
-
-在一台 NVIDIA 显卡的 Windows 电脑上实际跑过：模型下载与续传、识别、翻译、IndexTTS2 配音、双语版和替换版导出、批量合并、缓存清理。其余模型、云端服务和硬件组合没有逐一验证。自动更新功能要等下一个版本发布后才能得到实际检验。
