@@ -494,5 +494,6 @@
   "播放配音": "Play dub",
   "配音音量微调（dB）": "Dubbing adjustment (dB)",
   "我有译文字幕": "I have translated subtitles",
-  "Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。英语或中文的音频，识别请改用 Faster-Whisper。": "Parakeet 1.1B recognises speech and IndexTTS2 dubs in the original voice. For English or Chinese audio, use Faster-Whisper for recognition instead."
+  "Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。英语或中文的音频，识别请改用 Faster-Whisper。": "Parakeet 1.1B recognises speech and IndexTTS2 dubs in the original voice. For English or Chinese audio, use Faster-Whisper for recognition instead.",
+  "只影响速度。需要运行环境里另外装好对应的组件，没有的话会自动跳过。": "Affects speed only. Needs an extra component in the runtime; it is skipped automatically when that is missing."
 }

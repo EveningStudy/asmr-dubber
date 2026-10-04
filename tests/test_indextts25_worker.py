@@ -76,3 +76,12 @@ def test_indextts25_optional_acceleration_fails_explicitly(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="DeepSpeed requires"):
         _require_optional_module(True, "deepspeed", "DeepSpeed")
     _require_optional_module(False, "deepspeed", "DeepSpeed")
+
+
+def test_missing_acceleration_dependency_is_skipped_with_a_warning(capsys):
+    from asmr_dubber.indextts25_worker import _optional_acceleration
+
+    assert _optional_acceleration(True, "module_that_does_not_exist", "DeepSpeed") is False
+    assert "continuing without it" in capsys.readouterr().err
+    assert _optional_acceleration(True, "json", "Present") is True
+    assert _optional_acceleration(False, "module_that_does_not_exist", "Off") is False

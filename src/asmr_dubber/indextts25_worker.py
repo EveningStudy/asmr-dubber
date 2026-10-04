@@ -99,6 +99,15 @@ def _effective_bf16(requested: bool, device: str) -> bool:
     return supported
 
 
+def _optional_acceleration(enabled: bool, module: str, option: str) -> bool:
+    try:
+        _require_optional_module(enabled, module, option)
+    except RuntimeError as exc:
+        print(f"WARNING: {exc}; continuing without it", file=sys.stderr)
+        return False
+    return enabled
+
+
 def _require_optional_module(enabled: bool, module: str, option: str) -> None:
     if not enabled:
         return
@@ -186,13 +195,11 @@ def main(argv: list[str] | None = None) -> int:
     if device.startswith("cuda") and not torch.cuda.is_available():
         print("ERROR: CUDA was selected but is not available in this runtime", file=sys.stderr)
         return EXIT_RUNTIME_UNAVAILABLE
-    try:
-        _require_optional_module(bool(args.deepspeed), "deepspeed", "DeepSpeed")
-        _require_optional_module(bool(args.accel), "flash_attn", "GPT acceleration")
-        _require_optional_module(bool(args.torch_compile), "triton", "torch.compile")
-    except RuntimeError as exc:
-        print(f"ERROR: runtime unavailable: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME_UNAVAILABLE
+    # These switches only make synthesis faster. A runtime that cannot provide one of them
+    # still produces the same speech, so it continues without the acceleration.
+    use_deepspeed = _optional_acceleration(bool(args.deepspeed), "deepspeed", "DeepSpeed")
+    use_accel = _optional_acceleration(bool(args.accel), "flash_attn", "GPT acceleration")
+    use_torch_compile = _optional_acceleration(bool(args.torch_compile), "triton", "torch.compile")
     use_qwen_emo = any(bool(kwargs["use_emo_text"]) for kwargs in kwargs_by_task)
     try:
         model = IndexTTS2(
@@ -201,9 +208,9 @@ def main(argv: list[str] | None = None) -> int:
             use_bf16=_effective_bf16(bool(args.bf16), device),
             device=device,
             use_cuda_kernel=bool(args.cuda_kernel),
-            use_deepspeed=bool(args.deepspeed),
-            use_accel=bool(args.accel),
-            use_torch_compile=bool(args.torch_compile),
+            use_deepspeed=use_deepspeed,
+            use_accel=use_accel,
+            use_torch_compile=use_torch_compile,
             use_qwen_emo=use_qwen_emo,
         )
     except Exception as exc:
@@ -211,11 +218,10 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_RUNTIME_UNAVAILABLE
     if bool(args.cuda_kernel) and not bool(model.use_cuda_kernel):
         print(
-            "ERROR: runtime unavailable: BigVGAN CUDA kernel was requested but could not load; "
-            "disable it or install a compatible CUDA build environment",
+            "WARNING: BigVGAN CUDA kernel could not load in this runtime; "
+            "continuing with the standard implementation",
             file=sys.stderr,
         )
-        return EXIT_RUNTIME_UNAVAILABLE
 
     # The pinned upstream 2.5 release accepts ``do_sample`` in infer(), but
     # currently hard-codes True when it calls the GPT generator.  Override only
