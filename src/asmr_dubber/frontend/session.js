@@ -6,9 +6,11 @@ let templateSource, templates=[];
 function translatedText(source) {
   const locales=state.boot?.locales||{};
   if(locales[source])return locales[source];
+  const prefix=source.match(/^(\[\d+\/\d+\]\s*)(.*)$/);
+  if(prefix)return prefix[1]+translatedText(prefix[2]);
   if(templateSource!==locales){
     templateSource=locales;
-    templates=Object.entries(locales).filter(([key])=>/\{\w+\}/.test(key)).map(([key,text])=>{
+    templates=Object.entries(locales).filter(([key])=>/\{\w+\}/.test(key)).sort((a,b)=>b[0].length-a[0].length).map(([key,text])=>{
       const names=[...key.matchAll(/\{(\w+)\}/g)].map(match=>match[1]);
       const pattern=key.split(/(\{\w+\})/).map(part=>/^\{\w+\}$/.test(part)?'(.+?)':part.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('');
       return {pattern:new RegExp(`^${pattern}$`),names,text};
@@ -22,7 +24,7 @@ function translatedText(source) {
 }
 export function t(source, values = {}) {
   const label = state.boot?.labels[source] || source;
-  let text = state.language === 'en' ? String(label).split('\n').map(translatedText).join('\n') : label;
+  let text = state.language === 'en' ? state.boot?.locales[source] || String(label).split('\n').map(translatedText).join('\n') : label;
   for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, String(value));
   return text;
 }

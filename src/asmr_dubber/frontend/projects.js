@@ -31,7 +31,7 @@ export function renderProject() {
   $('#dubBar').style.width=`${enabled.length?voiced/enabled.length*100:0}%`;
   $('#exportStat').textContent=t('还有 {count} 句没有配音，成品里这些句子只有原声。',{count:enabled.length-voiced});
   $('#referenceLabel').textContent = `${t('音色参考')} · ${project.reference_external?t('外部音频'):project.reference_selected||t('未选择')}`;
-  $('#projectDiagnostics').textContent=project.diagnostics;
+  $('#projectDiagnostics').textContent=t(project.diagnostics);
   $('#outputs').innerHTML=Object.entries(project.outputs).map(([key,item])=>`<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key)?`<audio controls preload="none" src="${item.url}"></audio>`:''}<a class="btn plain small" href="${item.url}" download="${esc(item.name)}">${t('显示')}</a></div>`).join('');
   $$('#steps button').forEach((button,index)=>button.classList.toggle('done',[project.sentences.length>0,translated===enabled.length&&enabled.length>0,voiced===enabled.length&&enabled.length>0,Object.keys(project.outputs).length>0][index]));
   $$('[data-task],#translateAll,#exportProject').forEach(button=>button.disabled=projectBusy());

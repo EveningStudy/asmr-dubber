@@ -86,5 +86,20 @@
   "句子表格已保存。": "Sentence table saved.",
   "共 {count} 句，{enabled} 句参与中文处理。": "{count} sentences; {enabled} enabled for dubbing.",
   "已以便携式明文保存。": "Saved as portable plain text.",
-  "未发现 ZIP。把模型包原样放入该目录后再扫描。": "No ZIP files found. Place model packages here and scan again."
+  "未发现 ZIP。把模型包原样放入该目录后再扫描。": "No ZIP files found. Place model packages here and scan again.",
+  "项目语言：{language}": "Project language: {language}",
+  "总句数：{count}": "Total sentences: {count}",
+  "状态：{counts}": "Status: {counts}",
+  "最近错误：": "Recent errors:",
+  "项目迁移提示：": "Project migration notes:",
+  "台本待人工校对（{count} 句）：": "Script review required ({count} sentences):",
+  "ASR（语音识别）设置已改变：当前表格是旧结果，请重新运行 ASR。": "Recognition settings changed. The table contains previous results; run recognition again.",
+  "已下载（点击检查可重新校验）": "Downloaded (use diagnostics to verify again)",
+  "点击安装/修复：{model}": "Click Download to install or repair: {model}",
+  "未完成": "Incomplete",
+  "队列中有任务失败，请检查日志后重试。": "A queue task failed. Check the logs and retry.",
+  "标题翻译为空，保留原名称：{file} → {title}": "Empty title translation; keeping the original: {file} → {title}",
+  "正文": "Main track",
+  "特典": "Bonus track",
+  "样本": "Sample"
 }

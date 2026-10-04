@@ -24,11 +24,15 @@ def test_english_localizes_saved_keys_model_details_and_sentence_controls():
         "当前服务尚未保存 API Key。",
         "IndexTTS2 已就绪：D:/AT01/indextts2.exe；模型目录：D:/AT01/checkpoints",
         "字幕生成完成",
+        "failed",
+        "放置中文句子 s000044（自动加速 1.23×）",
+        "项目语言：日语\n总句数：54",
     ]
     code = (
         f"const m=await import({json.dumps(uri)});"
         "m.state.language='en';"
-        f"m.state.boot={{locales:{json.dumps(catalog(), ensure_ascii=False)},labels:{{}}}};"
+        f"m.state.boot={{locales:{json.dumps(catalog(), ensure_ascii=False)},"
+        f"labels:{json.dumps(catalog('zh'), ensure_ascii=False)}}};"
         f"console.log(JSON.stringify({json.dumps(examples, ensure_ascii=False)}.map(m.t)));"
     )
     result = subprocess.run(
