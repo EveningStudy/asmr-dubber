@@ -50,7 +50,9 @@
 
 架构参数只对相应模型生效。高级 JSON 覆盖各架构公开推理参数，不能修改训练网络结构。其他权重需要各自许可，部分模型有限制；清单里出现不等于已经下载或已经实测。ONNX 模型当前独立环境使用 CPU 提供程序，RoFormer 的 PyTorch 路径可使用 CUDA。
 
-下载必须在设置中主动确认：来源为 PyPI、PyTorch、GitHub/Hugging Face，不受原 Setup 的 ModelScope 镜像覆盖。默认模型固定哈希检查；其他模型记录本机下载校验清单。推理阶段禁止隐式下载，缺文件会报错。
+首次使用：在“模型 → 可选”找到人声分离模型，点击“下载”，程序会准备独立环境与所选模型。模型“详情”显示环境与文件状态，任务日志显示安装、下载和校验进度；任务完成后才算准备结束。需要换模型时下载对应项，再到项目“识别 → 更多设置 → 人声分离”选择模型。
+
+环境依赖来自 PyPI/PyTorch。模型优先使用 [ModelScope 镜像](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation)，提供 Mel-Band RoFormer、Demucs 和 Demucs FT；镜像失败时尝试原始来源，也可主动选择原始来源。`mirrors.json` 的 `separation_model_base` 可配置镜像地址。镜像文件固定 SHA256 检查，其他模型记录本机下载校验清单。推理阶段禁止隐式下载，缺文件会报错。
 
 ## 批量输出与缓存
 

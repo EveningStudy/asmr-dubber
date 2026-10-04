@@ -1,0 +1,61 @@
+{
+  "repository": "EveningStudyW/ASMR-Dubber-Separation",
+  "revision": "master",
+  "models": [
+    "vocals_mel_band_roformer.ckpt",
+    "htdemucs.yaml",
+    "htdemucs_ft.yaml"
+  ],
+  "files": {
+    "f7e0c4bc-ba3fe64a.th": {
+      "sha256": "ba3fe64ae8ef66ac9a4857222ce48efbdc5eb3ad375cb79dd13debee5aaa4066",
+      "size": 84141271,
+      "upstream": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/f7e0c4bc-ba3fe64a.th"
+    },
+    "d12395a8-e57c48e6.th": {
+      "sha256": "e57c48e6b0e38af4f7118d7bd08c49f0a0c0edf7d09143bdd902ea0d237303e6",
+      "size": 84141271,
+      "upstream": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/d12395a8-e57c48e6.th"
+    },
+    "92cfc3b6-ef3bcb9c.th": {
+      "sha256": "ef3bcb9c8b40d14ae5d51b6db2587339cc12c6b77c0be151ce6d69002e087bf2",
+      "size": 84141271,
+      "upstream": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/92cfc3b6-ef3bcb9c.th"
+    },
+    "04573f0d-f3cf25b2.th": {
+      "sha256": "f3cf25b222c4eed7cd49dd8b2c9597d50c18bd154090f7b919cfa5f93cf22c49",
+      "size": 84141271,
+      "upstream": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/04573f0d-f3cf25b2.th"
+    },
+    "htdemucs_ft.yaml": {
+      "sha256": "69470b8c1bbd674437b51bc9fb491327a10ab0396b702c93389b9cf750016346",
+      "size": 149,
+      "upstream": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/htdemucs_ft.yaml"
+    },
+    "955717e8-8726e21a.th": {
+      "sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4",
+      "size": 84141911,
+      "upstream": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
+    },
+    "htdemucs.yaml": {
+      "sha256": "239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c",
+      "size": 21,
+      "upstream": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/htdemucs.yaml"
+    },
+    "vocals_mel_band_roformer.ckpt": {
+      "sha256": "87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e",
+      "size": 913106900,
+      "upstream": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/vocals_mel_band_roformer.ckpt"
+    },
+    "vocals_mel_band_roformer.yaml": {
+      "sha256": "b958b29c8f7195f0d86bee6759a33980db675c4ecaf2fcaa80fa125828e6cd38",
+      "size": 944,
+      "upstream": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/vocals_mel_band_roformer.yaml"
+    },
+    "download_checks.json": {
+      "sha256": "d3622e1fa19c161d3cf704927711b453d593a3f1eb0f2e0838c3136907935151",
+      "size": 28267,
+      "upstream": "https://raw.githubusercontent.com/TRvlvr/application_data/main/filelists/download_checks.json"
+    }
+  }
+}

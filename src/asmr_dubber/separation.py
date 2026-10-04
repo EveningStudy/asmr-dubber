@@ -175,12 +175,22 @@ def _run(command: list[str], timeout: float, log=None) -> None:
         raise ProjectError(f"分离子进程失败（退出码 {result.returncode}）：{result.stdout[-3000:]}")
 
 
-def prepare_local_model(model: str = DEFAULT_MODEL, *, install: bool = False, log=None) -> str:
+def prepare_local_model(
+    model: str = DEFAULT_MODEL, *, install: bool = False, log=None, source: str = "modelscope"
+) -> str:
     """Explicit user action only. Never called automatically by inference."""
     model = local_model_name(model)
+    if source not in {"modelscope", "original"}:
+        raise ProjectError("请选择 ModelScope 优先或原始来源。")
+
+    def report(message):
+        if log:
+            log(message)
+
     with exclusive_file_lock(portable_home() / ".runtime-install.lock", timeout_seconds=1):
         python = runtime_python()
         if install:
+            report("第 1/3 步：安装分离环境（首次需要下载 Python 依赖，可能数 GB）")
             uv = shutil.which("uv") or str(portable_home() / "bootstrap/windows/uv/uv.exe")
             if not python.is_file():
                 _run(
@@ -216,6 +226,10 @@ def prepare_local_model(model: str = DEFAULT_MODEL, *, install: bool = False, lo
             )
         if not python.is_file():
             raise ProjectError("独立分离环境未安装，请先点击安装环境。")
+        report("第 2/3 步：下载所选模型，已存在的完整文件会跳过")
+        from .mirrors import modelscope_artifact_urls
+
+        bases = modelscope_artifact_urls("separation_model_base")
         with tempfile.TemporaryDirectory(
             dir=portable_home() / "temp", prefix="separation-install-"
         ) as tmp:
@@ -229,6 +243,8 @@ def prepare_local_model(model: str = DEFAULT_MODEL, *, install: bool = False, lo
                         "model": model,
                         "output": tmp,
                         "device": "cpu",
+                        "source": source,
+                        "base_url": bases[0] if bases else None,
                     }
                 ),
             )
@@ -237,7 +253,68 @@ def prepare_local_model(model: str = DEFAULT_MODEL, *, install: bool = False, lo
                 7200,
                 log,
             )
-        return f"已安装/校验 {model}；分离和 RTF 仍默认关闭。"
+        report("第 3/3 步：文件和模型加载校验通过")
+        return f"准备完成：分离环境可用；模型 {model} 已下载并校验。需要使用时勾选“启用人声分离”。"
+
+
+def local_install_status(model: str, *, thorough: bool = False) -> str:
+    """Fast page status; explicit checks additionally test imports and file hashes."""
+    python = runtime_python()
+    environment = "未安装 → 点击“安装环境和模型”"
+    if python.is_file():
+        environment = "已安装（点击“检查环境和模型”确认可用）"
+        if thorough:
+            try:
+                result = subprocess.run(
+                    [
+                        str(python),
+                        "-c",
+                        "import torch, librosa, soundfile; "
+                        "from audio_separator.separator import Separator; print('READY')",
+                    ],
+                    env=worker_environment(),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+                environment = (
+                    "可用（依赖检查通过）"
+                    if result.returncode == 0
+                    else "不完整 → 点击“安装环境和模型”修复"
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                environment = "检查失败或超时 → 点击“安装环境和模型”修复"
+    try:
+        model = local_model_name(model)
+        if thorough:
+            verify_local_model(model)
+            state = "已下载，文件校验通过"
+        else:
+            root = model_directory()
+            manifest = root / f"{model}.integrity.json"
+            if not (root / model).is_file():
+                state = "未下载 → 点击“下载所选模型”"
+            elif not manifest.is_file():
+                state = "文件已存在，尚未校验 → 点击“下载所选模型”"
+            else:
+                records = json.loads(manifest.read_text(encoding="utf-8"))
+                if not isinstance(records, dict) or model not in records:
+                    raise ValueError("校验记录不完整")
+                missing = [
+                    name for name in records if not (root / local_model_name(name)).is_file()
+                ]
+                state = (
+                    "文件不完整 → 重新下载所选模型" if missing else "已下载（点击检查可重新校验）"
+                )
+    except Exception as exc:
+        state = f"未就绪：{exc}"
+    return (
+        f"分离环境：{environment}\n所选模型：{model}\n模型状态：{state}\n"
+        f"文件位置：{model_directory()}"
+    )
 
 
 def verify_local_model(model: str) -> str:

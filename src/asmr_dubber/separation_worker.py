@@ -86,27 +86,24 @@ def main() -> None:
         **job.get("params", {}),
     )
     if job["action"] == "download":
-        import requests
+        try:
+            from .separation_download import download_model_file
+        except ImportError:
+            from separation_download import download_model_file
+
+        used_files = set()
 
         def atomic_download(url, output_path):
-            target = Path(output_path)
-            if not target.resolve().is_relative_to(models.resolve()):
-                raise RuntimeError("模型清单包含目录外路径。")
-            if target.is_file():
-                return
-            if not url.startswith("https://"):
-                raise RuntimeError("模型下载必须使用 HTTPS。")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            partial = target.with_name(target.name + ".partial")
-            try:
-                with requests.get(url, stream=True, timeout=60) as response:
-                    response.raise_for_status()
-                    with partial.open("wb") as output:
-                        for block in response.iter_content(1024 * 1024):
-                            output.write(block)
-                os.replace(partial, target)
-            finally:
-                partial.unlink(missing_ok=True)
+            download_model_file(
+                url,
+                output_path,
+                models=models,
+                source=job.get("source", "modelscope"),
+                base_url=job.get("base_url")
+                or "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation/resolve/master",
+                report=lambda message: print(message, flush=True),
+            )
+            used_files.add(Path(output_path).name)
 
         separator.download_file_if_not_exists = atomic_download
         separator.download_model_files(job["model"])
@@ -123,16 +120,14 @@ def main() -> None:
                     if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                         raise RuntimeError("默认分离模型哈希不符，拒绝加载：" + name)
         # Populate metadata and verify the checkpoint actually loads on this host.
+        print("正在加载模型并检查运行环境，请稍候……", flush=True)
         separator.load_model(job["model"])
         catalog = separator.list_supported_model_files()
         (models / "catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
         manifest = {}
-        for path in models.iterdir():
-            if (
-                path.is_file()
-                and not path.name.endswith((".integrity.json", ".partial"))
-                and path.name != "catalog.json"
-            ):
+        for name in sorted(used_files):
+            path = models / name
+            if path.is_file():
                 with path.open("rb") as handle:
                     manifest[path.name] = hashlib.file_digest(handle, "sha256").hexdigest()
         (models / f"{job['model']}.integrity.json").write_text(

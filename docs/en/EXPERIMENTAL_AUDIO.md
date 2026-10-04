@@ -58,7 +58,9 @@ Baseline: `vocals_mel_band_roformer.ckpt` by Kimberley Jensen. It is a music-voc
 
 Advanced JSON exposes inference parameters for the selected architecture, not arbitrary training/network configuration. The isolated ONNX environment uses CPU; the PyTorch RoFormer path can use CUDA. Check each model's license.
 
-Installation/download requires explicit consent. Sources are PyPI, PyTorch, GitHub and Hugging Face, separate from the ordinary Setup ModelScope policy. The default model is hash-pinned; other downloads record local integrity metadata. Inference refuses implicit downloads.
+First use: find a separation model under Models → Optional and click Download. The application prepares its isolated environment and weights. Details shows environment and file status; the task log shows installation, download and verification progress. Wait for the task to complete. To switch models, download the corresponding item, then select it under the project's Recognition → More settings → Separation panel.
+
+Environment dependencies come from PyPI/PyTorch. Models prefer the [ModelScope mirror](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation), containing Mel-Band RoFormer, Demucs and Demucs FT, with upstream fallback. You can also select upstream sources directly. Configure the mirror with `separation_model_base` in `mirrors.json`. Mirrored files have pinned SHA256 hashes; other models record local integrity metadata. Inference refuses implicit downloads.
 
 ## Batch outputs and caches
 

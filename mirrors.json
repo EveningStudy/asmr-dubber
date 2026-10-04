@@ -96,6 +96,9 @@
     ],
     "crispasr_vad_model_files": [
       "artifacts/models/crispasr/ggml-silero-v6.2.0.bin"
+    ],
+    "separation_model_base": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation/resolve/master"
     ]
   },
   "pypi_indexes": [
