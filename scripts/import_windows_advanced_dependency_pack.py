@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import filecmp
+import importlib.metadata
 import json
 import os
 import shutil
@@ -166,17 +167,38 @@ def _merge_file(source: Path, destination: Path) -> None:
 
 
 def _merge_venv(source: Path, destination: Path) -> None:
-    """Overlay a prepared venv without renaming the running WebUI environment."""
-
+    """Add optional distributions without replacing the running core's ABI."""
+    source_site = _windows_io_path(source / "Lib/site-packages")
+    destination_site = _windows_io_path(destination / "Lib/site-packages")
+    installed = {
+        distribution.metadata["Name"].lower().replace("-", "_").replace(".", "_")
+        for distribution in importlib.metadata.distributions(path=[str(destination_site)])
+        if distribution.files and distribution.metadata["Name"]
+    }
+    preserved = set()
+    metadata_directories = set()
+    for distribution in importlib.metadata.distributions(path=[str(source_site)]):
+        name = distribution.metadata["Name"]
+        if not name or name.lower().replace("-", "_").replace(".", "_") not in installed:
+            continue
+        for entry in distribution.files or ():
+            preserved.add((source_site / entry).resolve())
+            if entry.parts[0].endswith(".dist-info"):
+                metadata_directories.add((source_site / entry.parts[0]).resolve())
     for current, directories, filenames in os.walk(_windows_io_path(source)):
         current_path = Path(current)
         relative = current_path.relative_to(_windows_io_path(source))
-        target_directory = _windows_io_path(destination / relative)
-        target_directory.mkdir(parents=True, exist_ok=True)
-        for directory in directories:
-            (target_directory / directory).mkdir(parents=True, exist_ok=True)
+        if current_path.resolve() in metadata_directories:
+            directories.clear()
+            continue
         for filename in filenames:
-            _merge_file(current_path / filename, destination / relative / filename)
+            incoming = current_path / filename
+            target = destination / relative / filename
+            if incoming.resolve() in preserved:
+                continue
+            if not incoming.is_relative_to(source_site) and _windows_io_path(target).is_file():
+                continue
+            _merge_file(incoming, target)
 
 
 def import_pack(

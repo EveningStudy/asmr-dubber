@@ -224,6 +224,40 @@ def test_advanced_dependency_pack_can_merge_into_running_webui_venv(tmp_path: Pa
     assert (portable / "runtimes/windows-advanced-dependencies.json").is_file()
 
 
+def test_advanced_merge_preserves_complete_running_core_distributions(tmp_path, monkeypatch):
+    source, destination = tmp_path / "incoming", tmp_path / "running"
+    for root, version, content in (
+        (source, "1.0", b"old ABI"),
+        (destination, "2.0", b"loaded ABI"),
+    ):
+        site = root / "Lib/site-packages"
+        info = site / f"cffi-{version}.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(f"Name: cffi\nVersion: {version}\n")
+        (info / "RECORD").write_text(
+            f"_cffi_backend.pyd,,\ncffi/__init__.py,,\ncffi-{version}.dist-info/METADATA,,\n"
+            f"cffi-{version}.dist-info/RECORD,,\n"
+        )
+        (site / "_cffi_backend.pyd").write_bytes(content)
+        (site / "cffi").mkdir()
+        (site / "cffi/__init__.py").write_bytes(content)
+    (source / "Lib/site-packages/faster_whisper").mkdir()
+    (source / "Lib/site-packages/faster_whisper/__init__.py").write_bytes(b"new backend")
+    replace = ADVANCED_MODULE.os.replace
+
+    def deny_loaded_file(incoming, target):
+        if Path(target).name == "_cffi_backend.pyd":
+            raise PermissionError("WinError 5: loaded native module")
+        return replace(incoming, target)
+
+    monkeypatch.setattr(ADVANCED_MODULE.os, "replace", deny_loaded_file)
+    ADVANCED_MODULE._merge_venv(source, destination)
+    assert (destination / "Lib/site-packages/_cffi_backend.pyd").read_bytes() == b"loaded ABI"
+    assert (destination / "Lib/site-packages/cffi/__init__.py").read_bytes() == b"loaded ABI"
+    assert not (destination / "Lib/site-packages/cffi-1.0.dist-info").exists()
+    assert (destination / "Lib/site-packages/faster_whisper/__init__.py").is_file()
+
+
 def test_advanced_dependency_pack_rejects_path_traversal(tmp_path: Path) -> None:
     archive = tmp_path / "unsafe-advanced.zip"
     _write_advanced_pack(archive, unsafe=True)
