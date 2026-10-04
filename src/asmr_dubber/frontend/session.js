@@ -2,9 +2,27 @@ export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 export const state = {boot: null, project: null, tasks: [], queue: [], page: 'home', step: 1, filter: 'all', language: 'zh', saveChain: Promise.resolve(), saveError: null, seenTasks: new Set()};
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let templateSource, templates=[];
+function translatedText(source) {
+  const locales=state.boot?.locales||{};
+  if(locales[source])return locales[source];
+  if(templateSource!==locales){
+    templateSource=locales;
+    templates=Object.entries(locales).filter(([key])=>/\{\w+\}/.test(key)).map(([key,text])=>{
+      const names=[...key.matchAll(/\{(\w+)\}/g)].map(match=>match[1]);
+      const pattern=key.split(/(\{\w+\})/).map(part=>/^\{\w+\}$/.test(part)?'(.+?)':part.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('');
+      return {pattern:new RegExp(`^${pattern}$`),names,text};
+    });
+  }
+  for(const template of templates){
+    const match=source.match(template.pattern);if(!match)continue;
+    return template.text.replace(/\{(\w+)\}/g,(_,name)=>{const value=match[template.names.indexOf(name)+1];return locales[value]||value;});
+  }
+  return source.split(' · ').map(part=>locales[part]||part).join(' · ');
+}
 export function t(source, values = {}) {
   const label = state.boot?.labels[source] || source;
-  let text = state.language === 'en' ? state.boot?.locales[label] || state.boot?.locales[source] || label.split(' · ').map(part=>state.boot?.locales[part]||part).join(' · ') : label;
+  let text = state.language === 'en' ? String(label).split('\n').map(translatedText).join('\n') : label;
   for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, String(value));
   return text;
 }
@@ -32,7 +50,7 @@ export async function upload(file) {
 let noticeTimer;
 export function notice(message, error = false) {
   clearTimeout(noticeTimer);
-  const box = $('#notice'); box.textContent = String(message); box.hidden = false; box.classList.toggle('error', error);
+  const box = $('#notice'); box.textContent = t(String(message)); box.hidden = false; box.classList.toggle('error', error);
   if (!error) noticeTimer = setTimeout(() => box.hidden = true, 5000);
 }
 export function guard(action) {
@@ -75,7 +93,7 @@ export async function chooseFile(accept = '') {
 export function taskHTML(task) {
   const active = ['queued','running','cancelling'].includes(task.status);
   const ratio = task.total > 0 ? Math.min(100, task.current/task.total*100) : 0;
-  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}</div><div class="d">${esc(task.error || task.message)}</div><div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${task.id}">${t('暂停')}</button>` : ['cancelled','failed','interrupted'].includes(task.status) ? `<button class="btn" data-resume="${task.id}">${t('继续')}</button>` : ''}</div><details id="task-log-${task.id}"${document.getElementById(`task-log-${task.id}`)?.open?' open':''}><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
+  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}</div><div class="d">${esc(t(task.error || task.message))}</div><div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${task.id}">${t('暂停')}</button>` : ['cancelled','failed','interrupted'].includes(task.status) ? `<button class="btn" data-resume="${task.id}">${t('继续')}</button>` : ''}</div><details id="task-log-${task.id}"${document.getElementById(`task-log-${task.id}`)?.open?' open':''}><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
 }
 export async function startTask(kind, extra = {}, project = true) {
   await flushSaves();

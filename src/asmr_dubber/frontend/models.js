@@ -18,7 +18,7 @@ export function renderModels() {
   $('#starterDescription').textContent=t('Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。');
   $('#asrCheck').classList.toggle('ok',catalog.items.some(item=>item.group==='识别'&&item.state==='ready'));
   $$('[data-source]').forEach(button=>button.classList.toggle('on',button.dataset.source===state.boot.settings.download_source));
-  $('#modelTasks').innerHTML=`<details><summary>${t('导入离线模型包')}</summary><pre class="log">${esc(catalog.packs)}</pre></details>`+state.tasks.filter(task=>['download','import_models','repair'].includes(task.kind)).map(taskHTML).join('');
+  $('#modelTasks').innerHTML=`<details><summary>${t('导入离线模型包')}</summary><pre class="log">${esc(t(catalog.packs))}</pre></details>`+state.tasks.filter(task=>['download','import_models','repair'].includes(task.kind)).map(taskHTML).join('');
   $('#importModels').onclick=guard(async()=>{await startTask('import_models',{},false);notice(t('请把离线模型包放在程序目录的 model-packs 文件夹。'));});
 }
 export function initializeModels() {
