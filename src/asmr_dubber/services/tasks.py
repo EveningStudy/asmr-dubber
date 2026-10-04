@@ -129,6 +129,9 @@ class Tasks:
                     result=result,
                     reference=None,
                 )
+                if not failure:
+                    task = self.items[identifier]
+                    task["current"] = task["total"] = task["total"] or 1
         except (OperationCancelledError, InstallPausedError) as exc:
             with self.lock:
                 self.items[identifier].update(status="cancelled", message=str(exc), reference=None)

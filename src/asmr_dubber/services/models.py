@@ -1,6 +1,7 @@
 """Catalog numbers and install state come from the existing runtime registry."""
 
 import os
+import re
 import shutil
 from dataclasses import asdict
 from pathlib import Path
@@ -121,8 +122,23 @@ def download(request, report, token):
     name = "ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS"
     previous = os.environ.get(name)
     os.environ[name] = "1" if current().download_source == "original" else "0"
+    current_progress, total_progress = 0, 0
+
+    def progress(message="", current=None, total=None, **kwargs):
+        nonlocal current_progress, total_progress
+        if "desc" in kwargs:
+            current, total = message if isinstance(message, tuple) else (message, 1)
+            message = kwargs["desc"]
+        percent = re.search(r"(?:下载|download).*?(\d+(?:\.\d+)?)%", str(message), re.I)
+        curl = re.match(r"\s*(\d+)\s+[\d.]+[kMGT]?\s+\d+\s+[\d.]+[kMGT]?\s", str(message))
+        if percent or curl:
+            current, total = float((percent or curl).group(1)), 100
+        if current is not None and total is not None:
+            current_progress, total_progress = current, total
+        report(message, current_progress, total_progress)
+
     try:
-        return _download(request, report, token)
+        return _download(request, progress, token)
     finally:
         if previous is None:
             os.environ.pop(name, None)
