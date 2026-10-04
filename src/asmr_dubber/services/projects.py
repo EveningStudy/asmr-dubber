@@ -1,5 +1,6 @@
 """Project snapshots and revision checked editing operations."""
 
+import logging
 from pathlib import Path
 
 from .. import pipeline
@@ -7,7 +8,10 @@ from ..audio import verify_source
 from ..lifecycle import browser_revision_scope
 from ..models import load_project
 from . import project_audio, project_operations, project_records, review
+from .media import discard_upload
 from .settings import current
+
+logger = logging.getLogger(__name__)
 
 
 class Projects:
@@ -57,7 +61,13 @@ class Projects:
     def list(self):
         result = []
         for label, manifest in project_records.recent_projects(current().projects_root or None):
-            active, _ = load_project(manifest)
+            try:
+                active, _ = load_project(manifest)
+            except Exception as exc:
+                # One unreadable manifest must not hide every other project.
+                logger.warning("Skipping unreadable project %s: %s", manifest, exc)
+                result.append({"label": label, "manifest": manifest, "error": str(exc)})
+                continue
             result.append(
                 {
                     "label": label,
@@ -113,6 +123,7 @@ class Projects:
                 message, preview = project_audio.select_autoflow_external_reference(
                     project, external, text=text, language=language
                 )
+                discard_upload(external)
             elif start is not None or end is not None:
                 message, preview = project_audio.select_autoflow_project_reference(
                     project, sentence, start, end, text
@@ -147,6 +158,7 @@ class Projects:
                 update(
                     {"tts_target_language": request["target_language"]}, manifest, active.revision
                 )
+            discard_upload(request["source"])
             return self.get(manifest)
         manifest = request["project"]
         active, directory = load_project(manifest)
@@ -182,6 +194,7 @@ class Projects:
                     report,
                     token,
                 )
+                discard_upload(request.get("file"))
             elif kind == "subtitles":
                 project_operations.subtitles(
                     manifest, rows, request.get("language", "bilingual"), report, token

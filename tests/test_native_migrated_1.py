@@ -323,7 +323,7 @@ def test_workflow_controls_follow_prerequisites(app):
 
 def test_sentence_table_uses_bounded_native_editor(app):
     script = FRONTEND.joinpath("projects.js").read_text(encoding="utf-8")
-    assert "slice(rowPage*50,(rowPage+1)*50)" in script
+    assert "slice(rowPage * 50, (rowPage + 1) * 50)" in script
     assert "contenteditable" in script
     assert 'data-row-field="enabled"' in script
     assert "table-layout: fixed" in FRONTEND.joinpath("styles.css").read_text(encoding="utf-8")
@@ -339,7 +339,7 @@ def test_sentence_table_does_not_send_whole_table_on_cell_edit(app, tmp_path):
     )
     assert saved["rows"][0] == row and saved["rows"][1] == rows[1]
     script = FRONTEND.joinpath("projects.js").read_text(encoding="utf-8")
-    assert "only?'projects/sentence':'projects/table'" in script
+    assert "only ? 'projects/sentence' : 'projects/table'" in script
 
 
 def test_review_feature_and_result_panel_have_explicit_experimental_warning(app):

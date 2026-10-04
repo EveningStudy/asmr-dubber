@@ -79,7 +79,9 @@ class Handler(BaseHTTPRequestHandler):
             f"localhost:{self.server.server_port}",
             f"{self.server.server_address[0]}:{self.server.server_port}",
         }
-        if host not in valid_hosts:
+        # A remote bind is reached through whatever name or address the client uses and is
+        # protected by Basic authentication; the allow-list stops DNS rebinding on loopback.
+        if not self.server.auth and host not in valid_hosts:
             self._discard_body()
             self.close_connection = True
             self._json({"error": "Invalid Host"}, 403)

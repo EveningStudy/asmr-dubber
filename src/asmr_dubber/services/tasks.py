@@ -14,6 +14,7 @@ from ..storage import atomic_write_text
 from ..task_control import CancellationToken, cancellation_scope, check_cancelled
 
 ACTIVE = {"queued", "running", "cancelling"}
+HISTORY = 50
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +31,16 @@ class Tasks:
             if task["status"] in ACTIVE:
                 task.update(status="interrupted", message="Interrupted; saved results are retained")
         if self.items:
+            self._prune()
             self._save()
+
+    def _prune(self):
+        finished = sorted(
+            (task for task in self.items.values() if task["status"] not in ACTIVE),
+            key=lambda task: task.get("updated_at", 0),
+        )
+        for task in finished[:-HISTORY]:
+            del self.items[task["id"]]
 
     def _save(self):
         atomic_write_text(self.path, json.dumps(self.items, ensure_ascii=False))
@@ -74,6 +84,7 @@ class Tasks:
                 "reference": None,
             }
             token = self.tokens[identifier] = CancellationToken()
+            self._prune()
             self._save()
             threading.Thread(
                 target=self._run,

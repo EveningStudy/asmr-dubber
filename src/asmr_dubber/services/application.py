@@ -133,7 +133,9 @@ class Application:
                     saved_service_key(f"tts:{active.tts_backend}"),
                 )
             return {"message": result}
-        return self.projects.action(request, report, token)
+        result = self.projects.action(request, report, token)
+        # Task results are persisted and polled; the browser reloads the project itself.
+        return {"manifest": result["manifest"]} if "manifest" in result else result
 
     def storage(self):
         home = portable_home()

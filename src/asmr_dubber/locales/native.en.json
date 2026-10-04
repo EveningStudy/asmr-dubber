@@ -470,5 +470,9 @@
   "解除人工确认锁定（允许重新识别）": "Unlock confirmed sentences for recognition",
   "采纳所选候选": "Accept selected candidate",
   "保留并确认主稿": "Keep and confirm baseline",
-  "撤销上一次采纳或确认": "Undo last acceptance or confirmation"
+  "撤销上一次采纳或确认": "Undo last acceptance or confirmation",
+  "现有译文会被新的翻译覆盖，包括你手动改过的句子。已生成的配音需要重做。": "Existing translations will be overwritten, including sentences you edited by hand. Generated dubbing will need to be redone.",
+  "重新翻译": "Translate again",
+  "项目文件无法读取": "Project file cannot be read",
+  "这个模型需要进阶运行环境，先安装 Kotoba-Whisper 后端。": "This model needs the advanced runtime; installing the Kotoba-Whisper backend first."
 }

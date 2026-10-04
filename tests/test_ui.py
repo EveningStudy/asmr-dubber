@@ -359,7 +359,7 @@ def test_workspace_nests_both_work_modes_and_separates_autoflow_scopes(app):
             "batch/remove",
         )
     )
-    assert "referenceDialog(request.project_json,true)" in script
+    assert "referenceDialog(request.project_json, true)" in script
     assert "source_subtitles" in script and "subtitles" in script
     assert "background_choices" in script
 

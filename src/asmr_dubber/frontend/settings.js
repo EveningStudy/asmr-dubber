@@ -1,30 +1,147 @@
-import { $, $$, state, api, esc, t, size, options, field, dialog, taskHTML, startTask, guard, notice } from './session.js';
+import {
+  $,
+  $$,
+  state,
+  api,
+  esc,
+  t,
+  size,
+  options,
+  field,
+  dialog,
+  taskHTML,
+  startTask,
+  guard,
+  notice,
+} from './session.js';
 
 export function renderKeys() {
-  const providers=state.boot.choices.translation;
-  $('#serviceKeys').innerHTML=`<div class="label"><b>${t('翻译')}</b></div><div class="card">${Object.entries(providers).map(([id,provider])=>keyRow('translation',id,provider.label,state.boot.keys.translation[id])).join('')}</div><div class="label"><b>${t('配音')}</b></div><div class="card">${Object.keys(state.boot.keys.services).filter(id=>id.startsWith('tts:')).map(id=>keyRow('service',id,id.split(':')[1],state.boot.keys.services[id])).join('')}</div><div class="label"><b>${t('识别与分离')}</b></div><div class="card">${Object.keys(state.boot.keys.services).filter(id=>!id.startsWith('tts:')).map(id=>keyRow('service',id,id,state.boot.keys.services[id])).join('')}</div><p class="small muted" style="margin:12px 2px">${t('Key 以明文保存在本机的 .asmr-dubber\\config\\secrets.json。不要把这个文件夹发给别人。')}</p><div class="card group">${['asr','translation','tts'].map(service=>field(t(service),`<button class="btn" data-diagnostic="${service}">${t('测试接口')}</button>`)).join('')}</div>`;
-  $('#translationCheck').classList.toggle('ok',Object.values(state.boot.keys.translation).some(status=>status.includes('已以')));
+  const providers = state.boot.choices.translation;
+  $('#serviceKeys').innerHTML =
+    `<div class="label"><b>${t('翻译')}</b></div><div class="card">${Object.entries(providers)
+      .map(([id, provider]) => keyRow('translation', id, provider.label, state.boot.keys.translation[id]))
+      .join('')}</div><div class="label"><b>${t('配音')}</b></div><div class="card">${Object.keys(
+      state.boot.keys.services,
+    )
+      .filter((id) => id.startsWith('tts:'))
+      .map((id) => keyRow('service', id, id.split(':')[1], state.boot.keys.services[id]))
+      .join('')}</div><div class="label"><b>${t('识别与分离')}</b></div><div class="card">${Object.keys(
+      state.boot.keys.services,
+    )
+      .filter((id) => !id.startsWith('tts:'))
+      .map((id) => keyRow('service', id, id, state.boot.keys.services[id]))
+      .join(
+        '',
+      )}</div><p class="small muted" style="margin:12px 2px">${t('Key 以明文保存在本机的 .asmr-dubber\\config\\secrets.json。不要把这个文件夹发给别人。')}</p><div class="card group">${['asr', 'translation', 'tts'].map((service) => field(t(service), `<button class="btn" data-diagnostic="${service}">${t('测试接口')}</button>`)).join('')}</div>`;
+  $('#translationCheck').classList.toggle(
+    'ok',
+    Object.values(state.boot.keys.translation).some((status) => status.includes('已以')),
+  );
 }
-function keyRow(kind,id,label,status) {return `<div class="row"><div class="grow"><div class="t">${esc(t(label))}</div><div class="d">${esc(t(status))}</div></div><button class="btn" data-key-kind="${kind}" data-key-name="${id}">${t(status.includes('已以')?'更换':'填写')}</button><button class="btn plain small" data-clear-key="${id}" data-key-kind="${kind}">${t('清除')}</button></div>`;}
+function keyRow(kind, id, label, status) {
+  return `<div class="row"><div class="grow"><div class="t">${esc(t(label))}</div><div class="d">${esc(t(status))}</div></div><button class="btn" data-key-kind="${kind}" data-key-name="${id}">${t(status.includes('已以') ? '更换' : '填写')}</button><button class="btn plain small" data-clear-key="${id}" data-key-kind="${kind}">${t('清除')}</button></div>`;
+}
 export async function refreshStorage() {
-  const result=await api('storage/get');
-  $('#storageView').innerHTML=`<div class="card" style="padding:16px 18px"><div>${t('已用')} ${size(Object.values(result.sizes).reduce((a,b)=>a+b,0))}</div><div class="legend">${Object.entries(result.sizes).map(([name,bytes])=>`<span>${t(name)} ${size(bytes)}</span>`).join('')}</div></div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[['safe','临时文件','可以放心删。'],['rebuild','导出用的中间文件','删了以后，下次导出要多花几分钟重新计算。'],['separation','人声分离结果','删了以后，再做替换版要重新分离，比较慢。']].map(([category,title,hint])=>`<div class="row"><div class="grow"><div class="t">${t(title)}</div><div class="d">${t(hint)}</div></div><button class="btn" data-clean-category="${category}" data-clean-root="${esc(result.root)}">${t('清理')}</button></div>`).join('')}</div><p class="small muted" style="margin:12px 2px">${t('点“清理”后会先列出要删的文件，确认了才删。')}</p>`;
+  const result = await api('storage/get');
+  $('#storageView').innerHTML =
+    `<div class="card" style="padding:16px 18px"><div>${t('已用')} ${size(Object.values(result.sizes).reduce((a, b) => a + b, 0))}</div><div class="legend">${Object.entries(
+      result.sizes,
+    )
+      .map(([name, bytes]) => `<span>${t(name)} ${size(bytes)}</span>`)
+      .join(
+        '',
+      )}</div></div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
+      ['safe', '临时文件', '可以放心删。'],
+      ['rebuild', '导出用的中间文件', '删了以后，下次导出要多花几分钟重新计算。'],
+      ['separation', '人声分离结果', '删了以后，再做替换版要重新分离，比较慢。'],
+    ]
+      .map(
+        ([category, title, hint]) =>
+          `<div class="row"><div class="grow"><div class="t">${t(title)}</div><div class="d">${t(hint)}</div></div><button class="btn" data-clean-category="${category}" data-clean-root="${esc(result.root)}">${t('清理')}</button></div>`,
+      )
+      .join(
+        '',
+      )}</div><p class="small muted" style="margin:12px 2px">${t('点“清理”后会先列出要删的文件，确认了才删。')}</p>`;
 }
-async function cleanDialog(root,category) {
-  const plan=await api('storage/scan',{root,categories:[category]});
-  dialog('清理缓存',`<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map(project=>`<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,'确认清理',async()=>{const selected=$$('.clean-project:checked').map(input=>input.value);const result=await api('storage/clean',{plan,selected,confirmed:true});notice(t('已清理 {size}',{size:size(result.removed)})+(result.skipped.length?'\n'+result.skipped.join('\n'):''));await refreshStorage();});
+async function cleanDialog(root, category) {
+  const plan = await api('storage/scan', { root, categories: [category] });
+  dialog(
+    '清理缓存',
+    `<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map((project) => `<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,
+    '确认清理',
+    async () => {
+      const selected = $$('.clean-project:checked').map((input) => input.value);
+      const result = await api('storage/clean', { plan, selected, confirmed: true });
+      notice(
+        t('已清理 {size}', { size: size(result.removed) }) +
+          (result.skipped.length ? '\n' + result.skipped.join('\n') : ''),
+      );
+      await refreshStorage();
+    },
+  );
 }
 export async function refreshLogs() {
-  const result=await api('logs/get');
-  $('#logsView').innerHTML=`<div class="card"><div class="row"><div class="grow"><div class="t">${t('检查运行环境')}</div><div class="d">${t('显卡驱动、模型文件、运行库。出问题时先点这个。')}</div></div><button class="btn" id="checkHealth">${t('开始检查')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复微软 VC++ 运行库')}</div><div class="d">${t('从微软官网下载，可能会请求管理员权限。')}</div></div><button class="btn" data-repair="vc">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复某个模型的运行环境')}</div></div><select id="healthBackend">${options(Object.entries(state.boot.health_backends).map(([id,label])=>[label,id]),Object.keys(state.boot.health_backends)[0])}</select><button class="btn" data-repair="backend">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('导出日志')}</div><div class="d">${t('Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。')}</div></div><a class="btn" download="ASMR-Dubber.log.txt" href="${result.url}">${t('导出')}</a></div></div><div class="label"><b>${t('最近日志')}</b></div><div class="card"><pre class="log">${esc(result.text)}</pre></div><div id="diagnosticTasks">${state.tasks.filter(task=>['health','repair','diagnostic','preview_edge'].includes(task.kind)).map(task=>`${taskHTML(task)}${task.result?.message?`<pre class="log">${esc(task.result.message)}</pre>`:''}${task.result?.url?`<audio controls src="${task.result.url}"></audio>`:''}`).join('')}</div>`;
-  $('#checkHealth').onclick=guard(()=>startTask('health',{backend:$('#healthBackend').value},false));
+  const result = await api('logs/get');
+  $('#logsView').innerHTML =
+    `<div class="card"><div class="row"><div class="grow"><div class="t">${t('检查运行环境')}</div><div class="d">${t('显卡驱动、模型文件、运行库。出问题时先点这个。')}</div></div><button class="btn" id="checkHealth">${t('开始检查')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复微软 VC++ 运行库')}</div><div class="d">${t('从微软官网下载，可能会请求管理员权限。')}</div></div><button class="btn" data-repair="vc">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复某个模型的运行环境')}</div></div><select id="healthBackend">${options(
+      Object.entries(state.boot.health_backends).map(([id, label]) => [label, id]),
+      Object.keys(state.boot.health_backends)[0],
+    )}</select><button class="btn" data-repair="backend">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('导出日志')}</div><div class="d">${t('Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。')}</div></div><a class="btn" download="ASMR-Dubber.log.txt" href="${result.url}">${t('导出')}</a></div></div><div class="label"><b>${t('最近日志')}</b></div><div class="card"><pre class="log">${esc(result.text)}</pre></div><div id="diagnosticTasks">${state.tasks
+      .filter((task) => ['health', 'repair', 'diagnostic', 'preview_edge'].includes(task.kind))
+      .map(
+        (task) =>
+          `${taskHTML(task)}${task.result?.message ? `<pre class="log">${esc(task.result.message)}</pre>` : ''}${task.result?.url ? `<audio controls src="${task.result.url}"></audio>` : ''}`,
+      )
+      .join('')}</div>`;
+  $('#checkHealth').onclick = guard(() => startTask('health', { backend: $('#healthBackend').value }, false));
 }
 export function initializeSettings() {
-  document.addEventListener('click',guard(async event=>{
-    const key=event.target.closest('[data-key-name]');if(key){dialog('填写 API Key',`<label>API Key<input type="password" id="newKey" autocomplete="off"></label>`,'保存',async()=>{await api('settings/key',{kind:key.dataset.keyKind,name:key.dataset.keyName,value:$('#newKey').value});$('#newKey').value='';state.boot.keys=await api('settings/keys');renderKeys();});return;}
-    const clear=event.target.closest('[data-clear-key]');if(clear){await api('settings/key',{kind:clear.dataset.keyKind,name:clear.dataset.clearKey,clear:true});state.boot.keys=await api('settings/keys');renderKeys();return;}
-    const diagnostic=event.target.closest('[data-diagnostic]');if(diagnostic){await startTask('diagnostic',{service:diagnostic.dataset.diagnostic},false);notice(t('检查已开始'));return;}
-    const repair=event.target.closest('[data-repair]');if(repair){await startTask('repair',{backend:$('#healthBackend').value,action:repair.dataset.repair},false);return;}
-    const clean=event.target.closest('[data-clean-category]');if(clean)await cleanDialog(clean.dataset.cleanRoot,clean.dataset.cleanCategory);
-  }));
+  document.addEventListener(
+    'click',
+    guard(async (event) => {
+      const key = event.target.closest('[data-key-name]');
+      if (key) {
+        dialog(
+          '填写 API Key',
+          `<label>API Key<input type="password" id="newKey" autocomplete="off"></label>`,
+          '保存',
+          async () => {
+            await api('settings/key', {
+              kind: key.dataset.keyKind,
+              name: key.dataset.keyName,
+              value: $('#newKey').value,
+            });
+            $('#newKey').value = '';
+            state.boot.keys = await api('settings/keys');
+            renderKeys();
+          },
+        );
+        return;
+      }
+      const clear = event.target.closest('[data-clear-key]');
+      if (clear) {
+        await api('settings/key', { kind: clear.dataset.keyKind, name: clear.dataset.clearKey, clear: true });
+        state.boot.keys = await api('settings/keys');
+        renderKeys();
+        return;
+      }
+      const diagnostic = event.target.closest('[data-diagnostic]');
+      if (diagnostic) {
+        await startTask('diagnostic', { service: diagnostic.dataset.diagnostic }, false);
+        notice(t('检查已开始'));
+        return;
+      }
+      const repair = event.target.closest('[data-repair]');
+      if (repair) {
+        await startTask(
+          'repair',
+          { backend: $('#healthBackend').value, action: repair.dataset.repair },
+          false,
+        );
+        return;
+      }
+      const clean = event.target.closest('[data-clean-category]');
+      if (clean) await cleanDialog(clean.dataset.cleanRoot, clean.dataset.cleanCategory);
+    }),
+  );
 }

@@ -37,6 +37,9 @@ def open_output(path):
 
 
 def reference_upload(path):
+    from .media import discard_upload
     from .settings import reference_upload as store
 
-    return {"path": store(path)}
+    stored = store(path)
+    discard_upload(path)
+    return {"path": stored}

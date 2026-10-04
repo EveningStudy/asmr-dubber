@@ -39,7 +39,8 @@ def create(application, tmp_path):
     task = application.start(request)
     result = completed(application.tasks, task["id"])
     assert result["status"] == "completed", result
-    return result["result"]
+    assert set(result["result"]) == {"manifest"}
+    return application.projects.get(result["result"]["manifest"])
 
 
 def test_catalog_has_every_setting_once_and_real_constraints():
