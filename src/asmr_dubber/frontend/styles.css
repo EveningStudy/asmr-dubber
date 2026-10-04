@@ -267,6 +267,9 @@ td.id { overflow: hidden; text-overflow: ellipsis; }
 .language { margin-top: 12px; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 1100px) {
+  .app { min-width: 0; }
+  main, .set > div { min-width: 0; }
+  .t, .d, pre.log { overflow-wrap: anywhere; }
   .pbar { grid-template-columns: 1fr auto; }
   .pbar .steps { grid-row: 2; grid-column: 1 / -1; justify-self: center; }
   .work { grid-template-columns: 1fr 330px; }
@@ -274,16 +277,17 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
   .tools .saved { width: 100%; }
 }
 @media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   main { min-width: 0; margin-left: 0; }
   .sidebar { position: static; width: auto; height: auto; }
   .sidebar { padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .brand { display: none; }
   .nav { display: flex; justify-content: space-around; }
-  .nav button { width: auto; margin: 0; }
+  .nav button { width: auto; margin: 0; padding: 5px 6px; gap: 4px; font-size: 12px; }
   .nav button svg { flex: none; }
   .nav { gap: 4px; }
-  .side-foot { display: none; }
+  .side-foot { display: block; padding: 0; }
+  .side-foot #deviceFoot { display: none; }
   .page { padding: 28px 20px; }
   .page.wide { height: auto; min-height: calc(100vh - 64px); }
   .work { display: flex; flex-direction: column; }
@@ -303,6 +307,12 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
   .q .row { flex-wrap: wrap; }
   .q .prog { width: 100%; }
   .head { align-items: start; }
+  .head, .row, .legend { flex-wrap: wrap; }
+  .mrow .grow { flex-basis: 100%; }
+  .field { align-items: start; flex-wrap: wrap; }
+  .field .control { width: 100%; flex-wrap: wrap; }
+  .field select, .field textarea, .setview .field input[type=text] { max-width: 100%; }
+  .sidebar .language { display: flex; max-width: 180px; }
   .steps button { padding: 5px 12px; }
   .sentence-controls .field { width: 100%; }
 }
