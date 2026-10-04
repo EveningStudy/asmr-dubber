@@ -10,13 +10,15 @@ ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper，以及�
 
 ## 一览
 
+下面的显存与接口说明来自项目注册/适配合同，不表示每个账户或硬件均已实测。当前配置数值见[参数清单](PARAMETERS.md)，动态推荐以模型页为准。
+
 ### ASR（语音识别）
 
-| 后端 | 设备 | 建议显存 | 安装方案中的模型 | 适合场景 |
+| 后端 | 设备 | 建议显存 | 下载准备的模型 | 适合场景 |
 |---|---|---:|---|---|
-| Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 推荐、进阶 | 默认主识别，日语质量优先 |
-| Kotoba-Whisper（日语）| CPU、NVIDIA CUDA | 6 GB | 进阶安装 v2.2 | 日语 Whisper 对照与复核 |
-| Faster-Whisper（日语/英语）| CPU、NVIDIA CUDA | 6 GB | 进阶安装 large-v2 | 英语项目唯一的本地 ASR；CPU `int8`、词级时间戳 |
+| Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 模型页下载 | 默认主识别，日语质量优先 |
+| Kotoba-Whisper（日语）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 v2.2 | 日语 Whisper 对照与复核 |
+| Faster-Whisper（日语/英语/中文）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 large-v2 | 英语项目唯一的本地 ASR；CPU `int8`、词级时间戳 |
 | 通用 ASR API | 服务端 | — | 不安装本地模型 | 兼容 OpenAI 转写接口的本地或云端服务 |
 
 Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较小任务，但还要给驱动、音频和中间张量留空间。显存接近下限时保持批大小 1。
@@ -38,19 +40,13 @@ Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较�
 
 IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。IndexTTS-2.5 的运行环境和权重更大，建议使用支持 BF16 且有 10 GB 以上显存的 NVIDIA 显卡；CPU 可以运行，但不适合长项目。Edge、MiMo 和 MiniMax 由在线服务完成合成；GPT-SoVITS、CosyVoice 和 Fish Speech 的服务端由用户自行管理。
 
-## 安装方案中的固定模型
+## 按需准备模型
 
-“推荐”安装两个 Parakeet 模型；“进阶”安装以下完整组合：
+模型在侧栏“模型”页下载，后端在当前项目对应步骤选择；默认选择在“设置 → 新项目默认值”修改。没有 Windows 首次安装方案选择。Parakeet 包包含 1.1B/0.6B；Kotoba/Faster-Whisper 下载准备各自固定推荐模型；其它注册模型需另行完整准备。IndexTTS-2.5 单独下载并主动切换。模型表的能力来自当前注册表，不表示每台机器已真实推理。
 
-1. Parakeet CTC 1.1B JA GAL；
-2. Parakeet TDT/CTC 0.6B JA；
-3. `kotoba-tech/kotoba-whisper-v2.2`；
-4. `Systran/faster-whisper-large-v2`；
-5. `TransWithAI/Whisper-Vad-EncDec-ASMR-onnx`；
-6. `Qwen/Qwen3-ForcedAligner-0.6B`；
-7. IndexTTS2 checkpoints，仅 NVIDIA GPU。
+![模型管理](../assets/screenshots/zh/models.png)
 
-注册表可以识别同系列的若干其它模型 ID，但分档安装不会下载它们。详见[安装指南](INSTALLATION.md)。
+项目中的后端、模型、设备、参考和采样参数自动保存；Key 在“设置 → 云端服务”保存。详见[完整参数清单](PARAMETERS.md)。
 
 ## Parakeet 日语
 
@@ -63,7 +59,7 @@ Parakeet 通过固定的 CrispASR F16 运行时执行，不在主 Python 环境�
 
 长音频默认由主程序先按安静边界切成 120 秒左右的临时片段，范围是 15–600 秒，再一次性交给同一个 CrispASR 模型进程处理；不会为每个片段重新加载模型。1.1B 输出的 token 时间戳会再按标点、停顿和单句最长时间整理成句子。“连续无响应超时”只在进程长期没有任何输出时停止任务，持续收到进度的长音频不会因为总耗时超过该值而中断。任务结束或用户取消后会清理子进程和临时目录。
 
-独立安装或修复：
+高级脚本安装或修复（通常使用模型页下载）：
 
 ```powershell
 .\scripts\windows\install-parakeet.ps1 -Variant Auto
@@ -75,7 +71,7 @@ bash scripts/linux/install-parakeet.sh
 
 ## Kotoba-Whisper
 
-Kotoba-Whisper 使用 Transformers 和 PyTorch。分档安装准备经过固定 revision 校验的 v2.2；注册表还允许选择同系列的 v2.1 和 v2.0，但这些变体必须先完整下载到本地缓存。
+Kotoba-Whisper 使用 Transformers 和 PyTorch。模型页固定包安装准备经过固定 revision 校验的 v2.2；注册表还允许选择同系列的 v2.1 和 v2.0，但这些变体必须先完整下载到本地缓存。
 
 音频默认按 30 秒分块，范围是 5–120 秒。较小分块降低峰值内存，较大分块保留更多上下文。它适合作为 Parakeet 的第二意见，也可以独立作为主识别器。
 
@@ -83,7 +79,7 @@ Kotoba-Whisper 没有在本项目中暴露“后端自带 VAD”选项。需要�
 
 ## Faster-Whisper
 
-Faster-Whisper 使用 CTranslate2，支持词级时间戳。分档安装固定准备 `Systran/faster-whisper-large-v2`。其它 Faster-Whisper 模型可以从本地目录加载。
+Faster-Whisper 使用 CTranslate2，支持词级时间戳。模型页固定包安装固定准备 `Systran/faster-whisper-large-v2`。其它 Faster-Whisper 模型可以从本地目录加载。
 
 常用计算方式：
 
@@ -95,7 +91,7 @@ Windows 的 CTranslate2 CUDA 构建需要其对应的 CUDA 12 BLAS 运行库。�
 
 ### 使用 large-v3
 
-先在“设置 → 设备与模型”确认 Faster-Whisper 运行环境可用，再把完整的 CTranslate2 模型放到：
+先在“模型”确认 Faster-Whisper 运行环境可用，再把完整的 CTranslate2 模型放到：
 
 ```text
 .asmr-dubber\models\faster-whisper-large-v3
@@ -144,7 +140,10 @@ Parakeet/CrispASR 和 Faster-Whisper 可以使用各自的 Silero VAD。它跟�
 
 ## IndexTTS2
 
-IndexTTS2 安装在 `.asmr-dubber/runtimes/index-tts` 的隔离环境中，避免它的固定依赖与主程序冲突。模型 checkpoints 默认在该目录下，由 Setup 或“设备与模型”准备。
+![IndexTTS 项目参数](../assets/screenshots/zh/defaults-tts.png)
+
+
+IndexTTS2 安装在 `.asmr-dubber/runtimes/index-tts` 的隔离环境中，避免它的固定依赖与主程序冲突。模型 checkpoints 默认在该目录下，由模型页下载或“模型”准备。
 
 ```powershell
 .\scripts\windows\install-indextts2.ps1
@@ -167,7 +166,7 @@ IndexTTS2 使用独立的 bilibili Model Use License，不属于本项目 MIT Li
 
 ## IndexTTS-2.5
 
-IndexTTS-2.5 使用单独的 `.asmr-dubber/runtimes/index-tts-2.5` 运行环境。它不随基础、推荐或进阶方案安装；旧 IndexTTS2 仍是推荐方案和新项目的默认本地 TTS。需要 2.5 时，在“设置 → 设备与模型”选择它并点击安装，完成后再到 TTS（语音合成）设置中切换后端。
+IndexTTS-2.5 使用单独的 `.asmr-dubber/runtimes/index-tts-2.5` 运行环境。它需要单独下载。需要 2.5 时，在“模型”页下载，完成后到当前项目“3 配音”选择该后端；全局默认值只影响之后的新项目。
 
 模型使用项目维护、固定 SHA-256 的 ModelScope 模型包；失败时保留断点，不回退到未固定版本的 SDK snapshot。依赖优先使用离线 wheelhouse。源码回退仍受海外下载开关约束。首次安装需要约 11 GB 模型权重和约 4 GB 平台依赖包，解压与建环境还需要额外空间。修复失败会恢复原源码和环境；成功后旧环境备份保留在 runtimes 下，确认新环境可用后可手动归档或清理。
 
@@ -196,7 +195,7 @@ multipart/form-data
   emotion_alpha、temperature、top_p、speed：可选参数
 ```
 
-服务可以直接返回 WAV/MP3 音频，也可以返回带 `audio`、`audio_base64` 或 `audio_url` 字段的 JSON。参考音频不会写入 URL；程序会以 multipart 文件上传。不同项目的接口字段若有差异，可在“附加请求参数（JSON）”中补充未覆盖的字段。
+服务可以直接返回 WAV/MP3 音频，也可以返回带 `audio`、`audio_base64` 或 `audio_url` 字段的 JSON。参考音频不会写入 URL；程序会以 multipart 文件上传。不同项目的接口字段若有差异，可在“附加请求参数”中补充未覆盖的字段。
 
 ## 通用 ASR API
 
@@ -219,7 +218,7 @@ multipart/form-data
 
 ## Edge TTS
 
-Edge TTS 使用 Microsoft Edge 在线语音服务，不需要 API Key，也不需要下载语音模型。基础环境已经包含客户端，设置页可以试听中文音色；默认音色是 `zh-CN-XiaoxiaoNeural`。它不做音色克隆，也不会使用项目参考音频。
+Edge TTS 使用 Microsoft Edge 在线语音服务，不需要 API Key，也不需要下载语音模型。基础环境已经包含客户端，项目配音或默认配音参数中可以试听音色；默认音色是 `zh-CN-XiaoxiaoNeural`。它不做音色克隆，也不会使用项目参考音频。
 
 如果全局默认后端仍是 IndexTTS2，但程序启动时发现独立运行环境或 checkpoints 不完整，设置页和之后新建的项目会默认选择 Edge TTS。已经保存到旧项目中的 TTS 后端不会自动改写。
 

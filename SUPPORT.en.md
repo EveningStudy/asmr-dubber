@@ -2,7 +2,7 @@
 
 # Support
 
-Start with the [documentation index](docs/en/INDEX.md). Distinguish a release package from a modified checkout. For settings issues, state save scope, success message, browser refresh vs process restart, and whether the project was reopened. For stalls, include sentence count, media duration, models and stage.
+Start with the [documentation index](docs/en/INDEX.md). Distinguish a release package from a modified checkout. For settings issues, state whether you edited a project or new-project defaults, success message, browser refresh vs process restart, and whether the project was reopened. For stalls, include sentence count, media duration, models and stage.
 
 - Usage/configuration: [Discussions Q&A](https://github.com/EveningStudy/asmr-dubber/discussions/categories/q-a).
 - Reproducible defects: [bug report](https://github.com/EveningStudy/asmr-dubber/issues/new?template=bug_report.yml).

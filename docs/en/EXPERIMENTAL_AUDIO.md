@@ -1,90 +1,118 @@
-[中文](../EXPERIMENTAL_AUDIO.md) | English
+English | [中文](../EXPERIMENTAL_AUDIO.md)
 
-[Documentation index](INDEX.md) · [README](../../README.en.md)
+[← All docs](INDEX.md)
 
-# Audio processing: RTF, vocal separation and sentence mixing
+# Mixing and spatial following
 
-Some controls retain legacy Chinese-dubbing labels; selecting English as the TTS target applies the same processing to the English dub. See [Source and dubbing languages](CONFIGURATION.md#source-and-dubbing-languages) before switching targets.
+Once the dub exists, everything about combining it with the original is set on the **Export** step. Changing these settings only requires exporting again, never dubbing again, so feel free to experiment.
 
-Separation and Chinese replacement are **experimental, not recommended**; both are off by default. Separation can damage whispers, breaths and mouth sounds, and Japanese speech may remain in the background. RTF can alter timbre, phase and proximity. Neither promises lossless replacement.
+## Four kinds of result
 
-## Routing
+| Result | Contains | Good for |
+|---|---|---|
+| Bilingual mix | The complete original plus the dub | Most cases. Nothing of the original is lost and the dub sits on top |
+| Replacement mix (experimental) | The background with the voice removed, plus the dub | When you do not want to hear the original language |
+| Dub track only | Only the dub, no original and no background | Mixing it yourself in other software |
+| Subtitles only | No audio | When you just want translated subtitles |
 
-Separation has its own settings tab between General and ASR. RTF, mix mode and original-vocal retention live under Mixing & subtitles. RTF does not require separation, but requires a stereo original reference.
+The first two are chosen under **Mix mode**. The dub track is saved through **Audio output layout**. Subtitles only is chosen under **Output**.
 
-| Mode | Output |
+## Spatial following
+
+In these works the voice often moves: from the left ear to the right, from far to near. An ordinary dub sits in the centre and sounds detached from the original.
+
+With spatial following on, the program analyses the left-right position and distance of each original line and places the matching dub line in the same spot. Older versions and some documents call this RTF (original spatial cue transfer).
+
+![Spatial following parameters](../../assets/screenshots/en/export-rtf.png)
+
+Turning the switch on is usually enough. If it sounds wrong, expand **Spatial following parameters**:
+
+| Parameter | What it does | How to adjust |
+|---|---|---|
+| Strength | Overall strength. 0 is off, 1 follows fully | Lower it if the movement is exaggerated |
+| Distance strength | How much the dub gets nearer and farther with the original | Lower it if the dub volume jumps around |
+| Tone coloration strength | How much of the original's tone colours the dub | Lower it if the dub sounds muffled or off |
+| FFT window, FFT hop divisor | How fine the analysis is | Normally leave alone |
+| Processing block | How much audio is processed at once | Lower it if you run out of memory |
+
+Two limits:
+
+- **The original must be stereo.** Mono audio carries no position, so the switch does nothing useful.
+- If an original line is too short or too quiet to analyse, that line is placed near the centre. The log says "RTF downgraded". This is not an error.
+
+## Dub timing
+
+Expand **Dubbing timing**:
+
+![Dub timing and volume](../../assets/screenshots/en/export-timing.png)
+
+**Dub offset (ms)**: how long after the original line the dub starts. The default is 500, so the dub comes in half a second after the original starts and the two voices do not land exactly on top of each other. Positive delays the dub, negative brings it forward.
+
+**When the dub is longer than the line**: a translation is often longer than the original line, so the next line is due before this one finishes. There are two ways to handle it:
+
+- **Keep timing and speed up if needed**: each line starts at its original time and speaks faster if it would not fit. The speed-up is capped (**Maximum speed-up on overlap**, 1.8× by default). Past the cap, the line overlaps the next one slightly.
+- **Play the next line after the previous one ends**: no speed-up and no overlap. Later lines are pushed back, so the dub drifts further behind the original and the result can be longer than the source.
+
+The first mode suits most cases. If many lines are sped up noticeably, the better fix is to go back to the translation step and shorten the translations.
+
+## Volume
+
+Expand **Volume**.
+
+**Volume processing** has three modes:
+
+- **Follow source loudness** (default): a quiet original line gets a quiet dub, a loud one a loud dub. This sounds the most natural.
+- **Uniform volume**: every dub line is brought to the same level. Use it when the original's volume swings wildly and drags the dub with it.
+- **Keep original volume**: the dub stays as loud as the model produced it.
+
+If the dub is too loud or too quiet overall, change **Relative to original** or **Final gain adjustment**. The unit is decibels: positive is louder, negative quieter.
+
+To change the volume of one sentence only, see [Changing a single sentence](USER_GUIDE.md#8-changing-a-single-sentence).
+
+**Output protection** holds the peak limiter that prevents clipping. You rarely need to touch it.
+
+## Replacement mix: removing the original voice
+
+The replacement mix first splits the original into voice and background with a vocal separation model, then keeps the background and adds the dub.
+
+This is experimental. Its problems, up front:
+
+- Separation is never perfectly clean. Traces of the original voice are often audible.
+- Whispers, breathing and close-mic effects can be removed along with the voice.
+- Separation is slow.
+
+If you only want to understand the content, the bilingual mix is usually the better choice.
+
+To make a replacement mix:
+
+**1. Download a vocal separation model** from the Models page.
+
+**2. Turn on vocal separation in the project.** On the **Recognition** step, expand **Vocal separation** under **More settings** and turn on the switch.
+
+![Vocal separation settings](../../assets/screenshots/en/separation.png)
+
+**3. Choose the replacement mix when exporting.** On the **Export** step, set **Mix mode** to **Replacement mix** and click **Export**. The first export runs separation and takes a while.
+
+### Putting some of the original back
+
+The replacement mix removes all of the voice, but you may want to keep some of it, such as laughter and sighs. Those sentences have no dub, so removing them leaves a gap.
+
+With the replacement mix selected, **Original vocal reinsertion** appears under **More settings**:
+
+- **Undubbed sentences**: puts back the original voice for every sentence that has no dub.
+- **Manual selection**: you list the sentences to put back.
+- **No reinsertion**: removes everything.
+
+You can also control this per sentence: select a row, expand **Selected sentence**, and change **Original vocals (separation only)**.
+
+### Separating in the cloud
+
+Without a GPU, separation can be sent to a cloud service (Replicate, or an endpoint you host). Under **Vocal separation**, change **Separation backend** to Replicate or the self-hosted option, and enter the key under **Settings → Cloud services**. This uploads your audio to that service and may cost money.
+
+## What needs redoing
+
+| You changed | Redo |
 |---|---|
-| Bilingual | Original recording + Chinese speech |
-| Chinese replacement | Separated background + Chinese speech; requires separation |
-| Replacement with retention | Above + selected original-vocal intervals |
-
-Conflicting replacement/separation settings are rejected on save; the application does not silently switch modes. Retention controls appear only for replacement mode.
-
-1. Enable separation, select a downloaded model, save to the project and run ASR. Recognition and review use the separated vocals; the original recording remains intact.
-2. Translate, edit and synthesize normally. Voice-cloning references still use the original audio.
-3. Enable RTF if wanted, then mix. It uses matching stereo intervals to estimate relative level, spectrum and phase. No HRTF or Meta model is used.
-
-## Independent loudness for each mix
-
-The project's Export → More settings panel has separate bilingual and replacement loudness sections.
-
-- Bilingual keeps legacy loudness settings; its default offset is -8 dB relative to the original recording segment.
-- Replacement defaults to 0 dB relative to separated original vocals, with a -20 RMS dBFS matching ceiling and -6 dBFS sentence peak ceiling. Older projects without replacement settings receive these defaults.
-- Each section independently selects source matching, uniform loudness or raw TTS volume, with its own gain, bounds and peak protection. A 0 dB target remains subject to these limits.
-- Batch output applies the corresponding settings to each version. TTS is reused; final dubbing stems and loudness caches are independent.
-- Changes save automatically. Adjust project parameters and new-project defaults separately, then remix. TTS regeneration is unnecessary.
-
-## Per-sentence controls
-
-The right side of the sentence editor contains original-vocal mode, original gain, Chinese playback and Chinese gain.
-
-- Original mode inherits global behavior by default. Override with Keep or Mute. These controls affect only the separated vocal stem and require separation, including in bilingual mode.
-- Gain is an adjustment on top of global processing: default 0 dB, range −60 to +12 dB. Final peak protection still applies.
-- Chinese playback mutes only the final voice, not the text or TTS cache. It is distinct from Process Chinese.
-- Save the table and remix. No ASR, translation or TTS rerun is needed for gain/mute edits.
-- Overlapping original intervals do not duplicate vocals. Explicit mute wins on overlap.
-
-## Original-vocal retention
-
-Default: none. Manual mode accepts sentence IDs separated by commas/spaces. Automatic mode selects disabled sentences or sentences without playable Chinese, including filtered content. This is not a nonverbal-sound classifier: it may restore Japanese dialogue. Listen before exporting.
-
-Only the separated vocal signal is restored; the background is not added twice. Sounds outside recognized sentence intervals may still be lost. Add a sentence interval and select its ID if manual retention is needed.
-
-## Local backend
-
-Independent runtime: `.asmr-dubber/runtimes/separation/.venv`. Model directory: `.asmr-dubber/models/separation`. The adapter uses audio-separator 0.47.0 and supports its Mel/BS-RoFormer, MDXC, MDX, VR and Demucs interfaces.
-
-Baseline: `vocals_mel_band_roformer.ckpt` by Kimberley Jensen. It is a music-vocal separator, not an ASMR dialogue/effects model. Bandit and SAM Audio are not local integrations. A catalog entry does not mean its weights are downloaded or tested.
-
-Advanced JSON exposes inference parameters for the selected architecture, not arbitrary training/network configuration. The isolated ONNX environment uses CPU; the PyTorch RoFormer path can use CUDA. Check each model's license.
-
-First use: find a separation model under Models → Optional and click Download. The application prepares its isolated environment and weights. Details shows environment and file status; the task log shows installation, download and verification progress. Wait for the task to complete. To switch models, download the corresponding item, then select it under the project's Recognition → More settings → Separation panel.
-
-Environment dependencies come from PyPI/PyTorch. Models prefer the [ModelScope mirror](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation), containing Mel-Band RoFormer, Demucs and Demucs FT, with upstream fallback. You can also select upstream sources directly. Configure the mirror with `separation_model_base` in `mirrors.json`. Mirrored files have pinned SHA256 hashes; other models record local integrity metadata. Inference refuses implicit downloads.
-
-## Batch outputs and caches
-
-Batch jobs can produce bilingual mixes, replacement dubs or both, using the separation, RTF, mixing and vocal-return settings saved with the queue entry. Replacement requires separation. Original-with-subtitles and subtitle-only jobs skip TTS, separation and RTF. See [Batch output choices](USER_GUIDE.md#batch-output-choices).
-
-- **Separation**: one model load per local processing pass, with sequential chunks. Cancellation/timeouts retain validated chunks; retries load the model once and process the missing parts. The model does not remain in GPU memory permanently between tasks.
-- **RTF**: both variants reuse a valid dubbing stem. Source references, synthesized clips, scheduling, gain and RTF parameters are checked; changes or corruption trigger rebuilding. Changing only the background mix does not require rebuilding identical dubbing audio.
-- **Outputs**: variants write directly to `output/bilingual/` and `output/replace/`, with matching subdirectories under `subtitles/`. No shared output file needs a full backup copy between variants. The user-selected final export directory may still contain separate copies.
-
-Source media, separated stems, RTF references and mixed outputs serve different purposes; do not delete them indiscriminately by size. Long uncompressed WAVs still consume substantial storage, and RTF reuse retains one rebuildable intermediate. Use **Settings → Storage & cleanup** to scan and confirm: safe cleanup retains final separated stems; removing separation results requires rerunning the model later. See [Cleanup categories](CONFIGURATION.md#storage-and-cleanup). Legacy output copies are not automatically removed.
-
-## Cloud contracts
-
-| Backend | Contract |
-|---|---|
-| Replicate | Fixed 64-hex version ID, configurable audio/output fields and parameters; inline audio limited to 8 MiB per request |
-| Custom HTTP | Multipart file + `model` + JSON-string `parameters`; JSON response containing a vocal-stem HTTPS URL |
-
-Replicate output paths are relative to `output`, for example `vocals` or `0`. Use chunks of at most 30 seconds as a starting point. Cloud processing requires upload consent and may cost money. Failed jobs are not automatically resubmitted. Downloaded outputs do not inherit credentials and redirects are rejected. Mock-tested contracts are not live-provider validation.
-
-## RTF and recovery
-
-References shorter than 0.1 s use bounded left/right gain instead of phase estimation; silence or missing reference signal falls back to center. The log records the fallback. Chinese duration and scheduling remain unchanged, and no neighboring audio is borrowed. Corrupt/nonfinite samples still raise errors.
-
-RTF runs after duration scheduling and loudness processing. Strength controls dry/wet mixing; level/color controls tune cue transfer; FFT/hop parameters control time-frequency resolution. Mono/multichannel originals do not provide the required stereo reference. RTF changes require only remixing.
-
-Separation runs in chunks and reuses valid caches. Model/device/parameter changes create a distinct cache. Background is the exact residual `original − estimated vocals`; this preserves reconstruction, not perceptual separation quality. Test a short excerpt before processing a full work.
+| Spatial following, dub timing, volume, output protection | Export only |
+| Bilingual mix to replacement mix | Export only (the first time waits for separation) |
+| Turned vocal separation on or off | Running recognition again is recommended, because the audio it listens to has changed |

@@ -1,135 +1,212 @@
-[中文](../USER_GUIDE.md) | English
+English | [中文](../USER_GUIDE.md)
 
-[Documentation index](INDEX.md) · [README](../../README.en.md)
+[← All docs](INDEX.md)
 
 # User guide
 
-## Project cache cleanup
+This guide takes one audio file all the way to a finished dub, using the most common case, Japanese into Chinese, as the example. English or Chinese originals, or dubbing into English, follow exactly the same steps; only the languages you pick and the recognition model differ.
 
-Open **Settings → Storage & cleanup**, choose a project directory, and click **Scan caches (no deletion)**. Review sizes and the file inventory, select projects, then confirm cleanup. Changing the directory or categories requires a new scan.
+Following it takes about twenty minutes, most of which is waiting for models to run.
 
-- **Safe caches**: input copies and chunks whose completed separation outputs pass integrity checks. Selected by default; incomplete or damaged separation jobs retain their restart checkpoints.
-- **Rebuildable caches**: analysis audio, RTF references, dubbing stems and mix backgrounds. Future mixing may need to recompute them.
-- **Separated stems**: vocals and backgrounds. Future processing must rerun the separation model, which can take considerably longer.
+Before you start, get the program running and download a recognition model and a dubbing model as described in [Installation and models](INSTALLATION.md).
 
-Projects, source media, corrected text, synthesized clips, final media, subtitles, models and runtimes are preserved. Locks protect active operations; files changed since scanning are skipped. Deletion is irreversible, but caches can be rebuilt. Cleanup is manual; it never deletes entire projects.
+**Contents**
 
-Batch separation loads the model once per processing pass while retaining chunk-based recovery. Bilingual and replacement mixes write directly to separate output directories and reuse a Chinese RTF stem. Changes to synthesized audio, timing, loudness or RTF parameters invalidate that cache.
+1. [Before you start: add a translation key](#1-before-you-start-add-a-translation-key)
+2. [Create a project](#2-create-a-project)
+3. [The workspace](#3-the-workspace)
+4. [Step one: Recognition](#4-step-one-recognition)
+5. [Step two: Translation](#5-step-two-translation)
+6. [Step three: Dubbing](#6-step-three-dubbing)
+7. [Step four: Export](#7-step-four-export)
+8. [Changing a single sentence](#8-changing-a-single-sentence)
+9. [Stopping and picking up later](#9-stopping-and-picking-up-later)
+10. [Where to go next](#10-where-to-go-next)
 
-## Input and dubbing languages
+## 1. Before you start: add a translation key
 
-ASR accepts Japanese, English, or Chinese. Use multilingual Faster-Whisper or a compatible ASR API for English/Chinese. **TTS → Dubbing language** selects Chinese or English for both translation and synthesis. Matching source/target languages bypass translation. Interface language is independent.
+Translation uses a large language model service, so you need an account and an API key with one of them. DeepSeek is the default: it is cheap and good enough.
 
-Applying a different target language to a project backs up its old translations to `translations-language-revision.json`, then clears translation and sentence-audio references. Translate and synthesize again; source audio, recognition timestamps, and old audio files remain. IndexTTS 2/2.5 and GPT-SoVITS support English; custom APIs depend on the deployed model. Edge TTS automatically selects an English voice for English output; US/UK voices are also selectable.
+Open **Settings → Cloud services** and click **Enter** next to the provider you use.
 
-## Batch output choices
+![Cloud services](../../assets/screenshots/en/keys.png)
 
-Queue entries retain the selected TTS backend, model and reference settings. After changing the IndexTTS version or external voice, save new-project defaults (or both scopes), then edit and save existing queue entries. Current-project-only settings do not change batch defaults; started projects retain their own settings and results.
+Paste the key and click **Save**.
 
-While waiting for a reference, edit its start/end times and transcript directly in the picker. “Use this clip” saves the edits before continuing synthesis; timing edits also update that sentence in the project timeline. You can also open the project and save the review table while the batch is waiting. Save table edits before confirming a reference. Timeout still resumes processing automatically; increase the wait duration before lengthy edits.
+<img src="../../assets/screenshots/en/key-dialog.png" width="520" alt="Entering a key">
 
-Under **Workspace → Batch processing**, select the audio result, then subtitle content, audio/video format, and track/merged layout.
+You can skip this step in two cases:
 
-| Result | Processing |
-| --- | --- |
-| Bilingual mix + original | Original plus target-language dubbing; honors RTF settings |
-| Replacement dub + original | Separated background plus dubbing; separation required, experimental and not recommended |
-| Both mixes + original | Shares ASR, translation and TTS; renders and stores each mix separately |
-| Original media + subtitles | No TTS, separation or RTF; optional video subtitles |
-| Subtitle files only | SRT/LRC without media output; source-only subtitles skip translation |
+- You already have translated subtitles and do not need translation.
+- The audio is already in the target language and you only want to re-voice it.
 
-Every option supports bilingual, source-only, or translation-only subtitles. Translation-only uses the dubbing target language. Dubbing jobs still translate speech even when subtitles show only the source. Subtitle-file naming is configured in **Settings → AutoFlow → Subtitle files**.
+## 2. Create a project
 
-Queued jobs retain their target language, RTF, separation, mixing and original-speech retention settings. Edit and save the queue entry to adopt changed defaults. Replacement output may still contain separation leakage or deliberately retained original speech; audition before publishing.
+Go to **Projects** and drop an audio or video file onto the **New** area, or click it to choose a file.
 
-## Start
+![The Projects page](../../assets/screenshots/en/home.png)
 
-Run Setup once, then the launcher. Keep the terminal open while using the local web UI. Check Devices & models before selecting local backends. Interface language can be switched with 中文 / English; source-language and output-language settings are independent.
+After the file uploads, this dialog appears:
 
-## 1. Create or open
+<img src="../../assets/screenshots/en/new-project.png" width="560" alt="New project">
 
-Choose source language and upload audio/video, then Create project. The source is copied into the project. To resume, open a recent project or its `project.json`.
+- **Audio language**: the language spoken in the original.
+- **Dub into**: the language you want, Chinese or English.
+- **Where does the text come from?**: choose **Automatic recognition** if you have no subtitles. If you have subtitles or a script, see [Subtitles and scripts](SUBTITLE_WORKFLOW.md).
 
-![Workspace](../../assets/screenshots/workbench.png)
+Click **Create**. The program copies your file into the project folder. The original file is never modified.
 
-Import timed source subtitles to skip ASR. Import timed Chinese subtitles to skip both ASR and body translation. Untimed scripts need estimated timing or ASR-assisted matching. Import replaces the sentence timeline, not the original media; back up important edits first.
+## 3. The workspace
 
-## 2. Recognize
+An open project looks like this:
 
-Choose a backend/model in ASR settings, save to Current project/Both and run ASR. Japanese supports Parakeet, Kotoba and Faster-Whisper; local English uses Faster-Whisper. A generic ASR API uploads audio to your configured endpoint.
+![The project workspace](../../assets/screenshots/en/step1.png)
 
-![ASR settings](../../assets/screenshots/settings-asr.png)
+- **At the top** are the four steps: Recognition, Translation, Dubbing, Export. A finished step gets a filled number. You can click any step at any time to go back and change things.
+- **On the left** is the sentence table. Each row is one sentence with its time, original text, translation and dubbing status. Click into the original or the translation to edit it.
+- **On the right** are the settings and action buttons for the current step. The common ones are at the top and the rest are under **More settings**.
+- **At the bottom** is the player. Switch between the original audio, the dub, or both together.
 
-VAD may miss quiet whispers. Default is no VAD preprocessing; backend VAD and the optional Japanese ASMR VAD are alternatives. Qwen3 alignment repositions existing text without verifying its accuracy.
+Settings changed in the right panel belong to this project only. They save automatically; there is no Save button.
 
-Multi-model review is optional and experimental. Review proposals before translation; it may be worse than a single model. [Illustrated instructions](AUDIO_REVIEW_TUTORIAL.md).
+## 4. Step one: Recognition
 
-![Review proposals](../../assets/tutorials/review-proposals.png)
+Recognition turns the speech into text with timing.
 
-An untimed script uses a different path: LLM quote matching against ASR intervals. If retries cannot establish a reliable match, the existing sentence survives with a manual-review note. Check diagnostics; do not treat a completed batch as a fully corrected transcript.
+1. Check **ASR backend**. Use Parakeet for Japanese and Faster-Whisper for English or Chinese.
+2. Click **Run recognition again**. The button has this name even on the first run.
+3. Wait. An hour of audio takes a few minutes on a GPU.
 
-## 3. Edit and translate
+When it finishes, sentences appear in the table. Spend a few minutes reading the original text and fixing obvious mistakes. Translation works from this text, so an error here carries through every later step.
 
-Edit source text/timestamps in the sentence table, then save. The table pages 50 sentences at a time; paging retains all drafts. Clearing both texts deletes a row. Translation preserves sentence IDs and order; nonverbal content may have empty Chinese text.
+If sentences are split badly (one sentence cut in half, or two stuck together), expand **Segmentation** and **Silence detection** under **More settings**, adjust them, and run recognition again.
 
-Configure translation provider, model, endpoint and key. Keys use a separate Save button. LLM providers support structured script matching; DeepL/Google/Microsoft machine translation do not.
+![More settings for recognition](../../assets/screenshots/en/step1-advanced.png)
 
-![Translation settings](../../assets/screenshots/settings-translation.png)
+> **Note**: running recognition again replaces every existing sentence. Translations and dubbing already made have to be redone. Make sure the original text is right before moving on.
 
-Japanese and English translation prompts are stored separately. Keep names/terminology concise. Do not paste credentials or unrelated instructions into prompts.
+## 5. Step two: Translation
 
-## 4. Voice reference
+Click **Translation** at the top.
 
-Choose a clean representative project sentence or external reference. A unified reference improves voice consistency; per-sentence references follow local delivery but may vary more. Reference requirements depend on the TTS backend. GPT-SoVITS and some other APIs need the exact reference transcript.
+![The translation step](../../assets/screenshots/en/step2.png)
 
-## 5. Synthesize and mix
+1. Check that **Translation provider** is the one you entered a key for.
+2. Click **Translate N remaining sentences**.
 
-Select TTS backend/model, save and synthesize Chinese speech. Existing valid sentence caches are reused. Editing Chinese text invalidates the affected synthesis; gain, offset, scheduling and RTF changes require only remixing.
+The translations fill into the table. **The translation is the script the dub will read**, so it is worth reading carefully:
 
-![TTS settings](../../assets/screenshots/settings-tts.png)
+- If a line reads badly, click into the cell and rewrite it.
+- A long translation makes a long dub, which may have to be sped up to fit. Try to keep each translation about as long as the original line.
+- Laughter, breathing and other sounds with no real content are not translated. An empty translation there is normal.
 
-IndexTTS2 and optional IndexTTS-2.5 use separate runtimes. Speaker and emotion references are independent. Edge TTS requires internet, no key, and does not clone voices. MiMo supports preset, cloned or designed voices depending on model. MiniMax uses an account voice ID; cloning is managed on its platform. External model servers are not started by this application.
+**Translate remaining** only fills in sentences that have no translation and leaves your edits alone. **Translate everything again** retranslates every sentence, including the ones you edited by hand, and asks for confirmation first.
 
-### Timing and loudness
+To fit the translation to the work, expand **Translation parameters** and describe the characters, how they address each other, and the tone in **Translation prompt**. Context size and other parameters are here as well. **Restore built-in prompt** undoes your changes.
 
-Fit-window mode speeds up only conflicting Chinese sentences, up to the configured limit; residual overlap may remain. Sequential mode avoids Chinese-on-Chinese overlap by delaying subsequent sentences and may extend the result. Global offset applies to Chinese speech, not source media.
+![More settings for translation](../../assets/screenshots/en/step2-advanced.png)
 
-![Mix settings](../../assets/screenshots/settings-mix.png)
+## 6. Step three: Dubbing
 
-Choose source-relative loudness, a uniform RMS target or raw TTS level. Peak protection remains active. Raising levels aggressively can amplify noise; louder is not automatically better.
+Click **Dubbing** at the top.
 
-### Separation and RTF
+### Choose a dubbing model
 
-Separation and Chinese replacement are experimental, not recommended, and disabled by default. Enable separation before ASR if recognition should use the vocal stem. Replacement requires it; ordinary bilingual mixing does not.
+- **IndexTTS2**: imitates the original voice. Needs an NVIDIA GPU. Use this when you want it to sound like the same person speaking another language.
+- **Edge TTS**: Microsoft's online voices. Free, no GPU needed, but the voices are fixed and cannot imitate the original.
+- For other cloud services, see [Models and services](BACKENDS.md).
 
-RTF is independently enabled in Mixing & subtitles and uses original stereo cues. Short/silent references degrade to bounded level placement rather than aborting the mix.
+### Choose a voice reference
 
-The table's rightmost controls mute/adjust each original vocal or Chinese sentence. Original controls require separation. Chinese playback differs from Process Chinese: muting it retains text/cache. Save and remix. [Details](EXPERIMENTAL_AUDIO.md).
+A cloning model such as IndexTTS2 needs to know which voice to imitate. The program recommends a sentence automatically, and you can click **Change** to pick your own.
 
-## 6. Subtitles
+<img src="../../assets/screenshots/en/reference-dialog.png" width="560" alt="Choosing a voice reference">
 
-Choose bilingual, source or Chinese subtitles, and source or dubbing timing. SRT/LRC are written; video projects may also produce a subtitled video. For no audio/video deliverables, use AutoFlow's subtitle-files-only mode.
+Pick a sentence under **Project sentence** and play it. A good reference is:
 
-Line width accepts 8–500 characters. This wraps each cue without merging sentences. For an existing project save to Current project/Both, then regenerate. Minimum duration and reading-speed limits may extend display time beyond imported ends.
+- 5 to 15 seconds long
+- a single speaker
+- normal speech, not pure breath or laughter
+- over weak background music and effects
 
-## Batch processing
+Entries marked ★ are the ones the program considers suitable. Entries marked ⚠ are too short. You can also click **Choose file** to use audio from outside the project. Click **Use reference** when done.
 
-Scan a work folder, inspect selected tracks, ordering, subtitle associations and languages, choose output, then add to the queue. Drag tracks/tasks or use their move controls. Scanning and queueing are distinct; save per-work options before execution.
+### Generate
 
-![Batch workflow](../../assets/screenshots/batch-workflow.png)
+Click **Generate N remaining sentences**. The program works through them one at a time and shows progress on the right.
 
-Layouts: merged, per-track, or per-track plus merged. The combined output can reuse per-track work. Audio/video mode, subtitle content and filename policy are separate choices. Source-only subtitle output does not translate the body. All selected tracks need corresponding timed subtitles to bypass ASR completely.
+A finished sentence gets a play button and a duration at the right edge of the table. Click it to hear that sentence.
 
-Original-audio hard subtitles optionally add an encoded original-audio video; this costs time/space. Timestamp footer text can appear before or after the timestamp list, with the work title retained first. These AutoFlow rules are read when the queue starts; running tasks retain a snapshot.
+![Dubbing finished](../../assets/screenshots/en/step3-done.png)
 
-Reprocessing finished work requires explicit replacement confirmation. Back up results before using it. Cancel/pause does not delete projects, models or completed outputs.
+**Generate remaining** only generates sentences that have no dub yet and sentences whose translation changed. If you are unhappy with a line, edit its translation and click the button again. You never need to start over.
 
-### Subtitle files only
+## 7. Step four: Export
 
-In Batch processing, select **Subtitle files only**, then bilingual, source or translation. No finished audio or video is produced. Filename rules can preserve the audio basename. For timed subtitle import and ASR bypass conditions, see [Existing-subtitle workflow](SUBTITLE_WORKFLOW.md).
+Click **Export** at the top.
 
-## Recovery and privacy
+![The export step](../../assets/screenshots/en/step4.png)
 
-Keep the full project directory and any configured external project root. Resume from valid caches rather than deleting `.asmr-dubber`. Two browser sessions cannot overwrite newer revisions silently; reopen stale projects.
+From top to bottom:
 
-API keys are plaintext in the portable config directory. LLMs receive text/context; ASR and external voice/separation APIs may receive audio. Check rights and provider privacy terms. Logs and script diagnostics may contain private text; inspect before sharing.
+- **Mix mode**: **Bilingual mix** is the original plus the dub. **Replacement mix** removes the original voice and keeps only the dub. It is experimental; see [Mixing and spatial following](EXPERIMENTAL_AUDIO.md).
+- **Spatial following**: when on, the dub follows the left-right position and distance of the original voice. Recommended for stereo works.
+- **Audio output layout**: besides the mix, you can save a separate track with only the dub, for further work in other software.
+- **Output**: **Audio** exports normally. **Subtitles only** produces no audio.
+- **Subtitles**: bilingual, translation only, original only, or none.
+
+Click **Export**. The files appear under **Last export**, where you can listen to them right away or click **Download** to save a copy elsewhere.
+
+![Export finished](../../assets/screenshots/en/outputs.png)
+
+**Open folder** at the top right shows every exported file.
+
+When you change the settings on this step (volume, dub timing, spatial following strength), you only need to click **Export** again. No dubbing is redone. See [Mixing and spatial following](EXPERIMENTAL_AUDIO.md) for those settings.
+
+If export reports that a sentence has no translation, that sentence has original text but an empty translation. Fill it in, or untick the sentence, and export again.
+
+## 8. Changing a single sentence
+
+Click a row in the table to select it. Buttons appear below the table, and **Selected sentence** expands to show detailed controls for that sentence:
+
+![Controls for the selected sentence](../../assets/screenshots/en/sentence-controls.png)
+
+| To do this | Do this |
+|---|---|
+| Change the original or the translation | Click into the cell and edit. It saves when you click elsewhere |
+| Leave this sentence undubbed | Untick the box at the far left of the row |
+| Adjust when the sentence starts and ends | Change **Start (s)** and **End (s)** |
+| Make this sentence's dub louder or quieter | Change **Dubbing adjustment (dB)**. Positive is louder, negative is quieter |
+| Leave the dub out of the export but keep what was generated | Untick **Play dub** |
+| Add a sentence that was missed | Click **Add sentence** |
+| Remove this sentence | Click **Delete sentence** |
+| Use this sentence as the voice reference | Click **Set as project voice reference** |
+
+Above the table you can search, or show only **Untranslated** or **Not dubbed** sentences to see what is left. Long projects show 50 sentences per page, with paging below the table.
+
+What needs redoing after a change:
+
+| You changed | Next |
+|---|---|
+| The translation of a sentence | Click **Generate remaining** on the dubbing step, then export |
+| The dubbing model or the voice reference | Dub everything again, then export |
+| Volume, dub timing, spatial following, subtitle layout | Export again |
+| Ran recognition again | Translation and dubbing must both be redone |
+
+## 9. Stopping and picking up later
+
+- **To stop a running task**: click **Pause** next to the task on the right. What is already done is kept.
+- **To continue**: click **Resume**, or click that step's button again. Only the rest is processed.
+- **After closing and reopening the program**: the project is listed under **Recent** on the Projects page. Click it to return to where you were.
+
+![Recent projects](../../assets/screenshots/en/home-recent.png)
+
+Closing the black window that appeared at startup stops the program. Closing the browser tab does not; open `http://127.0.0.1:7860` again to come back.
+
+## 10. Where to go next
+
+- A whole work folder to process: [Batch processing](BATCH.md)
+- You have subtitles or a script: [Subtitles and scripts](SUBTITLE_WORKFLOW.md)
+- The dub and the original do not sit well together: [Mixing and spatial following](EXPERIMENTAL_AUDIO.md)
+- Different models or services: [Models and services](BACKENDS.md)
+- Something went wrong: [Troubleshooting](TROUBLESHOOTING.md)

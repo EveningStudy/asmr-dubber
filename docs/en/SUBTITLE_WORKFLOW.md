@@ -1,50 +1,77 @@
-[中文](../SUBTITLE_WORKFLOW.md) | English
+English | [中文](../SUBTITLE_WORKFLOW.md)
 
-[Documentation index](INDEX.md) · [README](../../README.en.md)
+[← All docs](INDEX.md)
 
-# Existing subtitles and subtitle-only output
+# Subtitles and scripts
 
-For translation-only subtitle files, selected timed Chinese subtitles can provide text and timing directly, without ASR or body translation. Source/bilingual output still needs source-language text. Select direct subtitle timing on the track.
+If the work comes with subtitles or a script, the model does not have to listen for the words. Existing text is more accurate and faster.
 
-Trusted subtitles do not need to cover every second of audio. Music, pauses and breaths without captions are not missing dialogue.
+## What to do with what you have
 
-## Use supplied timing
+| You have | Choose when creating the project | Then |
+|---|---|---|
+| Timed original-language subtitles (SRT, VTT, ASS, LRC) | I have original subtitles | Translate → dub → export |
+| Timed translated subtitles | I have translated subtitles | Dub → export |
+| An untimed original-language script (TXT) | I have an untimed script | Recognise → translate → dub → export |
+| Nothing | Automatic recognition | Recognise → translate → dub → export |
 
-1. Scan the work in Workspace → Batch processing.
-2. Assign the correct SRT, VTT, ASS/SSA or LRC to every selected track.
-3. Choose full use of subtitle text/timing, without ASR.
-4. Verify each subtitle's language. Chinese subtitles remain Chinese even when the audio is Japanese.
-5. Confirm complete per-track coverage before adding to the queue.
+<img src="../../assets/screenshots/en/new-project.png" width="560" alt="Choosing the text source for a new project">
 
-| Input | Processing |
-|---|---|
-| Chinese timed subtitles on every track | Skip ASR and body translation; synthesize directly |
-| Japanese or English timed subtitles | Skip ASR; translate then synthesize |
-| Chinese plus one source language | Keep Chinese; translate only source-language entries |
-| Mixed Japanese and English in one merged project | Rejected; split tracks or use consistent language metadata |
-| Missing subtitles on selected tracks | Supply them or deselect those tracks |
-| Untimed TXT / retiming mode | ASR may still be needed for timing |
+With any of the three subtitle options, the import dialog opens automatically once the project is created.
 
-Merging adds each track's start offset to its subtitles. Parsing errors do not silently trigger ASR. Repeated/overlapping source captions are preserved rather than deduplicated.
+## Importing subtitles
 
-LRC usually defines starts only: ends are inferred from the next entry or a final duration estimate. Imported timestamps are not forced TTS durations. Dubbing offsets, speed-up and subtitle readability settings can change output timing.
+You can also import into an existing project at any time. On the **Recognition** step, click **Choose file** next to **Import subtitles or script**.
 
-Work and track-title translation are separate switches. Disable them too if the task must never call a translation service.
+<img src="../../assets/screenshots/en/import-dialog.png" width="560" alt="Importing subtitles or a script">
 
-## Subtitle files only
+- **Import content**: whether this text is the **Original** or the **Translation**. A translation goes straight into the translation column and skips the translation step.
+- **Choose file**: pick the subtitle file. Or skip the file and paste the text into the box below.
+- **Timing for untimed scripts**: only matters when the text has no timing. See the next section.
 
-Select subtitle-only output, then **Bilingual**, **Source only** or **Translation only**. It produces SRT/LRC without synthesizing finished audio or encoding video. Source-only does not translate the body. Bilingual and translation-only use translation settings when no matching Chinese text is supplied.
+Click **Import**.
 
-Choose source filename, content-based name or a custom name in Settings → AutoFlow. Per-track subtitles retain the track filename. Internal working audio may still be created for ASR; no audio/video deliverable is produced.
+> **Note**: importing replaces every sentence in the project. Think twice if you have already proofread it.
 
-Maximum characters per line is a wrapping limit, not a target cue length and not a sentence-merging control. Set 8–500 in Mixing & subtitles. Save to Current project/Both for existing projects and regenerate; old files are not rewritten by saving settings.
+After importing, spot-check a few lines. Click a row and the player jumps to that time, so you can hear whether the text matches the audio.
 
-## Untimed scripts
+About the formats:
 
-The LLM selects literal script quotes; Python computes character ranges. Explicitly skipped stage directions are recorded. The same characters cannot be allocated twice, and ASR timing is not interpolated from character counts.
+- SRT, VTT and ASS give a start and an end for every line. These are the most reliable.
+- LRC only has start times. The end is inferred from the next line.
+- Subtitles do not need to cover every second. Music, pauses and breathing normally have none.
 
-Invalid batches retry with diagnostics, then sentence by sentence. Unresolved sentences retain their source text/translation and are marked for manual review. Authentication, network and output-limit failures remain errors, not successful reviews. Inspect project diagnostics and the script report before dubbing.
+## When the script has no timing
 
-## Redoing an incorrect task
+Many works ship a TXT script with words only and no timing per line. There are three ways to give it timing:
 
-Back up finished outputs. Rescan rather than resuming a stale queue snapshot, check language/timing on every track, then explicitly allow replacing the tool's prior results. Upgrading does not rewrite source media, source subtitles or existing deliverables.
+| Method | Needs | Result |
+|---|---|---|
+| **Run recognition, then match the script with an LLM** (recommended) | A recognition model and a translation key | Recognition provides the timing of each sentence, then the script text is matched onto it. Timing comes from recognition and text from the script, taking the best of both |
+| **Qwen3 alignment** | The Qwen3 alignment model | Finds each script line directly in the audio. Japanese and English originals only |
+| **Estimate from text length** | Nothing | Spreads time by character count. Only a starting point; you must adjust every line yourself |
+
+Whichever you use, check the result. Look for missing lines and for wrong starts and ends.
+
+Lines that could not be matched keep the recognition result and are marked for review. Click **Needs review** above the table to see only those.
+
+## Subtitles only, no dubbing
+
+If you just want translated subtitles:
+
+1. Run recognition and translation as usual.
+2. Skip dubbing and go straight to **Export**.
+3. Set **Output** to **Subtitles only** and choose what the subtitles contain.
+4. Click **Export**.
+
+You get both SRT and LRC files.
+
+Characters per line and minimum display time are under **Subtitle layout** in **More settings** on the export step.
+
+## Which subtitles each track uses in batch
+
+In batch processing the program matches a subtitle file to each track by file name. You can check and correct each one in the Add work dialog. See [Batch processing](BATCH.md#check-each-track).
+
+- If every track has timed subtitles, choose **Use subtitle text and timing (no ASR)** and no recognition model is needed.
+- If they are all translated subtitles, translation is not needed either.
+- Do not mix Japanese and English original subtitles within one work.

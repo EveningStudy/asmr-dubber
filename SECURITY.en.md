@@ -14,7 +14,7 @@ Keys are **plaintext** in `.asmr-dubber/config/secrets.json`. Protect directory 
 
 ## Web and files
 
-Non-loopback binding requires username/password; an unset password is generated and printed in the terminal. Public sharing tunnels are disabled. Served outputs are staged in the controlled UI directory; upload limit defaults to 20 GB. Authentication is not a reason to expose the development UI directly to the internet.
+Non-loopback binding requires username/password; an unset password is generated and printed in the terminal. Public sharing tunnels are disabled. Media URLs only serve registered resources; writes validate session token/Origin and loopback checks Host; upload limit defaults to 20 GB. Authentication is not a reason to expose the development UI directly to the internet.
 
 Untrusted media exercises parsers/codecs. Do not run as administrator/root. Path escape, symlink bypass and arbitrary file disclosure are security issues. Keep schema/revision validation enabled.
 

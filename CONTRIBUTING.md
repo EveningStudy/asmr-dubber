@@ -14,7 +14,7 @@
 项目使用 Python 3.12 和 uv。开发环境可以放在仓库内，但不要复用用户的便携运行环境：
 
 ```bash
-uv sync --locked --extra ui --extra dev
+uv sync --locked --extra dev
 ```
 
 确认基本质量门槛：
@@ -27,10 +27,10 @@ uv run --no-sync python scripts/verify_modelscope_artifacts.py
 uv run --no-sync pytest
 ```
 
-构建一次 UI 图，能提前发现事件输入/输出数量不匹配：
+启动原生网页并验证 JSON 接口和真实浏览器交互；不要使用已移除的 Gradio 构建检查。
 
 ```bash
-uv run --no-sync python -c "from asmr_dubber.ui import build_app; app = build_app(); assert app.blocks"
+uv run --no-sync asmr-dubber ui --host 127.0.0.1 --port 7860
 ```
 
 测试如果需要便携目录，使用单独的临时路径，不要读取开发者真实的 `.asmr-dubber`：
@@ -48,7 +48,7 @@ uv run --no-sync pytest
 
 ## 代码边界
 
-- UI 和 CLI 都通过 `pipeline.py` 执行业务流程；不要在事件处理器里复制模型逻辑；
+- UI 通过 JSON 接口与独立服务层调用核心，CLI 使用核心 pipeline；不要在接口或浏览器里复制业务逻辑；
 - 后端能力只在 `model_registry.py` 声明，项目 schema 和适配器引用同一 ID；
 - 所有用户文件路径都要验证在允许的目录内，不能直接信任 manifest 字符串；
 - 项目、设置、密钥和索引写入使用 `storage.py` 的锁与原子替换；
@@ -139,14 +139,14 @@ PowerShell 5.1 解析所有脚本；现有需要兼容 5.1 的文件应保留 UT
 
 ### 设置和 UI
 
-- 测试仅默认值、仅当前项目、两者三种保存范围；
+- 测试当前项目自动保存、新项目默认值隔离和队列快照；
 - 在同一进程测试保存、浏览器刷新、重新打开，不只测试 UI 图构建；
 - 覆盖 500 行以上表格、长文本、布尔文本往返与首次加载；
 - 验证完整中文字幕绕过 ASR/正文翻译，混合语言不误报覆盖不足；
 - ASR 设置变化后当前结果被标记为待更新；
 - 切换服务或后端时只显示相关参数；
 - 中文界面的首次缩写写成 ASR（语音识别）、TTS（语音合成）、VAD（语音活动检测）；
-- Gradio 事件输入、输出和动态 choices 保持一致。
+- JSON 请求合同、参数清单、动态显示条件和本地化保持一致。
 
 ## 真实模型验证
 

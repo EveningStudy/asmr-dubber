@@ -1,53 +1,42 @@
 中文 | [English](en/INDEX.md)
 
-# 文档索引
+[← 回到 README](../README.md)
 
-[返回 README](../README.md)
+# 文档
 
-## 开始使用
+第一次用，按这个顺序看：
 
-| 目标 | 文档 |
+1. **[安装与模型](INSTALLATION.md)**：把程序跑起来，下载模型。
+2. **[使用手册](USER_GUIDE.md)**：把一个音频从头做成配音。
+
+## 按你要做的事找
+
+| 我想…… | 看这篇 |
 |---|---|
-| 安装、选择方案、检查环境 | [安装指南](INSTALLATION.md) |
-| 单个作品：识别 → 校对 → 翻译 → 配音 → 输出 | [使用指南](USER_GUIDE.md) |
-| 多音轨、多作品排队处理 | [批量处理](USER_GUIDE.md#批量处理作品) |
-| 日／英／中文输入，中文或英文配音 | [输入与配音语言](USER_GUIDE.md#输入与配音语言) |
-| 双语成品、替换配音或两者 | [批量输出选择](USER_GUIDE.md#批量输出选择) |
+| 一次处理整个作品文件夹，做成视频 | [批量处理](BATCH.md) |
+| 用作品自带的字幕或台本 | [字幕与台本](SUBTITLE_WORKFLOW.md) |
+| 只要翻译字幕，不要配音 | [字幕与台本](SUBTITLE_WORKFLOW.md#只要字幕不要配音) |
+| 让配音跟着原声的位置移动 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md#空间跟随) |
+| 调配音的音量和时间 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md) |
+| 去掉原来的人声 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md#替换版去掉原来的人声) |
+| 让多个模型互相校对识别结果 | [多模型复核](AUDIO_REVIEW_TUTORIAL.md) |
+| 换别的识别模型、配音服务、翻译服务 | [模型与服务](BACKENDS.md) |
+| 弄清设置存在哪 | [设置与存储](CONFIGURATION.md) |
+| 清理磁盘、备份项目 | [设置与存储](CONFIGURATION.md#清理磁盘) |
+| 查某个参数的含义和默认值 | [参数表](PARAMETERS.md) |
+| 解决报错 | [常见问题](TROUBLESHOOTING.md) |
 
-## 字幕与音频
+## 给开发者
 
-| 目标 | 文档 |
+| | |
 |---|---|
-| 已有字幕直接制作、无时间轴台本重新定时 | [已有字幕制作](SUBTITLE_WORKFLOW.md) |
-| 只输出双语、原文或译文字幕，使用音频原名 | [仅字幕文件](USER_GUIDE.md#只输出字幕文件) |
-| RTF、人声分离、中文替换、原声回填、逐句音量与静音 | [音频处理](EXPERIMENTAL_AUDIO.md) |
-| 比较不同 ASR 的候选结果 | [多模型复核教程](AUDIO_REVIEW_TUTORIAL.md)（实验性，效果可能不如单模型） |
+| [命令行](CLI.md) | 不开界面，用命令做每一步 |
+| [架构](ARCHITECTURE.md) | 代码是怎么组织的 |
+| [Prompt 维护](PROMPTS.md) | 内置的翻译和校对提示词 |
+| [镜像制品维护](MODELSCOPE_UPLOADS.md) | 模型和依赖包是怎么发布的 |
+| [历史发布记录](RELEASE.md) | 各版本的变化 |
+| [贡献指南](../CONTRIBUTING.md) | 怎么提交代码 |
 
-RTF（原声空间线索迁移）是独立的混音选项。人声分离与中文替换标注“实验性，不推荐”；是否使用它们不影响普通制作流程。
+## 其他
 
-## 配置与排障
-
-| 目标 | 文档 |
-|---|---|
-| 参数、默认值、项目设置及保存范围 | [配置参考](CONFIGURATION.md) |
-| 释放项目空间、保留成品与断点 | [项目缓存清理](USER_GUIDE.md#项目缓存清理) · [缓存机制](EXPERIMENTAL_AUDIO.md#批量输出与缓存) |
-| 本地模型与云端服务接入 | [后端指南](BACKENDS.md) |
-| 命令行与自动化 | [CLI](CLI.md) |
-| 安装失败、卡住、缺模型、重复台词、恢复任务 | [排障指南](TROUBLESHOOTING.md) |
-| 提交问题、提供日志 | [支持与反馈](../SUPPORT.md) |
-
-## 开发与维护
-
-| 目标 | 文档 |
-|---|---|
-| 开发环境、测试和贡献流程 | [贡献指南](../CONTRIBUTING.md) |
-| 项目、缓存、队列和运行时结构 | [架构](ARCHITECTURE.md) |
-| 修改模型请求模板和返回合约 | [Prompt 维护](PROMPTS.md) |
-| 模型包、镜像和发布制品 | [制品维护](MODELSCOPE_UPLOADS.md) |
-| 已发布版本与验证记录 | [发布记录](RELEASE.md) |
-
-## 安全与许可
-
-[安全策略](../SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md) · [行为准则](../CODE_OF_CONDUCT.md)
-
-每篇文档开头提供中英文切换和返回本索引的链接。图文教程保留操作截图；截图用于定位控件，不代表模型质量评测。
+[第三方声明](THIRD_PARTY_NOTICES.md) · [安全策略](../SECURITY.md) · [获取帮助](../SUPPORT.md) · [行为准则](../CODE_OF_CONDUCT.md)

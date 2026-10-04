@@ -11,8 +11,8 @@ The registry is the capability source of truth. A listed interface is not a prom
 | Backend | Language / notes |
 |---|---|
 | Parakeet via CrispASR | Japanese; CTC 1.1B GAL quality baseline, 0.6B TDT/CTC lower-resource alternative |
-| Kotoba-Whisper | Japanese; Advanced installs v2.2 only |
-| Faster-Whisper | Japanese/English; Advanced installs large-v2 |
+| Kotoba-Whisper | Japanese; Model download prepares v2.2 only |
+| Faster-Whisper | Japanese/English/Chinese with a suitable multilingual model; Model download prepares large-v2 |
 | Generic ASR API | OpenAI-compatible `/v1/audio/transcriptions`; uploads audio |
 
 Parakeet uses its own executable/models, not the main Torch runtime. Its chunk size defaults to 120 s and idle timeout to 600 s. Punctuation restoration is disabled by default. Kotoba defaults to 30 s chunks. Faster-Whisper generally uses float16/int8_float16 on GPU or int8 on CPU; device support depends on the installed runtime.
@@ -23,9 +23,13 @@ VAD and alignment are independent. Default VAD is off. Backend VAD is available 
 
 Multi-model review operates on common audio clips and is **experimental, potentially worse than one model**. It does not call a translation LLM. [Review guide](AUDIO_REVIEW_TUTORIAL.md).
 
+![Model management](../../assets/screenshots/en/models.png)
+
 ## Local TTS
 
-IndexTTS2 and IndexTTS-2.5 have independent environments and checkpoints. Recommended Setup installs IndexTTS2 only when NVIDIA is detected. IndexTTS-2.5 is opt-in in Devices & models. Neither is installed into the main ASR venv.
+IndexTTS2 and IndexTTS-2.5 have independent environments and checkpoints. Download them in Models, then select the backend in project step 3. IndexTTS-2.5 is a separate opt-in download. Neither is installed into the main ASR venv.
+
+![IndexTTS controls](../../assets/screenshots/en/defaults-tts.png)
 
 Both expose speaker/emotion reference choices. IndexTTS-2.5 adds duration factor, language, normalization, BF16, sampling and emotion controls. CPU is supported by the integration but often very slow. Optional CUDA kernels/DeepSpeed/compilation must match the isolated environment; leave them off initially.
 
@@ -57,3 +61,5 @@ Built-in endpoints/model names are presets; use IDs available to your account. B
 ## Separation and RTF
 
 Local audio-separator plus Replicate/custom HTTP adapters are optional. Separation and Chinese replacement are experimental, not recommended. Download/upload is explicit. RTF is local mix-time stereo processing, not another cloud service. [Parameters, contracts and limitations](EXPERIMENTAL_AUDIO.md).
+
+Project parameters autosave; new-project defaults are separate. Save keys in Settings → Cloud services. [All 201 fields](PARAMETERS.md) · [Configuration](CONFIGURATION.md).

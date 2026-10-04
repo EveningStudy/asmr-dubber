@@ -1,15 +1,27 @@
 [中文](README.md) | English
 
+<div align="center">
+
 # ASMR Dubber
 
-[![Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
-![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
-![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624)
-[![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+**Dub audio works into another language. Wherever the original voice is, the dub is there too.**
 
-Turn Japanese, English or Chinese audio/video into Chinese or English dubbing, bilingual audio and subtitles. Supports voice cloning, batch processing and subtitle-only export. Recognition, translation, synthesis and mixing are separate stages; sentence text and timing remain editable. Language support depends on the selected backend.
+Recognition, translation, voice-cloned dubbing, mixing and subtitles in one program.
 
-## Demo
+Works with Japanese, English and Chinese audio or video, and dubs into Chinese or English.
+
+[![GitHub Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
+![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+[Download](https://github.com/EveningStudy/asmr-dubber/releases/latest) · [Get started](#get-started-in-three-minutes) · [User guide](docs/en/USER_GUIDE.md) · [All docs](docs/en/INDEX.md)
+
+</div>
+
+![The project workspace: sentences on the left, settings for the current step on the right](assets/screenshots/en/step3-done.png)
+
+## Listen first
 
 Headphones recommended.
 
@@ -37,97 +49,73 @@ Chinese replacement dub: separate Japanese vocals from the background, recognize
 
 https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
-[Watch the full demo of an older version on Bilibili; refer to this README for current information](https://www.bilibili.com/video/BV1f43G6YEov/). Media is used for demonstration; contact the maintainer about rights concerns.
+[Watch the introduction and demo of an older version on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Please refer to the documents for current information.
 
-## Install
+[More audio examples](https://space.bilibili.com/3747523753675973) made with this program. Results vary with the source material, models and settings.
 
-On Windows, download the portable ZIP from [Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest). Extract it completely to a short, writable path such as `D:\Apps\ASMR-Dubber`.
+Media is used for demonstration; contact the maintainer about rights concerns.
 
-> Enable Windows long paths before use. If available, open Settings → System → Advanced → File Explorer → Enable long paths, then restart ASMR Dubber. Deep paths in third-party runtimes can otherwise fail even when the file exists. If your Windows version does not expose the toggle, use a short directory such as `D:\ASMR-Dubber` to reduce the risk.
+## What it does
 
-![Windows long-path setting](assets/windows-enable-long-paths.png)
-
-1. Run `ASMR-Dubber-Setup.exe`; choose a language and installation profile. Chinese is the default.
-2. Run `ASMR-Dubber.exe` and keep its terminal open.
-3. Check **Settings → Devices & models**, then configure ASR, translation and TTS.
-
-Use **中文 / English** at the top of the web UI to switch interface language without restarting. This does not change the source language, prompts, dubbing target or project contents.
-
-No preinstalled Python, uv, Git, FFmpeg or CUDA Toolkit is required. Downloads need system `curl.exe`; local GPU inference needs a compatible NVIDIA driver. See [Installation](docs/en/INSTALLATION.md).
-
-Linux x86_64, including WSL2:
-
-```bash
-bash scripts/linux/setup.sh 推荐
-bash scripts/linux/run-ui.sh
-```
-
-Requires `bash`, `curl`, `tar` and `getconf`. ARM64 and macOS are not supported.
-
-| Profile | Contents |
+| | |
 |---|---|
-| Core | UI, media tools, Edge TTS and API clients; no large models |
-| Recommended | Core + two Japanese Parakeet models; IndexTTS2 on NVIDIA machines |
-| Advanced | Recommended components + Kotoba, Faster-Whisper, ASMR VAD and Qwen3 alignment |
+| 🎧 **Any result you want** | A bilingual mix of original plus dub, a replacement mix with the original voice removed, a separate dub track, translated subtitles only, or a video with a cover image. |
+| 🧭 **Spatial following** | Voices in these works move from ear to ear and from far to near. The program analyses the position and distance of each original line and places the dub in the same spot instead of leaving it in the centre. |
+| 🎼 **Vocal separation** | Splits the original into voice and background, removes the original language, and keeps the background with the dub as a replacement mix. Laughter and sighs that have no dub can keep the original voice. |
+| 🗣️ **Voice cloning** | Pick one line of the original as a reference and the dub speaks in that voice. This uses IndexTTS2 on your own GPU. |
+| ✍️ **Edit any sentence** | Fix a misheard line, rewrite a translation, and only that sentence is dubbed again. |
+| 📦 **A whole work in one go** | Hand a work folder to the Batch page. Every track runs through the full pipeline and can be merged into one file or turned into a video. |
+| 📝 **Use existing subtitles** | Original-language subtitles skip recognition. Translated subtitles skip translation too. You can also export subtitles only. |
+| 🎚️ **Every parameter is exposed** | Over two hundred settings, folded away until you need them. Changes inside a project affect only that project. |
 
-IndexTTS-2.5 is an optional installation, not part of these profiles. Local English ASR requires Faster-Whisper; the Japanese recommended profile is not an English model bundle.
+## Get started in three minutes
 
-## Workflow
+The steps below use the most common case, Japanese dubbed into Chinese, as the example.
 
-Select Japanese, English or Chinese as the new-project source language in **ASR**, and Chinese or English as the **TTS dubbing language**. Batch jobs can produce bilingual mixes, replacement dubs or both, using the selected RTF and mixing settings; original media with subtitles and subtitle-only exports are also available. See [Input and dubbing languages](docs/en/USER_GUIDE.md#input-and-dubbing-languages) and [Batch output choices](docs/en/USER_GUIDE.md#batch-output-choices).
+**1. Download and run.** Get the archive from [Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest), extract it to a short path such as `D:\ASMR-Dubber`, and double-click `ASMR-Dubber.exe`. The interface opens in your browser. You do not need to install Python or anything else first.
 
-| Input | Route |
-|---|---|
-| Audio/video only | Create → ASR → correct source text → translate → synthesize → mix |
-| Timed source-language subtitles | Import → translate → synthesize → mix |
-| Chinese subtitles | Import as Chinese → synthesize → mix; no ASR or body translation |
-| Untimed script | Import with estimated timing or ASR-assisted script matching; review manually |
-| Multiple tracks/works | Scan → check tracks, scripts and languages → queue → run |
-| Subtitles only | AutoFlow → subtitle files only → bilingual, source or translation; no finished audio/video |
+**2. Download models.** Open **Models** and click **Download both**. This installs Parakeet for Japanese recognition and IndexTTS2 for voice cloning. If the original is English or Chinese, download Faster-Whisper for recognition instead.
 
-[User guide](docs/en/USER_GUIDE.md) · [Existing-subtitle workflow](docs/en/SUBTITLE_WORKFLOW.md) · [Configuration](docs/en/CONFIGURATION.md)
+![The Models page](assets/screenshots/en/models.png)
 
-### Save scope
+**3. Add a translation key.** Open **Settings → Cloud services** and enter an API key for DeepSeek or any provider you have an account with.
 
-**Defaults for new projects / Current project / Both** are distinct. Saving defaults does not update an open project. API keys have separate save buttons. Tab changes preserve drafts; browser refresh discards unsaved drafts. Reopen existing projects after refresh.
+**4. Make something.** Go back to **Projects**, drop in an audio file, pick the original and dubbing languages, and follow the four steps at the top: **Recognition → Translation → Dubbing → Export**.
 
-### Mixing
+<img src="assets/screenshots/en/new-project.png" width="560" alt="New project">
 
-Mixing optionally uses **RTF (original spatial cue transfer)** to transfer stereo cues from the original recording to the target-language dub. Bilingual and replacement mixes reuse a valid RTF dubbing stem rather than computing it twice. See [Audio processing](docs/en/EXPERIMENTAL_AUDIO.md) for operation and parameters.
+No GPU? It still works. Use the built-in Edge TTS for dubbing (online, fixed voices) and run recognition on the CPU, which is slower.
 
-## Backends
-
-| Stage | Supported interfaces |
-|---|---|
-| ASR | Parakeet (Japanese), Kotoba-Whisper (Japanese), Faster-Whisper (Japanese/English/Chinese with a suitable multilingual model), generic ASR API |
-| Alignment | Backend timestamps, Qwen3 ForcedAligner |
-| Local TTS | IndexTTS2, optional IndexTTS-2.5 |
-| Online TTS | Edge, MiMo, MiniMax, IndexTTS2 API, GPT-SoVITS, CosyVoice, Fish, generic TTS API |
-| Translation | DeepSeek, Bailian, Doubao, SenseNova, OpenAI, Claude, Gemini, OpenAI-compatible, DeepL, Google, Microsoft |
-
-Edge needs internet but no key and does not clone voices. Other services need your account or server. ASMR Dubber does not deploy third-party servers. [Backend reference](docs/en/BACKENDS.md).
-
-## Data and recovery
-
-Default data lives in `.asmr-dubber`: projects, models, isolated runtimes, configuration, download caches and AutoFlow state. Back up the entire project directory, not just `project.json`. External project directories need separate backups. Retrying reuses valid caches; deleting the data directory is not routine troubleshooting.
-
-Use **Settings → Storage & cleanup** to reclaim space: scan, select projects, then confirm. Only safe caches are selected by default. Analysis audio, RTF intermediates and separated stems require explicit selection and may need rebuilding later. Projects, source media, synthesized clips, final outputs and models are preserved. See [Project cache cleanup](docs/en/USER_GUIDE.md#project-cache-cleanup).
-
-API keys are plaintext in `.asmr-dubber/config/secrets.json`. Translation sends text; ASR APIs send audio; external TTS/separation may upload reference audio. Check service terms and media rights before use. Do not publish private logs or projects without review.
+The full walkthrough with screenshots is in the [user guide](docs/en/USER_GUIDE.md). For Linux, see [Installation and models](docs/en/INSTALLATION.md#linux-and-wsl2).
 
 ## Documentation
 
-[Complete documentation index](docs/en/INDEX.md)
-
-| Category | Pages |
+| I want to… | Read |
 |---|---|
-| Getting started | [Installation](docs/en/INSTALLATION.md) · [User guide and batch processing](docs/en/USER_GUIDE.md) |
-| Subtitles and audio | [Existing-subtitle workflow](docs/en/SUBTITLE_WORKFLOW.md) · [Audio processing: RTF, separation and sentence mixing](docs/en/EXPERIMENTAL_AUDIO.md) |
-| Configuration and troubleshooting | [Configuration](docs/en/CONFIGURATION.md) · [Backends](docs/en/BACKENDS.md) · [CLI](docs/en/CLI.md) · [Troubleshooting](docs/en/TROUBLESHOOTING.md) · [Support](SUPPORT.en.md) |
-| Storage and recovery | [Project cache cleanup](docs/en/USER_GUIDE.md#project-cache-cleanup) · [Separation and RTF caches](docs/en/EXPERIMENTAL_AUDIO.md#batch-outputs-and-caches) |
-| Development and maintenance | [Contributing](CONTRIBUTING.en.md) · [Architecture](docs/en/ARCHITECTURE.md) · [Prompts](docs/en/PROMPTS.md) · [Artifact maintenance](docs/en/MODELSCOPE_UPLOADS.md) · [Release notes](docs/en/RELEASE.md) |
-| Security and licensing | [Security](SECURITY.en.md) · [Third-party notices](docs/en/THIRD_PARTY_NOTICES.md) · [Code of conduct](CODE_OF_CONDUCT.en.md) |
+| Install the program and download models | [Installation and models](docs/en/INSTALLATION.md) |
+| Dub one audio file from start to finish | [User guide](docs/en/USER_GUIDE.md) |
+| Process a whole work folder | [Batch processing](docs/en/BATCH.md) |
+| Use existing subtitles or a script | [Subtitles and scripts](docs/en/SUBTITLE_WORKFLOW.md) |
+| Tune spatial following and volume, or make a replacement mix | [Mixing and spatial following](docs/en/EXPERIMENTAL_AUDIO.md) |
+| Have several models cross-check recognition | [Multi-model review](docs/en/AUDIO_REVIEW_TUTORIAL.md) |
+| Switch recognition models, dubbing services or translation providers | [Models and services](docs/en/BACKENDS.md) |
+| Understand where settings live, free disk space, back up | [Settings and storage](docs/en/CONFIGURATION.md) |
+| Look up a parameter | [Parameter reference](docs/en/PARAMETERS.md) |
+| Fix an error | [Troubleshooting](docs/en/TROUBLESHOOTING.md) |
+
+For developers: [Architecture](docs/en/ARCHITECTURE.md) · [Command line](docs/en/CLI.md) · [Contributing](CONTRIBUTING.en.md) · [All docs](docs/en/INDEX.md)
+
+## Things to know
+
+- **Your data lives in the program folder.** Projects, models and settings are under `.asmr-dubber`. Copy the whole folder to back up or move.
+- **API keys are stored in plain text** at `.asmr-dubber/config/secrets.json`. Do not share that folder.
+- **Cloud services receive your content.** Translation sends the script text. Cloud dubbing sends the translation and the reference audio. Nothing is uploaded when you use local models only.
+- **Vocal separation and the replacement mix are experimental.** They can leave traces of the original voice and can damage sound effects.
 
 ## License
 
-Application code is MIT licensed. Model weights, voices, media and third-party runtimes retain their own terms. Obtain permission for voice cloning and redistribution; passing tests is not a quality or rights guarantee.
+The project code is released under the [MIT](LICENSE) license. Models, runtimes, cloud services, input works and generated content are subject to their own terms; open-source code does not grant rights to them. See [third-party notices](docs/en/THIRD_PARTY_NOTICES.md).
+
+## Friends
+
+- [LINUX DO](https://linux.do/): a new kind of community

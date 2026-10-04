@@ -30,7 +30,7 @@ bash scripts/linux/run-cli.sh --help
 
 `doctor` checks the configured backends as well as core dependencies; a missing selected backend can return nonzero while the UI itself works. Without `--no-network`, it may contact the translation endpoint.
 
-Create accepts `--projects-root`, `--source-language ja|en`, `--offset-ms` and `--max-speed`. Source media is copied into the new project. Analyze/translate/synthesize accept `--force`; use it only when cached work should be replaced. Normal translation processes enabled sentences without Chinese text.
+Create accepts `--projects-root`, `--source-language ja|en|zh`, `--offset-ms` and `--max-speed`. Source media is copied into the new project. Analyze/translate/synthesize accept `--force`; use it only when cached work should be replaced. Normal translation processes enabled sentences without Chinese text.
 
 ## Selected sentences and timing
 

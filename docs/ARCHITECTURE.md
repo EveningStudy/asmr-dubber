@@ -2,235 +2,55 @@
 
 [文档索引](INDEX.md) · [README](../README.md)
 
-# 架构说明
+# 原生界面与服务架构
 
-本文面向维护者和准备扩展代码的开发者。用户操作请从[使用指南](USER_GUIDE.md)开始。
+用户操作见[图文手册](USER_GUIDE.md)。当前界面为原生 HTML/CSS/JS，没有前端构建工具或 Gradio 依赖。
 
-## 设计约束
-
-ASMR Dubber 的实现围绕几条约束展开：
-
-- **便携目录**：默认持久状态只写入 `<program>/.asmr-dubber`；
-- **项目可恢复**：长流程分阶段保存，逐句工作按输入签名缓存；
-- **结果可解释**：项目明确记录后端、模型和参数，不做静默模型回退；
-- **资源有上限**：长音频分块、翻译上下文有界、HTTP 并发有界；
-- **写入可恢复**：项目 revision、跨进程锁、唯一临时文件和原子替换；
-- **运行时隔离**：主程序、CrispASR、IndexTTS2 和下载工具不混用系统环境。
-
-这些约束比“少写几行适配代码”优先级更高。新的后端或流程必须保持相同的数据和失败语义。
-
-## 分层
+## 调用路径
 
 ```text
-Windows 启动器 / Shell 脚本
-                 │
-          Web UI / CLI
-                 │
-   ui_services.py / autoflow/
-                 │
-           pipeline.py
-       ┌─────────┼──────────┐
-       │         │          │
-   分析/识别   翻译/合成   混音/字幕
-       │         │          │
-       └─────────┼──────────┘
-                 │
-        models.py + storage.py
-                 │
-       项目目录 / 便携数据目录
+Windows EXE / scripts
+  → ui.py → http_server.py → api.py / api_contract.py
+  → services/（项目、设置、模型、批量、任务）
+  → pipeline / asr / translation / tts / audio / autoflow
+  → 项目与便携数据
+
+frontend/*.js → JSON API → services → 核心
+CLI → 核心项目流程
 ```
 
-UI 不直接加载模型。`ui_services.py` 负责把网页输入转换成领域对象、刷新项目视图和限制输出路径；实际任务进入 `pipeline.py`。CLI 调用同一套 pipeline，因此网页和脚本具有相同的缓存、持久化和错误行为。
+接口层校验请求与绑定服务，不实现业务流程；服务层不依赖界面库，组合核心模块和持久状态。浏览器用会话 token、媒体能力 URL 与 JSON 数据，服务器保持 revision/任务锁保护。
 
 ## 模块职责
 
-### 入口和编排
-
-| 模块 | 职责 |
+| 位置 | 职责 |
 |---|---|
-| `ui.py` | 构建 Gradio 组件、动态显示相关设置、注册事件和远程访问认证 |
-| `ui_assets.py` | 静态 CSS 和浏览器行为脚本 |
-| `lifecycle.py` | 项目执行锁、浏览器 revision 检查和输出失效 |
-| `installer_transaction.py` | IndexTTS-2.5 源码与环境备份、失败回滚和中断恢复 |
-| `ui_services.py` | 校验表格/上传、创建项目视图、应用全局设置、网页文件暂存 |
-| `cli.py` | Typer 命令、终端进度、环境检查和安装入口 |
-| `pipeline.py` | 创建、识别、翻译、合成、混音、字幕、导出和性能记录的事务边界 |
-| `autoflow/catalog.py` | 扫描作品目录，识别音频版本、附加音轨、带时间轴字幕和背景图 |
-| `autoflow/domain.py` | 无 I/O 副作用的任务计划与设置类型 |
-| `autoflow/engine.py` | 规范化分轨、建立批量任务、断点续跑并整理音频、视频和字幕成品 |
-| `autoflow/ui_services.py` | 把批量页选项转换成不可变任务计划，维护队列和日志视图 |
-| `autoflow/ui_components.py` | 音轨和队列卡片、拖动排序及逐项编辑事件 |
+| frontend/index.html/styles.css | 页面外壳、布局 |
+| frontend/projects.js/project_dialogs.js | 四步工作区、字幕/参考/复核弹窗 |
+| frontend/forms.js | 参数清单驱动表单与自动保存 |
+| frontend/session.js/app.js | 会话、JSON 请求、保存队列、任务轮询、导航、本地化 |
+| frontend/models.js/batch.js/settings.js | 模型、队列、设置/诊断/清理页面 |
+| api_contract.py/api_contracts.py/api.py | 请求类型、路由与参数校验 |
+| services/parameters.py/parameter_layout.json | 参数类型/默认值/范围/分组/显示条件；与领域模型合成一份清单 |
+| services/settings.py | 全局/项目范围、Key 与持久设置 |
+| services/projects.py/project_* | 项目视图、编辑、阶段操作、音频参考 |
+| services/review.py | 复核报告、采纳/锁定/撤销 |
+| services/models.py/model_status.py | 硬件、权重/依赖状态、下载/移除/离线包 |
+| services/batch*.py | 扫描、计划快照、队列、执行 |
+| services/tasks.py | 启动、进度、取消、重启中断与恢复；保留 50 个已结束任务 |
+| lifecycle.py/models.py/storage.py | 缓存失效、项目验证、revision、跨进程锁与原子写入 |
+| model_registry.py/runtime_manager.py | 后端能力、安装/检测合同 |
 
-### 媒体和模型
+## 持久化与资源
 
-| 模块 | 职责 |
-|---|---|
-| `audio.py` | 媒体探测、分析副本、参考截取、响度处理、混音和视频封装 |
-| `asr.py` | 三个本地识别系列、通用 ASR API 与统一句子输出 |
-| `asr_progress.py` | 模型加载/解码期间的存活反馈，不伪造百分比 |
-| `segmentation.py` | token/segment 时间戳整理、标点与停顿切句 |
-| `vad.py` | ASMR ONNX VAD、区间压缩、缓存和原时间映射 |
-| `forced_alignment.py` | Qwen3 ForcedAligner 句子边界计算 |
-| `asr_review.py` | 统一音频分片、后端会话复用、候选缓存、精确一致性与保守提案 |
-| `review_services.py` | 试听、差异展示、版本保护的采纳/确认/撤销、独立时间对齐 |
-| `translation.py` | LLM 与机器翻译请求、分批、上下文和翻译记忆 |
-| `tts.py` | 逐句缓存键、参考解析和合成调度 |
-| `tts_backends.py` | IndexTTS2 子进程及外部 HTTP API 适配 |
-| `voice_reference.py` | 项目统一参考和逐句参考选择 |
-| `timing.py` | 中文落点、冲突检测、自动加速倍速和剩余重叠计算 |
-| `subtitles.py` | SRT/LRC 文本、时间轴和可读性限制 |
-| `filtering.py` | 日语语气词和非实义文本判断 |
+项目拥有自己的设置；默认值只在创建时复制。密钥单独存全局，不放任务快照；项目任务结果只记录 manifest，页面重新载入项目。已消费上传清理，废弃上传过期回收。媒体注册使用规范路径映射。
 
-### 状态、运行时和下载
+安装、推理与批量受互斥保护。取消通过 token/子进程控制向下传播，核心检查点保留有效完成结果；重启将活跃任务标记 interrupted。缓存签名包括相关文本、时间、参考、模型与参数，避免误复用。
 
-| 模块 | 职责 |
-|---|---|
-| `models.py` | Pydantic 项目 schema、设置验证、加载、revision 保存和兼容性规范化 |
-| `user_settings.py` | 新项目默认值、便携路径、明文密钥和外部参考音频 |
-| `storage.py` | 线程/进程文件锁、持久化临时文件和原子替换 |
-| `model_registry.py` | 后端白名单、设备、模型、安装方式和能力声明 |
-| `runtime_manager.py` | 硬件探测、后端状态、安装互斥和模型准备 |
-| `model_packs.py` | 离线模型包 manifest、路径安全、文件校验和导入 |
-| `model_pack_download.py` | 固定远程模型包、分段/断点下载和 SHA-256 |
-| `mirrors.py` | Python 侧镜像策略和固定 snapshot 下载 |
-| `platforms.py` | 平台检查、便携路径和第三方子进程私有环境 |
-| `environment.py` | FFmpeg、CUDA 和本地模型缓存定位 |
-| `performance.py` | 阶段耗时、资源信息和缓存统计 |
-| `hashing.py` | 大文件摘要及基于 path/size/mtime 的安全缓存 |
-| `constants.py` | schema 版本、默认后端、固定模型 revision 和必需文件合同 |
-| `errors.py` | 可展示给 UI/CLI 的领域错误类型 |
+清理方案的高精度时间戳/inode 以字符串跨 JSON，清理时重新验证指纹和锁。模型按登记文件与完整性检查判断就绪/删除，不能用单个同名文件代替整个模型。
 
-PowerShell/Bash 脚本负责在 Python 可用之前引导 uv、managed CPython、依赖和隔离运行时。`mirrors.json` 与 `modelscope-artifacts.lock.json` 是引导阶段的外部制品合同。
+## HTTP 边界
 
-Windows 的两个 C# 启动器只负责引导：Setup 建立日志并调用安装脚本；应用启动器检查核心环境、选择空闲端口、启动 PowerShell 子进程并验证产品页面。业务逻辑仍在 Python 中，启动器不会维护另一份后端或设置实现。
+默认 loopback Host 白名单；远程绑定强制 Basic 登录。写请求验证 `X-ASMR-Token` 和 Origin；媒体 URL 只访问注册资源。请求/上传有大小限制，模型/项目操作需通过服务验证；不是任意文件 Web 服务。
 
-## 项目生命周期
-
-### 批量编排
-
-AutoFlow 先把扫描结果固化为带指纹的任务计划，再为合并成品或每条分轨建立普通 ASMR Dubber 项目。每个计划记录源文件大小、修改时间、字幕选择与语言、音轨顺序、输出模式和背景图；源文件变化后不会静默复用旧结果。
-
-完整的带时间轴字幕直接替换识别时间轴。中文字幕使项目进入中文配音稿状态，跳过 ASR 与翻译；日语或英语字幕跳过 ASR，之后仍进入翻译。只有字幕未覆盖任务时才运行识别兜底。分轨加合并模式先完成各分轨项目，再从它们的成品和时间轴生成合并版本，不会为合并版再次运行 ASR 或 TTS。
-
-批量状态、失败记录、共享参考音频和工作目录位于 `.asmr-dubber/autoflow`，源作品目录只接收用户选择的输出子目录。
-
-### 创建
-
-`create_project` 建立唯一项目目录，复制输入媒体，计算 SHA-256，探测音视频流，并把当前全局默认值转换成 `ProjectSettings` 快照。项目从此不依赖上传临时文件。
-
-### 分析
-
-`analyze_project` 的顺序是：
-
-```text
-验证源文件
-  → 建立 16 kHz 单声道分析副本
-  → 可选 VAD 和压缩时间轴
-  → 运行主 ASR 并独立保存原稿
-  → 可选统一音频片段复听，保留逐模型候选和更正提案
-  → 用户确认文字后可独立执行复核时间对齐
-  → 写句子、审计文件和导出表
-```
-
-VAD 的压缩音频只影响识别输入。每个识别边界在进入项目之前映射回原媒体时间；后续参考截取、字幕和混音始终使用原时间轴。
-
-### 翻译
-
-`translate_project` 只提交已启用且中文为空的句子，除非调用方要求强制刷新。成功结果按批写回项目；后续请求失败不会撤销前面已经保存的中文。
-
-翻译上下文是围绕当前批次的滑动窗口，记忆只保留固定数量的已确认对照。这样请求体和进程内存不会随项目长度无限增长。
-
-### 合成
-
-`synthesize_project` 为每句计算缓存键。键覆盖中文、后端、模型、参考音频内容摘要和会改变声音的参数。只有键相同且缓存音频可读时才复用。
-
-外部 API 使用有界任务窗口和线程池；IndexTTS2/2.5 和 CrispASR 通过隔离子进程运行。中文音频采用句子 ID 加内容签名命名，验证时长和格式后才进入缓存。已完成音频可以在项目清单尚未 checkpoint 时由内容签名恢复；进程内清单保存最多每两秒一次，完成后导出完整表格。IndexTTS 的 Generated 通知逐句提交结果，超时不再丢失已提交句子。超时按模型加载及两次完成通知间的无进展时间计算，不再乘以句数。
-
-### 混音和字幕
-
-`mix_project` 一次只把一个中文句子波形放进内存，按原媒体采样率构建 RF64 浮点中文克隆音轨。根据 `mix_output_mode`，它可以只保留中文轨、只生成混音成品，或同时保留两者；切换输出模式不需要重新生成逐句 TTS。响度规范化、逐句峰值、stem 峰值和最终峰值分别处理。最终输出为 24-bit WAV；视频封装在可行时复制原视频流和其它媒体流。
-
-时间窗口模式只在当前句超过下一句开始时间时自动加速，并受最大倍速约束；顺延模式不改变语速，而是把发生冲突的下一句移动到上一句结尾。两种方式都由同一个时间计划同时驱动混音、中文轨、字幕和导出表，避免各输出使用不同落点。
-
-`generate_subtitles` 独立于合成阶段。字幕边界可以取原句或中文配音，文本先经过换行、最短时长和阅读速度约束，再原子写入 SRT/LRC。视频字幕优先烧录，失败时尝试软字幕封装。
-
-## 项目数据模型
-
-`project.json` 是项目的权威状态，包含：
-
-- schema 和应用版本；
-- revision、创建时间和更新时间；
-- 源媒体摘要与流信息；
-- 项目设置快照；
-- 句子、启用状态、源文/中文正文、时间和逐句缓存引用；
-- 当前音频、视频和字幕输出路径。
-
-项目 manifest 使用 `extra="forbid"`，不接受未知顶层字段。设置模型使用受控枚举和范围验证，避免无效后端或极端数值进入执行层。加载时可以在内存中规范化受支持的历史 schema；需要重写 manifest 时，保存路径先在 `backups` 留原始副本。
-
-源媒体和项目成品路径由项目内解析器验证，拒绝逃逸。模型路径、用户配置的外部参考属于另一类路径，可以在项目外；不是所有 manifest 字段都表示项目内文件。
-
-## 保存和并发
-
-保存项目时：
-
-1. 获取 `<project>/.project.lock` 的线程内和跨进程独占锁；
-2. 读取磁盘 revision；
-3. 与内存 revision 不同则抛出 `ProjectConflictError`；
-4. 增加 revision 和更新时间；
-5. 写入带随机名的同目录临时文件并 `fsync`；
-6. 使用 `os.replace` 原子替换；POSIX 上再同步目录项。
-
-清单写入失败时恢复内存 revision。正式文件原子替换、项目执行锁和浏览器 revision 分别保护文件、操作与过期表格；它们不等于多输出数据库事务。新增 I/O 须独立测试并发、取消和恢复，不能由 JSON 原子保存推导所有产物都有相同保证。
-
-安装和推理另有 `.asmr-dubber/.runtime-install.lock`。网页事件使用同一个运行时任务队列，进程锁提供最终互斥；这防止安装器在模型已经加载时替换 DLL 或 Python 包。
-
-## 便携存储边界
-
-`platforms.portable_home()` 默认定位仓库旁的 `.asmr-dubber`。启动器和运行脚本会设置明确的 `ASMR_DUBBER_HOME`，避免当前工作目录影响数据位置。
-
-第三方子进程不一定遵守本项目目录约定，因此 `isolated_runtime_environment()` 为它们单独设置 `APPDATA`、`LOCALAPPDATA`、XDG 配置、状态和缓存目录。修改只存在于子进程环境，不写系统变量。
-
-API Key 在 `.asmr-dubber/config/secrets.json` 明文保存，这是产品的便携性选择。文件写入与普通设置分离，POSIX 上使用私有权限；它不会进入项目、性能记录或 UI 输出。
-
-## 网页文件边界
-
-项目目录不直接加入 Gradio `allowed_paths`。需要播放或下载的文件由 `ui_services.stage_for_ui` 硬链接或复制到 `.asmr-dubber/temp/ui`，网页只允许读取该目录。暂存名包含源路径、大小和 mtime 摘要；独立 lease 文件记录最近暂存时间，避免源文件旧 mtime 导致新链接立即过期。
-
-默认只监听 loopback。绑定非 loopback 地址时强制认证；未设置密码则为当前进程生成随机值。上传大小有明确上限，默认 20 GB。
-
-## 下载和供应链边界
-
-引导制品遵循四层验证：
-
-1. `mirrors.json` 决定允许的源及顺序；
-2. `modelscope-artifacts.lock.json` 固定引导制品路径、大小和 SHA-256；
-3. `model_pack_download.py` 固定大型模型包文件合同；
-4. `model_packs.py` 再验证包内 manifest、相对路径、每个文件大小和哈希。
-
-外部源默认关闭，只有显式环境变量才能进入候选列表。下载器支持 Range、分段状态和中断恢复；正式文件必须经过完整哈希后才交给导入器。
-
-## 性能策略
-
-- Parakeet、Kotoba-Whisper 和 VAD 按块读长音频；
-- 混音一次只持有一个中文句子波形；
-- 外部文件 SHA-256 按 path/size/mtime 缓存；
-- 外部 TTS 使用 1–8 个工作线程的有界池；
-- 翻译上下文和记忆有固定句数上限；
-- 逐句 TTS 使用内容完整的缓存键；
-- 安装和推理互斥，避免峰值资源叠加；
-- `performance.json` 记录阶段时间和缓存命中，便于定位瓶颈。
-
-## 扩展后端
-
-增加后端不能只在网页添加一个下拉项。完整接入至少包括：
-
-1. `model_registry.py` 的平台、设备、模型、安装方式和执行能力声明；
-2. `ProjectSettings` 白名单和参数验证；
-3. ASR 或 TTS 适配器，并返回统一领域对象；
-4. `runtime_manager.py` 的可用性检测和安装语义；
-5. 模型 revision、缓存键和失败行为；
-6. 动态 UI，只显示当前后端使用的参数；
-7. 单元测试、无网络安装测试和真实短音频烟雾测试；
-8. 第三方许可证、模型卡和服务数据边界说明。
-
-当前产品范围只接受 Parakeet、Kotoba-Whisper、Faster-Whisper 系列，以及注册表中已有的 TTS 适配器。扩大范围前应先讨论持续维护、安装体积、硬件验证和用户界面成本。
+开发测试运行 pytest、Ruff、Pyright；真实浏览器回归另运行 `tests/native_viewport.cjs` 和 `tests/native_cleanup.cjs`。短格式/契约测试不能代替模型真实推理或听感评价。运行时 prompts 是代码资产，文档整理不改变它们，见[PROMPTS](PROMPTS.md)。

@@ -1,76 +1,166 @@
-[中文](../TROUBLESHOOTING.md) | English
+English | [中文](../TROUBLESHOOTING.md)
 
-[Documentation index](INDEX.md) · [README](../../README.en.md)
+[← All docs](INDEX.md)
 
 # Troubleshooting
 
-Preserve the project, logs and completed results before repair. Record version/commit, installation profile, OS, selected backend/model and the exact failing stage. Static checks and screenshots alone do not establish inference quality.
+## Do these two things first
 
-## Missing DLL / backend exit
+**1. Read the error.** When a task fails, the task box on the right shows the reason, and **Log** expands to show more. Most problems explain themselves there.
 
-Open Settings → Devices & models → Dependency diagnostics & repair. Check first; repair only the identified runtime/backend. Microsoft runtime repair downloads from the official source, verifies signatures and may request elevation. Backend repair may replace its environment or download missing assets. It does not delete projects/models/results or rerun failed tasks.
+**2. Run the environment check.** Open **Settings → Logs and diagnostics** and click **Start check**.
 
-Do not copy arbitrary DLLs into system/application directories. A bare exit code can indicate missing dependencies, incompatible CPU/GPU code, driver problems or a native crash; the diagnostic log is needed to distinguish them.
+![Logs and diagnostics](../../assets/screenshots/en/logs.png)
 
-## Setup and downloads
+It checks the GPU driver, model files and runtime libraries. Click the matching **Repair** for whatever it reports.
 
-| Symptom | Check |
-|---|---|
-| Setup cannot start | Complete extraction, `scripts`, `mirrors.json`, PowerShell and `curl.exe`; use a short writable path |
-| File exists but cannot be opened | Windows path length, permissions, antivirus locking, synced folders |
-| Interrupted download | Rerun Setup; retain verified files and partial download state |
-| ModelScope failure | Exact URL/status, proxy, disk space, authentication only for private repos |
-| Existing download ignored | Expected filename, size, SHA-256 and internal package manifest |
-| Installed but warning remains | Distinguish optional selected backend from core runtime readiness |
+Whatever the problem, **do not delete the `.asmr-dubber` folder.** Your projects and models are in it.
 
-Logs: `.asmr-dubber/logs/setup-*.log`. Do not disable checksums or rename unrelated artifacts to the expected filename. External download fallback requires explicit opt-in; a failure is not permission to change sources silently.
+## Starting up
 
-Moving the application can invalidate virtual-environment paths. Rerun Setup after moving. Keep runtime rollback backups until the new environment works. A partially interrupted install may retain archives, extraction directories and caches; inspect exact locations rather than deleting the whole data directory.
+**Double-clicking the EXE does nothing, or a window flashes and disappears**
 
-## UI and projects
+- Make sure you extracted the archive and are not running from inside it.
+- Put the program on a short path such as `D:\ASMR-Dubber`, not deep inside folders with spaces and non-ASCII names.
+- Check whether antivirus software blocked it.
 
-If no browser opens, inspect the terminal and use its local URL. A refreshed page discards unsaved drafts, not saved project data. Reopen a project after refresh. A process restart is required for changed Python code, not ordinary saved settings.
+**The black window appears but no browser opens**
 
-When settings appear unchanged, check Save scope and the success message. Defaults-only does not update an existing project. A stale project revision means another session saved first; reopen instead of overwriting its work.
+Open `http://127.0.0.1:7860` yourself. The black window also prints this address.
 
-Large sentence tables are paginated. Saving commits all pages. Slow model initialization is distinct from a frozen editor; include sentence count, media duration, selected models and exact stage in a report.
+**The port is already in use**
 
-## ASR and review
+Usually the previous run was not fully closed. Close the earlier black window and try again.
 
-CUDA unavailable: inspect driver/runtime compatibility and device selection. VRAM capacity alone is insufficient. Use CPU-compatible precision or an API where appropriate. Out-of-memory: reduce batch/chunk size and avoid simultaneous GPU workloads.
+**Startup is very slow**
 
-Missing Kotoba/Faster-Whisper files indicate an incomplete snapshot, not necessarily a missing Python package. VAD/Qwen alignment controls appear only when their model/runtime is complete. Parakeet uses a separate executable; keep its private DLL environment intact. Punctuation restoration is off by default.
+The first start, and the first start after updating or moving, prepares the runtime and takes a few minutes. Antivirus scanning many small files also slows it down.
 
-An empty review list usually means no eligible local models. Review completion means proposals, not automatic transcript replacement. Different model sentence splits are compared over common audio regions. Retry review alone instead of rerunning the primary ASR unnecessarily.
+## Downloading models
 
-## Untimed-script matching fails
+**A download fails or is very slow**
 
-The model selects exact script quotes; the application computes offsets. Repeated/rewritten quotes and backward mappings are rejected. Explicitly skipped stage directions are recorded. After batch retries, single-sentence retries isolate failures; unresolved sentences keep their original text and receive manual-review notes in project diagnostics.
+- Switch the download source at the top right of the Models page.
+- Check free disk space. Models are unpacked after download and need more room than the size shown.
+- Click **Download** again. What is already downloaded is not fetched twice.
 
-Inspect `imports/script-reconciliation*-error.json` for source lines, recognition times and model response. It contains private text. API authentication/network/token-limit failures remain task errors. Do not duplicate an entire script line into several timestamp intervals.
+**The download finished but the model shows as not installed or incomplete**
 
-## Subtitles stay at the old width
+Expand **Details** for that model to see what is missing. Then go to **Settings → Logs and diagnostics**, pick it under **Repair a model runtime**, and click **Repair**.
 
-The supported line limit is 8–500 characters. Save to Current project/Both for an existing project, then regenerate SRT/LRC. Defaults-only affects future projects. Saving does not rewrite exported files. The width is a maximum; short cues remain short and separate cues are not merged. A player's automatic screen wrapping is separate from line breaks in the SRT file.
+**Errors like "the file exists but cannot be found"**
 
-## Batch repeats dialogue / unexpectedly runs ASR
+Most likely the path is too long. Move the program to a shorter path and enable Windows long path support. See [Installation and models](INSTALLATION.md#1-download-and-extract).
 
-Check every selected track's subtitle, language and timing mode. Timed Chinese subtitles bypass ASR/body translation when coverage is complete by track; silence need not be captioned. LRC has inferred ends. Untimed scripts still need timing. Do not resume a queue snapshot created with incorrect associations: back up results, rescan and explicitly redo.
+**DLL or VC++ errors**
 
-## Translation and TTS
+Click **Repair Microsoft VC++ runtime** under Logs and diagnostics.
 
-Verify provider, endpoint, model availability, region, key and quota. Keep JSON extra parameters valid and avoid overriding protected fields. Output-token exhaustion is not an empty successful translation.
+## Recognition
 
-Edge needs internet. External TTS servers must actually be running and may need access to reference paths. IndexTTS2 and 2.5 use different runtimes/checkpoints; repairing one does not install the other. For unstable voice, compare clean unified references before changing many inference parameters.
+**Out of memory**
 
-## Mixing and video
+- Close other programs using the GPU, such as games or other AI software.
+- Under **More settings** for recognition, set the batch size to 1 and reduce the chunk length.
+- Use a smaller model, or switch the device to CPU.
 
-Clipping: lower gains and inspect peak limits. Delayed Chinese: check global offset and sequential scheduling. Overlap: fit-window speed caps may leave residual conflicts. Channel layout: inspect routing; RTF requires stereo original audio.
+**English or Chinese audio comes out as nonsense**
 
-Short/silent RTF references fall back to level placement and log the change. Separation may remove breaths or leave speech residue; it is experimental. Original sentence gain/mute requires separation. Chinese playback mute preserves text/TTS and needs only remixing.
+Parakeet and Kotoba only recognise Japanese. Set **Audio language** correctly when creating the project and use Faster-Whisper.
 
-Video failures: retain FFmpeg diagnostics and check source codecs, output path and disk space. Original-audio hard-subtitle encoding fails explicitly rather than silently switching to soft subtitles.
+**Quiet speech is missing**
 
-## Reporting
+Turn **Silence detection** off and run recognition again. It skips very quiet parts, and whispers get caught by it.
 
-Use [Support](../../SUPPORT.en.md). Provide reproducible steps and sanitized text logs, not screenshots alone. Never attach API keys, full config directories, private audio or unreviewed script diagnostics publicly.
+**Strange sentences appear in long silences**
+
+The opposite: turn **Silence detection** on. For Japanese works you can use the ASMR-specific detector, which must be downloaded first.
+
+**The progress bar does not move for a long time**
+
+Loading the model shows no progress, which is normal. Expand **Log** and see whether new lines are appearing. Only if nothing new shows up for several minutes is it stuck.
+
+## Translation
+
+**401, 403, or "invalid key"**
+
+The key is wrong, or was entered under a different provider. Enter it again under **Settings → Cloud services**. Also check that **Translation provider** in the project is the one you entered a key for.
+
+**404 or "model not found"**
+
+The model name is wrong. Check which models your account can use in the provider's console and enter the exact name.
+
+**Some sentences have no translation**
+
+Laughter, breathing, "mm" and similar sounds are not translated. That is normal. If a sentence with real content is empty, expand the task log to look for errors, then click **Translate remaining** again.
+
+**Translation overwrote my edits**
+
+**Translate remaining** never touches existing translations. **Translate everything again** does, and it asks for confirmation first.
+
+## Dubbing
+
+**The voice does not sound like the original at all**
+
+- Make sure you are using a cloning model such as IndexTTS2. Edge TTS has fixed voices and will not resemble the original.
+- Try another voice reference. One that is too short, too noisy, or has more than one speaker throws the voice off. See the [user guide](USER_GUIDE.md#choose-a-voice-reference).
+
+**I changed one sentence but many need regenerating**
+
+Editing a translation affects only that sentence. If many are redone, you changed something else as well: the dubbing model, the voice reference, or dubbing parameters. Any of those invalidates the earlier dubs.
+
+**The first sentence takes a long time to start**
+
+The model has to load onto the GPU first. Later sentences are much faster.
+
+**Pause does not stop immediately**
+
+The sentence being generated has to finish first. A cloud request already sent also has to return.
+
+## Export
+
+**The dub and the original overlap and are hard to follow**
+
+On the export step, expand **Dubbing timing** and increase **Dub offset (ms)** so the dub comes in later.
+
+**The dub speeds up and slows down**
+
+When the translation is longer than the original line, the program speeds it up. Shortening the translation is the best fix. You can also lower **Maximum speed-up on overlap**, or switch the timing mode so lines are pushed back instead.
+
+**The dub is too loud or too quiet**
+
+Expand **Volume** and adjust **Relative to original**.
+
+**A channel error appears with spatial following on**
+
+Spatial following needs a stereo original. Turn it off for mono audio.
+
+**Export says a sentence has no translation**
+
+That sentence has original text but an empty translation. Fill it in, or untick the sentence, and export again.
+
+**The original voice is still audible in the replacement mix**
+
+Vocal separation cannot be perfectly clean. This is a limit of the technology today. Also check whether **Original vocal reinsertion** is on, since it deliberately puts some of the original back.
+
+## Settings
+
+**I changed a setting and nothing happened**
+
+You probably changed it in the wrong place. **Settings → New project defaults** only affects projects created afterwards. To change the current project, change it inside the project. See [Settings and storage](CONFIGURATION.md#where-to-change-settings).
+
+Batch works the same way: works already in the queue do not follow the defaults. Click **Edit** and save again.
+
+**The interface is in English but the dub is still Chinese**
+
+The interface language and the dubbing language are separate. Choose the dubbing language under **Dub into** on the dubbing step.
+
+## Still stuck
+
+Click **Export** under **Settings → Logs and diagnostics** and attach the log file to an [issue](https://github.com/EveningStudy/asmr-dubber/issues), along with:
+
+- what you did and which step failed
+- your GPU model and VRAM
+- which recognition and dubbing models you use
+
+API keys in the log are hidden automatically, but file paths and work names are not. Look it over before sending.

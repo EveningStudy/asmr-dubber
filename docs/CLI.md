@@ -44,7 +44,7 @@ bash scripts/linux/run-cli.sh --help
 
 ```text
 --projects-root PATH   把项目放到指定目录
---source-language ja|en  指定源语言；英语项目使用现有 Faster-Whisper
+--source-language ja|en|zh  指定源语言；英语/中文使用支持该语言的识别器
 --offset-ms INTEGER    设置中文配音整体偏移（毫秒）
 --max-speed FLOAT      设置冲突时最大自动加速倍速（1.0–4.0）
 ```
@@ -69,7 +69,7 @@ bash scripts/linux/run-cli.sh create /data/input.wav --projects-root /data/proje
 .\scripts\windows\run-cli.ps1 analyze '<project>' --force
 ```
 
-VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。英语项目会自动使用 Faster-Whisper，并把识别语言固定为英语；Parakeet、Kotoba-Whisper 和日语 ASMR VAD 只用于日语。CLI 不接受一组临时后端参数，以免运行结果与 `project.json` 记录不一致；先在网页应用设置，或通过受验证的代码修改项目设置。
+VAD（语音活动检测）、主识别器、多模型校对和 Qwen3 时间戳对齐都从项目设置读取。英语项目会自动使用 Faster-Whisper，并把识别语言固定为英语；Parakeet、Kotoba-Whisper 和日语 ASMR VAD 只用于日语。CLI 不接受一组临时后端参数，以免运行结果与 `project.json` 记录不一致；先在当前项目面板修改并等待自动保存，或通过受验证的代码修改项目设置。
 
 识别完成后输出 `exports/transcript.json` 路径。
 

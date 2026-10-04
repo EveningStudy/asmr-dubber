@@ -4,7 +4,7 @@
 
 # ModelScope 制品维护
 
-本文面向发布维护者。普通用户不需要上传任何文件，只需运行 Setup 或使用离线模型包。
+本文面向发布维护者。普通用户不需要上传任何文件，只需直接运行主 EXE，在模型页下载或导入离线模型包。
 
 ASMR Dubber 默认从 ModelScope 获取引导程序、Python、依赖包、模型包和部分第三方运行时。GitHub、Hugging Face、hf-mirror 与海外官方软件源只有在用户显式开启时才进入候选列表。
 
@@ -66,7 +66,7 @@ API Token 只用于上传或访问私有仓库。不要把 Token 写进仓库、
 
 Linux Parakeet 还需要上述 OpenBLAS、标点和 VAD 文件。它们已经上传到同一个 Portable Mirror 仓库；安装器会在下载后按大小和 SHA-256 校验，不会静默使用系统目录或临时下载到用户目录。
 
-Windows 全新安装首先依赖根目录的 uv 和 Python 3.12 文件。把它们放进子目录或把 `+` 改成空格都会导致 Setup 找不到。
+Windows 全新安装首先依赖根目录的 uv 和 Python 3.12 文件。把它们放进子目录或把 `+` 改成空格都会导致启动器的基础环境准备找不到。
 
 ## Windows 依赖包
 
@@ -98,7 +98,7 @@ EveningStudyW/ASMR-Dubber-Windows-Advanced/
 
 它提供进阶识别、VAD 和对齐所需的主环境依赖，内部布局由 `scripts/import_windows_advanced_dependency_pack.py` 校验。
 
-推荐/进阶依赖 ZIP 也可以原样放入用户的 `model-packs` 目录。Setup 只按固定名称、大小和哈希识别，不会接受“内容看起来相同”的重新压缩文件。
+推荐/进阶依赖 ZIP 也可以原样放入用户的 `model-packs` 目录。安装器只按固定名称、大小和哈希识别，不会接受“内容看起来相同”的重新压缩文件。
 
 ## 大型模型包
 
@@ -150,7 +150,7 @@ index-tts-13495845e3028f0bb6ca1462ad22aa0e76349e40.zip
 
 仓库：[EveningStudyW/ASMR-Dubber-IndexTTS25](https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-IndexTTS25)
 
-IndexTTS-2.5 不进入任何 Setup 方案。只有用户在网页“设备与模型”中选择安装时，程序才会读取这个仓库：
+IndexTTS-2.5 不进入任何 Setup 方案。只有用户在网页“模型”中选择下载时，程序才会读取这个仓库：
 
 | 仓库根目录文件 | 字节数 | SHA-256 |
 |---|---:|---|
@@ -236,7 +236,7 @@ $file.Length
 7. 上传大文件，等待 ModelScope 显示完整大小；
 8. 最后上传 wheelhouse 的 `.sha256` 旁车；
 9. 用远端 metadata 或小范围请求核对 URL、Content-Length 和 Range 支持；
-10. 从不含 `.asmr-dubber` 的发行包执行一次全新安装。
+10. 从不含 `.asmr-dubber` 的发行包直接启动 EXE，再经模型页按需下载。
 
 最后一步必须覆盖至少：Windows PowerShell 5.1、无预装 Python、全空缓存、推荐方案和进阶方案。不能用开发机已经存在的模型或依赖缓存代替这个测试。
 
@@ -246,7 +246,7 @@ $file.Length
 
 ```powershell
 $env:ASMR_DUBBER_LOCAL_CACHE_ROOTS = 'E:\ASMR-Dubber-Artifact-Cache'
-.\ASMR-Dubber-Setup.exe
+.\ASMR-Dubber.exe
 ```
 
 也可以传脚本参数：
