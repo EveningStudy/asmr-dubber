@@ -174,6 +174,8 @@ def _finish_tokens(
     if not values:
         if _REVIEW_MODELS.get() is not None and not full_text.strip():
             return [], language or source_language
+        if not full_text.strip():
+            raise AsmrDubberError("未检测到可识别的语音；请检查音频或调整语音检测设置。")
         raise AsmrDubberError("识别出了文字，但所选 ASR（语音识别）后端没有返回可用时间戳。")
     punctuated = restore_punctuation(values, full_text)
     sentences = split_timed_tokens(
@@ -1051,6 +1053,20 @@ def transcribe_source(
         "generic_asr_api",
     }:
         raise AsmrDubberError("英语识别可使用 Faster-Whisper 或通用 ASR API。")
+
+    # Only reject digital silence, never a loudness threshold that might remove whispers.
+    check_cancelled(cancel_event)
+    with sf.SoundFile(analysis_audio) as audio:
+        signal_present = False
+        for block in audio.blocks(blocksize=262_144, dtype="float32", always_2d=True):
+            check_cancelled(cancel_event)
+            if np.any(block != 0):
+                signal_present = True
+                break
+    if not signal_present:
+        if _REVIEW_MODELS.get() is not None:
+            return [], source_language
+        raise AsmrDubberError("未检测到语音：音频没有有效信号（数字静音）。原有句子表已保留。")
 
     runners = {
         "generic_asr_api": _transcribe_generic_api,

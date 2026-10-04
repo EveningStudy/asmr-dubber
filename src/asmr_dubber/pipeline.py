@@ -1251,6 +1251,14 @@ def generate_subtitles(
 
     if progress:
         progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
+    media_duration = project.source.duration_seconds
+    if project.settings.subtitle_timeline == "dubbing" and project.output_file:
+        from .audio import probe_audio
+
+        mixed = resolve_project_path(project_dir, project.output_file, "完成音频")
+        if mixed.is_file():
+            media_duration = probe_audio(mixed).duration_seconds
+    subtitle_warnings: list[str] = []
     srt, lrc = write_subtitle_files(
         project.sentences,
         project_dir / "subtitles" / output_variant if output_variant else project_dir / "subtitles",
@@ -1262,7 +1270,11 @@ def generate_subtitles(
         chinese_dubbing_offset_ms=project.settings.chinese_dubbing_offset_ms,
         chinese_max_auto_speed=project.settings.chinese_max_auto_speed,
         chinese_dubbing_timing_mode=project.settings.chinese_dubbing_timing_mode,
+        media_duration_seconds=media_duration,
+        warnings=subtitle_warnings,
     )
+    if progress and subtitle_warnings:
+        progress(f"{len(subtitle_warnings)} 句字幕可读时长受下一句或媒体末尾限制", 1, 2)
     check_cancelled(cancel_event)
 
     video_output: Path | None = None

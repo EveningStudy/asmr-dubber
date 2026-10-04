@@ -57,6 +57,8 @@ def _subtitle_lines(
     if language in {"bilingual", "zh"} and not chinese:
         raise ProjectError(f"句子 {sentence.id} 没有中文，无法生成所选字幕。")
     if language == "source":
+        if not source:
+            raise ProjectError(f"句子 {sentence.id} 没有原文，请先识别或导入原文字幕。")
         return source
     if language == "zh":
         return chinese
@@ -98,6 +100,8 @@ def write_subtitle_files(
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
     chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
+    media_duration_seconds: float | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Write readable, atomic UTF-8 SRT and LRC subtitle files."""
 
@@ -118,11 +122,29 @@ def write_subtitle_files(
         )
     }
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if media_duration_seconds is not None and (
+        not math.isfinite(media_duration_seconds) or media_duration_seconds <= 0
+    ):
+        raise ProjectError("字幕对应媒体的时长无效。")
+    included.sort(
+        key=lambda sentence: (
+            timing_by_id[sentence.id].start_seconds
+            if timeline == "dubbing" and sentence.id in timing_by_id
+            else sentence.start_seconds,
+            sentence.id,
+        )
+    )
+    # Validate the complete export before replacing either existing subtitle file.
+    entries = []
+    for sentence in included:
+        lines = _subtitle_lines(sentence, language, maximum_chars)
+        timing = timing_by_id.get(sentence.id) if timeline == "dubbing" else None
+        start = timing.start_seconds if timing else sentence.start_seconds
+        original_end = start + timing.effective_duration_seconds if timing else sentence.end_seconds
+        entries.append((sentence, lines, start, original_end))
     srt_blocks: list[str] = []
     lrc_lines: list[str] = []
-    for index, sentence in enumerate(included, start=1):
-        lines = _subtitle_lines(sentence, language, maximum_chars)
+    for index, (sentence, lines, _start, original_end) in enumerate(entries, start=1):
         start, end = _subtitle_range(
             sentence,
             timeline=timeline,
@@ -131,6 +153,17 @@ def write_subtitle_files(
             minimum_duration=minimum_duration,
             maximum_cps=maximum_cps,
         )
+        requested_end = end
+        if index < len(entries):
+            next_start = entries[index][2]
+            # Preserve genuine overlap; only prevent readability padding from creating it.
+            end = min(end, max(original_end, next_start))
+        if media_duration_seconds is not None:
+            end = min(end, media_duration_seconds)
+        if end <= start:
+            raise ProjectError(f"句子 {sentence.id} 的字幕起点超出媒体范围。")
+        if warnings is not None and end < requested_end:
+            warnings.append(f"句子 {sentence.id} 的字幕可读时长受下一句或媒体末尾限制。")
         srt_blocks.append(
             f"{index}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n" + "\n".join(lines)
         )
@@ -139,6 +172,7 @@ def write_subtitle_files(
 
     srt = output_dir / f"subtitles_{language}.srt"
     lrc = output_dir / f"subtitles_{language}.lrc"
+    output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_text(srt, "\n\n".join(srt_blocks) + "\n")
     atomic_write_text(lrc, "\n".join(lrc_lines) + "\n")
     return srt, lrc

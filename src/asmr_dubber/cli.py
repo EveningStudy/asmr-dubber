@@ -508,7 +508,7 @@ def set_timing_command(
         ),
     ] = None,
 ) -> None:
-    """修改中文配音偏移和冲突加速上限；重混即可。"""
+    """修改配音排程；请重混，并重新生成跟随配音时间轴的字幕。"""
     try:
         if offset_ms is None and max_speed is None and mode is None:
             raise ValueError("请至少提供 --offset-ms、--max-speed 或 --mode。")
@@ -525,10 +525,9 @@ def set_timing_command(
                 "fit_window" if mode in {"fit-window", "fit_window"} else "sequential"
             )
         project.settings = ProjectSettings.model_validate(settings)
-        project.chinese_stem_file = None
-        project.output_file = None
-        project.output_video_file = None
-        project.subtitle_video_file = None
+        from .lifecycle import invalidate_outputs
+
+        invalidate_outputs(project, subtitles=project.settings.subtitle_timeline == "dubbing")
         save_project(project, directory)
         export_transcript(project, directory)
     except (AsmrDubberError, ValueError) as exc:
@@ -542,6 +541,8 @@ def set_timing_command(
             else "上一句结束后再播放下一句，不自动加速。"
         )
     )
+    if project.settings.subtitle_timeline == "dubbing":
+        console.print("旧配音时间轴字幕已失效；请运行 subtitles 重新生成字幕。")
 
 
 @app.command("doctor")

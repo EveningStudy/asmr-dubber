@@ -72,6 +72,10 @@ _ZH_RE = re.compile(
 )
 _EN_RE = re.compile(r"(?:英語|英文|english)", re.IGNORECASE)
 _JA_RE = re.compile(r"(?:日文|日本語|japanese)", re.IGNORECASE)
+_LANGUAGE_SUFFIX_RE = re.compile(
+    r"\.(ja(?:[-_]jp)?|en(?:[-_](?:us|gb))?|zh(?:[-_](?:cn|tw|hans|hant))?)$",
+    re.IGNORECASE,
+)
 _GENERIC_DIRECTORY_RE = re.compile(
     r"^(?:\d+[. _-]*)?(?:本編|本篇|main|audio|音声|音聲|wav|flac|mp3|m4a|aac|ogg|opus)$",
     re.IGNORECASE,
@@ -211,6 +215,9 @@ def _subtitle_content_language(path: Path | None) -> str | None:
 
 
 def _transcript_language(path: Path, *, content_path: Path | None = None) -> str:
+    suffix = _LANGUAGE_SUFFIX_RE.search(path.stem)
+    if suffix:
+        return suffix[1][:2].lower()
     path_text = path.as_posix()
     if _ZH_RE.search(path_text):
         return "zh"
@@ -235,6 +242,7 @@ def _transcript_language(path: Path, *, content_path: Path | None = None) -> str
 
 def _transcript_stem(path: Path) -> str:
     stem = path.stem
+    stem = _LANGUAGE_SUFFIX_RE.sub("", stem)
     # 兼容 01.mp3.vtt 这种双扩展名字幕。
     if Path(stem).suffix.casefold() in AUDIO_EXTENSIONS:
         stem = Path(stem).stem
@@ -329,7 +337,13 @@ def _pair_transcript(
     if not ranked:
         return None
     ranked.sort(key=lambda item: (-item[0], natural_key(item[1].relative_path)))
-    return ranked[0][1]
+    best = [item[1] for item in ranked if item[0] == ranked[0][0]]
+    if len(best) > 1:
+        matching = [item for item in best if item.language == _language(relative_audio.as_posix())]
+        if len(matching) == 1:
+            return matching[0]
+        return None
+    return best[0]
 
 
 def _background_score(path: Path, root: Path) -> tuple[int, int, tuple[tuple[int, object], ...]]:
