@@ -23,6 +23,7 @@ ASSET_NAME = re.compile(r"ASMR-Dubber-windows-portable-v\d+\.\d+\.\d+\.zip")
 REQUIRED_FILES = ("ASMR-Dubber.exe", "pyproject.toml", "src/asmr_dubber/__init__.py")
 DATA_DIRECTORY = ".asmr-dubber"
 CACHE_SECONDS = 3600
+WINDOWS = os.name == "nt"
 
 _cached = (0.0, None)
 
@@ -37,7 +38,7 @@ def installable_root():
     home = portable_home()
     root = home.parent
     if (
-        os.name == "nt"
+        WINDOWS
         and home.name == DATA_DIRECTORY
         and (root / "ASMR-Dubber.exe").is_file()
         # A source checkout is updated with git, never by overwriting the working tree.

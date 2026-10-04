@@ -68,7 +68,7 @@ def test_incomplete_or_unsafe_archive_changes_nothing(installed, tmp_path):
 
 def test_source_checkout_is_never_updated_automatically(installed, monkeypatch):
     monkeypatch.setattr(updates, "portable_home", lambda: installed / ".asmr-dubber")
-    monkeypatch.setattr(updates.os, "name", "nt")
+    monkeypatch.setattr(updates, "WINDOWS", True)
     assert updates.installable_root() == installed
     (installed / ".git").mkdir()
     assert updates.installable_root() is None
@@ -102,7 +102,7 @@ def release(tag, body=b""):
 
 def test_check_reports_newer_release_and_network_failure(installed, monkeypatch):
     monkeypatch.setattr(updates, "portable_home", lambda: installed / ".asmr-dubber")
-    monkeypatch.setattr(updates.os, "name", "nt")
+    monkeypatch.setattr(updates, "WINDOWS", True)
     monkeypatch.setattr(updates.httpx, "get", lambda *a, **k: Response(release("v99.0.0")))
     found = updates.check(force=True)
     assert found["newer"] and found["automatic"] and found["latest"] == "99.0.0"
@@ -120,7 +120,7 @@ def test_check_reports_newer_release_and_network_failure(installed, monkeypatch)
 def test_install_downloads_verifies_and_applies(installed, tmp_path, monkeypatch):
     body = archive(io.BytesIO(), RELEASE).getvalue()
     monkeypatch.setattr(updates, "portable_home", lambda: installed / ".asmr-dubber")
-    monkeypatch.setattr(updates.os, "name", "nt")
+    monkeypatch.setattr(updates, "WINDOWS", True)
     monkeypatch.setattr(updates.httpx, "get", lambda *a, **k: Response(release("v99.0.0", body)))
     monkeypatch.setattr(updates.httpx, "stream", lambda *a, **k: Response(body=body))
     progress = []
