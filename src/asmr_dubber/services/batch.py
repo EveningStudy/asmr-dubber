@@ -1,7 +1,9 @@
 """Persistent batch queue editing and the core reference selection handshake."""
 
+import io
 import json
 import threading
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
 
 from ..autoflow import ui_services as flow
@@ -100,12 +102,21 @@ class Batch:
         if request.get("plan"):
             queue = [item for item in queue if item["plan_id"] == request["plan"]]
         report("开始处理队列。", 0, len(queue))
-        result, outputs = flow.run_queue(
-            queue, cancel_event=token, reference_event_callback=reference
-        )
+
+        class LogStream(io.TextIOBase):
+            def write(self, value):
+                if value.strip():
+                    report(value.strip(), 0, len(queue))
+                return len(value)
+
+        with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
+            result, outputs = flow.run_queue(
+                queue, cancel_event=token, reference_event_callback=reference
+            )
         report("队列处理完成。", len(queue), len(queue))
         return {
             "exit_code": result,
+            "plans": [plan["plan_id"] for plan in queue],
             "outputs": outputs,
             "subtitles": flow.subtitle_output_rows(outputs),
         }

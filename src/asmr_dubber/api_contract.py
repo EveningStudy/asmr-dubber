@@ -13,6 +13,10 @@ class Empty(Request):
     pass
 
 
+class FilePath(Request):
+    path: str
+
+
 class ProjectRequest(Request):
     project: str = Field(min_length=1)
 
@@ -20,6 +24,11 @@ class ProjectRequest(Request):
 class TableRequest(ProjectRequest):
     revision: int = Field(ge=0)
     rows: list[list[Any]]
+
+
+class SentenceRequest(ProjectRequest):
+    revision: int = Field(ge=0)
+    row: list[Any] = Field(min_length=10, max_length=10)
 
 
 class SettingsRequest(Request):

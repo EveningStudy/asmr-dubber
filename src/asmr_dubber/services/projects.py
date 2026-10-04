@@ -65,6 +65,17 @@ class Projects:
             ui_services.save_table(project, rows)
         return self.get(project)
 
+    def sentence(self, project, row, revision):
+        with browser_revision_scope(project, revision):
+            active, _ = load_project(project)
+            rows = ui_services.project_rows(active)
+            matched = next((index for index, item in enumerate(rows) if item[0] == row[0]), None)
+            if matched is None:
+                raise ValueError("Sentence no longer exists")
+            rows[matched] = row
+            ui_services.save_table(project, rows)
+        return self.get(project)
+
     def open(self, project, output=False):
         function = (
             ui_services.open_project_output_directory

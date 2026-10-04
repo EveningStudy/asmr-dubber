@@ -7,6 +7,7 @@ from pydantic import Field
 
 from .. import ui_services
 from ..lifecycle import browser_revision_scope
+from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 from ..models import ProjectSettings, load_project
 from ..storage import exclusive_file_lock
 from ..user_settings import (
@@ -43,6 +44,20 @@ def update(changes, project=None, revision=None):
     from .parameters import validate_changes
 
     validate_changes(changes, project=bool(project))
+    changes = dict(changes)
+    for backend_key, model_key, registry in (
+        ("asr_backend", "asr_model", ASR_BACKENDS),
+        ("tts_backend", "tts_model", TTS_BACKENDS),
+    ):
+        if backend_key in changes and changes[backend_key] in registry:
+            spec = registry[changes[backend_key]]
+            changes.setdefault(model_key, spec.default_model)
+            if backend_key == "tts_backend":
+                changes.setdefault("tts_voice", spec.default_voice)
+    if "translation_provider" in changes and changes["translation_provider"] in PROVIDER_PRESETS:
+        preset = PROVIDER_PRESETS[changes["translation_provider"]]
+        changes.setdefault("translation_model", preset["default_model"])
+        changes.setdefault("translation_base_url", preset["base_url"])
     if project:
         active, _ = load_project(project)
         payload = active.settings.model_dump()
@@ -91,9 +106,10 @@ def key_statuses():
             name: service_key_status(name, True)
             for name in (
                 "asr:generic_asr_api",
-                "tts:mimo",
+                "tts:mimo_tts",
                 "tts:minimax",
-                "tts:fish_audio",
+                "tts:fish_speech",
+                "tts:generic_tts_api",
                 "tts:indextts2_api",
                 "tts:gpt_sovits",
                 "tts:cosyvoice",

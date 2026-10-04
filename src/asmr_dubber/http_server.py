@@ -55,6 +55,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         logging.getLogger(__name__).debug(fmt, *args)
 
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            self.close_connection = True
+
     def _allowed(self, write=False):
         if self.server.auth:
             expected = "Basic " + base64.b64encode(":".join(self.server.auth).encode()).decode()

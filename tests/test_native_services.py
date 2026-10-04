@@ -98,6 +98,20 @@ def test_table_preserves_sentence_controls_and_rejects_stale_save(application, t
     assert saved["rows"] == rows
     with pytest.raises(ProjectError):
         application.save_table(project["manifest"], rows, project["revision"])
+
+
+def test_sentence_patch_keeps_other_rows_and_rejects_unknown_sentence(application, tmp_path):
+    project = create(application, tmp_path)
+    rows = [["s1", True, 0, 1, "hello", "你好", "off", -3, True, 2],
+            ["s2", True, 1, 2, "bye", "再见", "default", 0, True, 0]]
+    saved = application.save_table(project["manifest"], rows, project["revision"])
+    changed = [*rows[0]]
+    changed[5] = "您好"
+    saved = application.save_sentence(project["manifest"], changed, saved["revision"])
+    assert saved["rows"] == [changed, rows[1]]
+    changed[0] = "missing"
+    with pytest.raises(ValueError, match="no longer exists"):
+        application.save_sentence(project["manifest"], changed, saved["revision"])
     assert load_project(project["manifest"])[0].sentences[0].original_audio_enabled is False
 
 

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="asmr-session" content="__SESSION_TOKEN__">
+  <meta name="asmr-dubber-product-marker" content="ASMR Dubber">
+  <title>ASMR Dubber</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">ASMR Dubber</div>
+    <nav class="nav" aria-label="主导航">
+      <button data-page="home" class="on"><svg viewBox="0 0 20 20"><path d="M2.5 6.5a2 2 0 0 1 2-2h3l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z"/></svg><span data-i18n>项目</span></button>
+      <button data-page="batch"><svg viewBox="0 0 20 20"><path d="M3 5.5h14M3 10h14M3 14.5h14"/></svg><span data-i18n>批量</span><span class="badge" id="queueBadge"></span></button>
+      <button data-page="models"><svg viewBox="0 0 20 20"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6zM3 6l7 3.5L17 6M10 9.5v8"/></svg><span data-i18n>模型</span></button>
+      <button data-page="settings"><svg viewBox="0 0 20 20"><path d="M3 6h7M14 6h3M3 14h3M10 14h7"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="14" r="2"/></svg><span data-i18n>设置</span></button>
+    </nav>
+    <div class="side-foot"><div id="deviceFoot"></div><div class="seg language"><button data-language="zh">中文</button><button data-language="en">English</button></div></div>
+  </aside>
+  <main>
+    <section class="page on" id="home">
+      <div class="head"><div><h1 data-i18n>项目</h1><p data-i18n>一个音频或视频就是一个项目。做到一半可以关掉，下次接着做。</p></div></div>
+      <div id="firstSteps">
+        <div class="label"><b data-i18n>开始之前</b></div>
+        <div class="card">
+          <div class="row"><div class="check" id="asrCheck">✓</div><div class="grow"><div class="t" data-i18n>识别模型</div><div class="d" data-i18n>把音频里的话变成文字。已有字幕文件的话可以不装。</div></div><button class="btn" data-go="models" data-i18n>去下载</button></div>
+          <div class="row"><div class="check ok">✓</div><div class="grow"><div class="t" data-i18n>配音</div><div class="d" data-i18n>Edge TTS 已内置，联网就能用。想让配音像原声的音色，再下载 IndexTTS2。</div></div><span class="muted small" data-i18n>可以用了</span></div>
+          <div class="row"><div class="check" id="translationCheck">✓</div><div class="grow"><div class="t" data-i18n>翻译服务</div><div class="d" data-i18n>填一个翻译服务的 API Key，比如 DeepSeek。已有中文字幕的话可以不填。</div></div><button class="btn" data-go="settings" data-set="keys" data-i18n>去填写</button></div>
+        </div>
+      </div>
+      <div class="label"><b data-i18n>新建</b></div>
+      <div class="drop" id="dropNew" role="button" tabindex="0"><b data-i18n>把音频或视频拖到这里</b><p data-i18n>或点击选择文件。原文件不会被改动。</p></div>
+      <div class="label"><b data-i18n>最近</b><span id="projectsRoot"></span><button class="btn plain" id="openExisting" data-i18n>打开项目</button></div>
+      <div class="card plist" id="recentProjects"></div>
+    </section>
+    <section class="page wide" id="project">
+      <div class="pbar">
+        <div class="left"><button class="back" data-go="home" data-i18n>‹ 项目</button><div><div class="name" id="projectName"></div><div class="meta" id="projectMeta"></div></div></div>
+        <div class="steps" id="steps">
+          <button data-step="1" class="on"><span class="n">1</span><span data-i18n>识别</span></button>
+          <button data-step="2"><span class="n">2</span><span data-i18n>翻译</span></button>
+          <button data-step="3"><span class="n">3</span><span data-i18n>配音</span></button>
+          <button data-step="4"><span class="n">4</span><span data-i18n>导出</span></button>
+        </div>
+        <div class="right"><button class="btn" id="openProjectFolder" data-i18n>打开文件夹</button></div>
+      </div>
+      <div class="work">
+        <div class="sheetwrap">
+          <div class="tools"><input id="search" type="search" placeholder="搜索" data-placeholder="搜索"><div class="seg" id="filters"><button data-filter="all" class="on" data-i18n>全部</button><button data-filter="translation" data-i18n>未翻译</button><button data-filter="tts" data-i18n>未配音</button><button data-filter="review" data-i18n>待复核</button></div><span class="saved" id="saveState" data-i18n>修改会自动保存</span></div>
+          <div class="tablebox"><table><thead><tr><th style="width:32px"></th><th style="width:36px">#</th><th style="width:124px" data-i18n>时间</th><th data-i18n>原文</th><th data-i18n>译文</th><th style="width:104px" data-i18n>配音</th></tr></thead><tbody id="rows"></tbody></table></div>
+          <div id="sentenceControls" class="sentence-controls"></div>
+          <div class="transport"><button class="pp" id="playSource" aria-label="播放">▶</button><span class="tc" id="playerTime">00:00</span><input id="seek" type="range" min="0" max="1" step="0.01" value="0"><div class="seg" id="listenMode"><button data-listen="source" data-i18n>原声</button><button data-listen="dub" data-i18n>配音</button><button data-listen="both" class="on" data-i18n>一起</button></div></div>
+          <audio id="sourcePlayer" preload="metadata"></audio><audio id="dubPlayer" preload="none"></audio>
+        </div>
+        <div class="insp">
+          <div class="stepview on" data-view="1"><h2 data-i18n>识别</h2><p class="lead" data-i18n>把音频里的话转成带时间的文字。</p><div class="schema" data-panels="asr" data-part="basic" data-scope="proj"></div><button class="btn block big" data-task="analyze" data-i18n>重新识别</button><p class="stat" id="asrStat"></p><div class="card group" style="margin-top:14px"><div class="field"><div class="fl"><span data-i18n>导入字幕或台本</span><small data-i18n>SRT、VTT、ASS、LRC、TXT。有字幕就不用识别。</small></div><button class="btn" id="importTranscript" data-i18n>选择文件</button></div></div><button class="btn plain" id="showReview" data-i18n>音频复核提案：试听、采纳与撤销</button><div class="more" data-i18n>更多设置</div><div class="schema" data-panels="asr,sep" data-part="adv" data-scope="proj"></div></div>
+          <div class="stepview" data-view="2"><h2 data-i18n>翻译</h2><p class="lead" data-i18n>译文就是配音要念的稿子，可以直接在表格里改。</p><div class="schema" data-panels="tr" data-part="basic" data-scope="proj"></div><button class="btn primary block big" data-task="translate" id="translateRemaining"></button><p class="stat" id="translationStat"></p><button class="btn plain small" id="translateAll" data-i18n>全部重新翻译</button><p class="stat" data-i18n>呼吸声、笑声这类没有内容的句子不翻译，也不配音。</p><div class="more" data-i18n>更多设置</div><div class="schema" data-panels="tr" data-part="adv" data-scope="proj"></div></div>
+          <div class="stepview" data-view="3"><h2 data-i18n>配音</h2><p class="lead" data-i18n>按译文逐句生成语音。</p><div class="schema" data-panels="tts" data-part="basic" data-scope="proj"></div><div class="card group"><div class="field"><div class="fl" id="referenceLabel" data-i18n>音色参考</div><button class="btn" id="changeReference" data-i18n>更换</button></div></div><p class="stat" style="margin:-2px 2px 14px" data-i18n>配音会模仿这一句的声音。选 5–15 秒、只有一个人说话、背景干净的句子。</p><button class="btn primary block big" data-task="synthesize" id="synthesizeRemaining"></button><div class="bar" style="margin-top:12px"><i id="dubBar"></i></div><p class="stat" id="dubStat"></p><div class="more" data-i18n>更多设置</div><div class="schema" data-panels="tts" data-part="adv" data-scope="proj"></div></div>
+          <div class="stepview" data-view="4"><h2 data-i18n>导出</h2><p class="lead" data-i18n>把配音和原声合成成品。改这里的设置不用重新配音。</p><div class="schema" data-panels="mix" data-part="basic" data-scope="proj"></div><div class="card group"><div class="field"><label for="exportAudio" data-i18n>成品</label><select id="exportAudio"><option value="true" data-i18n>音频</option><option value="false" data-i18n>只要字幕</option></select></div><div class="field"><label for="exportSubtitle" data-i18n>字幕</label><select id="exportSubtitle"><option value="bilingual" data-i18n>双语</option><option value="zh" data-i18n>仅译文</option><option value="source" data-i18n>仅原文</option><option value="none" data-i18n>不要字幕</option></select></div></div><button class="btn primary block big" id="exportProject" data-i18n>导出</button><p class="stat" id="exportStat"></p><div class="more" data-i18n>上次导出</div><div class="card group" id="outputs"></div><div class="more" data-i18n>更多设置</div><div class="schema" data-panels="mix,sub" data-part="adv" data-scope="proj"></div></div>
+          <div class="taskbox" id="projectTask"></div><details><summary data-i18n>日志与诊断</summary><pre class="log" id="projectDiagnostics"></pre></details>
+        </div>
+      </div>
+    </section>
+    <section class="page" id="batch"><div class="head"><div><h1 data-i18n>批量</h1><p data-i18n>一次处理一整个作品文件夹。每个作品自动走完识别、翻译、配音和导出，不用守着。</p></div><button class="btn primary big" id="addWork" data-i18n>添加作品</button></div><div id="batchQueue"></div><div class="label"><b data-i18n>等你确认</b></div><div id="batchReference"></div><div class="label"><b data-i18n>已完成</b></div><div id="batchHistory"></div><button class="btn primary big" id="runBatch" data-i18n>开始处理队列</button></section>
+    <section class="page" id="models"><div class="head"><div><h1 data-i18n>模型</h1><p data-i18n>用到什么下载什么。断线后再点一次会接着下，不会从头来。</p></div><div class="seg"><button data-source="modelscope" data-i18n>国内镜像</button><button data-source="original" data-i18n>海外源</button></div></div><div class="card device" id="modelDevice"></div><div class="label"><b data-i18n>不知道选什么</b></div><div class="card"><div class="row" style="padding:16px 18px"><div class="grow"><div class="t" data-i18n>日语音声配中文，装这两个就够</div><div class="d" id="starterDescription"></div></div><button class="btn primary big" id="starterBtn" data-i18n>一起下载</button></div></div><div id="modelGroups"></div><div class="label"><b data-i18n>不需要下载</b></div><div class="card"><div class="row"><div class="grow"><div class="t">Edge TTS</div><div class="d" data-i18n>微软在线语音，免费，要联网。音色固定，不能模仿原声。</div></div><span class="muted small" data-i18n>已内置</span></div><div class="row"><div class="grow"><div class="t" data-i18n>云端服务</div><div class="d" data-i18n>翻译（DeepSeek、百炼、OpenAI 等）和云端配音（MiMo、MiniMax 等）只需要填 Key。</div></div><button class="btn" data-go="settings" data-set="keys" data-i18n>去填写</button></div></div><div id="modelTasks"></div></section>
+    <section class="page" id="settings"><div class="head"><div><h1 data-i18n>设置</h1></div></div><div class="set"><nav id="setNav"><button data-set="general" class="on" data-i18n>通用</button><button data-set="keys" data-i18n>云端服务</button><div class="nl" data-i18n>新项目默认值</div><button data-set="d-asr" data-i18n>识别</button><button data-set="d-tr" data-i18n>翻译</button><button data-set="d-tts" data-i18n>配音</button><button data-set="d-mix" data-i18n>导出与字幕</button><div class="nl" data-i18n>其他</div><button data-set="batch" data-i18n>批量</button><button data-set="storage" data-i18n>存储</button><button data-set="logs" data-i18n>日志与诊断</button></nav><div>
+      <div class="setview on" data-setview="general"><div class="schema" data-panels="general" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="keys" id="serviceKeys"></div>
+      <div class="setview" data-setview="d-asr"><p class="cap" data-i18n>新建项目时会带上这里的选择。已有的项目不受影响，要改就打开那个项目改。</p><div class="schema" data-panels="asr,sep" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-tr"><p class="cap" data-i18n>新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="tr" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-tts"><p class="cap" data-i18n>新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="tts" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-mix"><p class="cap" data-i18n>新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="mix,sub" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="batch"><p class="cap" data-i18n>添加作品时的初始选择。已经在队列里的作品不受影响。</p><div class="schema" data-panels="batch" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="storage" id="storageView"></div>
+      <div class="setview" data-setview="logs" id="logsView"></div>
+    </div></div></section>
+  </main>
+</div>
+<div class="mask" id="dialog"><div class="sheet lg"><header><h2 id="dialogTitle"></h2><p id="dialogDescription"></p></header><div class="body" id="dialogBody"></div><footer><button class="btn" data-close data-i18n>取消</button><button class="btn primary" id="dialogSubmit"></button></footer></div></div>
+<input type="file" id="mediaFile" accept="audio/*,video/*" hidden>
+<div class="toast" id="notice" role="status" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

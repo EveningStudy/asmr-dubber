@@ -276,6 +276,9 @@
 5. 覆盖审计完成后移除 Gradio 代码/依赖；旧测试迁移到对应服务，不删测试、不削弱行为断言；全量通过，提交。
 
 ## 待确认
+- mockup 的翻译“作品背景”没有独立持久化字段，保守保留现有翻译 Prompt 用于填写背景；不添加核心翻译输入。
+- mockup 的 IndexTTS2 Top K 没有对应项目参数，仅 IndexTTS-2.5 和 GPT-SoVITS 的真实 Top K 可调；未新增不生效的控件。
+- 海外源选择允许外部下载来源，底层安装器仍沿用现有 ModelScope 优先与回退规则；未重写核心下载策略。
 - mockup 两种配音语言以核心现有 target_language 支持集合为准，不新造翻译行为。
 - mockup 未画到的高级字段统一保留在对应步骤的“更多设置”，不删除。
 - 模型 registry 没有精确权重大小的项显示实际已用空间或未知，不使用 mockup 示意数字。
@@ -287,6 +290,8 @@
 - 暂无确认的新 bug；基线全部测试通过。发现后只记录，不顺手修改核心。
 
 ## 实际验证记录
+- 步骤 3：Playwright 使用本机 Edge（Browser plugin not available）；1440×1000 与 390×844；项目/模型/批量/设置及中英文切换，无浏览器运行错误。
+- 实际浏览器媒体流程：上传 japanese_smoke.mp3 → 导入中文字幕 → Edge TTS 在线真实合成一条 → 导出混音 WAV、配音轨 WAV、双语 SRT/LRC；四个下载均 HTTP 200。没有实跑 ASR、LLM 翻译、本地克隆模型。
 - 基线及步骤 1 pytest：646 passed, 3 skipped；步骤 1 提交 7686ecf。
 - 步骤 2：新增 20 项服务/HTTP 验证，首次完整验证 666 passed, 3 skipped；服务/接口 Pyright 0 errors，Ruff 通过。
 - 模型安装沿用原有后端粒度：Parakeet 运行环境包含两款权重；可选 VAD/对齐复用已有进阶依赖安装路径。

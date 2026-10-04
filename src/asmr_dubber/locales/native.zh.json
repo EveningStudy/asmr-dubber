@@ -1,0 +1,16 @@
+{
+  "ja": "日语", "en": "英语", "zh": "中文",
+  "create": "新建项目", "analyze": "识别", "translate": "翻译",
+  "synthesize": "配音", "export": "导出", "subtitles": "字幕", "import": "导入",
+  "batch": "批量", "download": "下载", "import_models": "导入离线模型包",
+  "health": "检查运行环境", "repair": "修复", "diagnostic": "测试接口",
+  "preview_edge": "试听", "preview_reference": "音色参考",
+  "accept_review": "采纳所选候选", "keep_review": "保留并确认主稿",
+  "undo_review": "撤销上一次采纳或确认", "unlock_review": "解除人工确认锁定",
+  "retry_review": "只重试音频复核", "align_review": "仅重新对齐时间",
+  "queued": "等待中", "running": "正在处理…", "cancelling": "正在暂停…",
+  "completed": "已完成", "cancelled": "已暂停", "failed": "失败", "interrupted": "已中断",
+  "missing": "未安装", "ready": "已安装", "broken": "需要修复", "partial": "未完成",
+  "dubbing": "双语版", "replacement": "替换版（实验性）", "both": "都要",
+  "source_subtitles": "原声 + 字幕，不配音", "merged": "合并成一个", "separate": "每轨单独"
+}

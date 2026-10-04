@@ -1,10 +1,9 @@
 """Application operations composed from the project, model and batch services."""
 
-import json
-from importlib.resources import files
 from pathlib import Path
 
 from .. import __version__, app_logging, backend_diagnostics, cache_cleanup, runtime_health
+from ..localization import catalog
 from ..models import load_project
 from ..platforms import portable_home
 from ..ui_services import preview_edge_tts_voice
@@ -32,9 +31,8 @@ class Application:
             "keys": settings.key_statuses(),
             "tasks": self.tasks.list(),
             "queue": self.batch.list(),
-            "locales": json.loads(
-                files("asmr_dubber").joinpath("locales/en.json").read_text(encoding="utf-8")
-            ),
+            "locales": catalog(),
+            "labels": catalog("zh"),
             "health_backends": runtime_health.BACKENDS,
         }
 
@@ -53,12 +51,25 @@ class Application:
                 if kind in {"download", "import_models", "repair"}
                 else kind
             )
+        with self.tasks.lock:
+            self._assert_ready(kind, resource)
+            return self.tasks.start(request, resource)
+
+    def _assert_ready(self, kind, resource):
         active = [task for task in self.tasks.list() if task["status"] in ACTIVE]
+        if (kind == "batch" and active) or (
+            any(task["kind"] == "batch" for task in active) and kind != "preview_reference"
+        ):
+            raise ValueError("Wait for the active batch operation to finish")
         if (resource == "models" and active) or any(
             task["resource"] == "models" for task in active
         ):
             raise ValueError("Wait for the active runtime operation to finish")
-        return self.tasks.start(request, resource)
+    def resume(self, identifier):
+        with self.tasks.lock:
+            task = self.tasks.get(identifier)
+            self._assert_ready(task["kind"], task["resource"])
+            return self.tasks.resume(identifier)
 
     def update_settings(self, changes, project=None, revision=None):
         if project:
@@ -68,6 +79,10 @@ class Application:
     def save_table(self, project, rows, revision):
         self.tasks.assert_idle(str(Path(project).resolve()))
         return self.projects.table(project, rows, revision)
+
+    def save_sentence(self, project, row, revision):
+        self.tasks.assert_idle(str(Path(project).resolve()))
+        return self.projects.sentence(project, row, revision)
 
     def remove_model(self, model):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
@@ -138,7 +153,13 @@ class Application:
         return {"removed": removed, "skipped": skipped}
 
     def logs(self):
+        from ..storage import atomic_write_text
+
+        target = portable_home() / "temp" / "ASMR-Dubber.log.txt"
+        source = app_logging.application_log_path()
+        contents = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
+        atomic_write_text(target, app_logging.redact_sensitive(contents))
         return {
             "text": app_logging.recent_log_text(),
-            "url": self.media.register(app_logging.application_log_path()),
+            "url": self.media.register(target),
         }

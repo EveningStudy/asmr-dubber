@@ -1,7 +1,7 @@
 """Validated route bindings to application services."""
 
 from . import api_contract as contract
-from .services import models, settings
+from .services import files, models, settings
 
 
 class API:
@@ -12,6 +12,7 @@ class API:
             "projects/list": (contract.Empty, application.projects.list),
             "projects/get": (contract.ProjectRequest, application.projects.get),
             "projects/table": (contract.TableRequest, application.save_table),
+            "projects/sentence": (contract.SentenceRequest, application.save_sentence),
             "projects/open": (contract.OpenRequest, application.projects.open),
             "projects/reference": (contract.ReferenceRequest, application.projects.reference),
             "review/get": (contract.ReviewRequest, application.projects.review),
@@ -19,13 +20,16 @@ class API:
             "settings/update": (contract.SettingsRequest, application.update_settings),
             "settings/key": (contract.KeyRequest, settings.key),
             "settings/keys": (contract.Empty, settings.key_statuses),
+            "settings/reference-upload": (contract.FilePath, files.reference_upload),
+            "files/folder": (contract.Empty, files.folder),
+            "batch/open": (contract.FilePath, files.open_output),
             "models/list": (contract.Empty, models.catalog),
             "models/remove": (contract.ModelRequest, application.remove_model),
             "tasks/start": (contract.TaskRequest, self._start),
             "tasks/list": (contract.Empty, application.tasks.list),
             "tasks/get": (contract.TaskID, application.tasks.get),
             "tasks/cancel": (contract.TaskID, application.tasks.cancel),
-            "tasks/resume": (contract.TaskID, application.tasks.resume),
+            "tasks/resume": (contract.TaskID, application.resume),
             "batch/list": (contract.Empty, application.batch.list),
             "batch/scan": (contract.ScanRequest, application.batch.scan),
             "batch/edition": (contract.EditionRequest, application.batch.edition),

@@ -32,7 +32,7 @@ def catalog():
             value["options"] = [[spec.label, spec.id] for spec in registry.values()]
         elif name == "translation_provider":
             value["options"] = [[item["label"], key] for key, item in PROVIDER_PRESETS.items()]
-        elif "enum" in value:
+        elif "enum" in value and "options" not in value:
             value["options"] = [[str(option), option] for option in value["enum"]]
         result.append(value)
     return result

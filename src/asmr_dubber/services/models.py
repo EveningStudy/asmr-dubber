@@ -104,6 +104,14 @@ def download(request, report, token):
 
 def _download(request, report, token):
     identifier = request["model"]
+    if identifier == "recommended":
+        results = [
+            runtime.install_backend(
+                backend, progress=report, log_callback=report, cancel_event=token
+            )
+            for backend in ("parakeet_nemo", "indextts2")
+        ]
+        return {"message": "\n".join(results)}
     if identifier.startswith("separation_"):
         models = {
             "separation_roformer": "vocals_mel_band_roformer.ckpt",
