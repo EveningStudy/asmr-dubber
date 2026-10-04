@@ -42,9 +42,9 @@ def plain_path(path: Path, root: Path) -> bool:
         return False
 
 
-def _signature(path: Path) -> list[int]:
+def _signature(path: Path) -> list[int | str]:
     s = path.stat()
-    return [s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_ino]
+    return [s.st_size, str(s.st_mtime_ns), str(s.st_ctime_ns), str(s.st_ino)]
 
 
 def _referenced_files(value, directory: Path) -> set[Path]:
@@ -177,7 +177,7 @@ def clean_caches(plan: dict, selected: list[str], confirmed: bool) -> tuple[int,
                             skipped.append(f"{directory.name}/{relative}: 扫描后已更新")
                             continue
                         path.unlink()
-                        removed += signature[0]
+                        removed += int(signature[0])
                     except OSError as exc:
                         skipped.append(f"{directory.name}/{relative}: {exc}")
         except (OSError, ValueError, ProjectError) as exc:
