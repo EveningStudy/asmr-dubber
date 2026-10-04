@@ -1,0 +1,1120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASMR Dubber · 界面示例</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --panel: #ffffff;
+  --side: #eaeaec;
+  --line: rgba(0,0,0,.08);
+  --line-2: rgba(0,0,0,.15);
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #a1a1a6;
+  --accent: #0071e3;
+  --accent-soft: rgba(0,113,227,.1);
+  --fill: rgba(0,0,0,.04);
+  --fill-2: rgba(0,0,0,.075);
+  --green: #248a3d;
+  --orange: #b25e00;
+  --red: #d70015;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e; --panel: #2a2a2c; --side: #232325;
+    --line: rgba(255,255,255,.09); --line-2: rgba(255,255,255,.18);
+    --text: #f5f5f7; --text-2: #a1a1a6; --text-3: #6e6e73;
+    --accent: #2997ff; --accent-soft: rgba(41,151,255,.16);
+    --fill: rgba(255,255,255,.06); --fill-2: rgba(255,255,255,.11);
+    --green: #30d158; --orange: #ff9f0a; --red: #ff453a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+h1 { font-size: 28px; font-weight: 600; letter-spacing: -.02em; margin: 0; line-height: 1.2; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; }
+.muted { color: var(--text-2); }
+.small { font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+::selection { background: var(--accent-soft); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--fill-2); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* ---------- 布局 ---------- */
+.app { display: grid; grid-template-columns: 200px 1fr; height: 100vh; min-width: 1180px; }
+.sidebar { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 22px 10px 14px; }
+.brand { padding: 0 10px 22px; font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
+.nav button {
+  display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: none;
+  padding: 6px 10px; border-radius: 7px; text-align: left; margin-bottom: 1px;
+}
+.nav button:hover { background: var(--fill); }
+.nav button.on { background: var(--fill-2); }
+.nav svg { width: 16px; height: 16px; stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.nav .badge { margin-left: auto; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.side-foot { margin-top: auto; padding: 0 10px; font-size: 11.5px; color: var(--text-2); display: grid; gap: 12px; }
+.side-foot b { display: block; color: var(--text); font-weight: 500; font-size: 12px; }
+.demo { border-top: 1px solid var(--line); padding-top: 12px; }
+.demo label { display: block; margin-bottom: 6px; color: var(--text-3); }
+
+main { overflow: auto; }
+.page { display: none; max-width: 920px; margin: 0 auto; padding: 44px 40px 72px; }
+.page.on { display: block; }
+.page.wide { max-width: none; padding: 0; height: 100vh; }
+.page.wide.on { display: flex; flex-direction: column; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
+.head p { color: var(--text-2); margin-top: 6px; max-width: 520px; font-size: 14px; }
+.label { font-size: 12px; color: var(--text-2); margin: 28px 2px 8px; display: flex; justify-content: space-between; align-items: baseline; }
+.label b { font-weight: 600; color: var(--text); font-size: 13px; }
+
+/* ---------- 基础控件 ---------- */
+.btn { border: 0; border-radius: 7px; padding: 5px 13px; background: var(--fill-2); font-weight: 500; white-space: nowrap; transition: opacity .12s; }
+.btn:hover { opacity: .82; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.plain { background: none; color: var(--accent); padding: 5px 2px; font-weight: 400; }
+.btn.big { padding: 8px 18px; border-radius: 9px; font-size: 14px; }
+.btn.block { width: 100%; }
+.btn[disabled] { opacity: .4; cursor: default; }
+.card { background: var(--panel); border-radius: var(--r); box-shadow: 0 0 0 1px var(--line); }
+.row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.grow { flex: 1; min-width: 0; }
+.row .t { font-weight: 500; }
+.row .d { color: var(--text-2); font-size: 12px; margin-top: 1px; }
+select, input[type=text], input[type=password], textarea {
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 3px 8px; outline: none; min-height: 26px;
+}
+select { padding-right: 22px; }
+select:focus, input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { width: 100%; resize: vertical; min-height: 54px; padding: 6px 8px; line-height: 1.45; }
+textarea.mono { font: 12px/1.5 ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; }
+.seg { display: inline-flex; background: var(--fill-2); border-radius: 7px; padding: 2px; }
+.seg button { border: 0; background: none; padding: 3px 11px; border-radius: 5px; font-size: 12.5px; }
+.seg button.on { background: var(--panel); box-shadow: 0 0 0 .5px var(--line-2), 0 1px 2px rgba(0,0,0,.1); font-weight: 500; }
+.switch { width: 34px; height: 20px; border-radius: 10px; border: 0; background: var(--fill-2); position: relative; flex: none; transition: background .15s; padding: 0; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.switch.on { background: #34c759; }
+.switch.on::after { transform: translateX(14px); }
+.tag { font-size: 11px; color: var(--text-2); background: var(--fill-2); padding: 1px 6px; border-radius: 4px; white-space: nowrap; font-weight: 400; }
+.tag.rec { color: var(--accent); background: var(--accent-soft); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.dot.ok { background: var(--green); } .dot.run { background: var(--accent); } .dot.bad { background: var(--red); }
+.bar { height: 3px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+
+/* ---------- 设置项（项目和默认值共用） ---------- */
+.group { margin-bottom: 10px; }
+.field { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--line); min-height: 40px; }
+.field:first-child { border-top: 0; }
+.field.col { display: block; padding: 9px 12px 11px; }
+.field.col .fl { margin-bottom: 6px; }
+.fl small { display: block; color: var(--text-2); font-size: 11.5px; line-height: 1.4; margin-top: 1px; }
+.field select, .field input[type=text] { max-width: 172px; }
+.field input[type=text] { width: 172px; }
+.numf { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.numf input { width: 62px !important; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.fold .fh { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 10px 12px; text-align: left; }
+.fold .ft { font-weight: 500; white-space: nowrap; }
+.fold .fs { flex: 1; min-width: 0; text-align: right; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fold .fh svg { width: 10px; height: 10px; stroke: var(--text-3); fill: none; stroke-width: 1.8; flex: none; transition: transform .15s; }
+.fold.open .fh svg { transform: rotate(90deg); }
+.fold.open .fs { visibility: hidden; }
+.fold .fb { border-top: 1px solid var(--line); }
+.keyst { color: var(--text-2); font-size: 12px; }
+
+/* ---------- 项目首页 ---------- */
+.drop { border-radius: var(--r); background: var(--panel); box-shadow: 0 0 0 1px var(--line); padding: 34px; text-align: center; cursor: pointer; transition: box-shadow .15s; }
+.drop:hover { box-shadow: 0 0 0 1.5px var(--accent); }
+.drop b { font-size: 15px; font-weight: 600; display: block; }
+.drop p { color: var(--text-2); margin-top: 2px; }
+.plist .row { cursor: pointer; padding: 13px 16px; }
+.plist .row:hover { background: var(--fill); }
+.plist .stage { width: 150px; font-size: 12px; color: var(--text-2); }
+.plist .when { width: 70px; text-align: right; font-size: 12px; color: var(--text-3); }
+.p4 { display: flex; gap: 3px; width: 64px; }
+.p4 i { flex: 1; height: 3px; border-radius: 2px; background: var(--fill-2); }
+.p4 i.d { background: var(--text); } .p4 i.h { background: var(--accent); }
+.check { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line-2); flex: none; display: grid; place-items: center; font-size: 11px; color: transparent; }
+.check.ok { background: var(--green); border-color: var(--green); color: #fff; }
+body:not(.first) .only-first { display: none !important; }
+body.first .not-first { display: none !important; }
+
+/* ---------- 项目工作区 ---------- */
+.pbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.pbar .left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.pbar .back { border: 0; background: none; color: var(--accent); padding: 0; white-space: nowrap; }
+.pbar .name { font-weight: 600; font-size: 14px; }
+.pbar .meta { color: var(--text-2); font-size: 12px; }
+.pbar .right { text-align: right; }
+.steps { display: flex; background: var(--fill-2); border-radius: 8px; padding: 2px; }
+.steps button { border: 0; background: none; padding: 5px 18px; border-radius: 6px; display: flex; align-items: center; gap: 7px; }
+.steps button.on { background: var(--panel); box-shadow: 0 0 0 .5px var(--line-2), 0 1px 2px rgba(0,0,0,.1); font-weight: 600; }
+.steps .n { width: 16px; height: 16px; border-radius: 50%; font-size: 10.5px; display: grid; place-items: center; box-shadow: inset 0 0 0 1.2px var(--text-3); color: var(--text-2); font-weight: 600; }
+.steps .done .n { background: var(--text); color: var(--panel); box-shadow: none; }
+.steps .part .n { box-shadow: inset 0 0 0 1.2px var(--accent); color: var(--accent); }
+.work { flex: 1; display: grid; grid-template-columns: 1fr 372px; min-height: 0; }
+.sheetwrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
+.tools { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.tools input { width: 190px; }
+.tools .saved { margin-left: auto; font-size: 12px; color: var(--text-3); }
+.tablebox { overflow: auto; flex: 1; }
+table { width: 100%; border-collapse: collapse; }
+th { position: sticky; top: 0; background: var(--panel); text-align: left; font-size: 11.5px; font-weight: 500; color: var(--text-3); padding: 7px 10px; border-bottom: 1px solid var(--line); z-index: 1; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 14px; }
+td.id, td.time { color: var(--text-3); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 11px; }
+td[contenteditable] { outline: none; }
+td[contenteditable]:focus { background: var(--accent-soft); }
+tr.off td { color: var(--text-3); }
+tr.sel td { background: var(--accent-soft); }
+td.dub { white-space: nowrap; font-size: 12px; color: var(--text-2); padding-top: 10px; }
+.play { width: 20px; height: 20px; border-radius: 50%; border: 0; background: var(--fill-2); font-size: 8px; padding: 0 0 0 2px; vertical-align: middle; margin-right: 6px; }
+.transport { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--line); }
+.transport .pp { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--text); color: var(--panel); font-size: 10px; padding-left: 3px; flex: none; }
+.transport .tc { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transport svg { flex: 1; height: 34px; min-width: 0; }
+.transport rect { fill: var(--text-3); opacity: .55; }
+.transport rect.p { fill: var(--accent); opacity: 1; }
+.insp { border-left: 1px solid var(--line); overflow: auto; padding: 20px 18px 32px; }
+.insp h2 { font-size: 18px; letter-spacing: -.01em; }
+.insp .lead { color: var(--text-2); margin: 2px 0 14px; }
+.stat { font-size: 12px; color: var(--text-2); margin: 10px 2px 0; }
+.more { font-size: 12px; color: var(--text-2); margin: 22px 2px 8px; }
+.stepview { display: none; } .stepview.on { display: block; }
+.out { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--line); }
+.out:first-child { border-top: 0; }
+
+/* ---------- 模型 ---------- */
+.device { display: flex; gap: 32px; padding: 14px 18px; align-items: center; }
+.device span { display: block; font-size: 11.5px; color: var(--text-2); }
+.device b { font-weight: 500; }
+.mrow .size { width: 64px; text-align: right; color: var(--text-2); font-size: 12px; }
+.mrow .act { width: 130px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+.mrow .act .bar { width: 76px; }
+.mrow .tags { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+
+/* ---------- 设置 ---------- */
+.set { display: grid; grid-template-columns: 160px 1fr; gap: 32px; }
+.set nav { position: sticky; top: 0; align-self: start; }
+.set nav button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 5px 10px; border-radius: 6px; margin-bottom: 1px; }
+.set nav button.on { background: var(--fill-2); font-weight: 500; }
+.set nav .nl { font-size: 11.5px; color: var(--text-3); padding: 14px 10px 4px; }
+.setview { display: none; } .setview.on { display: block; }
+.setview .card { margin-bottom: 14px; }
+.setview .field select, .setview .field input[type=text] { max-width: 240px; }
+.setview .field input[type=text] { width: 240px; }
+.cap { color: var(--text-2); font-size: 12.5px; margin: 0 2px 14px; }
+.usage { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 6px 0 10px; background: var(--fill-2); gap: 1px; }
+.legend { display: flex; gap: 18px; font-size: 12px; color: var(--text-2); }
+.legend i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }
+pre.log { margin: 0; padding: 12px 16px; font: 12px/1.7 ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; color: var(--text-2); white-space: pre-wrap; }
+
+/* ---------- 弹窗 ---------- */
+.mask { position: fixed; inset: 0; background: rgba(0,0,0,.3); display: none; place-items: center; z-index: 10; }
+.mask.on { display: grid; }
+.sheet { background: var(--bg); border-radius: 14px; width: 500px; max-height: 90vh; overflow: auto; box-shadow: 0 0 0 1px var(--line), 0 24px 70px rgba(0,0,0,.28); }
+.sheet.lg { width: 760px; }
+.sheet header { padding: 22px 24px 6px; }
+.sheet header h2 { font-size: 18px; }
+.sheet header p { color: var(--text-2); margin-top: 2px; }
+.sheet .body { padding: 10px 24px 4px; }
+.sheet footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px 20px; }
+.choice { display: flex; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+.choice:first-child { border-top: 0; }
+.choice .radio { width: 15px; height: 15px; border-radius: 50%; box-shadow: inset 0 0 0 1.2px var(--line-2); flex: none; margin-top: 3px; }
+.choice.on .radio { box-shadow: inset 0 0 0 4.5px var(--accent); }
+.choice small { display: block; color: var(--text-2); font-size: 12px; }
+.track { display: grid; grid-template-columns: 20px 1fr 56px 230px; gap: 10px; align-items: center; padding: 7px 14px; border-top: 1px solid var(--line); }
+.track:first-child { border-top: 0; }
+.track select { width: 100%; }
+.track.dim { color: var(--text-3); }
+.q .prog { width: 230px; font-size: 12px; color: var(--text-2); }
+.q .prog .bar { margin-top: 7px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ================= 侧栏 ================= -->
+<aside class="sidebar">
+  <div class="brand">ASMR Dubber</div>
+  <div class="nav">
+    <button data-page="home" class="on"><svg viewBox="0 0 20 20"><path d="M2.5 6.5a2 2 0 0 1 2-2h3l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z"/></svg>项目</button>
+    <button data-page="batch"><svg viewBox="0 0 20 20"><path d="M3 5.5h14M3 10h14M3 14.5h14"/></svg>批量<span class="badge not-first">1 / 3</span></button>
+    <button data-page="models"><svg viewBox="0 0 20 20"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6zM3 6l7 3.5L17 6M10 9.5v8"/></svg>模型</button>
+    <button data-page="settings"><svg viewBox="0 0 20 20"><path d="M3 6h7M14 6h3M3 14h3M10 14h7"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="14" r="2"/></svg>设置</button>
+  </div>
+  <div class="side-foot">
+    <div><b>RTX 4070 · 12 GB</b>D 盘可用 182 GB · 版本 1.7.0</div>
+    <div class="demo">
+      <label>示例专用：切换状态</label>
+      <div class="seg"><button id="demoFirst">首次启动</button><button id="demoUsed" class="on">日常使用</button></div>
+    </div>
+  </div>
+</aside>
+
+<main>
+
+<!-- ================= 项目首页 ================= -->
+<section class="page on" id="home">
+  <div class="head">
+    <div><h1>项目</h1><p>一个音频或视频就是一个项目。做到一半可以关掉，下次接着做。</p></div>
+  </div>
+
+  <div class="only-first">
+    <div class="label"><b>开始之前</b></div>
+    <div class="card">
+      <div class="row"><div class="check" id="ck-asr">✓</div><div class="grow"><div class="t">识别模型</div><div class="d">把音频里的话变成文字。已有字幕文件的话可以不装。</div></div><button class="btn" data-go="models">去下载</button></div>
+      <div class="row"><div class="check ok">✓</div><div class="grow"><div class="t">配音</div><div class="d">Edge TTS 已内置，联网就能用。想让配音像原声的音色，再下载 IndexTTS2。</div></div><span class="muted small">可以用了</span></div>
+      <div class="row"><div class="check">✓</div><div class="grow"><div class="t">翻译服务</div><div class="d">填一个翻译服务的 API Key，比如 DeepSeek。已有中文字幕的话可以不填。</div></div><button class="btn" data-go="settings" data-set="keys">去填写</button></div>
+    </div>
+  </div>
+
+  <div class="label"><b>新建</b></div>
+  <div class="drop" id="dropNew">
+    <b>把音频或视频拖到这里</b>
+    <p>或点击选择文件。原文件不会被改动。</p>
+  </div>
+
+  <div class="label not-first"><b>最近</b><span>D:\ASMR-Dubber\projects</span></div>
+  <div class="card plist not-first">
+    <div class="row" data-open><div class="grow"><div class="t">耳边低语 第 1 轨</div><div class="d">日语 → 中文 · 24:36</div></div><div class="p4"><i class="d"></i><i class="d"></i><i class="h"></i><i></i></div><div class="stage">配音 86 / 128 句</div><div class="when">10 分钟前</div></div>
+    <div class="row" data-open><div class="grow"><div class="t">Rainy Night Whisper</div><div class="d">英语 → 中文 · 41:02</div></div><div class="p4"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></div><div class="stage">已导出</div><div class="when">昨天</div></div>
+    <div class="row" data-open><div class="grow"><div class="t">雨の日の添い寝</div><div class="d">日语 → 中文 · 18:20</div></div><div class="p4"><i class="d"></i><i></i><i></i><i></i></div><div class="stage">已识别，待翻译</div><div class="when">10 月 1 日</div></div>
+    <div class="row" data-open><div class="grow"><div class="t">おやすみ前の耳かき</div><div class="d">日语 → 英文 · 32:47</div></div><div class="p4"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></div><div class="stage">已导出</div><div class="when">9 月 27 日</div></div>
+  </div>
+</section>
+
+<!-- ================= 项目工作区 ================= -->
+<section class="page wide" id="project">
+  <div class="pbar">
+    <div class="left">
+      <button class="back" data-go="home">‹ 项目</button>
+      <div><div class="name">耳边低语 第 1 轨</div><div class="meta">日语 → 中文 · 24:36 · 128 句</div></div>
+    </div>
+    <div class="steps" id="steps">
+      <button data-step="1" class="done"><span class="n">✓</span>识别</button>
+      <button data-step="2" class="done"><span class="n">✓</span>翻译</button>
+      <button data-step="3" class="part on"><span class="n">3</span>配音</button>
+      <button data-step="4"><span class="n">4</span>导出</button>
+    </div>
+    <div class="right"><button class="btn">打开文件夹</button></div>
+  </div>
+
+  <div class="work">
+    <div class="sheetwrap">
+      <div class="tools">
+        <input type="text" placeholder="搜索">
+        <div class="seg"><button class="on">全部</button><button>未翻译</button><button>未配音</button><button>待复核 6</button></div>
+        <span class="saved">修改会自动保存</span>
+      </div>
+      <div class="tablebox">
+        <table>
+          <thead><tr><th style="width:32px"></th><th style="width:36px">#</th><th style="width:124px">时间</th><th>原文</th><th>译文</th><th style="width:104px">配音</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="transport">
+        <button class="pp">▶</button>
+        <span class="tc">00:09.1 / 24:36</span>
+        <svg id="wave" viewBox="0 0 800 34" preserveAspectRatio="none"></svg>
+        <div class="seg"><button>原声</button><button>配音</button><button class="on">一起</button></div>
+      </div>
+    </div>
+
+    <div class="insp">
+      <!-- 1 识别 -->
+      <div class="stepview" data-view="1">
+        <h2>识别</h2>
+        <p class="lead">把音频里的话转成带时间的文字。</p>
+        <div class="schema" data-panels="asr" data-part="basic" data-scope="proj"></div>
+        <button class="btn block big" style="margin-top:4px">重新识别</button>
+        <p class="stat">已识别 128 句，用时 3 分 12 秒。重新识别会替换现有句子，译文和配音要重做。</p>
+        <div class="card group" style="margin-top:14px">
+          <div class="field"><div class="fl">导入字幕或台本<small>SRT、VTT、ASS、LRC、TXT。有字幕就不用识别。</small></div><button class="btn">选择文件</button></div>
+        </div>
+        <div class="more">更多设置</div>
+        <div class="schema" data-panels="asr,sep" data-part="adv" data-scope="proj"></div>
+      </div>
+
+      <!-- 2 翻译 -->
+      <div class="stepview" data-view="2">
+        <h2>翻译</h2>
+        <p class="lead">译文就是配音要念的稿子，可以直接在表格里改。</p>
+        <div class="schema" data-panels="tr" data-part="basic" data-scope="proj"></div>
+        <button class="btn primary block big" style="margin-top:4px">翻译剩余 0 句</button>
+        <p class="stat">128 句已全部翻译。<button class="btn plain small">全部重新翻译</button></p>
+        <p class="stat" style="margin-top:2px">呼吸声、笑声这类没有内容的句子不翻译，也不配音。</p>
+        <div class="more">更多设置</div>
+        <div class="schema" data-panels="tr" data-part="adv" data-scope="proj"></div>
+      </div>
+
+      <!-- 3 配音 -->
+      <div class="stepview on" data-view="3">
+        <h2>配音</h2>
+        <p class="lead">按译文逐句生成语音。</p>
+        <div class="schema" data-panels="tts" data-part="basic" data-scope="proj"></div>
+        <div class="card group">
+          <div class="field"><div class="fl"><button class="play">▶</button>音色参考 · 第 12 句 · 8.4 秒</div><button class="btn">更换</button></div>
+        </div>
+        <p class="stat" style="margin:-2px 2px 14px">配音会模仿这一句的声音。选 5–15 秒、只有一个人说话、背景干净的句子。</p>
+        <button class="btn primary block big" id="dubBtn">生成剩余 42 句</button>
+        <div class="bar" style="margin-top:12px"><i id="dubBar" style="width:67%"></i></div>
+        <p class="stat" id="dubStat">已完成 86 / 128 句。只生成还没有配音、或译文改过的句子。</p>
+        <div class="more">更多设置</div>
+        <div class="schema" data-panels="tts" data-part="adv" data-scope="proj"></div>
+      </div>
+
+      <!-- 4 导出 -->
+      <div class="stepview" data-view="4">
+        <h2>导出</h2>
+        <p class="lead">把配音和原声合成成品。改这里的设置不用重新配音。</p>
+        <div class="schema" data-panels="mix" data-part="basic" data-scope="proj"></div>
+        <button class="btn primary block big" style="margin-top:4px">导出</button>
+        <p class="stat">还有 42 句没有配音，成品里这些句子只有原声。</p>
+        <div class="more">上次导出 · 昨天 21:40</div>
+        <div class="card group">
+          <div class="out"><button class="play">▶</button><span class="grow">双语版.wav</span><button class="btn plain small">显示</button></div>
+          <div class="out"><button class="play">▶</button><span class="grow">中文配音轨.wav</span><button class="btn plain small">显示</button></div>
+          <div class="out"><span class="grow" style="padding-left:26px">字幕.srt · 字幕.lrc</span><button class="btn plain small">显示</button></div>
+        </div>
+        <div class="more">更多设置</div>
+        <div class="schema" data-panels="mix,sub" data-part="adv" data-scope="proj"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 批量 ================= -->
+<section class="page" id="batch">
+  <div class="head">
+    <div><h1>批量</h1><p>一次处理一整个作品文件夹。每个作品自动走完识别、翻译、配音和导出，不用守着。</p></div>
+    <button class="btn primary big" id="addWork">添加作品</button>
+  </div>
+
+  <div class="only-first card" style="padding:52px;text-align:center">
+    <b>队列是空的</b>
+    <p class="muted" style="margin-top:2px">添加一个已解压的作品文件夹开始。</p>
+  </div>
+
+  <div class="not-first">
+    <div class="label"><b>队列</b><span>按顺序处理，可拖动调整</span></div>
+    <div class="card q">
+      <div class="row"><div class="grow"><div class="t">RJ01234567 耳边低语</div><div class="d">6 条音轨 · 双语版 · 合并成一个文件</div></div><div class="prog"><span class="dot run"></span>第 3 轨 · 配音 41 / 96 句<div class="bar"><i style="width:46%"></i></div></div><button class="btn">暂停</button></div>
+      <div class="row"><div class="grow"><div class="t">RJ01198822 雨の日の添い寝</div><div class="d">4 条音轨 · 双语版 + 替换版 · 每轨单独输出</div></div><div class="prog">等待中</div><button class="btn">编辑</button></div>
+      <div class="row"><div class="grow"><div class="t">RJ01075310 Rainy Night</div><div class="d">9 条音轨 · 只要字幕 · 双语</div></div><div class="prog">等待中</div><button class="btn">编辑</button></div>
+    </div>
+
+    <div class="label"><b>等你确认</b></div>
+    <div class="card">
+      <div class="row"><div class="grow"><div class="t">RJ01234567 · 音色参考</div><div class="d">自动选了第 12 句。4 分 20 秒后按这个继续，也可以现在换一句。</div></div><button class="btn">试听并选择</button></div>
+    </div>
+
+    <div class="label"><b>已完成</b></div>
+    <div class="card">
+      <div class="row"><div class="grow"><div class="t">RJ00987654 おやすみ前の耳かき</div><div class="d">5 条音轨 · 双语版 · 用时 1 小时 12 分</div></div><span class="small muted">昨天</span><button class="btn">打开文件夹</button></div>
+      <div class="row"><div class="grow"><div class="t">RJ00911203 添い寝ボイス</div><div class="d"><span class="dot bad"></span>第 2 轨翻译失败：API Key 无效。其余 2 轨已完成。</div></div><span class="small muted">9 月 30 日</span><button class="btn">重试</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 模型 ================= -->
+<section class="page" id="models">
+  <div class="head">
+    <div><h1>模型</h1><p>用到什么下载什么。断线后再点一次会接着下，不会从头来。</p></div>
+    <div class="seg"><button class="on">国内镜像</button><button>海外源</button></div>
+  </div>
+
+  <div class="card device">
+    <div><span>显卡</span><b>NVIDIA RTX 4070 · 12 GB 显存</b></div>
+    <div><span>磁盘</span><b>D 盘可用 182 GB</b></div>
+    <div><span>模型已占用</span><b id="used" class="num">0 GB</b></div>
+    <div style="margin-left:auto"><button class="btn plain">导入离线模型包</button></div>
+  </div>
+
+  <div class="only-first">
+    <div class="label"><b>不知道选什么</b></div>
+    <div class="card"><div class="row" style="padding:16px 18px">
+      <div class="grow"><div class="t">日语音声配中文，装这两个就够</div><div class="d">Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。共约 15 GB。</div></div>
+      <button class="btn primary big" id="starterBtn">一起下载</button>
+    </div></div>
+  </div>
+
+  <div id="modelGroups"></div>
+
+  <div class="label"><b>不需要下载</b></div>
+  <div class="card">
+    <div class="row"><div class="grow"><div class="t">Edge TTS</div><div class="d">微软在线语音，免费，要联网。音色固定，不能模仿原声。</div></div><span class="muted small">已内置</span></div>
+    <div class="row"><div class="grow"><div class="t">云端服务</div><div class="d">翻译（DeepSeek、百炼、OpenAI 等）和云端配音（MiMo、MiniMax 等）只需要填 Key。</div></div><button class="btn" data-go="settings" data-set="keys">去填写</button></div>
+  </div>
+</section>
+
+<!-- ================= 设置 ================= -->
+<section class="page" id="settings">
+  <div class="head"><div><h1>设置</h1></div></div>
+  <div class="set">
+    <nav id="setNav">
+      <button data-set="general" class="on">通用</button>
+      <button data-set="keys">云端服务</button>
+      <div class="nl">新项目默认值</div>
+      <button data-set="d-asr">识别</button>
+      <button data-set="d-tr">翻译</button>
+      <button data-set="d-tts">配音</button>
+      <button data-set="d-mix">导出与字幕</button>
+      <div class="nl">其他</div>
+      <button data-set="batch">批量</button>
+      <button data-set="storage">存储</button>
+      <button data-set="logs">日志与诊断</button>
+    </nav>
+    <div>
+      <div class="setview on" data-setview="general">
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">界面语言</div></div><select><option>中文</option><option>English</option></select></div>
+          <div class="row"><div class="grow"><div class="t">项目保存位置</div><div class="d">D:\ASMR-Dubber\projects</div></div><button class="btn">更改</button></div>
+          <div class="row"><div class="grow"><div class="t">启动时自动打开浏览器</div></div><button class="switch on"></button></div>
+        </div>
+        <div class="label"><b>下载</b></div>
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">下载来源</div><div class="d">国内镜像走 ModelScope。海外源走 Hugging Face 和 GitHub，可能需要代理。</div></div><div class="seg"><button class="on">国内镜像</button><button>海外源</button></div></div>
+          <div class="row"><div class="grow"><div class="t">Hugging Face 端点</div></div><input type="text" value="https://hf-mirror.com" style="width:240px"></div>
+          <div class="row"><div class="grow"><div class="t">Python 软件源</div></div><input type="text" value="https://mirrors.aliyun.com/pypi/simple" style="width:240px"></div>
+        </div>
+      </div>
+
+      <div class="setview" data-setview="keys">
+        <div class="label" style="margin-top:0"><b>翻译</b></div>
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">DeepSeek</div><div class="d">sk-····3f9a</div></div><span class="small muted"><span class="dot ok"></span>可用</span><button class="btn">更换</button></div>
+          <div class="row"><div class="grow"><div class="t">阿里云百炼</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">豆包</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">SenseNova</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">OpenAI</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">Claude</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">Gemini</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">DeepL · Google · Microsoft</div><div class="d">逐句机器翻译，不看上下文。</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">自定义</div><div class="d">任何兼容 OpenAI 接口的服务，包括本机运行的模型。</div></div><button class="btn">添加</button></div>
+        </div>
+        <div class="label"><b>配音</b></div>
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">MiMo</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">MiniMax</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">Fish Audio</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">IndexTTS2 API · GPT-SoVITS · CosyVoice</div><div class="d">需要你自己先把服务跑起来，这里只填地址。</div></div><button class="btn">填写</button></div>
+        </div>
+        <div class="label"><b>识别与分离</b></div>
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">云端识别 API</div><div class="d">兼容 OpenAI 接口。音频会上传到这个服务。</div></div><button class="btn">填写</button></div>
+          <div class="row"><div class="grow"><div class="t">Replicate</div><div class="d">云端人声分离。</div></div><button class="btn">填写</button></div>
+        </div>
+        <p class="small muted" style="margin:12px 2px">Key 以明文保存在本机的 .asmr-dubber\config\secrets.json。不要把这个文件夹发给别人。</p>
+      </div>
+
+      <div class="setview" data-setview="d-asr"><p class="cap">新建项目时会带上这里的选择。已有的项目不受影响，要改就打开那个项目改。</p><div class="schema" data-panels="asr,sep" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-tr"><p class="cap">新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="tr" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-tts"><p class="cap">新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="tts" data-part="all" data-scope="def"></div></div>
+      <div class="setview" data-setview="d-mix"><p class="cap">新建项目时会带上这里的选择。已有的项目不受影响。</p><div class="schema" data-panels="mix,sub" data-part="all" data-scope="def"></div></div>
+
+      <div class="setview" data-setview="batch"><p class="cap">添加作品时的初始选择。已经在队列里的作品不受影响。</p><div class="schema" data-panels="batch" data-part="all" data-scope="def"></div></div>
+
+      <div class="setview" data-setview="storage">
+        <div class="card" style="padding:16px 18px">
+          <div style="font-weight:500">已用 46.8 GB</div>
+          <div class="usage"><i style="width:56%;background:var(--text)"></i><i style="width:26%;background:var(--accent)"></i><i style="width:18%;background:var(--text-3)"></i></div>
+          <div class="legend"><span><i style="background:var(--text)"></i>模型 26.4 GB</span><span><i style="background:var(--accent)"></i>项目 12.1 GB</span><span><i style="background:var(--text-3)"></i>缓存 8.3 GB</span></div>
+        </div>
+        <div class="label"><b>清理缓存</b><span>不会删除项目、配音和成品</span></div>
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">临时文件</div><div class="d">可以放心删。</div></div><span class="muted small num">3.1 GB</span><button class="btn">清理</button></div>
+          <div class="row"><div class="grow"><div class="t">导出用的中间文件</div><div class="d">删了以后，下次导出要多花几分钟重新计算。</div></div><span class="muted small num">2.4 GB</span><button class="btn">清理</button></div>
+          <div class="row"><div class="grow"><div class="t">人声分离结果</div><div class="d">删了以后，再做替换版要重新分离，比较慢。</div></div><span class="muted small num">2.8 GB</span><button class="btn">清理</button></div>
+        </div>
+        <p class="small muted" style="margin:12px 2px">点“清理”后会先列出要删的文件，确认了才删。</p>
+      </div>
+
+      <div class="setview" data-setview="logs">
+        <div class="card">
+          <div class="row"><div class="grow"><div class="t">检查运行环境</div><div class="d">显卡驱动、模型文件、运行库。出问题时先点这个。</div></div><button class="btn">开始检查</button></div>
+          <div class="row"><div class="grow"><div class="t">修复微软 VC++ 运行库</div><div class="d">从微软官网下载，可能会请求管理员权限。</div></div><button class="btn">修复</button></div>
+          <div class="row"><div class="grow"><div class="t">修复某个模型的运行环境</div></div><select><option>Parakeet</option><option>IndexTTS2</option><option>IndexTTS-2.5</option><option>Faster-Whisper</option></select><button class="btn">修复</button></div>
+          <div class="row"><div class="grow"><div class="t">导出日志</div><div class="d">Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。</div></div><button class="btn">导出</button></div>
+        </div>
+        <div class="label"><b>最近日志</b></div>
+        <div class="card"><pre class="log">21:38:02  配音  第 86 句完成（2.1 秒）
+21:38:05  配音  第 87 句开始
+21:38:05  配音  已暂停
+21:40:11  导出  双语版.wav 已写入</pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+</div>
+
+<!-- ================= 弹窗：新建项目 ================= -->
+<div class="mask" id="newSheet">
+  <div class="sheet">
+    <header><h2>新建项目</h2><p>耳边低语_track01.wav · 24:36</p></header>
+    <div class="body">
+      <div class="card group">
+        <div class="field"><div class="fl">音频里说的是</div><select><option>日语</option><option>英语</option><option>中文</option></select></div>
+        <div class="field"><div class="fl">配音成</div><select><option>中文</option><option>英文</option></select></div>
+      </div>
+      <div class="more" style="margin-top:16px">文字从哪来</div>
+      <div class="card group">
+        <div class="choice on"><span class="radio"></span><div>自动识别<small>用识别模型听出原文</small></div></div>
+        <div class="choice"><span class="radio"></span><div>我有原文字幕<small>跳过识别，直接翻译</small></div></div>
+        <div class="choice"><span class="radio"></span><div>我有中文字幕<small>跳过识别和翻译，直接配音</small></div></div>
+        <div class="choice"><span class="radio"></span><div>我只有不带时间的台本<small>先识别出时间，再把台本文字对上去</small></div></div>
+      </div>
+    </div>
+    <footer><button class="btn" data-close>取消</button><button class="btn primary" id="createBtn">创建</button></footer>
+  </div>
+</div>
+
+<!-- ================= 弹窗：添加作品 ================= -->
+<div class="mask" id="workSheet">
+  <div class="sheet lg">
+    <header><h2>添加作品</h2></header>
+    <div class="body">
+      <div class="card group">
+        <div class="field"><input type="text" value="D:\DLsite\RJ01234567" style="flex:1;max-width:none"><button class="btn">选择文件夹</button></div>
+        <div class="field"><div class="fl">音频版本<small>这个作品有多种格式，选一组处理</small></div><select><option>WAV（6 条）</option><option>MP3（6 条）</option></select></div>
+      </div>
+      <div class="more" style="display:flex;justify-content:space-between"><span>音轨 · 找到 5 条，已选 4 条</span><span>每条音轨的文字从哪来</span></div>
+      <div class="card group">
+        <div class="track"><input type="checkbox" checked><span>01 プロローグ</span><span class="muted num">03:12</span><select><option>用 01.vtt 的文字和时间（日语）</option><option>自动识别</option></select></div>
+        <div class="track"><input type="checkbox" checked><span>02 耳かき</span><span class="muted num">24:36</span><select><option>用 02.vtt 的文字和时间（日语）</option><option>自动识别</option></select></div>
+        <div class="track"><input type="checkbox" checked><span>03 添い寝</span><span class="muted num">31:05</span><select><option>自动识别</option><option>选择文件…</option></select></div>
+        <div class="track"><input type="checkbox" checked><span>04 おやすみ</span><span class="muted num">18:44</span><select><option>识别出时间，文字用 台本.txt</option><option>自动识别</option></select></div>
+        <div class="track dim"><input type="checkbox"><span>特典 フリートーク</span><span class="num">06:20</span><span class="small">未选</span></div>
+      </div>
+      <div class="more">做成什么</div>
+      <div class="card group">
+        <div class="field"><div class="fl">成品</div><select style="max-width:260px"><option>双语版</option><option>替换版（实验性）</option><option>双语版 + 替换版</option><option>原声 + 字幕，不配音</option><option>只要字幕文件</option></select></div>
+        <div class="field"><div class="fl">字幕</div><select><option>双语</option><option>仅译文</option><option>仅原文</option></select></div>
+        <div class="field"><div class="fl">格式<small>和谐视频会压低并延后原声</small></div><div class="seg"><button class="on">音频</button><button>视频</button><button>和谐视频</button></div></div>
+        <div class="field"><div class="fl">视频画面</div><select><option>cover.jpg（推荐）</option><option>黑色背景</option></select></div>
+        <div class="field"><div class="fl">把字幕烧进视频</div><button class="switch"></button></div>
+        <div class="field"><div class="fl">多条音轨</div><div class="seg"><button class="on">合并成一个</button><button>每轨单独</button><button>都要</button></div></div>
+      </div>
+      <p class="small muted" style="margin:0 2px">识别、翻译、配音按“新项目默认值”来。</p>
+    </div>
+    <footer><button class="btn" data-close>取消</button><button class="btn primary" data-close>加入队列</button></footer>
+  </div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+/* ================= 设置项定义：项目面板和“新项目默认值”共用同一份 ================= */
+const sel  = (l, o, h, key) => ({ k: 'sel', l, o, h, key });
+const num  = (l, v, u, h) => ({ k: 'num', l, v, u, h });
+const txt  = (l, v, h) => ({ k: 'txt', l, v, h });
+const area = (l, v, h, mono) => ({ k: 'area', l, v, h, mono });
+const json = (l, h) => area(l, '{}', h, true);
+const tog  = (l, v, h) => ({ k: 'tog', l, v, h });
+const act  = (l, b, h) => ({ k: 'act', l, b, h });
+const apik = (l, st) => ({ k: 'key', l, st });
+const on   = (key, ...vals) => s => vals.includes(s[key]);
+const W    = (cond, items) => items.map(i => ({ ...i, when: cond }));
+
+const LLM = ['DeepSeek', '阿里云百炼', '豆包', 'SenseNova', 'OpenAI', 'Claude', 'Gemini', '自定义（OpenAI 兼容）'];
+const LOCAL_TTS = ['IndexTTS2', 'IndexTTS-2.5'];
+const API_TTS = ['IndexTTS2 API', 'MiMo', 'MiniMax', 'GPT-SoVITS', 'CosyVoice', 'Fish Speech', '通用 TTS API'];
+const CLONE = ['IndexTTS2', 'IndexTTS-2.5', 'IndexTTS2 API', 'GPT-SoVITS', 'CosyVoice', 'Fish Speech'];
+
+const PANELS = {
+  asr: [
+    { basic: 1, items: [
+      sel('音频语言', ['日语', '英语', '中文'], '', 'lang'),
+      sel('模型', s => s.lang === '日语' ? ['Parakeet 1.1B', 'Parakeet 0.6B', 'Kotoba-Whisper v2.2', 'Faster-Whisper large-v2', '云端识别 API'] : ['Faster-Whisper large-v2', '云端识别 API'], '', 'asr'),
+      { ...sel('运行在', ['显卡', '处理器（慢）']), when: s => s.asr !== '云端识别 API' },
+    ]},
+    { t: '断句', sum: '停顿 0.6 秒 · 最长 12 秒', items: [
+      num('停顿多久算一句结束', 0.6, '秒'),
+      num('单句最长', 12, '秒'),
+    ]},
+    { t: '无声片段检测', sum: s => s.vad, items: [
+      sel('方式', s => s.lang === '日语' ? ['关闭', '模型自带', 'ASMR 专用'] : ['关闭', '模型自带'], '识别前先找出有人说话的片段。耳语被漏掉时请关闭。', 'vad'),
+      ...W(on('vad', '模型自带'), [num('最短静音', 500, '毫秒')]),
+      ...W(on('vad', 'ASMR 专用'), [
+        num('语音阈值', 0.5, '', '越低越容易把轻声当成语音'),
+        num('最短语音', 250, '毫秒'),
+        num('最短静音', 100, '毫秒'),
+        num('边界保留', 200, '毫秒'),
+      ]),
+    ]},
+    { t: '模型参数', sum: s => s.asr, items: [
+      ...W(on('asr', 'Parakeet 0.6B'), [sel('解码头', ['TDT', 'CTC'])]),
+      ...W(on('asr', 'Parakeet 1.1B', 'Parakeet 0.6B'), [
+        num('分块长度', 120, '秒', '15–600'),
+        num('无响应超时', 300, '秒'),
+      ]),
+      ...W(on('asr', 'Kotoba-Whisper v2.2'), [num('分块长度', 30, '秒', '5–120')]),
+      ...W(on('asr', 'Faster-Whisper large-v2'), [
+        sel('计算精度', ['float16', 'float32', 'int8_float16', 'int8']),
+        num('束搜索宽度', 5, '', 'Beam Size'),
+        tog('用上一段文字作为识别条件', false, '更连贯，但出错时会连着错'),
+      ]),
+      ...W(s => s.asr !== '云端识别 API', [num('批大小', 1, '', '调大更快，更占显存')]),
+      ...W(on('asr', '云端识别 API'), [
+        txt('接口地址', 'https://api.example.com/v1'),
+        apik('API Key', '未填写'),
+        json('附加请求参数', 'JSON'),
+      ]),
+      area('识别提示词', '', '人名、作品名、特殊读法。只是线索，不要放整段台词。'),
+    ]},
+    { t: '时间对齐', sum: '用模型自带的时间', items: [
+      tog('识别后用 Qwen3 重新对齐', false, '只重算每句的起止时间，不改文字。需要先下载 Qwen3 时间对齐模型。'),
+    ]},
+    { t: '多模型复核', tag: '实验性', sum: '关闭', items: [
+      tog('启用', false, '让另外几个模型听同一段音频，文字不一致的地方列出来给你确认。效果不一定比单模型好。'),
+      sel('复核模型', ['Parakeet 0.6B + Faster-Whisper', 'Parakeet 0.6B', 'Faster-Whisper large-v2', 'Kotoba-Whisper v2.2']),
+      sel('有分歧时', ['只提建议', '保守自动纠错（实验性）']),
+      num('片段长度', 30, '秒'),
+      num('前后多听', 2, '秒'),
+      sel('文字以谁为准', ['主模型', '复核结果']),
+      sel('时间以谁为准', ['主模型', 'Qwen3 重新对齐']),
+      num('允许的时间漂移', 1.5, '秒'),
+      area('作品、人物与场景背景', ''),
+      area('校对提示词', '', 'Prompt。留空用内置的。'),
+    ]},
+  ],
+
+  sep: [
+    { t: '人声分离', tag: '实验性', sum: '关闭', items: [
+      tog('识别前先分离人声', false, '背景音乐很响时可能提高识别率。做“替换版”必须开启。'),
+      sel('在哪里分离', ['本机', 'Replicate 云端', '自建接口'], '', 'sepBk'),
+      ...W(on('sepBk', '本机'), [
+        sel('模型', ['Mel-Band RoFormer', 'Demucs 四轨', 'Demucs FT 四轨（较慢）']),
+        sel('运行在', ['显卡', '处理器（慢）']),
+        tog('自动混合精度', true, '省显存。结果不稳定时关闭。'),
+        num('归一化峰值', 1, '', '0.1–1'),
+        txt('人声轨名称', 'Vocals', '换成多轨模型时要确认这个名字'),
+        json('通用参数', 'invert_using_spec、use_torch_compile、use_native_fp16、amplification_threshold'),
+        json('RoFormer / MDX23C 参数', 'segment_size、override_model_segment_size、batch_size、overlap、pitch_shift'),
+        json('MDX 参数', 'hop_length、segment_size、overlap、batch_size、enable_denoise'),
+        json('VR 参数', 'batch_size、window_size、aggression、enable_tta、enable_post_process、post_process_threshold、high_end_process'),
+        json('Demucs 参数', 'segment_size、shifts、overlap、segments_enabled'),
+      ]),
+      ...W(s => s.sepBk !== '本机', [
+        tog('同意把音频上传到这个服务', false, '可能产生费用'),
+        { ...txt('接口地址', '', '外网必须 HTTPS'), when: on('sepBk', '自建接口') },
+        txt('模型或版本 ID', ''),
+        txt('音频字段名', 'audio'),
+        txt('人声地址的字段路径', 'vocals'),
+        json('其余参数', '原样发给服务商'),
+        apik('API Key', '未填写'),
+      ]),
+    ]},
+  ],
+
+  tr: [
+    { basic: 1, items: [
+      sel('翻译成', ['中文', '英文'], '也是配音的语言。和音频语言相同时不翻译。'),
+      sel('服务', [...LLM, 'DeepL', 'Google', 'Microsoft'], '', 'tr'),
+      { ...txt('模型', 'deepseek-v4-flash'), when: s => LLM.includes(s.tr) },
+    ]},
+    { t: '接口', sum: 'Key 已填写', items: [
+      txt('接口地址', 'https://api.deepseek.com'),
+      apik('API Key', 'sk-····3f9a'),
+      ...W(on('tr', 'DeepL'), [sel('正式程度', ['default', 'more', 'less', 'prefer_more', 'prefer_less'])]),
+      ...W(on('tr', 'Microsoft'), [txt('区域', 'eastasia')]),
+      ...W(s => LLM.includes(s.tr), [json('附加请求参数', 'JSON，可选')]),
+    ]},
+    { t: '上下文', sum: '前后各 3 句', when: s => LLM.includes(s.tr), items: [
+      tog('参考前后句', true, '代词和语气更连贯'),
+      num('前后各看', 3, '句'),
+      num('翻译记忆', 20, '句', '把前面译过的句子带上，保持称呼一致'),
+    ]},
+    { t: '提示词', sum: '内置', when: s => LLM.includes(s.tr), items: [
+      area('作品背景', '', '人物关系、称呼、场景。写了翻译会更准。'),
+      area('翻译 Prompt', '', '留空用内置的。'),
+    ]},
+    { t: '采样', sum: 'Temperature 0.3', when: s => LLM.includes(s.tr), items: [
+      num('Temperature', 0.3, '', '随机度'),
+      num('Top P', 0.9, ''),
+      num('最大输出', 4096, 'Token'),
+    ]},
+  ],
+
+  tts: [
+    { basic: 1, items: [
+      sel('引擎', [...LOCAL_TTS, 'Edge TTS', ...API_TTS], '', 'tts'),
+      { ...sel('模型', ['mimo-v2.5-tts-voiceclone', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voicedesign']), when: on('tts', 'MiMo') },
+      { ...sel('模型', ['speech-2.8-hd', 'speech-2.8-turbo']), when: on('tts', 'MiniMax') },
+      { ...sel('音色', ['zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoyiNeural', 'zh-CN-YunxiNeural', 'en-US-AriaNeural']), when: on('tts', 'Edge TTS') },
+      { ...txt('音色 ID', ''), when: on('tts', 'MiMo', 'MiniMax', 'Fish Speech', '通用 TTS API') },
+      sel('语速', ['正常', '稍慢', '稍快', '自定义']),
+    ]},
+    { t: '音色参考', sum: '项目内的句子', when: s => CLONE.includes(s.tts) || s.tts === 'MiMo', items: [
+      sel('参考音频', ['项目内的句子', '外部音频']),
+      sel('参考方式', ['全部句子用同一条', '每句用自己的原声']),
+      act('外部音频', '选择文件'),
+      area('外部音频对应的原文', '', 'GPT-SoVITS、Fish Speech 等需要，必须和音频完全对应'),
+      sel('外部音频语言', ['跟随项目', '日语', '英语', '中文']),
+      num('参考片段两端多取', 0.1, '秒'),
+    ]},
+    { t: '情绪', sum: '跟随每句原声', when: on('tts', 'IndexTTS2', 'IndexTTS2 API'), items: [
+      sel('音色来自', ['项目统一参考句', '当前句', '外部音频']),
+      sel('情绪来自', ['当前句', '项目统一参考句', '跟随音色参考', '外部音频', '文字描述', '八维情绪向量']),
+      num('情绪权重', 0.65, ''),
+      txt('情绪文字描述', ''),
+      act('外部情绪参考音频', '选择文件'),
+    ]},
+    { t: 'IndexTTS2 参数', sum: 'FP16 · Top K 30', when: on('tts', 'IndexTTS2'), items: [
+      sel('运行在', ['显卡', '处理器（非常慢）']),
+      tog('半精度计算', true, 'FP16，省显存'),
+      num('Temperature', 0.8, ''),
+      num('Top P', 0.8, ''),
+      num('Top K', 30, ''),
+      txt('模型权重目录', '.asmr-dubber\\models\\indextts2', 'checkpoints'),
+      txt('配置文件', 'config.yaml'),
+    ]},
+    { t: 'IndexTTS-2.5 参数', sum: 'BF16 · Top K 30', when: on('tts', 'IndexTTS-2.5'), items: [
+      sel('运行在', ['显卡', '处理器（非常慢）']),
+      sel('合成语言', ['中文', '英语', '日语', '西班牙语', '阿拉伯语']),
+      num('时长倍率', 1, '×'),
+      tog('BF16 半精度', true),
+      tog('BigVGAN CUDA 内核', false),
+      tog('DeepSpeed', false),
+      sel('GPT 加速引擎', ['关闭', 'vLLM', 'accel']),
+      tog('torch.compile', false),
+      tog('文本规范化', true),
+      tog('随机选择情绪和音色条件', false, '会降低音色一致性'),
+      num('内部切段间隔', 200, '毫秒'),
+      num('单段最大文本', 120, 'Token'),
+      tog('启用采样', true),
+      num('Temperature', 0.8, ''),
+      num('Top P', 0.8, ''),
+      num('Top K', 30, ''),
+      num('束搜索数量', 3, '', 'Beams'),
+      num('重复惩罚', 10, ''),
+      num('长度惩罚', 0, ''),
+      num('最大声学 Token', 1500, ''),
+      txt('模型权重目录', '.asmr-dubber\\models\\indextts25', 'checkpoints'),
+      txt('配置文件', 'config.yaml'),
+    ]},
+    { t: 'Edge TTS 参数', sum: '默认', when: on('tts', 'Edge TTS'), items: [
+      act('试听这个音色', '试听'),
+      num('音量', 0, '%'),
+      num('音调', 0, 'Hz'),
+    ]},
+    { t: 'MiMo 参数', sum: '默认', when: on('tts', 'MiMo'), items: [
+      area('语气与风格说明', '', '可选。voicedesign 模型按这段话设计声音。'),
+    ]},
+    { t: 'MiniMax 参数', sum: '默认', when: on('tts', 'MiniMax'), items: [
+      num('音量', 1, ''),
+      num('音调', 0, ''),
+      sel('情绪', ['自动', '平静', '开心', '悲伤', '愤怒', '恐惧']),
+    ]},
+    { t: 'GPT-SoVITS 参数', sum: 'Top K 15', when: on('tts', 'GPT-SoVITS'), items: [
+      num('Temperature', 1, ''),
+      num('Top P', 1, ''),
+      num('Top K', 15, ''),
+      txt('文本切分方法', 'cut5'),
+      num('采样步数', 32, ''),
+    ]},
+    { t: 'CosyVoice 参数', sum: '零样本', when: on('tts', 'CosyVoice'), items: [
+      sel('模式', ['零样本', '跨语言']),
+    ]},
+    { t: '接口', sum: '2 路并发', when: s => API_TTS.includes(s.tts), items: [
+      txt('接口地址', 'http://127.0.0.1:9880'),
+      apik('API Key', '未填写'),
+      num('同时请求', 2, '路', '服务不稳定时降到 1'),
+      json('附加请求参数', 'JSON，可选'),
+    ]},
+    { t: '其他', sum: '超时 120 秒', items: [
+      num('单句超时', 120, '秒'),
+      num('随机种子', 0, '', '0 表示每次随机'),
+      tog('跳过纯语气词', true, '日语项目里“うん”“ふふ”这类句子不配音'),
+    ]},
+  ],
+
+  mix: [
+    { basic: 1, items: [
+      sel('成品', ['双语版', '替换版（实验性）', '只要字幕'], s => ({ '双语版': '保留原声，叠加配音', '只要字幕': '不生成音频' })[s.out] || '去掉原来的人声，只留背景和配音。可能有残留。需要开启人声分离。', 'out'),
+      tog('空间跟随', true, '配音跟着原声的左右和远近移动（RTF）'),
+      sel('保存哪些音频', ['成品和配音轨', '只要成品', '只要配音轨']),
+      sel('字幕', ['双语', '仅译文', '仅原文', '不要字幕']),
+    ]},
+    { t: '配音时间', sum: '延后 500 毫秒 · 最多加速 1.8×', items: [
+      num('整体偏移', 500, '毫秒', '正数延后，负数提前'),
+      sel('配音比原句长时', ['留在原位，适当加速', '顺延到上一句说完'], '顺延不会加速，但后面会越拖越晚', 'sched'),
+      { ...num('最多加速到', 1.8, '×', '超过这个倍速就允许和下一句重叠'), when: on('sched', '留在原位，适当加速') },
+    ]},
+    { t: '音量', sum: s => s.loud, items: [
+      sel('方式', ['跟随对应原声', '全部统一', '不调整'], '', 'loud'),
+      { ...num('相对原声', 0, 'dB'), when: on('loud', '跟随对应原声') },
+      { ...num('统一到', -23, 'dBFS', 'RMS'), when: on('loud', '全部统一') },
+      { ...num('微调', 0, 'dB'), when: on('loud', '不调整') },
+      ...W(on('loud', '跟随对应原声'), [
+        num('最安静不低于', -40, 'dBFS'),
+        num('最响不超过', -18, 'dBFS'),
+      ]),
+      ...W(s => s.loud !== '不调整', [
+        num('每句最多提升', 12, 'dB', '防止把底噪放大'),
+        num('单句峰值上限', -1, 'dBFS'),
+        num('句首句尾淡入淡出', 10, '毫秒'),
+        num('处理后整体微调', 0, 'dB'),
+      ]),
+      num('配音轨峰值上限', -1, 'dBFS'),
+    ]},
+    { t: '空间跟随参数', sum: '强度 1.0', items: [
+      num('强度', 1, '', '0 是不处理，1 是完全跟随'),
+      num('远近变化强度', 1, '', '0–1'),
+      num('音色染色强度', 0.5, '', '0–1'),
+      sel('FFT 窗口', ['自动', '1024', '2048', '4096', '8192']),
+      sel('FFT 步长除数', ['4', '8', '16']),
+      num('内存分块', 10, '秒', '内存不够时调小'),
+    ]},
+    { t: '原声回填', sum: '未配音的句子', when: on('out', '替换版（实验性）'), items: [
+      sel('回填哪些', ['不回填', '没有配音的句子', '手动指定'], '把这些句子的原人声放回成品'),
+      txt('句子编号', '', '逗号或空格分隔'),
+      num('前后多留', 50, '毫秒'),
+    ]},
+    { t: '输出保护', sum: '峰值 -1 dBFS · 自动声道', items: [
+      tog('成品峰值保护', true),
+      num('峰值上限', -1, 'dBFS'),
+      sel('多声道时配音放在', ['自动（优先中置）', '复制到全部声道']),
+    ]},
+  ],
+
+  sub: [
+    { t: '字幕排版', sum: '每行 22 字 · 跟随原声', items: [
+      sel('时间', ['跟随原声', '跟随配音']),
+      num('每行最多', 22, '字', '8–500'),
+      num('最短显示', 1, '秒'),
+      num('每秒最多', 18, '字'),
+    ]},
+  ],
+
+  batch: [
+    { basic: 1, items: [
+      txt('成品文件夹名称', '中文配音', '在作品文件夹里新建'),
+      sel('有多种音频格式时', ['WAV › FLAC › MP3', 'FLAC › WAV › MP3', 'MP3 › WAV › FLAC']),
+      tog('包含特典、样本和 Free Talk', false),
+      tog('翻译作品文件夹名称', true),
+      tog('翻译音轨标题', true),
+    ]},
+    { basic: 1, items: [
+      sel('默认格式', ['音频', '视频', '和谐视频']),
+      sel('默认多轨方式', ['合并成一个', '每轨单独', '都要']),
+      sel('默认视频画面', ['用作品里的推荐图', '黑色背景']),
+      tog('默认把字幕烧进视频', false),
+    ]},
+    { t: '音色参考', sum: '等我确认 · 最多 5 分钟', items: [
+      tog('选音色参考时等我确认', true, '关闭后直接用自动选出的句子'),
+      num('最多等', 300, '秒'),
+    ]},
+    { t: '只要字幕时', sum: '双语 · 沿用音频原名', items: [
+      sel('默认内容', ['双语', '仅原文', '仅译文']),
+      sel('文件命名', ['沿用音频原名', '按字幕内容命名', '自定义']),
+      txt('自定义名称', '', '不含扩展名'),
+    ]},
+    { t: '和谐视频', sum: '原声 -6 dB · 延后 1 分钟', items: [
+      num('原声降低', 6, 'dB'),
+      num('原声、配音和字幕整体延后', 1, '分钟'),
+      tog('原声视频也烧字幕', false, '额外生成一份带字幕的原声视频'),
+    ]},
+    { t: '时间戳文档', sum: '无页脚', items: [
+      sel('附加文字位置', ['时间戳前', '时间戳后']),
+      area('附加文字', '', '留空就不加'),
+    ]},
+  ],
+};
+
+const DEFAULTS = { lang: '日语', asr: 'Parakeet 1.1B', vad: '关闭', sepBk: '本机', tr: 'DeepSeek', tts: 'IndexTTS2', out: '双语版', sched: '留在原位，适当加速', loud: '跟随对应原声' };
+const ST = { proj: { ...DEFAULTS }, def: { ...DEFAULTS } };
+const openSet = new Set();
+const val = (x, s) => typeof x === 'function' ? x(s) : x;
+
+function fieldHTML(it, s) {
+  const hint = val(it.h, s);
+  const lab = `<div class="fl">${it.l}${hint ? `<small>${hint}</small>` : ''}</div>`;
+  if (it.k === 'area') return `<div class="field col">${lab}<textarea class="${it.mono ? 'mono' : ''}">${it.v || ''}</textarea></div>`;
+  let c = '';
+  if (it.k === 'sel') {
+    const opts = val(it.o, s), cur = it.key ? s[it.key] : opts[0];
+    c = `<select ${it.key ? `data-key="${it.key}"` : ''}>${opts.map(o => `<option${o === cur ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+  } else if (it.k === 'num') c = `<span class="numf"><input type="text" value="${it.v}">${it.u || ''}</span>`;
+  else if (it.k === 'txt') c = `<input type="text" value="${it.v || ''}">`;
+  else if (it.k === 'tog') c = `<button class="switch${it.v ? ' on' : ''}"></button>`;
+  else if (it.k === 'act') c = `<button class="btn">${it.b}</button>`;
+  else if (it.k === 'key') c = `<span class="keyst">${it.st}</span><button class="btn">${it.st === '未填写' ? '填写' : '更换'}</button>`;
+  return `<div class="field">${lab}<span style="display:flex;align-items:center;gap:8px;flex:none">${c}</span></div>`;
+}
+function groupHTML(g, s, id) {
+  const items = g.items.filter(i => !i.when || i.when(s));
+  if (!items.length) return '';
+  const body = items.map(i => fieldHTML(i, s)).join('');
+  if (g.basic) return `<div class="card group">${body}</div>`;
+  const open = openSet.has(id);
+  return `<div class="card group fold${open ? ' open' : ''}"><button class="fh" data-fold="${id}"><span class="ft">${g.t}${g.tag ? ` <span class="tag">${g.tag}</span>` : ''}</span><span class="fs">${val(g.sum, s) || ''}</span><svg viewBox="0 0 10 10"><path d="M3 1l4 4-4 4"/></svg></button>${open ? `<div class="fb">${body}</div>` : ''}</div>`;
+}
+function renderSchemas() {
+  $$('.schema').forEach(box => {
+    const { panels, part, scope } = box.dataset, s = ST[scope];
+    if (s.lang !== '日语' && !['Faster-Whisper large-v2', '云端识别 API'].includes(s.asr)) s.asr = 'Faster-Whisper large-v2';
+    if (s.lang !== '日语' && s.vad === 'ASMR 专用') s.vad = '关闭';
+    box.innerHTML = panels.split(',').flatMap(p => PANELS[p].map((g, i) => [g, `${scope}.${p}.${i}`]))
+      .filter(([g]) => part === 'all' || !!g.basic === (part === 'basic'))
+      .filter(([g]) => !g.when || g.when(s))
+      .map(([g, id]) => groupHTML(g, s, id)).join('');
+  });
+}
+document.addEventListener('change', e => {
+  const k = e.target.dataset && e.target.dataset.key; if (!k) return;
+  ST[e.target.closest('.schema').dataset.scope][k] = e.target.value; renderSchemas();
+});
+
+/* ================= 页面切换 ================= */
+function go(page, setTab) {
+  $$('.page').forEach(p => p.classList.toggle('on', p.id === page));
+  $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.page === (page === 'project' ? 'home' : page)));
+  if (setTab) setSet(setTab);
+}
+$$('.nav button').forEach(b => b.onclick = () => go(b.dataset.page));
+$$('[data-go]').forEach(b => b.onclick = e => { e.stopPropagation(); go(b.dataset.go, b.dataset.set); });
+$$('[data-open]').forEach(r => r.onclick = () => go('project'));
+
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-fold]');
+  if (f) { const id = f.dataset.fold; openSet.has(id) ? openSet.delete(id) : openSet.add(id); renderSchemas(); return; }
+  const sb = e.target.closest('.seg button');
+  if (sb && !sb.id) { $$('button', sb.parentNode).forEach(x => x.classList.remove('on')); sb.classList.add('on'); }
+  const sw = e.target.closest('.switch'); if (sw) sw.classList.toggle('on');
+  const ch = e.target.closest('.choice'); if (ch) { $$('.choice', ch.parentNode).forEach(x => x.classList.remove('on')); ch.classList.add('on'); }
+  if (e.target.matches('[data-close]') || e.target.classList.contains('mask')) $$('.mask').forEach(m => m.classList.remove('on'));
+});
+
+/* ================= 示例状态 ================= */
+function demo(first) {
+  document.body.classList.toggle('first', first);
+  $('#demoFirst').classList.toggle('on', first); $('#demoUsed').classList.toggle('on', !first);
+  models.forEach(m => { m.state = (!first && m.pre) ? 'done' : 'none'; m.p = 0; });
+  renderModels();
+}
+$('#demoFirst').onclick = () => demo(true);
+$('#demoUsed').onclick = () => demo(false);
+
+/* ================= 项目 ================= */
+function setStep(n) {
+  $$('#steps button').forEach(b => b.classList.toggle('on', b.dataset.step == n));
+  $$('.stepview').forEach(v => v.classList.toggle('on', v.dataset.view == n));
+}
+$$('#steps button').forEach(b => b.onclick = () => setStep(b.dataset.step));
+
+const lines = [
+  ['00:04.2', '00:07.9', 'おかえりなさい。今日もお疲れさま。', '欢迎回来。今天也辛苦了。', 1],
+  ['00:09.1', '00:12.6', 'ほら、こっちに来て。横になって。', '来，到这边来。躺下吧。', 1],
+  ['00:14.0', '00:15.2', 'ふふっ。', '', 0],
+  ['00:16.8', '00:21.3', '今日は耳かき、ゆっくりしてあげるね。', '今天慢慢帮你掏耳朵哦。', 1],
+  ['00:23.5', '00:27.0', 'まずは右のお耳から。力、抜いてね。', '先从右耳开始。放松一点。', 1],
+  ['00:29.4', '00:33.8', '痛かったら、すぐ言ってね。', '要是疼的话，马上告诉我。', 1],
+  ['00:36.2', '00:40.5', 'うん、いい子。そのままじっとしてて。', '嗯，真乖。就这样别动。', 1],
+  ['00:43.0', '00:47.7', '奥のほう、少しだけ触るよ。', '稍微碰一下里面哦。', 2],
+  ['00:50.1', '00:54.4', 'どう？気持ちいい？', '怎么样？舒服吗？', 2],
+  ['00:56.9', '01:01.2', '眠くなったら、寝ちゃってもいいからね。', '困了的话，睡着也没关系。', 2],
+  ['01:03.6', '01:08.0', '次は左のお耳。ゆっくり向きを変えて。', '接下来是左耳。慢慢转过来。', 2],
+  ['01:10.3', '01:14.9', 'おやすみ。いい夢を見てね。', '晚安。做个好梦。', 2],
+];
+$('#rows').innerHTML = lines.map((l, i) => {
+  const empty = !l[3];
+  const dub = empty ? '不配音' : l[4] === 1 ? '<button class="play">▶</button>3.2 秒' : '<span style="color:var(--text-3)">未生成</span>';
+  return `<tr class="${empty ? 'off' : ''}${i === 1 ? ' sel' : ''}">
+    <td><input type="checkbox" ${empty ? '' : 'checked'} title="参与配音"></td>
+    <td class="id">${i + 1}</td><td class="time">${l[0]} – ${l[1]}</td>
+    <td contenteditable>${l[2]}</td><td contenteditable>${l[3]}</td>
+    <td class="dub">${dub}</td></tr>`;
+}).join('');
+
+let wave = '';
+for (let i = 0; i < 200; i++) {
+  const v = 3 + Math.abs(Math.sin(i * .37) * Math.sin(i * .09 + 1)) * 24 + (i * 7919 % 13) / 3;
+  wave += `<rect x="${i * 4}" y="${17 - v / 2}" width="2" height="${v}" rx="1"${i < 9 ? ' class="p"' : ''}/>`;
+}
+$('#wave').innerHTML = wave;
+
+$('#dubBtn').onclick = function () {
+  let n = 86; this.disabled = true; this.textContent = '正在生成…';
+  const t = setInterval(() => {
+    n += 2; $('#dubBar').style.width = (n / 128 * 100) + '%';
+    $('#dubStat').textContent = `已完成 ${Math.min(n, 128)} / 128 句。可以关掉页面，回来接着生成。`;
+    if (n >= 128) { clearInterval(t); this.textContent = '全部生成完毕'; const b = $('#steps [data-step="3"]'); b.className = 'done on'; $('.n', b).textContent = '✓'; }
+  }, 180);
+};
+
+$('#dropNew').onclick = () => $('#newSheet').classList.add('on');
+$('#createBtn').onclick = () => { $('#newSheet').classList.remove('on'); go('project'); setStep(1); };
+$('#addWork').onclick = () => $('#workSheet').classList.add('on');
+
+/* ================= 模型 ================= */
+const models = [
+  { g: '识别', gd: '把音频变成文字', n: 'Parakeet 1.1B', d: '日语识别效果最好，一般用这个。', tags: ['日语', '显存 6 GB'], rec: 1, size: 2.8, pre: 1 },
+  { g: '识别', n: 'Parakeet 0.6B', d: '更快更省显存，准确度略低。', tags: ['日语', '显存 4 GB'], size: 1.9 },
+  { g: '识别', n: 'Faster-Whisper large-v2', d: '英语和中文音频用这个。也能识别日语。', tags: ['日语', '英语', '中文', '显存 2 GB'], size: 3.1 },
+  { g: '识别', n: 'Kotoba-Whisper v2.2', d: '另一个日语模型，可以和 Parakeet 对比着用。', tags: ['日语', '显存 3 GB'], size: 1.6 },
+  { g: '配音', gd: '把译文念出来', n: 'IndexTTS2', d: '模仿原声的音色和语气。一般用这个。', tags: ['中文', '英文', '显存 6 GB'], rec: 1, size: 12.4, pre: 1 },
+  { g: '配音', n: 'IndexTTS-2.5', d: '新一代，支持更多语言，对显卡要求更高。', tags: ['多语言', '显存 10 GB'], size: 15.0 },
+  { g: '可选', gd: '不装也能用', n: 'ASMR 语音检测', d: '识别前先找出有人说话的片段，减少长静音里的误识别。', tags: ['日语', '不占显存'], size: 0.3 },
+  { g: '可选', n: 'Qwen3 时间对齐', d: '重新计算每句话的起止时间，字幕和配音对得更准。', tags: ['日语', '英语'], size: 1.8 },
+  { g: '可选', n: '人声分离 · Mel-Band RoFormer', d: '把人声和背景分开。做“替换版”才需要。', tags: ['实验性'], size: 0.9, pre: 1 },
+  { g: '可选', n: '人声分离 · Demucs', d: '另一种分离模型，分成人声、鼓、贝斯、其他四轨。', tags: ['实验性'], size: 0.4 },
+];
+function renderModels() {
+  const groups = [...new Set(models.map(m => m.g))];
+  $('#modelGroups').innerHTML = groups.map(g => {
+    const list = models.filter(m => m.g === g);
+    return `<div class="label"><b>${g}</b><span>${list[0].gd}</span></div><div class="card">` + list.map(m => {
+      const i = models.indexOf(m);
+      const act = m.state === 'done' ? `已安装<button class="btn plain small" data-del="${i}">删除</button>`
+        : m.state === 'run' ? `<div class="bar"><i style="width:${m.p}%"></i></div><span class="num">${Math.round(m.p)}%</span>`
+        : `<button class="btn" data-dl="${i}">下载</button>`;
+      return `<div class="row mrow"><div class="grow"><div class="t">${m.n}${m.rec ? ' <span class="tag rec">推荐</span>' : ''}</div><div class="d">${m.d}</div>
+        <div class="tags">${m.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div></div>
+        <div class="size num">${m.size.toFixed(1)} GB</div><div class="act">${act}</div></div>`;
+    }).join('') + '</div>';
+  }).join('');
+  $('#used').textContent = models.filter(m => m.state === 'done').reduce((a, m) => a + m.size, 0).toFixed(1) + ' GB';
+  $('#ck-asr').classList.toggle('ok', models.some(m => m.g === '识别' && m.state === 'done'));
+  $$('[data-dl]').forEach(b => b.onclick = () => download(+b.dataset.dl));
+  $$('[data-del]').forEach(b => b.onclick = () => { models[+b.dataset.del].state = 'none'; renderModels(); });
+}
+function download(i) {
+  const m = models[i]; if (m.state !== 'none') return;
+  m.state = 'run'; m.p = 0; renderModels();
+  const t = setInterval(() => {
+    if (m.state !== 'run') return clearInterval(t);
+    m.p += 60 / (m.size * 4 + 6);
+    if (m.p >= 100) { m.state = 'done'; clearInterval(t); }
+    renderModels();
+  }, 200);
+}
+$('#starterBtn').onclick = () => models.forEach((m, i) => m.rec && download(i));
+
+/* ================= 设置 ================= */
+function setSet(k) {
+  $$('#setNav button').forEach(b => b.classList.toggle('on', b.dataset.set === k));
+  $$('.setview').forEach(v => v.classList.toggle('on', v.dataset.setview === k));
+}
+$$('#setNav button').forEach(b => b.onclick = () => setSet(b.dataset.set));
+
+renderSchemas();
+demo(false);
+</script>
+</body>
+</html>
