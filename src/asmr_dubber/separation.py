@@ -152,12 +152,16 @@ def worker_environment() -> dict[str, str]:
             "NUMBA_CACHE_DIR": str(cache / "numba"),
         }
     )
-    env["PATH"] = str(Path(ffmpeg_executable()).parent) + os.pathsep + env.get("PATH", "")
+    executable = Path(ffmpeg_executable())
+    env["PATH"] = str(executable.parent) + os.pathsep + env.get("PATH", "")
+    name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    if executable.name.lower() == name:
+        return env
     bin_dir = portable_home() / "runtimes/separation/bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    ffmpeg = bin_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffmpeg = bin_dir / name
     if not ffmpeg.is_file():
-        shutil.copy2(ffmpeg_executable(), ffmpeg)
+        shutil.copy2(executable, ffmpeg)
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     return env
 
