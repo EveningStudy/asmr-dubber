@@ -4,6 +4,7 @@ import { initializeProjects, refreshHome, openProject, renderProject, finishCrea
 import { initializeBatch, refreshBatch, renderBatch } from './batch.js';
 import { initializeModels, refreshModels, renderModels } from './models.js';
 import { initializeSettings, renderKeys, refreshLogs, refreshStorage } from './settings.js';
+import { initializeUpdates, renderUpdate, updateFinished } from './updates.js';
 
 async function navigate(page, setTab) {
   if (page === 'project' && !state.project) return;
@@ -34,6 +35,7 @@ function setStep(step) {
 function refreshTaskViews() {
   const tasks = state.tasks.filter((task) => task.request.project === state.project?.manifest);
   $('#projectTask').innerHTML = tasks.slice(-3).map(taskHTML).join('');
+  renderUpdate();
   renderBatch();
   renderModels();
   if (state.project)
@@ -69,7 +71,8 @@ async function pollTasks() {
         if (['download', 'import_models'].includes(task.kind)) await refreshModels();
         if (['health', 'repair', 'diagnostic'].includes(task.kind) && state.page === 'settings')
           await refreshLogs();
-        notice(task.result?.message || t('任务完成'));
+        if (task.kind === 'update') updateFinished(task);
+        else notice(task.result?.message || t('任务完成'));
       } else if (task.status === 'failed') notice(task.error, true);
     }
     refreshTaskViews();
@@ -155,6 +158,7 @@ async function boot() {
   initializeBatch();
   initializeModels();
   initializeSettings();
+  initializeUpdates();
   localize();
   renderForms();
   renderKeys();

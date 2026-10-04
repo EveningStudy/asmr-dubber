@@ -1,32 +1,39 @@
-[中文](../RELEASE.md) | English
+English | [中文](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/RELEASE.md)
 
-# ASMR Dubber 1.6.2
+# ASMR Dubber 2.0.0
 
-## Changes
+The interface has been rebuilt from scratch and installation works differently.
 
-- Fixed batch vocal-separation worker failures caused by temporarily locked request files. Reading and deletion use bounded retries, duplicate chunks are guarded, and returned audio files are validated.
-- Completed separation chunks are preserved. Restart the application after updating, then retry the failed task.
+## The new interface
 
-## Features introduced in 1.6.1
+- Four entries on the left: Projects, Batch, Models, Settings.
+- A project follows four steps: Recognition, Translation, Dubbing, Export. Sentences are on the left and only the current step's settings are on the right.
+- Every parameter is still there, folded away until you need it.
+- Settings changed inside a project affect only that project. **Settings → New project defaults** affects only projects created afterwards. The "save scope" option is gone.
+- Changes save automatically. There is no Save button.
 
-- Vocal separation loads its model once per processing pass, retaining chunk-based cancellation and recovery.
-- Bilingual and replacement mixes reuse the Chinese RTF stem. Audio, timing and relevant parameter changes invalidate the cache. Each variant writes directly to its own directory, reducing intermediate copies.
-- Added **Settings → Storage & cleanup**: scan, select projects, then confirm. Safe caches, rebuildable caches and separated stems are distinct categories. Projects, source media, synthesized clips and final outputs are preserved; active or changed files are skipped.
-- Japanese, English and Chinese ASR inputs; Chinese or English dubbing targets, subject to the selected backend's capabilities.
-- Batch processing supports bilingual mixes, replacement dubs or both, alongside originals and subtitle-only outputs, using the selected RTF, separation and mixing settings.
-- Fixed propagation of batch IndexTTS version and external voice-reference settings. Reference timing and source text can be edited while waiting for selection.
-- Updated bilingual documentation, README demo explanations and cache-cleanup instructions.
+## The new installation
+
+- `ASMR-Dubber-Setup.exe` and installation profiles are gone. Extract the archive and run `ASMR-Dubber.exe`.
+- Models are downloaded on demand from the **Models** page, with pause and resume.
+- The bottom left of the interface tells you when a new version is available and can download and install it for you.
+
+## Other changes
+
+- Uploaded source files are removed once used and no longer take up disk space.
+- **Translate everything again** asks for confirmation first, so hand-edited translations are not overwritten by accident.
+- The documentation has been rewritten with screenshots of the new interface.
 
 ## Download and upgrade
 
-Windows: extract `ASMR-Dubber-windows-portable-v1.6.2.zip` completely, run `ASMR-Dubber-Setup.exe`, then `ASMR-Dubber.exe`. Enable long paths and use a short writable directory.
+On Windows, download `ASMR-Dubber-windows-portable-v2.0.0.zip`, extract all of it to a short path, and run `ASMR-Dubber.exe`.
 
-Linux x86_64: run `bash scripts/linux/setup.sh 推荐` from the source root, then `bash scripts/linux/run-ui.sh`.
+Upgrading from 1.x: close the program, delete the `src` folder and `ASMR-Dubber-Setup.exe` from the old folder, then copy all files of the new version over it. Keep the `.asmr-dubber` folder: it holds your projects, models and settings. Back it up first.
 
-Stop tasks and back up projects, settings and finished outputs before upgrading. Preserve `.asmr-dubber` and external project directories. Restart the application after updating; refreshing the browser does not load new code. Existing caches are not deleted automatically; cleanup requires confirmation.
+On Linux x86_64, run `bash scripts/linux/setup.sh Core` from the source directory, then `bash scripts/linux/run-ui.sh`.
 
-[User guide](USER_GUIDE.md) · [Installation](INSTALLATION.md)
+[User guide](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/en/USER_GUIDE.md) · [Installation and models](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/en/INSTALLATION.md)
 
-## Verification scope
+## What was verified
 
-Local checks covered real-model process reuse across separation chunks, cache hits, short-sample dual-variant mixing and subtitled video, and the browser scan/confirm/cleanup workflow. These checks do not establish long-job speedup ratios or guarantee every cloud service or hardware configuration.
+Run for real on one Windows machine with an NVIDIA GPU: model download and resume, recognition, translation, IndexTTS2 dubbing, bilingual and replacement exports, batch merging and cache cleanup. Other models, cloud services and hardware combinations were not individually verified. The automatic update can only be proven once the next version is released.

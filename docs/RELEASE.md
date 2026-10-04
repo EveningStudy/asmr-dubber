@@ -1,32 +1,39 @@
-中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/en/RELEASE.md)
+中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/en/RELEASE.md)
 
-# ASMR Dubber 1.6.2
+# ASMR Dubber 2.0.0
 
-## 更新
+界面整个重做了，安装方式也变了。
 
-- 修复批量人声分离时请求文件短暂被占用导致 worker 退出的问题：请求读取与删除增加有限重试，避免重复处理分块，并校验返回的音频文件。
-- 保留已完成的分离分块；升级后重启程序，再重试失败任务。
+## 新的界面
 
-## 1.6.1 功能回顾
+- 左侧四个入口：项目、批量、模型、设置。
+- 项目里按四步走：识别、翻译、配音、导出。左边是句子表格，右边只显示当前这一步的设置。
+- 所有参数都还在，平时折叠着，需要时展开。
+- 在项目里改的设置只影响这个项目；“设置 → 新项目默认值”只影响以后新建的项目。不再有“设置保存范围”。
+- 改了就自动保存，没有保存按钮。
 
-- 人声分离在一次任务内只加载一次模型，保留分块、取消和断点恢复。
-- 双语版与替换配音版复用中文 RTF 音轨；音频、时间轴和相关参数变化时重新计算。各版本直接写入独立目录，减少中转副本。
-- 新增 **设置 → 存储与清理**：先扫描、再选择项目并确认。区分安全缓存、可重建缓存和分离结果；保护项目、原素材、逐句配音与成品，跳过运行中或扫描后发生变化的文件。
-- 支持日语、英语、中文 ASR 输入及中文／英文配音目标；具体语言能力以所选后端为准。
-- 批量处理支持双语成品、替换配音或两者，同时保留原声与纯字幕选项，沿用 RTF、分离和混音设置。
-- 修复批量 IndexTTS 版本与外部音色参考设置传递；等待参考选择时可修改时间和原文。
-- 同步中英文说明，补充 README 演示流程与缓存清理指南。
+## 新的安装方式
+
+- 不再需要 `ASMR-Dubber-Setup.exe`，也不用选安装方案。解压后直接运行 `ASMR-Dubber.exe`。
+- 模型在界面的“模型”页按需下载，支持暂停和断点续传。
+- 界面左下角会提示有没有新版本，点一下可以自动下载并安装。
+
+## 其他
+
+- 上传的源文件用完后会自动清理，不再占用磁盘。
+- “全部重新翻译”会先确认，避免误覆盖手动改过的译文。
+- 文档全部重写，配了新界面的截图。
 
 ## 下载与升级
 
-Windows 下载 `ASMR-Dubber-windows-portable-v1.6.2.zip`，完整解压后运行 `ASMR-Dubber-Setup.exe`，再运行 `ASMR-Dubber.exe`。请启用长路径并使用短且可写的目录。
+Windows 下载 `ASMR-Dubber-windows-portable-v2.0.0.zip`，完整解压到一个路径短的文件夹，运行 `ASMR-Dubber.exe`。
 
-Linux x86_64 在源码根目录运行 `bash scripts/linux/setup.sh 推荐`，之后运行 `bash scripts/linux/run-ui.sh`。
+从 1.x 升级：先关掉程序，删除旧文件夹里的 `src` 文件夹和 `ASMR-Dubber-Setup.exe`，再把新版本的文件全部覆盖进去。`.asmr-dubber` 文件夹要保留，里面是你的项目、模型和设置。升级前建议先备份它。
 
-升级前停止任务并备份项目、配置与成品，保留 `.asmr-dubber` 和外部项目目录。更新后重启程序，仅刷新网页不会加载新代码。旧项目缓存不会自动删除；清理需手动确认。
+Linux x86_64 在源码根目录运行 `bash scripts/linux/setup.sh 基础`，之后运行 `bash scripts/linux/run-ui.sh`。
 
-[使用指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/USER_GUIDE.md) · [安装指南](https://github.com/EveningStudy/asmr-dubber/blob/v1.6.2/docs/INSTALLATION.md)
+[使用手册](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/USER_GUIDE.md) · [安装与模型](https://github.com/EveningStudy/asmr-dubber/blob/v2.0.0/docs/INSTALLATION.md)
 
 ## 验证范围
 
-已验证本机分离模型的多分块进程复用、缓存命中、短样本双版本混音及字幕视频，以及浏览器扫描／确认清理流程。未据此承诺长任务提速倍数、所有云端服务或所有硬件的效果。
+在一台 NVIDIA 显卡的 Windows 电脑上实际跑过：模型下载与续传、识别、翻译、IndexTTS2 配音、双语版和替换版导出、批量合并、缓存清理。其余模型、云端服务和硬件组合没有逐一验证。自动更新功能要等下一个版本发布后才能得到实际检验。

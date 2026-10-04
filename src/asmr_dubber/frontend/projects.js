@@ -74,16 +74,17 @@ export function renderProject() {
     total: enabled.length,
   });
   $('#dubBar').style.width = `${enabled.length ? (voiced / enabled.length) * 100 : 0}%`;
-  $('#exportStat').textContent = t('还有 {count} 句没有配音，成品里这些句子只有原声。', {
-    count: enabled.length - voiced,
-  });
+  const undubbed = enabled.filter((s) => s.zh_text && !s.tts_file).length;
+  $('#exportStat').textContent = undubbed
+    ? t('还有 {count} 句没有配音，成品里这些句子只有原声。', { count: undubbed })
+    : t('所有句子都已配音。');
   $('#referenceLabel').textContent =
     `${t('音色参考')} · ${project.reference_external ? t('外部音频') : project.reference_selected || t('未选择')}`;
   $('#projectDiagnostics').textContent = t(project.diagnostics);
   $('#outputs').innerHTML = Object.entries(project.outputs)
     .map(
       ([key, item]) =>
-        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${item.url}"></audio>` : ''}<a class="btn plain small" href="${item.url}" download="${esc(item.name)}">${t('显示')}</a></div>`,
+        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${item.url}"></audio>` : ''}<a class="btn plain small" href="${item.url}" download="${esc(item.name)}">${t('下载')}</a></div>`,
     )
     .join('');
   $$('#steps button').forEach((button, index) =>
@@ -140,7 +141,7 @@ function renderControls() {
                   ? 'on'
                   : 'off',
             )}</select>`,
-          )}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放中文配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('中文音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
+          )}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
         : ''
     }`;
 }
@@ -197,7 +198,7 @@ async function newSource(file) {
     )}</div><div class="more">${t('文字从哪来')}</div><div class="card group">${[
       ['自动识别', '用识别模型听出原文', 'auto'],
       ['我有原文字幕', '跳过识别，直接翻译', 'source'],
-      ['我有中文字幕', '跳过识别和翻译，直接配音', 'zh'],
+      ['我有译文字幕', '跳过识别和翻译，直接配音', 'zh'],
       ['我只有不带时间的台本', '先识别出时间，再把台本文字对上去', 'script'],
     ]
       .map(

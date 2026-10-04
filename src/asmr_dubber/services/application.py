@@ -7,7 +7,7 @@ from ..localization import catalog
 from ..models import load_project
 from ..platforms import portable_home
 from ..user_settings import resolve_api_key, saved_service_key
-from . import models, parameters, settings
+from . import models, parameters, settings, updates
 from .batch import Batch
 from .media import MediaStore
 from .project_audio import preview_edge_tts_voice
@@ -48,7 +48,7 @@ class Application:
                 "batch"
                 if kind == "batch"
                 else "models"
-                if kind in {"download", "import_models", "repair"}
+                if kind in {"download", "import_models", "repair", "update"}
                 else kind
             )
         with self.tasks.lock:
@@ -99,6 +99,8 @@ class Application:
             return models.download(request, report, token)
         if kind == "import_models":
             return models.import_packs(request, report, token)
+        if kind == "update":
+            return updates.install(request, report, token)
         if kind == "batch":
             return self.batch.run(request, report, token, reference)
         if kind == "preview_edge":

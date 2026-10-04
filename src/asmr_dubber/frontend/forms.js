@@ -33,6 +33,7 @@ export function renderForms() {
       Object.entries(rule).every(([key, allowed]) => allowed.includes(conditions[key]));
     const fields = state.boot.parameters.filter(
       (parameter) =>
+        !parameter.hidden &&
         panels.split(',').includes(parameter.panel) &&
         (scope !== 'proj' || parameter.scope === 'project') &&
         (part === 'all' || parameter.basic === (part === 'basic')) &&

@@ -2,7 +2,7 @@
   "ja": "日语", "en": "英语", "zh": "中文",
   "create": "新建项目", "analyze": "识别", "translate": "翻译",
   "synthesize": "配音", "export": "导出", "subtitles": "字幕", "import": "导入",
-  "batch": "批量", "download": "下载", "import_models": "导入离线模型包",
+  "batch": "批量", "download": "下载", "update": "更新", "import_models": "导入离线模型包",
   "health": "检查运行环境", "repair": "修复", "diagnostic": "测试接口",
   "preview_edge": "试听", "preview_reference": "音色参考",
   "accept_review": "采纳所选候选", "keep_review": "保留并确认主稿",

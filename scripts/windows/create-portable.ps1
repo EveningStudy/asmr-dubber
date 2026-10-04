@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$Version = "1.6.2"
+    [string]$Version = "2.0.0"
 )
 
 $ErrorActionPreference = "Stop"

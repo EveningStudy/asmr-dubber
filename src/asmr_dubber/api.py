@@ -1,7 +1,7 @@
 """Validated route bindings to application services."""
 
 from . import api_contract as contract
-from .services import files, models, settings
+from .services import files, models, settings, updates
 
 
 class API:
@@ -44,6 +44,7 @@ class API:
             "storage/scan": (contract.StorageRequest, application.scan_storage),
             "storage/clean": (contract.CleanRequest, application.clean_storage),
             "logs/get": (contract.Empty, application.logs),
+            "updates/check": (contract.Empty, updates.check),
         }
 
     def _start(self, **request):

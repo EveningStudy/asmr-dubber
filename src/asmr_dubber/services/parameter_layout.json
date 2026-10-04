@@ -174,7 +174,7 @@
   "huggingface_endpoint": {"label": "Hugging Face 端点", "panel": "general", "group": "通用", "basic": false, "visible_when": {}},
   "pypi_index_url": {"label": "Python 软件源", "panel": "general", "group": "通用", "basic": false, "visible_when": {}},
   "default_source_language": {"label": "音频里说的是", "panel": "asr", "group": "识别参数", "basic": true, "visible_when": {}, "options": [["日语", "ja"], ["英语", "en"], ["中文", "zh"]]},
-  "tts_device_selection_version": {"label": "tts_device_selection_version", "panel": "tts", "group": "其他", "basic": false, "visible_when": {}},
+  "tts_device_selection_version": {"label": "tts_device_selection_version", "hidden": true, "panel": "tts", "group": "其他", "basic": false, "visible_when": {}},
   "translation_prompt_ja": {"label": "translation_prompt_ja", "panel": "tr", "group": "翻译参数", "basic": false, "visible_when": {"translation_provider": ["deepseek", "bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible", "sensenova"]}},
   "translation_prompt_en": {"label": "translation_prompt_en", "panel": "tr", "group": "翻译参数", "basic": false, "visible_when": {"translation_provider": ["deepseek", "bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible", "sensenova"]}},
   "translation_prompt_zh": {"label": "translation_prompt_zh", "panel": "tr", "group": "翻译参数", "basic": false, "visible_when": {"translation_provider": ["deepseek", "bailian", "doubao", "openai", "anthropic", "gemini", "openai_compatible", "sensenova"]}},

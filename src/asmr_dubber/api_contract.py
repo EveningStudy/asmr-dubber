@@ -76,6 +76,7 @@ class TaskRequest(Request):
         "health",
         "repair",
         "diagnostic",
+        "update",
     ]
     project: str | None = None
     revision: int | None = Field(default=None, ge=0)

@@ -35,7 +35,9 @@ export function renderModels() {
           .join('')}</div>`,
     )
     .join('');
-  $('#starterDescription').textContent = t('Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。');
+  $('#starterDescription').textContent = t(
+    'Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。英语或中文的音频，识别请改用 Faster-Whisper。',
+  );
   $('#asrCheck').classList.toggle(
     'ok',
     catalog.items.some((item) => item.group === '识别' && item.state === 'ready'),
@@ -46,7 +48,7 @@ export function renderModels() {
   $('#modelTasks').innerHTML =
     `<details><summary>${t('导入离线模型包')}</summary><pre class="log">${esc(t(catalog.packs))}</pre></details>` +
     state.tasks
-      .filter((task) => ['download', 'import_models', 'repair'].includes(task.kind))
+      .filter((task) => ['download', 'import_models', 'repair', 'update'].includes(task.kind))
       .map(taskHTML)
       .join('');
   $('#importModels').onclick = guard(async () => {
