@@ -461,8 +461,8 @@ def test_windows_setup_does_not_turn_a_successful_install_into_exit_code_zero_fa
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs",):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("2.0.0.0")' in source
-        assert 'AssemblyFileVersion("2.0.0.0")' in source
+        assert 'AssemblyVersion("2.0.1.0")' in source
+        assert 'AssemblyFileVersion("2.0.1.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:
