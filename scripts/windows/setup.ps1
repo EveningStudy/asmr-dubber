@@ -284,6 +284,10 @@ if (-not $ManagedPython) {
     throw "Python 3.12 安装命令已完成，但没有找到解释器。"
 }
 
+# Python and uv are certain to exist only from here on, so an environment that arrived
+# with the archive or was moved gets its launcher rebuilt before anything uses it.
+Repair-ASMRDubberPortablePythonPaths -Root $Root -PortableRoot $Paths.Home `
+    -RuntimeRoot $Paths.Runtimes -Venv $Venv
 if (-not (Test-Path $Python)) {
     Invoke-Checked -FilePath $Uv `
         -ArgumentList @("venv", "--python", $ManagedPython.FullName, $Venv) `

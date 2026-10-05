@@ -22,6 +22,34 @@
     }
 }
 
+function Invoke-ASMRDubberQuietProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$Arguments
+    )
+
+    # Started directly so a failing child cannot raise a PowerShell error record.
+    try {
+        $Info = New-Object System.Diagnostics.ProcessStartInfo
+        $Info.FileName = $FilePath
+        $Info.Arguments = $Arguments
+        $Info.UseShellExecute = $false
+        $Info.CreateNoWindow = $true
+        $Info.RedirectStandardOutput = $true
+        $Info.RedirectStandardError = $true
+        $Process = [System.Diagnostics.Process]::Start($Info)
+        $null = $Process.StandardOutput.ReadToEndAsync()
+        $null = $Process.StandardError.ReadToEndAsync()
+        if (-not $Process.WaitForExit(120000)) {
+            $Process.Kill()
+            return -1
+        }
+        return $Process.ExitCode
+    } catch {
+        return -1
+    }
+}
+
 function Repair-ASMRDubberPortablePythonPaths {
     [CmdletBinding()]
     param(
@@ -92,6 +120,24 @@ function Repair-ASMRDubberPortablePythonPaths {
         if (Test-Path -LiteralPath $SitePackages) {
             Set-ASMRDubberTextFileIfChanged `
                 -Path $Editable -Content (([string]$Environment.EditableTarget) + "`r`n")
+        }
+
+        # uv stores the interpreter location inside the environment's own launcher, so an
+        # environment built on another machine or moved to another folder cannot start even
+        # after the text files above are corrected. Rebuilding the launcher in place keeps
+        # every installed package.
+        $EnvironmentPython = Join-Path $EnvironmentRoot "Scripts\python.exe"
+        $Uv = Join-Path $PortableRoot "bootstrap\windows\uv\uv.exe"
+        if ($BasePython -and (Test-Path -LiteralPath $EnvironmentPython) -and
+            (Test-Path -LiteralPath $Uv)) {
+            $Started = Invoke-ASMRDubberQuietProcess `
+                -FilePath $EnvironmentPython -Arguments '-c "import sys"'
+            if ($Started -ne 0) {
+                $null = Invoke-ASMRDubberQuietProcess -FilePath $Uv -Arguments (
+                    'venv --python "{0}" --allow-existing "{1}"' -f
+                    $BasePython.FullName, $EnvironmentRoot
+                )
+            }
         }
     }
 }
