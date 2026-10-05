@@ -38,7 +38,7 @@
 
 第一次启动时，如果 Windows 弹出“已保护你的电脑”，点“更多信息”，再点“仍要运行”。
 
-<img src="../assets/windows-smartscreen-run-anyway.png" width="480" alt="SmartScreen 提示">
+<img src="../assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen 提示">
 
 会出现一个黑色的窗口，里面滚动着日志。**这个窗口不要关**，关掉它程序就停了。第一次启动需要几分钟准备运行环境，之后会快很多。
 

@@ -74,6 +74,10 @@ https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
 **1. 下载并启动。** 从 [Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest) 下载压缩包，解压到一个路径短的文件夹（比如 `D:\ASMR-Dubber`），双击 `ASMR-Dubber.exe`。浏览器会自动打开界面。不需要预先安装 Python 或其他东西。
 
+第一次运行时 Windows 可能会弹出“已保护你的电脑”。这是因为程序没有购买代码签名，不是出了问题。先点“更多信息”，再点出现的“仍要运行”。
+
+<img src="assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen 提示：先点更多信息，再点仍要运行">
+
 **2. 下载模型。** 打开“模型”页，点“一起下载”。这会装上日语识别模型 Parakeet 和音色克隆模型 IndexTTS2。原声是英语或中文的话，识别模型改下 Faster-Whisper。
 
 ![模型页](assets/screenshots/zh/models.png)

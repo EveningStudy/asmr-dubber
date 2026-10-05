@@ -38,7 +38,7 @@ Double-click `ASMR-Dubber.exe`.
 
 If Windows shows "Windows protected your PC" on the first run, click "More info" and then "Run anyway".
 
-<img src="../../assets/windows-smartscreen-run-anyway.png" width="480" alt="SmartScreen prompt">
+<img src="../../assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen prompt">
 
 A black window appears and scrolls log lines. **Leave it open.** Closing it stops the program. The first start takes a few minutes to prepare the runtime; later starts are much faster.
 

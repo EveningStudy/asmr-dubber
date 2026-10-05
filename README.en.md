@@ -74,6 +74,10 @@ The steps below use the most common case, Japanese dubbed into Chinese, as the e
 
 **1. Download and run.** Get the archive from [Releases](https://github.com/EveningStudy/asmr-dubber/releases/latest), extract it to a short path such as `D:\ASMR-Dubber`, and double-click `ASMR-Dubber.exe`. The interface opens in your browser. You do not need to install Python or anything else first.
 
+On the first run Windows may show "Windows protected your PC". This appears because the program has no paid code-signing certificate, not because something is wrong. Click **More info**, then **Run anyway**.
+
+<img src="assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen prompt: click More info, then Run anyway">
+
 **2. Download models.** Open **Models** and click **Download both**. This installs Parakeet for Japanese recognition and IndexTTS2 for voice cloning. If the original is English or Chinese, download Faster-Whisper for recognition instead.
 
 ![The Models page](assets/screenshots/en/models.png)
