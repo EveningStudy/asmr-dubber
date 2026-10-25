@@ -63,3 +63,9 @@ Built-in endpoints/model names are presets; use IDs available to your account. B
 Local audio-separator plus Replicate/custom HTTP adapters are optional. Separation and Chinese replacement are experimental, not recommended. Download/upload is explicit. RTF is local mix-time stereo processing, not another cloud service. [Parameters, contracts and limitations](EXPERIMENTAL_AUDIO.md).
 
 Project parameters autosave; new-project defaults are separate. Save keys in Settings → Cloud services. [All 201 fields](PARAMETERS.md) · [Configuration](CONFIGURATION.md).
+
+## MOSS-Transcribe-Diarize 0.9B
+
+Download MOSS on the Models page, select it for recognition, and expand MOSS parameters. The 17 controls cover chunking, precision, attention, decoding, prompting, hotwords, generation options and timeout. An isolated Transformers 5 environment preserves the existing backends. Model files use the user-owned ModelScope mirror first, then a pinned official upstream snapshot, with per-file SHA-256 verification.
+
+Defaults use the official prompt, greedy generation, SDPA and 300-second chunks. Speaker labels are stored with sentences and shown in the selected-sentence details. IDs are local to each chunk; there is no automatic cross-chunk identity merging or per-speaker TTS voice assignment. Windows CUDA was tested; Japanese ASMR accuracy and Linux/CPU inference have not been evaluated. See the [Chinese MOSS guide](../MOSS_TRANSCRIBE_DIARIZE.md) and the [complete parameter reference](PARAMETERS.md).

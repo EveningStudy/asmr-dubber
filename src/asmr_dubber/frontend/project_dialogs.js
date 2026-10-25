@@ -89,10 +89,15 @@ export async function referenceDialog(manifest = state.project.manifest, batch =
         ],
         'auto',
       )}</select>`,
-    )}</div>`,
+    )}</div>${batch ? `<label><input type="checkbox" id="referenceApplyQueue" checked> ${t('外部音频同时用于所有等待作品')}</label>` : ''}`,
     '采用',
     async () => {
       const latest = await api('projects/get', { project: manifest });
+      if (batch && external && $('#referenceApplyQueue').checked) {
+        await api('batch/reference', {
+          external: external.path, text: $('#referenceText').value, language: $('#referenceLanguage').value,
+        });
+      }
       const result = await api('projects/reference', {
         project: manifest,
         revision: latest.revision,
@@ -107,6 +112,7 @@ export async function referenceDialog(manifest = state.project.manifest, batch =
         state.project = result.project;
         window.dispatchEvent(new Event('project-changed'));
       }
+      if (batch) window.dispatchEvent(new Event('batch-reference-changed'));
     },
   );
   const previewPlayer = $('#referencePreview');
@@ -152,6 +158,7 @@ export async function referenceDialog(manifest = state.project.manifest, batch =
     const file = await chooseFile('audio/*');
     if (file) {
       external = await upload(file);
+      $('#referenceText').value = '';
       $('#referenceFileName').textContent = file.name;
       $('#referencePreview').src = external.url;
     }

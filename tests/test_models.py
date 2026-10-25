@@ -139,7 +139,7 @@ def test_safe_default_asr_batch_size() -> None:
     assert settings.chinese_target_active_rms_dbfs == -30.0
     assert settings.chinese_relative_loudness_db == -8.0
     assert settings.chinese_dubbing_offset_ms == 500
-    assert settings.chinese_max_auto_speed == 1.8
+    assert settings.chinese_max_auto_speed == 1.4
     assert settings.tts_index_speaker_source == "project_reference"
     assert settings.tts_index_emotion_source == "sentence_reference"
     assert settings.tts_index_emo_alpha == 0.5
@@ -369,5 +369,5 @@ def test_legacy_timing_fields_are_ignored_when_loading_current_models() -> None:
     )
 
     assert settings.chinese_dubbing_offset_ms == 500
-    assert settings.chinese_max_auto_speed == 1.8
+    assert settings.chinese_max_auto_speed == 1.4
     assert "overlap_seconds" not in sentence.model_dump()

@@ -18,6 +18,7 @@ from ..user_settings import (
     clear_service_key,
     config_dir,
     load_user_settings,
+    resolve_api_key,
     save_api_key,
     save_service_key,
     save_user_settings,
@@ -116,7 +117,15 @@ def reference_upload(path):
 
 
 def key_statuses():
+    def available(provider):
+        try:
+            resolve_api_key(provider)
+            return True
+        except ProjectError:
+            return False
+
     return {
+        "translation_available": {provider: available(provider) for provider in PROVIDER_PRESETS},
         "translation": {provider: api_key_status(provider) for provider in PROVIDER_PRESETS},
         "services": {
             name: service_key_status(name, True)

@@ -99,6 +99,26 @@
     ],
     "separation_model_base": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation/resolve/master"
+    ],
+    "moss_transcribe_diarize_files": [
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/README.md",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/added_tokens.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/chat_template.jinja",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/config.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/configuration_moss_transcribe_diarize.py",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/generation_config.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/merges.txt",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/model-00000-of-00001.safetensors",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/model.safetensors.index.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/modeling_moss_transcribe_diarize.py",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/preprocessor_config.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/processing_moss_transcribe_diarize.py",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/processor_config.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/special_tokens_map.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/tokenizer.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/tokenizer_config.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/vocab.json",
+      "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/LICENSE"
     ]
   },
   "pypi_indexes": [

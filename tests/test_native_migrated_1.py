@@ -417,7 +417,7 @@ def test_english_language_setting_filters_japanese_asr_backends(app):
         for _, value in descriptor["options"]
         if "source_language" not in descriptor["options_when"].get(value, {})
     ]
-    assert allowed == ["faster_whisper", "generic_asr_api"]
+    assert allowed == ["faster_whisper", "moss_transcribe_diarize", "generic_asr_api"]
     assert (
         "kotoba-tech/kotoba-whisper-v2.0-faster"
         not in parameters.choices()["asr"]["faster_whisper"]["models_by_language"]["en"]

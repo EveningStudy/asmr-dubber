@@ -4,7 +4,7 @@
 
 # 后端指南
 
-ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS-2.5、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
+ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper、MOSS-Transcribe-Diarize，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS-2.5、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
 
 程序启动时会检查 IndexTTS2 是否完整；未安装时，新项目默认使用 Edge TTS。项目开始执行后不会再静默切换后端。
 
@@ -18,7 +18,8 @@ ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper，以及�
 |---|---|---:|---|---|
 | Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 模型页下载 | 默认主识别，日语质量优先 |
 | Kotoba-Whisper（日语）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 v2.2 | 日语 Whisper 对照与复核 |
-| Faster-Whisper（日语/英语/中文）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 large-v2 | 英语项目唯一的本地 ASR；CPU `int8`、词级时间戳 |
+| Faster-Whisper（日语/英语/中文）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 large-v2 | 多语言本地 ASR；CPU `int8`、词级时间戳 |
+| MOSS-Transcribe-Diarize 0.9B | CPU、NVIDIA CUDA | 依分块长度而变；已验证 12 GB | 模型页下载，独立 Transformers 5 环境 | 日/英/中转写、段级时间戳与说话人标签 |
 | 通用 ASR API | 服务端 | — | 不安装本地模型 | 兼容 OpenAI 转写接口的本地或云端服务 |
 
 Kotoba-Whisper 约 3 GB 显存、Faster-Whisper 约 2 GB 显存可能装入较小任务，但还要给驱动、音频和中间张量留空间。显存接近下限时保持批大小 1。
@@ -47,6 +48,12 @@ IndexTTS2 约 6 GB 显存起，10 GB 以上更合适。IndexTTS-2.5 的运行环
 ![模型管理](../assets/screenshots/zh/models.png)
 
 项目中的后端、模型、设备、参考和采样参数自动保存；Key 在“设置 → 云端服务”保存。详见[完整参数清单](PARAMETERS.md)。
+
+## MOSS-Transcribe-Diarize
+
+模型页下载后，在识别页选择 MOSS，展开「MOSS 参数」调整所有推理选项。默认使用官方指令、关闭采样、SDPA 和 300 秒分块。下载先试你的 ModelScope 镜像，失败后回退官方固定版本；逐文件 SHA-256 校验。
+
+说话人标签随项目保存，显示在「所选句子」；编号仅在当前分块有效。没有自动按说话人分配不同配音音色。详见 [MOSS 指南](MOSS_TRANSCRIBE_DIARIZE.md)。
 
 ## Parakeet 日语
 

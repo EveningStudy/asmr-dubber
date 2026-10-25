@@ -95,14 +95,19 @@ export async function upload(file) {
   if (!response.ok) throw new Error(result.error);
   return result;
 }
-let noticeTimer;
+let noticeTimer, lastNotice = '', lastNoticeAt = 0;
 export function notice(message, error = false) {
+  const signature = `${error}:${message}`;
+  if (signature === lastNotice && Date.now() - lastNoticeAt < 30000) return;
+  lastNotice = signature;
+  lastNoticeAt = Date.now();
   clearTimeout(noticeTimer);
   const box = $('#notice');
-  box.textContent = t(String(message));
+  box.innerHTML = `<span>${esc(t(String(message)))}</span><button type="button" aria-label="${esc(t('关闭'))}">×</button>`;
+  box.querySelector('button').onclick = () => { box.hidden = true; clearTimeout(noticeTimer); };
   box.hidden = false;
   box.classList.toggle('error', error);
-  if (!error) noticeTimer = setTimeout(() => (box.hidden = true), 5000);
+  noticeTimer = setTimeout(() => (box.hidden = true), error ? 10000 : 5000);
 }
 export function guard(action) {
   return async (event) => {

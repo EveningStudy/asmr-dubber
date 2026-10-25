@@ -44,12 +44,13 @@ function refreshTaskViews() {
         (button.disabled = tasks.some((task) => ['queued', 'running', 'cancelling'].includes(task.status))),
     );
 }
-let polling = false;
+let polling = false, pollingError = '';
 async function pollTasks() {
   if (polling || !state.boot) return;
   polling = true;
   try {
     state.tasks = await api('tasks/list');
+    pollingError = '';
     for (const task of state.tasks) {
       if (
         ['queued', 'running', 'cancelling'].includes(task.status) ||
@@ -77,7 +78,8 @@ async function pollTasks() {
     }
     refreshTaskViews();
   } catch (error) {
-    notice(error.message, true);
+    if (pollingError !== error.message) notice(error.message, true);
+    pollingError = error.message;
   } finally {
     polling = false;
   }

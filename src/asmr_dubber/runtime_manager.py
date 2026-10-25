@@ -448,6 +448,17 @@ def backend_status(
         return BackendStatus("ready", "可用", "无需 API Key；需要联网")
     if backend.runtime == "http":
         return BackendStatus("external", "外部服务", "保存服务地址后请先用短音频试运行")
+    if backend.id == "moss_transcribe_diarize":
+        from . import moss
+
+        if (
+            not moss.runtime_python().is_file()
+            or not (moss.runtime_root() / "ready.json").is_file()
+        ):
+            return BackendStatus("missing", "未安装", "缺少 MOSS 独立运行环境")
+        if not moss.complete_model():
+            return BackendStatus("partial", "模型不完整", "点击下载以校验并恢复固定快照")
+        return BackendStatus("ready", "可用", str(moss.runtime_python()))
     if backend.id == "parakeet_nemo":
         executable_name = "crispasr.exe" if current_platform().is_windows else "crispasr"
         executable = portable_home() / "runtimes" / "crispasr" / "bin" / executable_name
@@ -597,7 +608,7 @@ def backend_model_status(
         return overall
     if overall.state == "external":
         return BackendStatus("external", "需连接外部服务确认")
-    if backend.id in {"indextts2_5", "indextts2"}:
+    if backend.id in {"indextts2_5", "indextts2", "moss_transcribe_diarize"}:
         return overall
 
     repository: str | None = None
@@ -1129,6 +1140,30 @@ def _install_backend_unlocked(
         raise EnvironmentError(
             "当前为 wheel/API 安装，不包含便携安装器资源。"
             "本地模型自动安装请使用完整源码或便携发行包；现有 CLI/API 功能不受影响。"
+        )
+    if backend_id == "moss_transcribe_diarize":
+        from . import moss
+
+        uv = _uv_executable()
+        if uv is None:
+            raise EnvironmentError("找不到 uv，请运行启动器准备安装环境。")
+
+        def run_moss(command, *, env):
+            return _run_streaming_process(
+                command,
+                cwd=PROJECT_ROOT,
+                env=env,
+                timeout_seconds=timeout_seconds,
+                log_callback=log_callback,
+                cancel_event=cancel_event,
+            )
+
+        return moss.install_runtime(
+            uv,
+            run_moss,
+            env=os.environ.copy(),
+            log=log_callback or (lambda message: None),
+            cancelled=cancel_event.is_set if cancel_event else lambda: False,
         )
     extra = spec.python_extra
     if spec.installer == "python-extra" and not extra:

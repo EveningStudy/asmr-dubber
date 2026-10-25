@@ -5,11 +5,12 @@ import json
 import threading
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
+from pathlib import Path
 
 from ..platforms import portable_home
 from ..storage import atomic_write_text
 from . import batch_catalog, batch_plan, batch_queue
-from .settings import current
+from .settings import current, reference_upload
 
 
 class Batch:
@@ -17,6 +18,40 @@ class Batch:
         self.media = media
         self.path = portable_home() / "config" / "batch-queue.json"
         self.lock = threading.RLock()
+        self.reference_path = self.path.with_name("batch-reference.json")
+        self.finished = set()
+        self.running = False
+
+    def reference(self, external=None, text="", language="auto", clear=False):
+        with self.lock:
+            if clear:
+                self.reference_path.unlink(missing_ok=True)
+            elif external is not None:
+                stored = reference_upload(external)
+                value = {
+                    "audio": stored,
+                    "text": text,
+                    "language": language,
+                    "plans": [
+                        p["plan_id"]
+                        for p in self.list()
+                        if not self.running or p["plan_id"] not in self.finished
+                    ],
+                }
+                atomic_write_text(self.reference_path, json.dumps(value, ensure_ascii=False))
+            value = (
+                json.loads(self.reference_path.read_text(encoding="utf-8"))
+                if self.reference_path.is_file()
+                else {}
+            )
+        return {**value, "url": self.media.register(value.get("audio"))}
+
+    def background(self, folder, background):
+        return {
+            "preview": self.media.register(
+                batch_catalog.background_preview_path(folder, background)
+            )
+        }
 
     def list(self):
         with self.lock:
@@ -24,6 +59,12 @@ class Batch:
 
     def _save(self, queue):
         atomic_write_text(self.path, json.dumps(queue, ensure_ascii=False))
+        if self.reference_path.is_file():
+            value = json.loads(self.reference_path.read_text(encoding="utf-8"))
+            value["plans"] = [
+                p["plan_id"] for p in queue if not self.running or p["plan_id"] not in self.finished
+            ]
+            atomic_write_text(self.reference_path, json.dumps(value, ensure_ascii=False))
         return queue
 
     def scan(self, folder, include_bonus=None):
@@ -58,10 +99,12 @@ class Batch:
         background="black",
         embed_subtitles=False,
         rebuild=False,
-        content="dubbing",
+        content=None,
         subtitle_language="bilingual",
         editing="",
     ):
+        defaults = current()
+        content = content or defaults.autoflow_default_content
         plan = batch_plan.build_plan_for_ui(
             folder,
             edition,
@@ -75,7 +118,7 @@ class Batch:
             source_subtitles_only=content == "source_subtitles",
             subtitle_language=subtitle_language,
             task_content=content,
-            settings=current(),
+            settings=defaults,
         )
         with self.lock:
             queue = self.list()
@@ -87,7 +130,9 @@ class Batch:
             return self._save(queue)
 
     def edit(self, identifier):
-        return asdict(batch_plan.edit_plan_for_ui(self.list(), identifier, settings=current()))
+        result = asdict(batch_plan.edit_plan_for_ui(self.list(), identifier, settings=current()))
+        result["preview"] = self.media.register(result.get("selected_background_preview"))
+        return result
 
     def remove(self, identifier):
         with self.lock:
@@ -103,9 +148,26 @@ class Batch:
 
     def run(self, request, report, token, reference):
         queue = self.list()
+        with self.lock:
+            self.finished = set()
+            self.running = True
         if request.get("plan"):
             queue = [item for item in queue if item["plan_id"] == request["plan"]]
         report("开始处理队列。", 0, len(queue))
+
+        def reference_event(payload):
+            kind = payload.get("kind")
+            if kind == "plan_finished":
+                with self.lock:
+                    self.finished.add(payload["plan_id"])
+            elif kind == "prepare":
+                chosen = self.reference()
+                if payload.get("plan_id") in chosen.get("plans", []):
+                    from ..autoflow.engine import apply_shared_reference
+
+                    apply_shared_reference(Path(payload["project_json"]), chosen)
+            else:
+                reference(payload)
 
         class LogStream(io.TextIOBase):
             def write(self, value):
@@ -113,10 +175,14 @@ class Batch:
                     report(value.strip(), 0, len(queue))
                 return len(value)
 
-        with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
-            result, outputs = batch_queue.run_queue(
-                queue, cancel_event=token, reference_event_callback=reference
-            )
+        try:
+            with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
+                result, outputs = batch_queue.run_queue(
+                    queue, cancel_event=token, reference_event_callback=reference_event
+                )
+        finally:
+            with self.lock:
+                self.running = False
         report("队列处理完成。", len(queue), len(queue))
         result_payload = {
             "exit_code": result,

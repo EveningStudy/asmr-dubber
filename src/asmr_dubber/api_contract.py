@@ -182,13 +182,27 @@ class PlanRequest(Request):
     background: str = "black"
     embed_subtitles: bool = False
     rebuild: bool = False
-    content: Literal["dubbing", "replacement", "both", "subtitles", "source_subtitles"] = "dubbing"
+    content: Literal["dubbing", "replacement", "both", "subtitles", "source_subtitles"] | None = (
+        None
+    )
     subtitle_language: Literal["bilingual", "source", "zh"] = "bilingual"
     editing: str = ""
 
 
 class OrderRequest(Request):
     order: list[str]
+
+
+class BackgroundRequest(Request):
+    folder: str
+    background: str
+
+
+class BatchReferenceRequest(Request):
+    external: str | None = None
+    text: str = ""
+    language: Literal["auto", "ja", "en", "zh"] = "auto"
+    clear: bool = False
 
 
 class StorageRequest(Request):

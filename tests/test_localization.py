@@ -38,8 +38,16 @@ def test_all_public_markdown_pages_have_language_pairs():
             else source.parent / "en" / source.name
         )
         assert translated.is_file(), source
-        assert "English" in source.read_text(encoding="utf-8").splitlines()[0]
-        assert "中文" in translated.read_text(encoding="utf-8").splitlines()[0]
+        assert "English" in _language_switch_area(source)
+        assert "中文" in _language_switch_area(translated)
+
+
+def _language_switch_area(page):
+    # The READMEs put the switch inside their centered header block.
+    text = page.read_text(encoding="utf-8")
+    if text.startswith('<div align="center">'):
+        return text.split("</div>", 1)[0]
+    return text.splitlines()[0]
 
 
 def test_prompts_are_not_documentation_navigation():

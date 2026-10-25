@@ -43,7 +43,7 @@ Take a few seconds on every track. A subtitle matched to the wrong track makes e
 | **Mix mode** | See the table below |
 | **Subtitles** | Bilingual, translation only, original only |
 | **Format** | **Audio** produces audio only. **Video** adds a still image. **Harmonized video** is described below |
-| **Video background** | Which image from the work to use, or a black background |
+| **Video background** | Which image from the work to use, with a live preview, or a black background |
 | **Burn subtitles into the video** | Draw the subtitles on the picture |
 | **Multiple tracks** | **Merge into one** joins all tracks into a single file. **Separate tracks** exports each on its own. **Both** does both |
 
@@ -52,12 +52,16 @@ There are five kinds of result:
 | Result | What you get |
 |---|---|
 | Bilingual mix | The original plus the dub |
-| Replacement mix (experimental) | The original voice removed, leaving background and dub. Needs a vocal separation model |
-| Bilingual and replacement mixes | Both. Recognition, translation and dubbing run only once |
+| Fully dubbed | The original voice removed, leaving background and dub. Needs a vocal separation model |
+| Fully dubbed + bilingual (default) | Both. Recognition, translation and dubbing run only once |
 | Original audio and subtitles, no dubbing | No dub, just subtitles for the original |
 | Subtitle files only | SRT and LRC files, no audio |
 
 **Harmonized video** lowers the original audio and delays the original, the dub and the subtitles together by a set amount. How much is set under **Settings → Batch → Harmonized video**.
+
+Use **Batch defaults** on the Batch page or **Settings → Batch** to save the output selection, format, track layout, background policy and subtitle defaults. Fully dubbed output automatically enables vocal separation for that batch work; install the separation model first.
+
+Use **Fully dubbed volume** on the Batch page or **Settings → New project defaults → Export and subtitles** to adjust loudness. Defaults follow the corresponding source at 0 dB relative level and 0 dB additional gain. Peak protection and loudness bounds still apply. Existing projects have the same controls under Export.
 
 Click **Add to queue** when everything is set. You can add more works and start them all together.
 
@@ -78,6 +82,10 @@ One thing to remember: **the recognition, translation and dubbing settings are r
 <img src="../../assets/screenshots/en/batch-edit.png" width="640" alt="Editing a queued work">
 
 ## 3. Confirm the voice reference
+
+Before starting, use **Shared external queue reference → Choose external audio**, enter the matching transcript and language, then apply. A durable copy is saved in the config folder and survives a restart. Later queued or edited works also inherit it; use **Clear** to stop sharing it.
+
+During a run, the reference dialog offers **Use external audio for all waiting works too**, checked by default. This updates the current project and remaining works while keeping each sentence’s emotion settings. Completed works are not synthesized again. Uncheck it to update only the current project. The shared choice is read before synthesis of each track, including choices made after the queue started. Existing synthesized caches are retained. Listen to the reference before leaving the queue unattended.
 
 With a cloning model, the program picks one sentence from each work as the voice reference. When it reaches that point it pauses for you, and a **Preview and choose** button appears under **Waiting for you**.
 

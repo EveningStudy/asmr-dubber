@@ -230,6 +230,7 @@ def test_backend_catalog_can_be_split_by_kind(monkeypatch) -> None:
 
 def test_backend_order_places_ready_recommended_first_and_generic_last(monkeypatch) -> None:
     states = {
+        "moss_transcribe_diarize": BackendStatus("missing", "未安装"),
         "parakeet_nemo": BackendStatus("ready", "可用"),
         "kotoba_whisper": BackendStatus("missing", "未安装"),
         "faster_whisper": BackendStatus("ready", "可用"),

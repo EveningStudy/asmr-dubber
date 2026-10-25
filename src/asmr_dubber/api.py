@@ -31,6 +31,8 @@ class API:
             "tasks/cancel": (contract.TaskID, application.tasks.cancel),
             "tasks/resume": (contract.TaskID, application.resume),
             "batch/list": (contract.Empty, application.batch.list),
+            "batch/reference": (contract.BatchReferenceRequest, application.batch.reference),
+            "batch/background": (contract.BackgroundRequest, application.batch.background),
             "batch/scan": (contract.ScanRequest, application.batch.scan),
             "batch/edition": (contract.EditionRequest, application.batch.edition),
             "batch/tracks": (contract.TracksRequest, application.batch.tracks),

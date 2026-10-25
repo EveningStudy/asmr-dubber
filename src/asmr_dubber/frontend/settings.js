@@ -35,11 +35,12 @@ export function renderKeys() {
       )}</div><p class="small muted" style="margin:12px 2px">${t('Key 以明文保存在本机的 .asmr-dubber\\config\\secrets.json。不要把这个文件夹发给别人。')}</p><div class="card group">${['asr', 'translation', 'tts'].map((service) => field(t(service), `<button class="btn" data-diagnostic="${service}">${t('测试接口')}</button>`)).join('')}</div>`;
   $('#translationCheck').classList.toggle(
     'ok',
-    Object.values(state.boot.keys.translation).some((status) => status.includes('已以')),
+    !!state.boot.keys.translation_available?.[state.boot.settings.translation_provider],
   );
 }
 function keyRow(kind, id, label, status) {
-  return `<div class="row"><div class="grow"><div class="t">${esc(t(label))}</div><div class="d">${esc(t(status))}</div></div><button class="btn" data-key-kind="${kind}" data-key-name="${id}">${t(status.includes('已以') ? '更换' : '填写')}</button><button class="btn plain small" data-clear-key="${id}" data-key-kind="${kind}">${t('清除')}</button></div>`;
+  const available = kind === 'translation' ? state.boot.keys.translation_available?.[id] : status.startsWith('已');
+  return `<div class="row"><div class="grow"><div class="t">${esc(t(label))}</div><div class="d">${esc(t(status))}</div></div><button class="btn" data-key-kind="${kind}" data-key-name="${id}">${t(available ? '更换' : '填写')}</button><button class="btn plain small" data-clear-key="${id}" data-key-kind="${kind}">${t('清除')}</button></div>`;
 }
 export async function refreshStorage() {
   const result = await api('storage/get');

@@ -37,6 +37,7 @@ foreach ($Item in $Sources) {
                 "/optimize+",
                 "/codepage:65001",
                 "/out:$TemporaryOutput",
+                "/win32icon:$(Join-Path $PSScriptRoot "icon.ico")",
                 "/reference:System.dll",
                 "/reference:System.Core.dll"
             ) + @($Item.Source)) `

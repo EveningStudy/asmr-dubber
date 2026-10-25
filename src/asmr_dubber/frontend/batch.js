@@ -12,6 +12,8 @@ import {
   taskHTML,
   guard,
   notice,
+  chooseFile,
+  upload,
 } from './session.js';
 import { referenceDialog } from './project_dialogs.js';
 
@@ -21,6 +23,31 @@ let scan = null,
 export async function refreshBatch() {
   state.queue = await api('batch/list');
   renderBatch();
+  await refreshReference();
+}
+export async function refreshReference() {
+  const value = await api('batch/reference');
+  $('#queueReferenceStatus').textContent = value.audio
+    ? t('已设置整队外部参考（{count} 个作品）', {count: value.plans.length}) : t('未设置，按作品选择参考');
+  $('#clearQueueReference').hidden = !value.audio;
+}
+async function queueReferenceDialog() {
+  const value = await api('batch/reference');
+  let external = value.audio ? {path: value.audio, url: value.url} : null;
+  dialog('整队共用外部参考', `<p>${t('将用于队列里所有等待作品；情绪仍跟随各句。')}</p><button class="btn" id="pickQueueReference">${t('选择文件')}</button><span id="queueReferenceFile"></span><audio id="queueReferenceAudio" controls style="width:100%"></audio><label>${t('参考文字')}<textarea id="queueReferenceText">${esc(value.text || '')}</textarea></label>${field('外部音频语言', `<select id="queueReferenceLanguage">${options([['跟随项目','auto'],['日语','ja'],['英语','en'],['中文','zh']], value.language || 'auto')}</select>`)}`, '采用', async () => {
+    if (!external) throw new Error(t('请选择外部音频。'));
+    await api('batch/reference', {external: external.path, text: $('#queueReferenceText').value, language: $('#queueReferenceLanguage').value});
+    await refreshReference();
+  });
+  function preview() {
+    $('#queueReferenceFile').textContent = external?.path.split(/[\\/]/).pop() || '';
+    $('#queueReferenceAudio').src = external?.url || '';
+  }
+  $('#pickQueueReference').onclick = guard(async () => {
+    const file = await chooseFile('audio/*');
+    if (file) { external = await upload(file); preview(); }
+  });
+  preview();
 }
 export function renderBatch() {
   const active = state.tasks.find(
@@ -39,6 +66,7 @@ export function renderBatch() {
     ? `<div class="label"><b>${t('队列')}</b><span>${t('按顺序处理，可拖动调整')}</span></div><div class="card q">${state.queue.map((plan, index) => `<div class="row" draggable="${!active}" data-plan-row="${plan.plan_id}"><div class="grow"><div class="t">${esc(plan.folder.split(/[\\/]/).pop())}</div><div class="d">${t('{count} 条音轨', { count: plan.sources.length })} · ${esc(t(plan.edition.output_policy?.content || 'dubbing'))} · ${esc(t(plan.layout))}</div></div><div class="prog">${completedPlans.has(plan.plan_id) ? t('已完成') : active ? t('正在处理…') : t('等待中')}</div>${active ? '' : `<button class="btn" data-edit-plan="${plan.plan_id}">${t('编辑')}</button><button class="btn plain" data-remove-plan="${plan.plan_id}">${t('删除')}</button><button class="btn plain" data-plan-up="${index}"${index === 0 ? ' disabled' : ''}>↑</button>`}</div>`).join('')}</div>${active ? taskHTML(active) : ''}`
     : `<div class="card empty"><b>${t('队列是空的')}</b><p>${t('添加一个已解压的作品文件夹开始。')}</p></div>`;
   $('#runBatch').disabled = !!active || !state.queue.length;
+  $('#setQueueReference').disabled = !!active || !state.queue.length;
   const request = active?.reference;
   $('#batchReference').innerHTML = request
     ? `<div class="card"><div class="row"><div class="grow"><div class="t">${esc(request.work || '')} · ${t('音色参考')}</div><div class="d">${t('等待时间结束后使用自动推荐的项目片段。')} ${request.deadline_epoch ? Math.max(0, Math.ceil(request.deadline_epoch - Date.now() / 1000)) : ''} ${t('秒')}</div></div><button class="btn" id="chooseBatchReference">${t('试听并选择')}</button></div></div>`
@@ -58,12 +86,12 @@ function taskFields() {
     `<select id="batchContent">${options(
       [
         ['双语版', 'dubbing'],
-        ['替换版（实验性）', 'replacement'],
-        ['双语版 + 替换版', 'both'],
+        ['完全配音版', 'replacement'],
+        ['完全配音版 + 双语版', 'both'],
         ['原声 + 字幕，不配音', 'source_subtitles'],
         ['只要字幕文件', 'subtitles'],
       ],
-      'dubbing',
+      defaults.autoflow_default_content,
     )}</select>`,
   )}${field(
     '字幕',
@@ -85,7 +113,7 @@ function taskFields() {
       ],
       defaults.autoflow_default_mode,
     )}</select>`,
-  )}${field('视频画面', `<select id="batchBackground"><option value="black">${t('黑色背景')}</option></select>`)}${field('把字幕烧进视频', `<input type="checkbox" id="batchEmbed"${defaults.autoflow_embed_subtitles ? ' checked' : ''}>`)}${field(
+  )}${field('视频画面', `<select id="batchBackground"><option value="black">${t('黑色背景')}</option></select>`)}<div class="cover-preview" id="batchCover"><img id="batchCoverImage" hidden alt="${t('视频画面')}"><span id="batchCoverBlack">${t('黑色背景')}</span></div>${field('把字幕烧进视频', `<input type="checkbox" id="batchEmbed"${defaults.autoflow_embed_subtitles ? ' checked' : ''}>`)}${field(
     '多条音轨',
     `<select id="batchLayout">${options(
       [
@@ -150,6 +178,14 @@ async function workDialog(identifier = '') {
     selected = new Set(scan.track_items.map((track) => track.id));
     renderTracks();
   });
+  const backgroundSelect = $('#batchBackground');
+  let coverGeneration = 0;
+  backgroundSelect.onchange = guard(async () => {
+    if (!scan) return;
+    const generation = ++coverGeneration;
+    const result = await api('batch/background', {folder: scan.folder, background: backgroundSelect.value});
+    if (generation === coverGeneration && backgroundSelect.isConnected) renderCover(result.preview);
+  });
   if (identifier) {
     scan = await api('batch/edit', { identifier });
     selected = new Set(scan.track_items.map((track) => track.id));
@@ -170,7 +206,14 @@ function renderScan() {
   $('#workFolder').value = scan.folder;
   $('#workEdition').innerHTML = options(scan.edition_choices, scan.selected_edition);
   $('#batchBackground').innerHTML = options(scan.background_choices, scan.selected_background);
+  renderCover(scan.preview);
   renderTracks();
+}
+function renderCover(url) {
+  $('#batchCoverImage').hidden = !url;
+  $('#batchCoverBlack').hidden = !!url;
+  if (url) $('#batchCoverImage').src = url;
+  else $('#batchCoverImage').removeAttribute('src');
 }
 function renderTracks() {
   $('#trackSummary').textContent = t('音轨 · 找到 {total} 条，已选 {selected} 条', {
@@ -194,6 +237,14 @@ function renderTracks() {
     .join('');
 }
 export function initializeBatch() {
+  $('#setQueueReference').onclick = guard(queueReferenceDialog);
+  $('#clearQueueReference').onclick = guard(async () => {
+    await api('batch/reference', {clear: true});
+    await refreshReference();
+  });
+  guard(refreshReference)();
+  window.addEventListener('batch-reference-changed', guard(refreshReference));
+  window.addEventListener('settings-changed', guard(refreshReference));
   $('#addWork').onclick = guard(() => workDialog());
   $('#runBatch').onclick = guard(() => startTask('batch', {}, false));
   document.addEventListener(

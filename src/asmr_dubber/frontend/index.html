@@ -6,13 +6,13 @@
   <meta name="asmr-session" content="__SESSION_TOKEN__">
   <meta name="asmr-dubber-product-marker" content="ASMR Dubber">
   <title>ASMR Dubber</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">ASMR Dubber</div>
+    <div class="brand"><img src="icon.svg" alt="">ASMR Dubber</div>
     <nav class="nav" aria-label="主导航">
       <button data-page="home" class="on"><svg viewBox="0 0 20 20"><path d="M2.5 6.5a2 2 0 0 1 2-2h3l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z"/></svg><span data-i18n>项目</span></button>
       <button data-page="batch"><svg viewBox="0 0 20 20"><path d="M3 5.5h14M3 10h14M3 14.5h14"/></svg><span data-i18n>批量</span><span class="badge" id="queueBadge"></span></button>
@@ -65,7 +65,7 @@
         </div>
       </div>
     </section>
-    <section class="page" id="batch"><div class="head"><div><h1 data-i18n>批量</h1><p data-i18n>一次处理一整个作品文件夹。每个作品自动走完识别、翻译、配音和导出，不用守着。</p></div><button class="btn primary big" id="addWork" data-i18n>添加作品</button></div><div id="batchQueue"></div><div class="label"><b data-i18n>等你确认</b></div><div id="batchReference"></div><div class="label"><b data-i18n>已完成</b></div><div id="batchHistory"></div><button class="btn primary big" id="runBatch" data-i18n>开始处理队列</button></section>
+    <section class="page" id="batch"><div class="head"><div><h1 data-i18n>批量</h1><p data-i18n>一次处理一整个作品文件夹。每个作品自动走完识别、翻译、配音和导出，不用守着。</p></div><button class="btn primary big" id="addWork" data-i18n>添加作品</button></div><div class="card"><div class="row queue-reference-row"><div class="grow"><div class="t" data-i18n>整队共用外部参考</div><div class="d" id="queueReferenceStatus"></div></div><button class="btn" id="setQueueReference" data-i18n>选择外部音频</button><button class="btn plain" id="clearQueueReference" hidden data-i18n>清除</button></div></div><div class="row"><button class="btn" data-go="settings" data-set="batch" data-i18n>批量默认设置</button><button class="btn" data-go="settings" data-set="d-mix" data-i18n>完全配音版音量</button></div><div id="batchQueue"></div><div class="label"><b data-i18n>等你确认</b></div><div id="batchReference"></div><div class="label"><b data-i18n>已完成</b></div><div id="batchHistory"></div><button class="btn primary big" id="runBatch" data-i18n>开始处理队列</button></section>
     <section class="page" id="models"><div class="head"><div><h1 data-i18n>模型</h1><p data-i18n>用到什么下载什么。断线后再点一次会接着下，不会从头来。</p></div><div class="seg"><button data-source="modelscope" data-i18n>国内镜像</button><button data-source="original" data-i18n>海外源</button></div></div><div class="card device" id="modelDevice"></div><div class="label"><b data-i18n>不知道选什么</b></div><div class="card"><div class="row" style="padding:16px 18px"><div class="grow"><div class="t" data-i18n>日语音声配中文，装这两个就够</div><div class="d" id="starterDescription"></div></div><button class="btn primary big" id="starterBtn" data-i18n>一起下载</button></div></div><div id="modelGroups"></div><div class="label"><b data-i18n>不需要下载</b></div><div class="card"><div class="row"><div class="grow"><div class="t">Edge TTS</div><div class="d" data-i18n>微软在线语音，免费，要联网。音色固定，不能模仿原声。</div></div><span class="muted small" data-i18n>已内置</span></div><div class="row"><div class="grow"><div class="t" data-i18n>云端服务</div><div class="d" data-i18n>翻译（DeepSeek、百炼、OpenAI 等）和云端配音（MiMo、MiniMax 等）只需要填 Key。</div></div><button class="btn" data-go="settings" data-set="keys" data-i18n>去填写</button></div></div><div id="modelTasks"></div></section>
     <section class="page" id="settings"><div class="head"><div><h1 data-i18n>设置</h1></div></div><div class="set"><nav id="setNav"><button data-set="general" class="on" data-i18n>通用</button><button data-set="keys" data-i18n>云端服务</button><div class="nl" data-i18n>新项目默认值</div><button data-set="d-asr" data-i18n>识别</button><button data-set="d-tr" data-i18n>翻译</button><button data-set="d-tts" data-i18n>配音</button><button data-set="d-mix" data-i18n>导出与字幕</button><div class="nl" data-i18n>其他</div><button data-set="batch" data-i18n>批量</button><button data-set="storage" data-i18n>存储</button><button data-set="logs" data-i18n>日志与诊断</button></nav><div>
       <div class="setview on" data-setview="general"><div class="schema" data-panels="general" data-part="all" data-scope="def"></div></div>

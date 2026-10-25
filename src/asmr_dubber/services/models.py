@@ -238,7 +238,11 @@ def import_packs(request, report, token):
 def remove(identifier):
     settings = current()
     candidates = []
-    if identifier in ASR_BACKENDS:
+    if identifier == "moss_transcribe_diarize":
+        from .. import moss
+
+        candidates.append(moss.model_directory())
+    elif identifier in ASR_BACKENDS:
         for model in ASR_BACKENDS[identifier].models:
             path = cached_model_path(model)
             if path:

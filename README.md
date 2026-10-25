@@ -1,25 +1,29 @@
-中文 | [English](README.en.md)
-
 <div align="center">
+
+<img src="design/icon.svg" width="112" alt="ASMR Dubber">
 
 # ASMR Dubber
 
 **给音声配上另一种语言。原声的位置在哪，配音就在哪。**
 
-识别、翻译、音色克隆配音、混音、字幕，一个程序做完。
-
+识别、翻译、音色克隆配音、混音、字幕，一个程序做完。<br>
 支持日语、英语、中文的音频和视频，可以配成中文或英文。
 
-[![GitHub Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
-![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
-![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release&color=6d55eb)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Linux%20x86__64-1d1d1f)
+[![License](https://img.shields.io/badge/license-MIT-6e6e73)](LICENSE)
+
+**简体中文** · [English](README.en.md)
 
 [下载](https://github.com/EveningStudy/asmr-dubber/releases/latest) · [三分钟上手](#三分钟上手) · [使用手册](docs/USER_GUIDE.md) · [全部文档](docs/INDEX.md)
 
+<br>
+
+<img src="assets/screenshots/zh/step3-done.png" alt="项目工作区：左边是句子表格，右边是当前步骤的设置" width="880">
+
 </div>
 
-![项目工作区：左边是句子表格，右边是当前步骤的设置](assets/screenshots/zh/step3-done.png)
+<br>
 
 ## 先听效果
 

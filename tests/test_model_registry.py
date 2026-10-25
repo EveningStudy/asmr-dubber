@@ -15,6 +15,7 @@ def test_default_backends_use_verified_recommendations() -> None:
 
 def test_only_supported_asr_and_tts_backends_are_registered() -> None:
     assert set(ASR_BACKENDS) == {
+        "moss_transcribe_diarize",
         "generic_asr_api",
         "parakeet_nemo",
         "kotoba_whisper",

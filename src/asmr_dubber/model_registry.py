@@ -88,6 +88,24 @@ class ModelBackend:
 
 
 ASR_BACKENDS: dict[str, ModelBackend] = {
+    "moss_transcribe_diarize": ModelBackend(
+        id="moss_transcribe_diarize",
+        label="MOSS-Transcribe-Diarize 0.9B（日/英/中）",
+        kind="asr",
+        runtime="command",
+        default_model="OpenMOSS-Team/MOSS-Transcribe-Diarize",
+        models=("OpenMOSS-Team/MOSS-Transcribe-Diarize",),
+        help="多语言转写、时间戳与说话人标签。独立 Transformers 5 环境；说话人编号仅在分块内有效。",
+        setup="在模型页下载；优先 ModelScope，失败后回退官方固定快照。",
+        installer="isolated",
+        support_level="experimental",
+        disk_gb=8,
+        recommended_vram_gb=6,
+        homepage="https://github.com/OpenMOSS/MOSS-Transcribe-Diarize",
+        execution=ExecutionCapabilities(
+            batch_strategy="internal_chunks", progress_strategy="streamed_process"
+        ),
+    ),
     "generic_asr_api": ModelBackend(
         id="generic_asr_api",
         label="通用 ASR API（OpenAI-compatible）",

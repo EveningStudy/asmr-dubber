@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "2.0.1",
+  "release": "2.1.0",
   "repository": "EveningStudyW/ASMR-Dubber-Portable-Mirror",
   "revision": "master",
   "artifacts": [
@@ -105,6 +105,114 @@
       "path": "artifacts/runtimes/openblas/0.3.26/libopenblas0-pthread_0.3.26+ds-1ubuntu0.1_amd64.deb",
       "size": 7183128,
       "sha256": "7dc3b4384c02aecb87eb8b70fa26c5843a08af242f4638aa4b36922bdc4f5b04"
+    },
+    {
+      "id": "moss-transcribe-diarize-README-md",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/README.md",
+      "size": 13985,
+      "sha256": "0d87aefa6a5cbe31b4d93ebe7942fe2480722923675623e4504ce4148f695bfb"
+    },
+    {
+      "id": "moss-transcribe-diarize-added_tokens-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/added_tokens.json",
+      "size": 707,
+      "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"
+    },
+    {
+      "id": "moss-transcribe-diarize-chat_template-jinja",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/chat_template.jinja",
+      "size": 4762,
+      "sha256": "8641466a16b184ebaf7c4903391e607cfd532ab937e81a64120628ab79d827f4"
+    },
+    {
+      "id": "moss-transcribe-diarize-config-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/config.json",
+      "size": 2335,
+      "sha256": "2b2b7a6e61334152bdd7ecf8a4da3073b4940a097e193d1d2b22093e77535234"
+    },
+    {
+      "id": "moss-transcribe-diarize-configuration_moss_transcribe_diarize-py",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/configuration_moss_transcribe_diarize.py",
+      "size": 2663,
+      "sha256": "b4d12b0f4609af69b61c2fe3aa5fbaf476af22278369e4540745bc47d1d37892"
+    },
+    {
+      "id": "moss-transcribe-diarize-generation_config-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/generation_config.json",
+      "size": 107,
+      "sha256": "e53a4b3ce4f944230cf1ca8fed0c42f4ff0d8c1443eaf98b5315d987334dd9e4"
+    },
+    {
+      "id": "moss-transcribe-diarize-merges-txt",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/merges.txt",
+      "size": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+    },
+    {
+      "id": "moss-transcribe-diarize-model-00000-of-00001-safetensors",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/model-00000-of-00001.safetensors",
+      "size": 1817113576,
+      "sha256": "9a0ceb4ab7330357db3ff583dba8d83625d5b733b00e1d55d6970e11b07026c4"
+    },
+    {
+      "id": "moss-transcribe-diarize-model-safetensors-index-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/model.safetensors.index.json",
+      "size": 65401,
+      "sha256": "0345ac5d8f360abe4e9adadb5fecd38e7730052b75f64bb58182818b1544cc36"
+    },
+    {
+      "id": "moss-transcribe-diarize-modeling_moss_transcribe_diarize-py",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/modeling_moss_transcribe_diarize.py",
+      "size": 15101,
+      "sha256": "a01da90fe1f7cb88942b8c56f443e7b4ecd307ed4b4c356ac08d7503dd7422c1"
+    },
+    {
+      "id": "moss-transcribe-diarize-preprocessor_config-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/preprocessor_config.json",
+      "size": 315,
+      "sha256": "ba2e601484abc80f4cded977f9a4fd4a53175b7d35c2f2511f0cfc3a32ad2499"
+    },
+    {
+      "id": "moss-transcribe-diarize-processing_moss_transcribe_diarize-py",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/processing_moss_transcribe_diarize.py",
+      "size": 10975,
+      "sha256": "6f228d22d9379e2f6a6830b18ce7336b22da8267547e96e65545d871d7f48766"
+    },
+    {
+      "id": "moss-transcribe-diarize-processor_config-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/processor_config.json",
+      "size": 292,
+      "sha256": "a978c2dd54a65b576c3dae4b654fe9bcbac1184c6db2df0afb2c90fcdc872ae7"
+    },
+    {
+      "id": "moss-transcribe-diarize-special_tokens_map-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/special_tokens_map.json",
+      "size": 613,
+      "sha256": "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd"
+    },
+    {
+      "id": "moss-transcribe-diarize-tokenizer-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/tokenizer.json",
+      "size": 11423222,
+      "sha256": "bcf03774334462d6e34b5005cb11120a62275f146ee2953e68731ecdbce84fbb"
+    },
+    {
+      "id": "moss-transcribe-diarize-tokenizer_config-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/tokenizer_config.json",
+      "size": 503,
+      "sha256": "61d04c96104177240688396655ae3f7cf38ce2ea036db867a1d2b6883e27c3d5"
+    },
+    {
+      "id": "moss-transcribe-diarize-vocab-json",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/vocab.json",
+      "size": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    },
+    {
+      "id": "moss-transcribe-diarize-LICENSE",
+      "path": "artifacts/models/moss-transcribe-diarize/704aa4a9c304e8520be88901e0d1960158ef5b15/LICENSE",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
     }
   ],
   "sidecar_verified_archives": [

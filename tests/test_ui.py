@@ -307,6 +307,7 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app):
     assert set(UserSettings.model_fields) <= keys
     assert set(ProjectSettings.model_fields) <= keys
     assert set(parameters.choices()["asr"]) == {
+        "moss_transcribe_diarize",
         "parakeet_nemo",
         "kotoba_whisper",
         "faster_whisper",

@@ -40,6 +40,7 @@ from .constants import (
 )
 from .errors import ProjectConflictError, ProjectError
 from .languages import SourceLanguage
+from .moss import DEFAULT_PROMPT as MOSS_DEFAULT_PROMPT
 from .storage import atomic_write_text, exclusive_file_lock
 
 
@@ -71,6 +72,7 @@ class Sentence(BaseModel):
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
+    speaker_id: str | None = None
     source_text: str = Field(validation_alias=AliasChoices("source_text", "ja_text"))
     zh_text: str = ""
     enabled: bool = True
@@ -232,6 +234,7 @@ class ProjectSettings(BaseModel):
         return json.dumps(parsed, ensure_ascii=False)
 
     asr_backend: Literal[
+        "moss_transcribe_diarize",
         "generic_asr_api",
         "parakeet_nemo",
         "kotoba_whisper",
@@ -259,6 +262,23 @@ class ProjectSettings(BaseModel):
     asr_parakeet_decoder: Literal["tdt", "ctc"] = "tdt"
     asr_chunk_seconds: float = Field(default=120.0, ge=15.0, le=600.0)
     asr_kotoba_chunk_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+    asr_moss_chunk_seconds: float = Field(default=300, ge=15, le=5400)
+    asr_moss_dtype: Literal["auto", "bfloat16", "float16", "float32"] = "auto"
+    asr_moss_attention: Literal["sdpa", "flash_attention_2", "eager"] = "sdpa"
+    asr_moss_max_new_tokens: int = Field(default=16384, ge=128, le=65536)
+    asr_moss_max_context: int = Field(default=131072, ge=1024, le=131072)
+    asr_moss_do_sample: bool = False
+    asr_moss_temperature: float = Field(default=1.0, gt=0, le=2)
+    asr_moss_top_p: float = Field(default=1.0, gt=0, le=1)
+    asr_moss_top_k: int = Field(default=50, ge=0, le=1000)
+    asr_moss_num_beams: int = Field(default=1, ge=1, le=16)
+    asr_moss_repetition_penalty: float = Field(default=1.0, ge=0.1, le=3)
+    asr_moss_use_cache: bool = True
+    asr_moss_seed: int = Field(default=0, ge=0, le=4294967295)
+    asr_moss_prompt: str = MOSS_DEFAULT_PROMPT
+    asr_moss_hotwords: str = ""
+    asr_moss_generation_params: str = "{}"
+    asr_moss_timeout_seconds: float = Field(default=7200, ge=30, le=86400)
     asr_review_enabled: bool = False
     asr_review_mode: Literal["suggest", "conservative"] = "suggest"
     asr_review_window_seconds: float = Field(default=30.0, ge=10.0, le=90.0)
@@ -422,12 +442,49 @@ class ProjectSettings(BaseModel):
     subtitle_min_duration_seconds: float = Field(default=1.0, ge=0.2, le=10.0)
     subtitle_max_cps: float = Field(default=18.0, ge=5.0, le=40.0)
 
+    @field_validator("asr_moss_generation_params")
+    @classmethod
+    def validate_moss_generation(cls, value: str) -> str:
+        parsed = json.loads(value or "{}")
+        if not isinstance(parsed, dict):
+            raise ValueError("MOSS generation parameters must be a JSON object")
+        protected = {
+            "input_ids",
+            "inputs",
+            "attention_mask",
+            "input_features",
+            "audio_feature_lengths",
+            "audio_chunk_mapping",
+            "streamer",
+            "generation_config",
+            "return_dict_in_generate",
+            "max_length",
+            "max_new_tokens",
+            "do_sample",
+            "temperature",
+            "top_p",
+            "top_k",
+            "num_beams",
+            "repetition_penalty",
+            "use_cache",
+            "num_return_sequences",
+        }
+        if protected.intersection(parsed):
+            raise ValueError("Use the dedicated MOSS controls for reserved generation parameters")
+        return value
+
+    @field_validator("asr_moss_prompt")
+    @classmethod
+    def restore_moss_prompt(cls, value: str) -> str:
+        return value.strip() or MOSS_DEFAULT_PROMPT
+
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_index_emotion(cls, value: Any) -> Any:
         if isinstance(value, dict):
             value = dict(value)
             supported_asr = {
+                "moss_transcribe_diarize",
                 "generic_asr_api",
                 "parakeet_nemo",
                 "kotoba_whisper",
@@ -534,7 +591,8 @@ def settings_for_source_language(
     values = settings.model_dump()
     model = str(values.get("asr_model", ""))
     if (
-        values.get("asr_backend") not in {"faster_whisper", "generic_asr_api"}
+        values.get("asr_backend")
+        not in {"faster_whisper", "generic_asr_api", "moss_transcribe_diarize"}
         or model.startswith("kotoba-tech/")
         or (source_language == "zh" and (model.endswith(".en") or "distil" in model.lower()))
     ):
@@ -544,7 +602,8 @@ def settings_for_source_language(
     review_models = [
         str(item)
         for item in values.get("asr_review_models") or []
-        if str(item).startswith("faster_whisper|") and "kotoba-tech/kotoba-whisper" not in str(item)
+        if str(item).startswith(("faster_whisper|", "moss_transcribe_diarize|"))
+        and "kotoba-tech/kotoba-whisper" not in str(item)
     ]
     if source_language == "zh":
         review_models = [
@@ -570,7 +629,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "2.0.1"
+    app_version: str = "2.1.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -718,6 +777,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
     if version == 1:
         settings = dict(payload.get("settings") or {})
         supported_asr = {
+            "moss_transcribe_diarize",
             "generic_asr_api",
             "parakeet_nemo",
             "kotoba_whisper",
@@ -764,7 +824,7 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
                 settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
         payload["settings"] = settings
         payload["schema_version"] = 2
-        payload["app_version"] = "2.0.1"
+        payload["app_version"] = "2.1.0"
         payload["revision"] = int(payload.get("revision", 0))
         payload["migration_warnings"] = warnings
         version = 2

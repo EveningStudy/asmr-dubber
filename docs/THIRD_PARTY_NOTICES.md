@@ -96,3 +96,7 @@ OpenAI-compatible 只是请求格式，不说明服务端采用何种代码、�
 6. 对不能再分发的组件只提供用户自行获取的安装路径。
 
 发现本清单与上游制品不一致时，应以实际许可证原文为准，并提交修正文档的 Issue 或补丁。
+
+## MOSS-Transcribe-Diarize
+
+[OpenMOSS MOSS-Transcribe-Diarize](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize) 与 [官方模型](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) 标注 Apache-2.0。本项目镜像保留上游模型卡、许可证与原始文件；快照和文件 SHA-256 记录在 `src/asmr_dubber/moss_manifest.json`，不会把上游模型标为本项目原创。应用侧适配器不修改上游模型文件。

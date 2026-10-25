@@ -12,6 +12,7 @@ from .platforms import isolated_runtime_environment, portable_home, virtualenv_e
 from .storage import exclusive_file_lock
 
 BACKENDS = {
+    "moss_transcribe_diarize": "MOSS-Transcribe-Diarize",
     "parakeet_nemo": "Parakeet / CrispASR",
     "faster_whisper": "Faster-Whisper",
     "kotoba_whisper": "Kotoba-Whisper",
@@ -96,6 +97,16 @@ def _check_backend(backend: str) -> str:
     if backend not in BACKENDS:
         raise ValueError("请选择支持的本地后端。")
     home = portable_home()
+    if backend == "moss_transcribe_diarize":
+        from . import moss
+
+        if not moss.runtime_python().is_file():
+            return "未安装：MOSS 独立环境不存在。"
+        return _probe(
+            [str(moss.runtime_python()), "-c", "import torch,transformers,librosa,soundfile,soxr"],
+            cwd=moss.runtime_root(),
+            runtime="moss-transcribe-diarize",
+        )
     runtime = {"indextts2": "index-tts", "indextts2_5": "index-tts-2.5"}.get(backend)
     if backend == "parakeet_nemo":
         binary = (

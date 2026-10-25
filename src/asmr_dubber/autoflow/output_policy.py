@@ -16,8 +16,6 @@ def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) 
         "replacement": ["replace"],
         "both": ["bilingual", "replace"],
     }.get(content, [])
-    if "replace" in variants and not settings.separation_enabled:
-        raise ValueError("替换配音需要人声分离：请在设置中开启人声分离并保存，再加入队列。")
     # Saved with the plan, hashed by plan_identity, and reused after restart.
     values = settings.model_dump(mode="json")
     selected = {
@@ -28,6 +26,8 @@ def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) 
     }
     # A sentence ID belongs to a single project, never to newly created tracks.
     selected.pop("tts_reference_sentence_id", None)
+    if "replace" in variants:
+        selected["separation_enabled"] = True
     return {"content": content, "variants": variants, "subtitle": subtitle, "settings": selected}
 
 

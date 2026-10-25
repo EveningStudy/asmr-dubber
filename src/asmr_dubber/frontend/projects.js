@@ -127,7 +127,7 @@ function renderControls() {
   $('#sentenceControls').innerHTML =
     `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${state.project.sentences.length > 50 ? `<button class="btn" id="prevRows">‹</button> ${rowPage + 1} / ${Math.ceil(state.project.sentences.length / 50)} <button class="btn" id="nextRows">›</button>` : ''}</span></div>${
       sentence
-        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field(
+        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${sentence.speaker_id ? field('说话人（仅当前分块）', `<span>${esc(sentence.speaker_id)}</span>`) : ''}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field(
             '原声开关（仅分离时）',
             `<select data-detail="original_audio_enabled">${options(
               [

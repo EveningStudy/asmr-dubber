@@ -5165,6 +5165,14 @@ def execute_task(
     subtitles_only = bool(state.get("subtitles_only", False))
     if not subtitles_only:
         if not status_at_least(state, "synthesized"):
+            if reference_event_callback is not None:
+                reference_event_callback(
+                    {
+                        "kind": "prepare",
+                        "plan_id": str(state.get("plan_id") or ""),
+                        "project_json": str(project_json.resolve()),
+                    }
+                )
             if project_has_external_reference(project_json):
                 print("\n  使用当前项目已配置的外部音色参考。")
             elif shared_reference is not None:
@@ -6540,6 +6548,10 @@ def execute_smart_queue(
             append_log(traceback.format_exc())
             print(f"\n这个作品发生未预期错误：{message}", file=sys.stderr)
             print("已有状态和成品已保留，继续处理下一个作品。", file=sys.stderr)
+
+        finally:
+            if reference_event_callback is not None:
+                reference_event_callback({"kind": "plan_finished", "plan_id": plan.plan_id})
 
     succeeded = len(plans) - len(failures)
     print("\n" + "=" * 68)

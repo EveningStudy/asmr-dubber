@@ -40,3 +40,9 @@
 ## 其他
 
 [第三方声明](THIRD_PARTY_NOTICES.md) · [安全策略](../SECURITY.md) · [获取帮助](../SUPPORT.md) · [行为准则](../CODE_OF_CONDUCT.md)
+
+### MOSS 与默认值审查
+
+- [MOSS-Transcribe-Diarize：安装、全部参数与限制](MOSS_TRANSCRIBE_DIARIZE.md)
+- [218 项默认设置审查 · 2026-10-16](DEFAULTS_AUDIT_2026-10-16.md)
+- [MOSS 验证报告 · 2026-10-16](MOSS_VALIDATION_2026-10-16.md)

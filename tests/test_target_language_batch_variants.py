@@ -80,8 +80,10 @@ def test_target_language_changes_tts_cache_but_mix_variant_does_not(tmp_path):
 
 @pytest.mark.parametrize("content", ["replacement", "both"])
 def test_replacement_preflight(content):
-    with pytest.raises(ValueError, match="人声分离"):
-        policy_for_settings(ProjectSettings(), content, "bilingual")
+    settings = ProjectSettings()
+    policy = policy_for_settings(settings, content, "bilingual")
+    assert policy["settings"]["separation_enabled"]
+    assert not settings.separation_enabled
 
 
 def test_subtitles_do_not_run_separation_or_rtf(tmp_path):

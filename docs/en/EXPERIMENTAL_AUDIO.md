@@ -50,7 +50,7 @@ Expand **Dubbing timing**:
 
 **When the dub is longer than the line**: a translation is often longer than the original line, so the next line is due before this one finishes. There are two ways to handle it:
 
-- **Keep timing and speed up if needed**: each line starts at its original time and speaks faster if it would not fit. The speed-up is capped (**Maximum speed-up on overlap**, 1.8× by default). Past the cap, the line overlaps the next one slightly.
+- **Keep timing and speed up if needed**: each line starts at its original time and speaks faster if it would not fit. The speed-up is capped (**Maximum speed-up on overlap**, 1.4× by default). Past the cap, the line overlaps the next one slightly.
 - **Play the next line after the previous one ends**: no speed-up and no overlap. Later lines are pushed back, so the dub drifts further behind the original and the result can be longer than the source.
 
 The first mode suits most cases. If many lines are sped up noticeably, the better fix is to go back to the translation step and shorten the translations.

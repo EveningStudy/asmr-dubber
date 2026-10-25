@@ -1,25 +1,29 @@
-[中文](README.md) | English
-
 <div align="center">
+
+<img src="design/icon.svg" width="112" alt="ASMR Dubber">
 
 # ASMR Dubber
 
 **Dub audio works into another language. Wherever the original voice is, the dub is there too.**
 
-Recognition, translation, voice-cloned dubbing, mixing and subtitles in one program.
-
+Recognition, translation, voice-cloned dubbing, mixing and subtitles in one program.<br>
 Works with Japanese, English and Chinese audio or video, and dubs into Chinese or English.
 
-[![GitHub Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
-![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
-![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/EveningStudy/asmr-dubber?label=release&color=6d55eb)](https://github.com/EveningStudy/asmr-dubber/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Linux%20x86__64-1d1d1f)
+[![License](https://img.shields.io/badge/license-MIT-6e6e73)](LICENSE)
+
+[简体中文](README.md) · **English**
 
 [Download](https://github.com/EveningStudy/asmr-dubber/releases/latest) · [Get started](#get-started-in-three-minutes) · [User guide](docs/en/USER_GUIDE.md) · [All docs](docs/en/INDEX.md)
 
+<br>
+
+<img src="assets/screenshots/en/step3-done.png" alt="The project workspace: sentences on the left, settings for the current step on the right" width="880">
+
 </div>
 
-![The project workspace: sentences on the left, settings for the current step on the right](assets/screenshots/en/step3-done.png)
+<br>
 
 ## Listen first
 

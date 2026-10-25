@@ -186,6 +186,9 @@ class UserSettings(ProjectSettings):
     autoflow_output_folder_name: str = "AutoFlow输出"
     autoflow_default_mode: Literal["audio", "video_normal", "video_harmonized"] = "video_normal"
     autoflow_default_layout: Literal["merged", "separate", "both"] = "merged"
+    autoflow_default_content: Literal[
+        "dubbing", "replacement", "both", "source_subtitles", "subtitles"
+    ] = "both"
     autoflow_include_bonus: bool = False
     autoflow_background_policy: Literal["auto", "black"] = "auto"
     autoflow_embed_subtitles: bool = True
@@ -229,6 +232,7 @@ class UserSettings(ProjectSettings):
             ):
                 value["chinese_target_active_rms_dbfs"] = value["chinese_max_active_rms_dbfs"]
             if "asr_backend" in value and value.get("asr_backend") not in {
+                "moss_transcribe_diarize",
                 "generic_asr_api",
                 "parakeet_nemo",
                 "kotoba_whisper",

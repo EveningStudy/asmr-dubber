@@ -103,7 +103,7 @@ function control(parameter, values, scope, language) {
   else if (choices?.length)
     input = `<select aria-label="${esc(t(parameter.label))}" ${data}>${options(choices, value)}</select>`;
   else if (['number', 'integer'].includes(parameter.type))
-    input = `<span class="numf"><input type="number" value="${esc(value)}" step="${parameter.type === 'integer' ? '1' : 'any'}"${parameter.minimum != null ? ` min="${parameter.minimum}"` : ''}${parameter.maximum != null ? ` max="${parameter.maximum}"` : ''} ${data}></span>`;
+    input = `<span class="numf"><input type="number" value="${esc(value)}" step="${parameter.type === 'integer' ? '1' : 'any'}"${parameter.minimum != null ? ` min="${parameter.minimum}"` : ''}${parameter.maximum != null ? ` max="${parameter.maximum}"` : ''} ${data}>${parameter.unit ? esc(t(parameter.unit)) : ''}</span>`;
   else if (
     parameter.type === 'array' ||
     key.includes('prompt') ||
