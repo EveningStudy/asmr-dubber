@@ -1,12 +1,12 @@
 """Regression coverage for queue defaults, cover previews and unattended references."""
 
+from base64 import b64decode
 from pathlib import Path
 from threading import Event
 
 import numpy as np
 import pytest
 import soundfile as sf
-from PIL import Image
 
 from asmr_dubber.api import API
 from asmr_dubber.autoflow import engine
@@ -15,6 +15,11 @@ from asmr_dubber.services import batch_queue, settings
 from asmr_dubber.services.application import Application
 from asmr_dubber.services.batch import Batch
 from asmr_dubber.services.media import MediaStore
+
+# A valid 1x1 PNG keeps these path/media tests independent of optional image libraries.
+PNG_IMAGE = b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+)
 
 
 @pytest.fixture
@@ -27,8 +32,8 @@ def app(tmp_path, monkeypatch):
 def work(tmp_path):
     tmp_path.mkdir(parents=True)
     sf.write(tmp_path / "01.wav", np.zeros(24000), 24000)
-    Image.new("RGB", (120, 80), "red").save(tmp_path / "cover.jpg")
-    Image.new("RGB", (100, 80), "blue").save(tmp_path / "other.png")
+    (tmp_path / "cover.png").write_bytes(PNG_IMAGE)
+    (tmp_path / "other.png").write_bytes(PNG_IMAGE)
     return tmp_path
 
 
@@ -44,7 +49,7 @@ def test_cover_scan_change_edit_and_path_boundary(app, tmp_path):
         "preview": None
     }
     outside = tmp_path / "outside.png"
-    Image.new("RGB", (10, 10)).save(outside)
+    outside.write_bytes(PNG_IMAGE)
     with pytest.raises(Exception, match="作品文件夹"):
         api.call("batch/background", {"folder": str(folder), "background": "../outside.png"})
     queue = api.call(
