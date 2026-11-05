@@ -167,6 +167,9 @@ def apply_table(project: DubProject, table: Any) -> bool:
             if field in {"start_seconds", "end_seconds", "source_text", "zh_text"}
         )
         updated = old.model_copy(update=payload)
+        if not old.enabled and updated.enabled and not updated.zh_text:
+            updated.status = "pending"
+            updated.error = None
         if material_changed:
             updated.review_locked = True
             updated.tts_file = None

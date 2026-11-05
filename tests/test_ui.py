@@ -378,6 +378,7 @@ def test_autoflow_reference_events_are_streamed_without_blocking_ui(app, monkeyp
         return 0, []
 
     monkeypatch.setattr(batch_queue, "run_queue", run_queue)
+    app.batch._save([{"plan_id": "one", "folder": "work", "output_root": "output"}])
     task = app.start({"kind": "batch"})
     deadline = time.monotonic() + 2
     while not app.tasks.get(task["id"])["reference"] and time.monotonic() < deadline:

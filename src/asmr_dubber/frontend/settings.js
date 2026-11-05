@@ -51,7 +51,7 @@ export async function refreshStorage() {
       .map(([name, bytes]) => `<span>${t(name)} ${size(bytes)}</span>`)
       .join(
         '',
-      )}</div></div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
+      )}</div></div><div class="label"><b>${t('项目与批量中间产物')}</b></div><div class="card">${(result.projects || []).map(p => `<div class="row"><div class="grow"><div class="t">${esc(p.label)}</div><div class="d">${esc(p.path)}</div></div></div>`).join('') || `<p class="empty">${t('还没有项目')}</p>`}</div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
       ['safe', '临时文件', '可以放心删。'],
       ['rebuild', '导出用的中间文件', '删了以后，下次导出要多花几分钟重新计算。'],
       ['separation', '人声分离结果', '删了以后，再做替换版要重新分离，比较慢。'],
@@ -68,7 +68,7 @@ async function cleanDialog(root, category) {
   const plan = await api('storage/scan', { root, categories: [category] });
   dialog(
     '清理缓存',
-    `<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map((project) => `<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,
+    `<p>${t('不会删除项目、配音和成品')}</p><div class="card">${plan.projects.map((project) => `<div class="row"><input type="checkbox" class="clean-project" value="${esc(project.path)}" checked><div class="grow"><div class="t">${esc(project.label || project.path)}</div><div class="d">${esc(project.path)}</div><pre class="log">${esc(Object.keys(project.files).join('\n'))}</pre></div></div>`).join('')}</div><p>${esc(plan.skipped.join('\n'))}</p>`,
     '确认清理',
     async () => {
       const selected = $$('.clean-project:checked').map((input) => input.value);

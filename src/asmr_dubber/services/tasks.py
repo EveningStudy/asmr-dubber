@@ -30,6 +30,9 @@ class Tasks:
         for task in self.items.values():
             if task["status"] in ACTIVE:
                 task.update(status="interrupted", message="Interrupted; saved results are retained")
+                for plan in task.get("plans", {}).values():
+                    if plan.get("status") == "running":
+                        plan["status"] = "interrupted"
         if self.items:
             self._prune()
             self._save()
@@ -48,6 +51,15 @@ class Tasks:
     def list(self):
         with self.lock:
             return copy.deepcopy(list(self.items.values()))
+
+    def dismiss(self, identifier):
+        with self.lock:
+            task = self.items[identifier]
+            if task["status"] in ACTIVE:
+                raise ValueError("正在运行的任务不能隐藏。")
+            task["hidden"] = True
+            self._save()
+            return {"hidden": True}
 
     def get(self, identifier):
         with self.lock:
@@ -82,6 +94,7 @@ class Tasks:
                 "started_at": time.time(),
                 "updated_at": time.time(),
                 "reference": None,
+                "plans": {},
             }
             token = self.tokens[identifier] = CancellationToken()
             self._prune()
@@ -118,9 +131,23 @@ class Tasks:
 
         def reference(payload):
             with self.lock:
-                self.items[identifier]["reference"] = (
-                    dict(payload) if payload.get("kind") == "ready" else None
-                )
+                task = self.items[identifier]
+                kind = payload.get("kind")
+                if kind == "queue":
+                    task["plans"] = {
+                        p["plan_id"]: {**p, "status": "queued"} for p in payload["plans"]
+                    }
+                elif kind in {"plan_started", "plan_finished"}:
+                    entry = task.setdefault("plans", {}).setdefault(payload["plan_id"], {})
+                    entry.update(
+                        {k: payload[k] for k in ("work", "output", "error") if k in payload}
+                    )
+                    if entry.get("error"):
+                        entry["error"] = redact_sensitive(entry["error"])
+                    entry["status"] = "running" if kind == "plan_started" else payload["status"]
+                    task["reference"] = None
+                else:
+                    task["reference"] = dict(payload) if kind == "ready" else None
                 self._save()
 
         try:

@@ -55,7 +55,13 @@ class Batch:
 
     def list(self):
         with self.lock:
-            return json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else []
+            from .batch_compat import normalize_subtitle_plan
+
+            old = json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else []
+            queue = [normalize_subtitle_plan(p) for p in old]
+            if queue != old:
+                self._save(queue)
+            return queue
 
     def _save(self, queue):
         atomic_write_text(self.path, json.dumps(queue, ensure_ascii=False))
@@ -100,11 +106,12 @@ class Batch:
         embed_subtitles=False,
         rebuild=False,
         content=None,
-        subtitle_language="bilingual",
+        subtitle_language=None,
         editing="",
     ):
         defaults = current()
         content = content or defaults.autoflow_default_content
+        subtitle_language = subtitle_language or defaults.autoflow_subtitle_language
         plan = batch_plan.build_plan_for_ui(
             folder,
             edition,
@@ -115,7 +122,7 @@ class Batch:
             embed_subtitles,
             rebuild,
             subtitles_only=content in {"subtitles", "source_subtitles"},
-            source_subtitles_only=content == "source_subtitles",
+            source_subtitles_only=content == "subtitles",
             subtitle_language=subtitle_language,
             task_content=content,
             settings=defaults,
@@ -153,6 +160,23 @@ class Batch:
             self.running = True
         if request.get("plan"):
             queue = [item for item in queue if item["plan_id"] == request["plan"]]
+        if not queue:
+            self.running = False
+            raise ValueError("队列没有作品：请先添加作品，再开始处理。此次未处理任何文件。")
+        outcomes = {}
+        reference(
+            {
+                "kind": "queue",
+                "plans": [
+                    {
+                        "plan_id": p["plan_id"],
+                        "work": Path(p["folder"]).name,
+                        "output": p["output_root"],
+                    }
+                    for p in queue
+                ],
+            }
+        )
         report("开始处理队列。", 0, len(queue))
 
         def reference_event(payload):
@@ -160,6 +184,8 @@ class Batch:
             if kind == "plan_finished":
                 with self.lock:
                     self.finished.add(payload["plan_id"])
+                    outcomes[payload["plan_id"]] = payload
+                reference(payload)
             elif kind == "prepare":
                 chosen = self.reference()
                 if payload.get("plan_id") in chosen.get("plans", []):
@@ -172,9 +198,10 @@ class Batch:
         class LogStream(io.TextIOBase):
             def write(self, value):
                 if value.strip():
-                    report(value.strip(), 0, len(queue))
+                    report(value.strip(), len(self_batch.finished), len(queue))
                 return len(value)
 
+        self_batch = self
         try:
             with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
                 result, outputs = batch_queue.run_queue(
@@ -188,6 +215,7 @@ class Batch:
             "exit_code": result,
             "plans": [plan["plan_id"] for plan in queue],
             "outputs": outputs,
+            "outcomes": outcomes,
             "subtitles": batch_queue.subtitle_output_rows(outputs),
         }
         if result:

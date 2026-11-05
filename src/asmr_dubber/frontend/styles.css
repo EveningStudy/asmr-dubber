@@ -332,3 +332,12 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
   .queue-reference-row { flex-wrap: wrap; }
   .queue-reference-row .grow { flex-basis: 100%; }
 }
+
+.batch-summary { font-size: 14px; font-weight: 600; margin: 10px 2px; }
+.batch-status { padding: 4px 10px; border-radius: 12px; background: var(--fill-2); white-space: nowrap; font-size: 12px; }
+.batch-status.completed { color: #16733d; background: #e5f6ec; }
+.batch-status.running, .batch-status.awaiting_reference { color: #0759a5; background: #e4f0ff; }
+.batch-status.failed, .batch-error { color: #b3261e; }
+.batch-status.failed { background: #fce9e7; }
+.grow > small.batch-error { display: block; }
+[data-plan-status="running"], [data-plan-status="awaiting_reference"] { box-shadow: inset 3px 0 #087ad0; }

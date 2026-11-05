@@ -30,7 +30,10 @@ def make_work(tmp_path):
 
 def make_plan(work, layout="both"):
     settings = UserSettings(
-        autoflow_subtitle_language="source", autoflow_subtitle_naming="standard"
+        autoflow_subtitle_language="source",
+        autoflow_subtitle_naming="standard",
+        autoflow_translate_work_title=False,
+        autoflow_translate_track_titles=False,
     )
     scanned = scan_for_ui(work, settings=settings)
     payload = build_plan_for_ui(
@@ -81,9 +84,12 @@ def mock_runtime(tmp_path, monkeypatch):
     )
     commands = []
 
-    def create(paths, media, source_language):
+    def create(paths, media, source_language, project_name=None):
         _, folder = pipeline.create_project(
-            media, projects_root=tmp_path / "projects", source_language=source_language
+            media,
+            projects_root=tmp_path / "projects",
+            source_language=source_language,
+            project_name=project_name,
         )
         return folder / "project.json"
 
@@ -106,7 +112,6 @@ def mock_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(e, "create_asmr_project", create)
     monkeypatch.setattr(e, "run_asmr_cli", cli)
     for name in (
-        "translated_plan_titles",
         "render_static_video",
         "render_static_bilingual_video",
         "normalize_and_concat",
@@ -114,6 +119,12 @@ def mock_runtime(tmp_path, monkeypatch):
         monkeypatch.setattr(
             e, name, lambda *a, **k: pytest.fail("unexpected media/translation work")
         )
+
+    def titles(plan_id, folder, sources, paths, **flags):
+        assert not any(flags.values())
+        return folder.name, {s.relative_path or s.path.name: s.title_ja for s in sources}
+
+    monkeypatch.setattr(e, "translated_plan_titles", titles)
     return commands
 
 

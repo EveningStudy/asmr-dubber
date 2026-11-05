@@ -124,6 +124,9 @@ def _candidates(directory: Path, categories: list[str]) -> list[Path]:
 
 
 def scan_caches(root_text: str, categories: list[str]) -> dict:
+    from .project_origin import origin_index, project_origin
+
+    origins = origin_index()
     root = Path(root_text).expanduser().absolute()
     if not root.is_dir() or not plain_path(root, root):
         raise ProjectError("请选择实际项目目录；不接受符号链接或目录联接。")
@@ -140,6 +143,7 @@ def scan_caches(root_text: str, categories: list[str]) -> dict:
                 plan["projects"].append(
                     {
                         "path": str(directory),
+                        **project_origin(directory, origins),
                         "files": {str(p.relative_to(directory)): _signature(p) for p in files},
                     }
                 )

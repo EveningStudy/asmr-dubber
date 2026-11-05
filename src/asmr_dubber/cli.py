@@ -210,6 +210,7 @@ def create_command(
     offset_ms: Annotated[int | None, typer.Option("--offset-ms")] = None,
     max_speed: Annotated[float | None, typer.Option("--max-speed")] = None,
     source_language: Annotated[str, typer.Option("--source-language")] = "ja",
+    project_name: Annotated[str | None, typer.Option("--project-name")] = None,
 ) -> None:
     """从音频或视频建立项目并保存原始文件副本。"""
     try:
@@ -227,6 +228,7 @@ def create_command(
             input_media,
             projects_root,
             settings=settings,
+            project_name=project_name,
             source_language=cast(SpeechSourceLanguage, source_language),
         )
     except (AsmrDubberError, ValueError) as exc:

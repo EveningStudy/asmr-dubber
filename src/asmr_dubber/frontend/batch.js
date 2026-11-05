@@ -16,6 +16,7 @@ import {
   upload,
 } from './session.js';
 import { referenceDialog } from './project_dialogs.js';
+import { renderQueue, renderHistory } from './batch_view.js';
 
 let scan = null,
   editing = '',
@@ -54,17 +55,10 @@ export function renderBatch() {
     (task) => task.kind === 'batch' && ['queued', 'running', 'cancelling'].includes(task.status),
   );
   const history = state.tasks.filter(
-    (task) => task.kind === 'batch' && !['queued', 'running', 'cancelling'].includes(task.status),
-  );
-  const completedPlans = new Set(
-    history
-      .filter((task) => task.status === 'completed' && task.result?.exit_code === 0)
-      .flatMap((task) => task.result.plans || []),
+    (task) => task.kind === 'batch' && !task.hidden && !['queued', 'running', 'cancelling'].includes(task.status),
   );
   $('#queueBadge').textContent = state.queue.length || '';
-  $('#batchQueue').innerHTML = state.queue.length
-    ? `<div class="label"><b>${t('队列')}</b><span>${t('按顺序处理，可拖动调整')}</span></div><div class="card q">${state.queue.map((plan, index) => `<div class="row" draggable="${!active}" data-plan-row="${plan.plan_id}"><div class="grow"><div class="t">${esc(plan.folder.split(/[\\/]/).pop())}</div><div class="d">${t('{count} 条音轨', { count: plan.sources.length })} · ${esc(t(plan.edition.output_policy?.content || 'dubbing'))} · ${esc(t(plan.layout))}</div></div><div class="prog">${completedPlans.has(plan.plan_id) ? t('已完成') : active ? t('正在处理…') : t('等待中')}</div>${active ? '' : `<button class="btn" data-edit-plan="${plan.plan_id}">${t('编辑')}</button><button class="btn plain" data-remove-plan="${plan.plan_id}">${t('删除')}</button><button class="btn plain" data-plan-up="${index}"${index === 0 ? ' disabled' : ''}>↑</button>`}</div>`).join('')}</div>${active ? taskHTML(active) : ''}`
-    : `<div class="card empty"><b>${t('队列是空的')}</b><p>${t('添加一个已解压的作品文件夹开始。')}</p></div>`;
+  $('#batchQueue').innerHTML = renderQueue(active);
   $('#runBatch').disabled = !!active || !state.queue.length;
   $('#setQueueReference').disabled = !!active || !state.queue.length;
   const request = active?.reference;
@@ -72,12 +66,7 @@ export function renderBatch() {
     ? `<div class="card"><div class="row"><div class="grow"><div class="t">${esc(request.work || '')} · ${t('音色参考')}</div><div class="d">${t('等待时间结束后使用自动推荐的项目片段。')} ${request.deadline_epoch ? Math.max(0, Math.ceil(request.deadline_epoch - Date.now() / 1000)) : ''} ${t('秒')}</div></div><button class="btn" id="chooseBatchReference">${t('试听并选择')}</button></div></div>`
     : `<p class="muted">${t('没有需要确认的任务')}</p>`;
   if (request) $('#chooseBatchReference').onclick = guard(() => referenceDialog(request.project_json, true));
-  $('#batchHistory').innerHTML = history
-    .map(
-      (task) =>
-        `${taskHTML(task)}${(task.result?.outputs || []).map((path) => `<div class="row"><span class="grow">${esc(path)}</span><button class="btn" data-batch-output="${esc(path)}">${t('打开文件夹')}</button></div>`).join('')}`,
-    )
-    .join('');
+  $('#batchHistory').innerHTML = renderHistory(history);
 }
 function taskFields() {
   const defaults = state.boot.settings;
@@ -199,7 +188,7 @@ async function workDialog(identifier = '') {
     const plan = state.queue.find((plan) => plan.plan_id === identifier);
     $('#batchContent').value =
       plan.edition.output_policy?.content ||
-      (scan.source_subtitles_only ? 'source_subtitles' : scan.subtitles_only ? 'subtitles' : 'dubbing');
+      (scan.source_subtitles_only ? 'subtitles' : scan.subtitles_only ? 'source_subtitles' : 'dubbing');
   }
 }
 function renderScan() {
@@ -250,6 +239,13 @@ export function initializeBatch() {
   document.addEventListener(
     'click',
     guard(async (event) => {
+      const hide = event.target.closest('[data-dismiss-batch]');
+      if (hide) {
+        await api('tasks/dismiss', {identifier: hide.dataset.dismissBatch});
+        state.tasks = await api('tasks/list');
+        renderBatch();
+        return;
+      }
       const edit = event.target.closest('[data-edit-plan]');
       if (edit) {
         await workDialog(edit.dataset.editPlan);

@@ -74,7 +74,14 @@ async function pollTasks() {
           await refreshLogs();
         if (task.kind === 'update') updateFinished(task);
         else notice(task.result?.message || t('任务完成'));
-      } else if (task.status === 'failed') notice(task.error, true);
+      } else if (task.status === 'failed') {
+        if (state.project && task.request.project === state.project.manifest) {
+          await flushSaves();
+          state.project = await api('projects/get', {project: state.project.manifest});
+          renderProject();
+        }
+        notice(task.error, true);
+      }
     }
     refreshTaskViews();
   } catch (error) {

@@ -1,3 +1,4 @@
+import { renderRecovery, initializeRecovery } from './project_translation.js';
 import {
   $,
   $$,
@@ -62,6 +63,7 @@ export function renderProject() {
     count: project.sentences.length,
   });
   $('#translateRemaining').textContent = t('翻译剩余 {count} 句', { count: enabled.length - translated });
+  renderRecovery(project);
   $('#translationStat').textContent = t('已翻译 {done} / {total} 句。', {
     done: translated,
     total: enabled.length,
@@ -117,7 +119,7 @@ function renderRows() {
   $('#rows').innerHTML = page
     .map(
       (sentence) =>
-        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''} aria-label="${t('参与配音')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!projectBusy()}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!projectBusy()}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${sentence.tts_url ? `<button class="play" data-play="${esc(sentence.id)}" aria-label="${t('试听')}">▶</button>${Number(sentence.tts_duration_seconds || 0).toFixed(1)} ${t('秒')}` : t(sentence.enabled ? '未生成' : '不配音')}</td></tr>`,
+        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!projectBusy()}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!projectBusy()}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${sentence.tts_url ? `<button class="play" data-play="${esc(sentence.id)}" aria-label="${t('试听')}">▶</button>${Number(sentence.tts_duration_seconds || 0).toFixed(1)} ${t('秒')}` : sentence.error ? `<span class="batch-error" title="${esc(sentence.error)}">${t('翻译或配音待重试')}</span>` : t(sentence.enabled ? '未生成' : '不配音')}</td></tr>`,
     )
     .join('');
   renderControls();
@@ -311,6 +313,7 @@ export function initializeProjects() {
       () => startTask('translate', { force: true }),
     ),
   );
+  initializeRecovery(saveRows, renderProject);
   $('#exportProject').onclick = guard(() =>
     startTask('export', { audio: $('#exportAudio').value === 'true', language: $('#exportSubtitle').value }),
   );
@@ -386,14 +389,14 @@ export function initializeProjects() {
           chinese_audio_gain_db: 0,
         });
         await saveRows();
-        renderRows();
+        renderProject();
         return;
       }
       if (event.target.id === 'deleteSentence') {
         state.project.sentences = state.project.sentences.filter((s) => s.id !== selected);
         selected = state.project.sentences[0]?.id || '';
         await saveRows();
-        renderRows();
+        renderProject();
         return;
       }
       const row = event.target.closest('tr[data-sentence]');
@@ -438,6 +441,10 @@ export function initializeProjects() {
             ? { default: null, on: true, off: false }[node.value]
             : Number(node.value);
       await saveRows(sentence.id);
+      if (key === 'enabled') {
+        state.project = await api('projects/get', {project: state.project.manifest});
+        renderProject();
+      }
     }),
   );
   const source = $('#sourcePlayer'),

@@ -210,3 +210,7 @@ Closing the black window that appeared at startup stops the program. Closing the
 - The dub and the original do not sit well together: [Mixing and spatial following](EXPERIMENTAL_AUDIO.md)
 - Different models or services: [Models and services](BACKENDS.md)
 - Something went wrong: [Troubleshooting](TROUBLESHOOTING.md)
+
+## Missing translations and retry
+
+Blank translations of meaningful speech are retried individually. Persistent failures remain enabled with a retry message; successful translations are saved. Use the ordinary remaining-translations button to retry. Older incorrectly skipped speech can be restored together or enabled individually, updating row appearance and counts immediately. No inserted blank sentence or project reload is needed. Nonverbal laughter and breathing can still be skipped.

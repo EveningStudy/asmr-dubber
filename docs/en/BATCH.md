@@ -120,3 +120,13 @@ To redo a completed work from scratch, edit it and tick **Reprocess**. This over
 | Voice reference | Whether to wait for you and for how long |
 
 Recognition, translation and dubbing use the settings under **Settings → New project defaults**. See [Settings and storage](CONFIGURATION.md).
+
+## Subtitle choices, progress and intermediate projects
+
+Subtitle-files-only exports SRT/LRC without original media; original audio with subtitles retains a media output. Subtitle language controls content, naming controls filenames. Original naming uses track names for separate subtitles and the work folder for multi-track merged subtitles. Title translation also applies to subtitle-only work; disable both title options to avoid translation service calls.
+
+Every work shows its own waiting, running, reference-waiting, completed or failed status. One failure does not hide successes or stop later works. Timestamped history can be hidden without changing files. Empty queues cannot start tasks.
+
+Old subtitle queue entries adopt their displayed meaning after upgrade. Existing exports are retained until an explicit rebuild or output-folder change. Old execution checkpoints are not mixed into corrected results.
+
+New batch project directories contain work, track or merged names and task IDs. Settings → Storage lists project ownership and actual paths. Older projects recover labels from available checkpoints without moving directories.

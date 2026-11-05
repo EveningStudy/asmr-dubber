@@ -19,6 +19,7 @@ from .api_contracts import APIContractError, merge_extra_body
 from .api_logging import logged_http_client, safe_api_url
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
+from .filtering import has_speakable_text, is_japanese_filler_only
 from .languages import (
     MACHINE_TRANSLATION_LANGUAGE_CODES,
     SourceLanguage,
@@ -36,6 +37,12 @@ from .task_control import (
 
 Progress = Callable[[str, int, int], None]
 logger = logging.getLogger(__name__)
+
+
+def empty_translation_is_expected(sentence: Sentence) -> bool:
+    return not has_speakable_text(sentence.source_text) or is_japanese_filler_only(
+        sentence.source_text
+    )
 
 
 class _NonRetryableTranslationError(TranslationError):
@@ -1599,8 +1606,35 @@ def translate_sentences(
                 except TranslationError:
                     check_cancelled(cancel_event)
                     raise
+                failed = []
                 for sentence in chunk.sentences:
                     translation = translations[sentence.id].strip()
+                    if not translation and not empty_translation_is_expected(sentence):
+                        # A blank semantic line is retried alone, rather than
+                        # silently being classified as a sound effect.
+                        try:
+                            retried = translator.translate_chunk(
+                                TranslationChunk([sentence]),
+                                _context_for_chunk(
+                                    sentences, TranslationChunk([sentence]), context_sentences
+                                )
+                                if send_context
+                                else "[]",
+                                _bounded_translation_memory(sentences, chunk, memory_sentences)
+                                if send_context
+                                else "[]",
+                                job_id,
+                            )
+                            translation = retried[sentence.id].strip()
+                        except TranslationError:
+                            check_cancelled(cancel_event)
+                        if not translation:
+                            sentence.status = "translation_failed"
+                            sentence.error = (
+                                "翻译服务未返回此句译文，单句重试后仍为空；保留启用，可再次翻译。"
+                            )
+                            failed.append(sentence.id)
+                            continue
                     sentence.zh_text = translation
                     if translation:
                         sentence.status = "translated"
@@ -1613,6 +1647,11 @@ def translate_sentences(
                     sentence.error = None
                 if on_batch:
                     on_batch()
+                if failed:
+                    raise TranslationError(
+                        f"{len(failed)} 句未取得译文（{', '.join(failed[:8])}）；"
+                        "其他已完成译文已保存，请再次翻译剩余句子。"
+                    )
                 check_cancelled(cancel_event)
                 index += 1
                 if progress:

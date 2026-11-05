@@ -38,6 +38,8 @@ class Application:
 
     def start(self, request):
         kind = request["kind"]
+        if kind == "batch":
+            self._require_batch_queue(request)
         if request.get("project"):
             project, directory = load_project(request["project"])
             if request.get("revision") != project.revision:
@@ -72,8 +74,17 @@ class Application:
     def resume(self, identifier):
         with self.tasks.lock:
             task = self.tasks.get(identifier)
+            if task["kind"] == "batch":
+                self._require_batch_queue(task["request"])
             self._assert_ready(task["kind"], task["resource"])
             return self.tasks.resume(identifier)
+
+    def _require_batch_queue(self, request):
+        queue = self.batch.list()
+        if request.get("plan"):
+            queue = [p for p in queue if p["plan_id"] == request["plan"]]
+        if not queue:
+            raise ValueError("队列没有作品：请先添加作品，再开始处理。此次未启动批量任务。")
 
     def update_settings(self, changes, project=None, revision=None):
         if project:
@@ -140,6 +151,8 @@ class Application:
         return {"manifest": result["manifest"]} if "manifest" in result else result
 
     def storage(self):
+        from ..project_origin import project_inventory
+
         home = portable_home()
         active = settings.current()
         model_sizes = models.model_storage(active)
@@ -154,6 +167,7 @@ class Application:
         return {
             "sizes": sizes,
             "root": str(roots["项目"]),
+            "projects": project_inventory(roots["项目"]),
         }
 
     def scan_storage(self, root, categories):

@@ -29,6 +29,7 @@ class API:
             "tasks/list": (contract.Empty, application.tasks.list),
             "tasks/get": (contract.TaskID, application.tasks.get),
             "tasks/cancel": (contract.TaskID, application.tasks.cancel),
+            "tasks/dismiss": (contract.TaskID, application.tasks.dismiss),
             "tasks/resume": (contract.TaskID, application.resume),
             "batch/list": (contract.Empty, application.batch.list),
             "batch/reference": (contract.BatchReferenceRequest, application.batch.reference),

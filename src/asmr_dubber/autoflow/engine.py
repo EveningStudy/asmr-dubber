@@ -1901,6 +1901,7 @@ def create_asmr_project(
     video: Path,
     *,
     source_language: str = "ja",
+    project_name: str | None = None,
 ) -> Path:
     projects_root = configured_projects_root(paths)
     before = known_project_manifests(projects_root)
@@ -1913,6 +1914,7 @@ def create_asmr_project(
         str(projects_root),
         "--source-language",
         source_language if source_language in {"ja", "en", "zh"} else "ja",
+        *(("--project-name", project_name) if project_name else ()),
     )
     ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
     for raw_line in reversed(output.splitlines()):
@@ -3668,11 +3670,10 @@ def prepare_smart_output_root(
     if not needs_clear:
         return
     if not force and generated_exists:
-        print("\nAutoFlow 输出目录中已有另一项任务的文件：")
-        print(f"  {output_root}")
-        answer = input("清理 AutoFlow 自己生成的旧内容并继续吗？输入 Y 确认：").strip().casefold()
-        if answer != "y":
-            raise KeyboardInterrupt
+        raise VideoPreparerError(
+            f"输出目录已有旧选项生成的结果：{output_root}。"
+            "旧文件已保留；请编辑该作品并勾选“重新处理”，或更换成品输出文件夹。"
+        )
     clear_smart_outputs(output_root)
 
 
@@ -5038,10 +5039,17 @@ def execute_task(
 
     if not status_at_least(state, "project_created"):
         print("\n[3/5] 创建 ASMR Dubber 项目")
+        from ..project_origin import batch_project_name
+
         project_json = create_asmr_project(
             paths,
             Path(state["dubbing_input"]),
             source_language=source_language_for_sources(sources),
+            project_name=batch_project_name(
+                Path(state.get("source_folder", folder)).name,
+                sources[0].path.stem if len(sources) == 1 else "合并版",
+                state.get("plan_id", ""),
+            ),
         )
         state["project_json"] = str(project_json)
         ensure_autoflow_project_outputs(project_json)
@@ -5056,6 +5064,16 @@ def execute_task(
         save_state(state_file, state)
 
     project_json = Path(state["project_json"])
+    from ..project_origin import record_batch_origin
+
+    if project_json.is_file():
+        record_batch_origin(
+            project_json,
+            source_folder=state.get("source_folder", folder),
+            plan_id=state.get("plan_id", ""),
+            job_id=state.get("job_id", ""),
+            track=sources[0].path.stem if len(sources) == 1 else "合并版",
+        )
     if not project_json.is_file() and not status_at_least(state, "outputs_ready"):
         raise VideoPreparerError(f"ASMR Dubber 项目已经不存在：{project_json}")
     old_import = state.get("transcript_import") or {}
@@ -6515,6 +6533,16 @@ def execute_smart_queue(
         print("\n" + "=" * 68)
         print(f"  队列 {index}/{len(plans)} · {plan.folder.name}")
         print("=" * 68)
+        outcome, failure_message = "completed", ""
+        if reference_event_callback is not None:
+            reference_event_callback(
+                {
+                    "kind": "plan_started",
+                    "plan_id": plan.plan_id,
+                    "work": plan.folder.name,
+                    "output": str(plan.output_root),
+                }
+            )
         try:
             if executor is None:
                 execute_prepared_smart_plan(
@@ -6528,9 +6556,11 @@ def execute_smart_queue(
             remove_failed_task(plan.plan_id)
             remove_failed_task(plan.retry_of)
         except (KeyboardInterrupt, OperationCancelledError):
+            outcome = "cancelled"
             raise
         except VideoPreparerError as exc:
             message = str(exc)
+            outcome, failure_message = "failed", message
             failures.append((plan, message))
             save_failed_task(plan, error=message)
             if plan.retry_of and plan.retry_of != plan.plan_id:
@@ -6540,6 +6570,7 @@ def execute_smart_queue(
             print("已有状态和成品已保留，继续处理下一个作品。", file=sys.stderr)
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
+            outcome, failure_message = "failed", message
             failures.append((plan, message))
             save_failed_task(plan, error=message)
             if plan.retry_of and plan.retry_of != plan.plan_id:
@@ -6551,7 +6582,16 @@ def execute_smart_queue(
 
         finally:
             if reference_event_callback is not None:
-                reference_event_callback({"kind": "plan_finished", "plan_id": plan.plan_id})
+                reference_event_callback(
+                    {
+                        "kind": "plan_finished",
+                        "plan_id": plan.plan_id,
+                        "status": outcome,
+                        "error": failure_message,
+                        "work": plan.folder.name,
+                        "output": str(plan.output_root),
+                    }
+                )
 
     succeeded = len(plans) - len(failures)
     print("\n" + "=" * 68)

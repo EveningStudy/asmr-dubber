@@ -309,17 +309,20 @@ def test_batch_subtitle_content_sets_core_execution_flags(application, tmp_path,
         content=content,
     )
     assert queue[0]["subtitles_only"] is True
-    assert queue[0]["source_subtitles_only"] == (content == "source_subtitles")
+    assert queue[0]["source_subtitles_only"] == (content == "subtitles")
     assert queue[0]["edition"]["output_policy"]["content"] == content
-    if content == "source_subtitles":
+    if content == "subtitles":
         assert queue[0]["mode"] == "audio"
 
 
-def test_failed_batch_retains_outputs_and_can_resume(application, monkeypatch):
+def test_failed_batch_retains_outputs_and_can_resume(application, monkeypatch, tmp_path):
     from asmr_dubber.services import batch_queue
 
     monkeypatch.setattr(batch_queue, "run_queue", lambda *args, **kwargs: (1, ["partial-output"]))
     monkeypatch.setattr(batch_queue, "subtitle_output_rows", lambda *args: [])
+    application.batch._save(
+        [{"plan_id": "one", "folder": str(tmp_path), "output_root": str(tmp_path / "out")}]
+    )
     task = application.start({"kind": "batch"})
     failed = completed(application.tasks, task["id"])
     assert failed["status"] == "failed"

@@ -185,7 +185,7 @@ class PlanRequest(Request):
     content: Literal["dubbing", "replacement", "both", "subtitles", "source_subtitles"] | None = (
         None
     )
-    subtitle_language: Literal["bilingual", "source", "zh"] = "bilingual"
+    subtitle_language: Literal["bilingual", "source", "zh"] | None = None
     editing: str = ""
 
 

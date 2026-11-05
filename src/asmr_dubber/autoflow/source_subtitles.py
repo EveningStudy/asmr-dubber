@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..models import load_project, save_project
 from ..pipeline import import_project_transcript
+from ..project_origin import batch_project_name, record_batch_origin
 from ..task_control import check_cancelled
 from . import engine as e
 from .domain import AppConfig, SmartTaskPlan, ToolPaths
@@ -31,6 +32,14 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
 
     root = plan.output_root
     e.prepare_smart_output_root(root, plan_id=plan.plan_id, force=plan.force, rebuild=plan.rebuild)
+    folder_translation, titles = e.translated_plan_titles(
+        plan.plan_id,
+        plan.folder,
+        list(plan.sources),
+        paths,
+        translate_work_title=plan.translate_work_title,
+        translate_track_titles=plan.translate_track_titles,
+    )
     e.write_plan_manifest(
         root / "处理清单.json",
         source_folder=plan.folder,
@@ -60,7 +69,10 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         project_json = Path(str(state.get("project_json") or ""))
         if not project_json.is_file():
             project_json = e.create_asmr_project(
-                paths, source.path, source_language=source.source_language
+                paths,
+                source.path,
+                source_language=source.source_language,
+                project_name=batch_project_name(plan.folder.name, source.path.stem, plan.plan_id),
             )
             from .output_policy import configure_project
 
@@ -68,6 +80,13 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
             state["project_json"] = str(project_json)
             state["analyzed"] = False
             e.save_state(state_path, state)
+        record_batch_origin(
+            project_json,
+            source_folder=plan.folder,
+            plan_id=plan.plan_id,
+            job_id=f"source-{index:04d}",
+            track=source.path.stem,
+        )
         if not state.get("analyzed"):
             # Source subtitles provide the original text. Chinese subtitles can
             # directly satisfy Chinese-only output without inventing source text.
@@ -155,7 +174,11 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
                 "status": "completed",
                 "project_json": str(project_json),
                 "outputs": state["outputs"],
-                "output": str(root / "分轨" / f"{index:03d}"),
+                "output": str(
+                    root / "合并版"
+                    if plan.layout == e.LAYOUT_MERGED
+                    else root / "分轨" / f"{index:03d}"
+                ),
             }
         )
         print(f"{labels[language]} {index}/{len(plan.sources)} 完成：{source.path.name}")
@@ -167,7 +190,6 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         )
         e.combine_srt_files(srt_entries, merged / f"{name}.srt", final_offset_ms=0)
         e.combine_lrc_files(lrc_entries, merged / f"{name}.lrc", final_offset_ms=0)
-    titles = {source.relative_path or source.path.name: source.title_ja for source in plan.sources}
     e.write_smart_summary(
         root,
         source_folder=plan.folder,
@@ -176,7 +198,7 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         sources=plan.sources,
         states=states,
         descriptors=descriptors,
-        folder_translation=plan.folder.name,
+        folder_translation=folder_translation,
         title_translations=titles,
         footer=config.timestamp_footer,
         footer_position=config.timestamp_footer_position,

@@ -87,7 +87,14 @@ def test_translation_ready_uses_selected_provider_and_environment(app, monkeypat
 def test_live_queue_reference_applies_at_synthesis_after_snapshot_and_survives_restart(
     app, tmp_path, monkeypatch
 ):
-    plans = [{"plan_id": name} for name in ("done", "waiting-1", "waiting-2")]
+    plans = [
+        {
+            "plan_id": name,
+            "folder": str(tmp_path / name),
+            "output_root": str(tmp_path / name / "out"),
+        }
+        for name in ("done", "waiting-1", "waiting-2")
+    ]
     app.batch._save(plans)
     audio = tmp_path / "external.wav"
     sf.write(audio, np.zeros(24000), 24000)

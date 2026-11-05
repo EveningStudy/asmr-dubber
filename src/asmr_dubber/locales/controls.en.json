@@ -210,5 +210,18 @@
   "将用于队列里所有等待作品；情绪仍跟随各句。": "Use for all waiting works in the queue; emotion still follows each sentence.",
   "请选择外部音频。": "Choose an external audio file.",
   "外部音频同时用于所有等待作品": "Use external audio for all waiting works too",
-  "默认字幕语言": "Default subtitle language"
+  "默认字幕语言": "Default subtitle language",
+  "历史记录": "History",
+  "隐藏记录": "Hide record",
+  "还没有历史记录": "No run history yet",
+  "这次运行没有可执行作品，未处理任何文件。": "This run had no queued works. No files were processed.",
+  "等待音色参考": "Waiting for voice reference",
+  "已中断": "Interrupted",
+  "已暂停": "Paused",
+  "已完成 {done}/{total} · 失败 {failed} · 等待 {waiting}": "Completed {done}/{total} · Failed {failed} · Waiting {waiting}",
+  "恢复误跳过的句子（{count}）": "Restore skipped speech ({count})",
+  "启用句子": "Enable sentence",
+  "翻译或配音待重试": "Translation or dubbing needs retry",
+  "项目与批量中间产物": "Projects and batch intermediates",
+  "translation_failed": "Translation failed"
 }

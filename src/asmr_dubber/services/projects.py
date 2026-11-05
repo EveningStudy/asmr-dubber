@@ -54,6 +54,16 @@ class Projects:
             stored = sentence.get("tts_file")
             sentence["tts_url"] = self.media.register(directory / stored) if stored else None
         result["diagnostics"] = project_records.diagnostics(active)
+        from ..translation import empty_translation_is_expected
+
+        result["recoverable_translations"] = [
+            s.id
+            for s in active.sentences
+            if s.status == "skipped_filler"
+            and not s.enabled
+            and not s.zh_text
+            and not empty_translation_is_expected(s)
+        ]
         choices, selected, _ = project_audio.reference_picker(project, include_preview=False)
         result["reference_choices"], result["reference_selected"] = choices, selected
         return result

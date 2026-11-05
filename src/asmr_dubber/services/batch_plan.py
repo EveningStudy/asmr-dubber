@@ -93,6 +93,9 @@ def serialize_plan(plan: engine.SmartTaskPlan) -> dict[str, Any]:
 def deserialize_plan(payload: Any) -> engine.SmartTaskPlan:
     if not isinstance(payload, dict):
         raise ProjectError("自动处理队列数据无效。")
+    from .batch_compat import normalize_subtitle_plan
+
+    payload = normalize_subtitle_plan(payload)
     try:
         sources = tuple(engine.deserialize_audio_source(item) for item in payload["sources"])
         plan = engine.SmartTaskPlan(
@@ -248,13 +251,16 @@ def build_plan_for_ui(
     from ..autoflow.output_policy import policy_for_settings
 
     content = task_content or (
-        "source_subtitles"
+        "subtitles"
         if source_subtitles_only
-        else "subtitles"
+        else "source_subtitles"
         if subtitles_only
         else "dubbing"
     )
+    source_subtitles_only = content == "subtitles"
+    subtitles_only = content in {"subtitles", "source_subtitles"}
     edition["output_policy"] = policy_for_settings(current, content, selected_subtitle_language)
+    edition["output_policy"]["content_version"] = 2
     mode = engine.MODE_AUDIO if source_subtitles_only else engine.normalize_mode(mode_value)
     subtitles_only = bool(subtitles_only or source_subtitles_only)
     layout = engine.normalize_layout(layout_value)
@@ -269,9 +275,8 @@ def build_plan_for_ui(
         output_root=output_root,
         background=background,
         embed_subtitles=bool(embed_subtitles) if mode != engine.MODE_AUDIO else False,
-        translate_work_title=current.autoflow_translate_work_title and not source_subtitles_only,
-        translate_track_titles=current.autoflow_translate_track_titles
-        and not source_subtitles_only,
+        translate_work_title=current.autoflow_translate_work_title,
+        translate_track_titles=current.autoflow_translate_track_titles,
         subtitles_only=bool(subtitles_only),
         source_subtitles_only=bool(source_subtitles_only),
         subtitle_language=selected_subtitle_language,
@@ -291,9 +296,8 @@ def build_plan_for_ui(
         plan_id=plan_id,
         rebuild=bool(rebuild),
         force=bool(rebuild),
-        translate_work_title=current.autoflow_translate_work_title and not source_subtitles_only,
-        translate_track_titles=current.autoflow_translate_track_titles
-        and not source_subtitles_only,
+        translate_work_title=current.autoflow_translate_work_title,
+        translate_track_titles=current.autoflow_translate_track_titles,
         subtitles_only=bool(subtitles_only),
         source_subtitles_only=bool(source_subtitles_only),
         subtitle_language=selected_subtitle_language,
