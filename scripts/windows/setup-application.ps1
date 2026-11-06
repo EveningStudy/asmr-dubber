@@ -79,7 +79,7 @@ if (-not $ApiClientsReady) {
         # leave a fresh basic profile with a misleading "Checked 1 package"
         # result and a failed post-install check.
         "pip", "install", "--python", $Python,
-        "edge-tts==7.2.8", "httpx>=0.28.0"
+        "edge-tts==7.3.1", "httpx>=0.28.0"
     )
     $InstalledBundledApiClient = $false
     if ($BundledCoreWheelsReady) {

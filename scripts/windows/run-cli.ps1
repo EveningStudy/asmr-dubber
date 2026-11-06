@@ -16,14 +16,15 @@ $HuggingFaceEndpoints = @(Set-ASMRDubberHuggingFaceEnvironment `
 . (Join-Path $Root "scripts\portable-runtime.ps1")
 $Paths = Initialize-ASMRDubberPortableEnvironment -Root $Root -Create
 $Python = $Paths.Python
-if (-not (Test-Path $Python)) {
+. (Join-Path $Root "scripts\windows-runtime.ps1")
+. (Join-Path $PSScriptRoot "recommended-dependencies.ps1")
+if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $Paths.Home)) {
     & (Join-Path $PSScriptRoot "setup.ps1") -Profile Core
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Python)) {
+    if ($LASTEXITCODE -ne 0 -or -not (Test-ASMRDubberCoreRuntime -PortableRoot $Paths.Home)) {
         throw "基础运行环境准备失败。"
     }
 }
 $DataRoot = $Paths.Home
-. (Join-Path $Root "scripts\windows-runtime.ps1")
 $SharedFFmpegBin = Enable-ASMRDubberSharedFFmpeg -DataRoot $DataRoot
 
 $ProcessArguments = @("-m", "asmr_dubber.cli") + $Arguments

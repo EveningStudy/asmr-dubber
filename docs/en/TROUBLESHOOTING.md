@@ -100,6 +100,12 @@ Laughter, breathing, "mm" and similar sounds are not translated. That is normal.
 
 ## Dubbing
 
+**Edge TTS returns 403 or voice previews fail**
+
+Upgrade to 2.2.1 or later, close the program and restart with the new launcher. Older edge-tts 7.2.8 is incompatible with Microsoft's new authentication. The launcher checks and updates the client to a compatible version (at least 7.3.1). No API key or speech-model download is needed.
+
+If 403 persists, retry later or check service access restrictions. HTTP 429 means rate limiting: reduce dubbing concurrency. Missing audio can be a temporary voice or service failure; change voices or retry only failed sentences. Synthesis respects the single-sentence timeout, and previews wait at most 30 seconds. Successful synthesis remains cached.
+
 **The voice does not sound like the original at all**
 
 - Make sure you are using a cloning model such as IndexTTS2. Edge TTS has fixed voices and will not resemble the original.

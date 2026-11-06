@@ -187,7 +187,7 @@ def test_every_setup_profile_installs_and_verifies_online_api_clients() -> None:
         package["version"] for package in lock["package"] if package["name"] == "edge-tts"
     )
 
-    api_install = windows.index('"edge-tts==7.2.8"')
+    api_install = windows.index('"edge-tts==7.3.1"')
     application_install = windows.index('Write-SetupHost "正在安装应用依赖')
     assert application_install < api_install
     assert f'"edge-tts=={edge_version}"' in windows
@@ -461,8 +461,8 @@ def test_windows_setup_does_not_turn_a_successful_install_into_exit_code_zero_fa
 def test_windows_launcher_sources_match_release_version() -> None:
     for name in ("ASMRDubberLauncher.cs",):
         source = (ROOT / "launcher/windows" / name).read_text(encoding="utf-8")
-        assert 'AssemblyVersion("2.2.0.0")' in source
-        assert 'AssemblyFileVersion("2.2.0.0")' in source
+        assert 'AssemblyVersion("2.2.1.0")' in source
+        assert 'AssemblyFileVersion("2.2.1.0")' in source
 
 
 def test_windows_launcher_uses_path_scoped_mutex_dynamic_port_and_product_marker() -> None:

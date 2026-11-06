@@ -445,6 +445,10 @@ def backend_status(
     if backend.id == "edge_tts":
         if not _imports_available(backend.id):
             return BackendStatus("missing", "运行依赖缺失", "请重新运行 Setup 修复基础依赖")
+        from .edge_tts_client import compatibility_problem
+
+        if problem := compatibility_problem():
+            return BackendStatus("broken", "客户端需更新", problem)
         return BackendStatus("ready", "可用", "无需 API Key；需要联网")
     if backend.runtime == "http":
         return BackendStatus("external", "外部服务", "保存服务地址后请先用短音频试运行")

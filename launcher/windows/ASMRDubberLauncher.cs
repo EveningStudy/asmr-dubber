@@ -14,8 +14,8 @@ using System.Threading;
 [assembly: AssemblyCompany("ASMR Dubber contributors")]
 [assembly: AssemblyProduct("ASMR Dubber")]
 [assembly: AssemblyCopyright("Copyright (c) ASMR Dubber contributors")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.2.1.0")]
+[assembly: AssemblyFileVersion("2.2.1.0")]
 
 namespace ASMRDubberLauncher
 {
@@ -194,7 +194,7 @@ namespace ASMRDubberLauncher
             {
                 ProcessStartInfo info = new ProcessStartInfo();
                 info.FileName = python;
-                info.Arguments = "-c \"import asmr_dubber.http_server, av, soundfile\"";
+                info.Arguments = "-c \"import asmr_dubber.http_server, av, soundfile; from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()\"";
                 info.WorkingDirectory = root;
                 info.UseShellExecute = false;
                 info.CreateNoWindow = true;

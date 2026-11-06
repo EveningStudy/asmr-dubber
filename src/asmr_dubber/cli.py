@@ -597,6 +597,10 @@ def doctor_command(
         try:
             version = importlib.metadata.version(distribution)
             importlib.import_module(module)
+            if distribution == "edge-tts":
+                from .edge_tts_client import require_compatible_client
+
+                require_compatible_client()
         except importlib.metadata.PackageNotFoundError:
             version = "未安装"
             healthy = False

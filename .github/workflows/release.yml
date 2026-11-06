@@ -89,7 +89,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Bundled Windows core wheelhouse failed its offline install smoke test."
           }
-          & $smokePython -c "import asmr_dubber.ui, edge_tts, pydantic, httpx, setuptools"
+          & $smokePython -c "import asmr_dubber.ui, edge_tts, pydantic, httpx, setuptools; from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()"
           if ($LASTEXITCODE -ne 0) {
             throw "Bundled Windows core wheelhouse failed its runtime import smoke test."
           }

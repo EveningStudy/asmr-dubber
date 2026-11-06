@@ -1,23 +1,20 @@
-English | [中文](https://github.com/EveningStudy/asmr-dubber/blob/v2.2.0/docs/RELEASE.md)
+English | [中文](https://github.com/EveningStudy/asmr-dubber/blob/v2.2.1/docs/RELEASE.md)
 
-# ASMR Dubber 2.2.0
+# ASMR Dubber 2.2.1
 
 ## Fixes and improvements
 
-- Corrected batch subtitle routing: subtitle-files-only exports SRT/LRC; original audio with subtitles retains media. Translation-only text, original filenames and title translation follow their settings.
-- Existing subtitle queues adopt displayed intent with new execution identities. Old exports are retained until an explicit rebuild or output-folder change.
-- Blank translations of meaningful speech are retried individually. Persistent failures remain enabled with errors, preserving successful translations. Older skipped speech can be restored; row appearance and remaining counts update immediately.
-- Each queued work has its own waiting, running, reference-waiting, completed or failed state. Successful works remain visible in failed batches. Timestamped history can be hidden; empty queues no longer create failed tasks.
-- New batch project directories include the work, track and task ID. Storage and cleanup previews show ownership, including older checkpoint labels without moving projects.
+- Updated Edge TTS to 7.3.1 with Microsoft's new authentication protocol, fixing HTTP 403 during synthesis and voice previews with older clients.
+- The Windows launcher and launch scripts detect incompatible clients and repair existing core environments after an upgrade. Portable releases bundle compatible dependencies for offline repair first. Linux launch scripts also detect and repair older clients.
+- Synthesis and previews share retries, deadlines and cancellation. Synthesis respects the single-sentence timeout; previews wait at most 30 seconds. Silent service connections no longer wait indefinitely.
+- Separate messages for authentication refusal, rate limits, DNS failures, timeouts and missing audio. Failures remove temporary files while retaining successful synthesis caches.
 
 ## Download and upgrade
 
-On Windows, download `ASMR-Dubber-windows-portable-v2.2.0.zip`, extract all of it to a short path, and run `ASMR-Dubber.exe`.
+On Windows, download `ASMR-Dubber-windows-portable-v2.2.1.zip`, extract all of it to a short path, and run `ASMR-Dubber.exe`.
 
-From 2.x: close the program, back it up, and copy the new files over the existing program folder. Keep `.asmr-dubber`, which contains projects, models and settings.
+From 2.x: close the program, back it up, and copy the new files over the existing program folder. Keep `.asmr-dubber`, which contains projects, models and settings. The first launch checks and updates the core clients without downloading speech models again.
 
 From 1.x: close the program, delete the old `src` folder and `ASMR-Dubber-Setup.exe`, then copy the new files over the old folder. Keep and back up `.asmr-dubber`.
 
-[Batch processing](https://github.com/EveningStudy/asmr-dubber/blob/v2.2.0/docs/en/BATCH.md) · [MOSS guide](https://github.com/EveningStudy/asmr-dubber/blob/v2.2.0/docs/en/MOSS_TRANSCRIBE_DIARIZE.md) · [Full parameters](https://github.com/EveningStudy/asmr-dubber/blob/v2.2.0/docs/en/PARAMETERS.md)
-
-If you worked around the 2.1 mapping by choosing the opposite subtitle option, review queued selections after upgrading.
+Edge TTS uses Microsoft's online service. Temporary service or voice failures and rate limits can still occur; retry failed sentences or choose another voice.

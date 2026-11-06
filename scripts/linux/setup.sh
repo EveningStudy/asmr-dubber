@@ -191,7 +191,7 @@ else
   install_from_pypi pip install --python "$VENV/bin/python" "setuptools>=78.1.1,<82"
 fi
 if ! "$VENV/bin/python" -c \
-  "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools"; then
+  "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools; from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()"; then
   setup_echo "错误：基础应用或在线/API 客户端安装后仍不完整。" >&2
   exit 1
 fi

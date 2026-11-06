@@ -26,4 +26,10 @@ cd "$ROOT"
 source "$ROOT/scripts/network-bridge.sh"
 asmr_prepare_network
 trap asmr_cleanup_network EXIT INT TERM
+if ! "$ASMR_DUBBER_VENV/bin/python" -c \
+  'from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()'; then
+  bash "$ROOT/scripts/linux/setup.sh" Core
+  "$ASMR_DUBBER_VENV/bin/python" -c \
+    'from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()'
+fi
 "$ASMR_DUBBER_VENV/bin/asmr-dubber" "$@"

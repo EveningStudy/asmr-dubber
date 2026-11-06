@@ -84,7 +84,7 @@ Invoke-ASMRDubberUvWithIndexFallback -Configuration $MirrorConfiguration `
 $CoreCheck = Invoke-ASMRDubberProcess -FilePath (Join-Path $CoreVenv "Scripts\python.exe") `
     -ArgumentList @(
         "-c",
-        "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools"
+        "import asmr_dubber.ui, av, edge_tts, pydantic, httpx, soundfile, setuptools; from asmr_dubber.edge_tts_client import require_compatible_client; require_compatible_client()"
     ) `
     -WorkingDirectory $Root
 if ($CoreCheck -ne 0) { throw "基础/UI 环境检查失败。" }

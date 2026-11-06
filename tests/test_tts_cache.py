@@ -650,7 +650,11 @@ def test_edge_tts_retries_temporary_network_errors(tmp_path: Path, monkeypatch) 
             Path(path).write_bytes(b"mock-mp3")
 
     monkeypatch.setitem(sys.modules, "edge_tts", SimpleNamespace(Communicate=FakeCommunicate))
-    monkeypatch.setattr("asmr_dubber.tts_backends.time.sleep", delays.append)
+
+    async def fake_delay(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr("asmr_dubber.edge_tts_client._retry_delay", fake_delay)
 
     def fake_ffmpeg(arguments, **_kwargs):
         assert Path(arguments[2]).read_bytes() == b"mock-mp3"
@@ -684,7 +688,11 @@ def test_edge_tts_reports_dns_failure_after_retries(tmp_path: Path, monkeypatch)
             raise OSError("getaddrinfo failed")
 
     monkeypatch.setitem(sys.modules, "edge_tts", SimpleNamespace(Communicate=FakeCommunicate))
-    monkeypatch.setattr("asmr_dubber.tts_backends.time.sleep", lambda _delay: None)
+
+    async def fake_delay(_delay):
+        pass
+
+    monkeypatch.setattr("asmr_dubber.edge_tts_client._retry_delay", fake_delay)
     project = _project()
     project.settings.tts_backend = "edge_tts"
 

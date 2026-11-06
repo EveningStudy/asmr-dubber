@@ -132,6 +132,7 @@ def test_http_backend_is_external_service(monkeypatch) -> None:
 
 
 def test_edge_tts_status_reflects_bundled_client(monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.edge_tts_client.version", lambda _name: "7.3.1")
     monkeypatch.setattr(
         "asmr_dubber.runtime_manager.current_platform",
         lambda: PlatformInfo("Linux", "x86_64", False, True, False),

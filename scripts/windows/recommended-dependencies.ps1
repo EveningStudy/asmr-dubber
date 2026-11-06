@@ -37,6 +37,8 @@ function Test-ASMRDubberApiClientRuntime {
 import sys
 try:
     import edge_tts, httpx
+    from asmr_dubber.edge_tts_client import require_compatible_client
+    require_compatible_client()
 except Exception:
     sys.exit(1)
 "@

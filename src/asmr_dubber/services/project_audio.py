@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import threading
@@ -13,7 +12,7 @@ from typing import Any, cast
 
 from .. import pipeline
 from ..audio import extract_reference, verify_source
-from ..errors import ProjectError
+from ..errors import OperationCancelledError, ProjectError
 from ..lifecycle import invalidate_outputs
 from ..model_registry import TTS_BACKENDS
 from ..models import (
@@ -126,25 +125,13 @@ def preview_edge_tts_voice(voice: str) -> str:
         temporary = destination.with_name(f".{destination.name}.tmp.mp3")
         temporary.unlink(missing_ok=True)
         try:
-            try:
-                import edge_tts
-            except ImportError as exc:
-                raise ProjectError(
-                    "Edge TTS 运行依赖缺失；请重新运行 setup 修复基础依赖。"
-                ) from exc
+            from ..edge_tts_client import save_audio
 
-            async def save_preview() -> None:
-                communicator = edge_tts.Communicate(
-                    preview_text,
-                    voice=voice_id,
-                )
-                await communicator.save(str(temporary))
-
-            asyncio.run(save_preview())
+            save_audio(preview_text, voice_id, temporary, timeout_seconds=30)
             if not temporary.is_file() or temporary.stat().st_size <= 0:
                 raise ProjectError("Edge TTS 没有生成试听音频。")
             temporary.replace(destination)
-        except ProjectError:
+        except (ProjectError, OperationCancelledError):
             raise
         except Exception as exc:
             raise ProjectError(f"Edge TTS 试听失败：{exc}") from exc

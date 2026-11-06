@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import gc
 import json
@@ -928,12 +927,6 @@ def _generic_tts_api_runner(
 def _edge_tts_runner(
     project: DubProject,
 ) -> tuple[Callable[[Sentence, VoiceReference, Path], None], Callable[[], None]]:
-    try:
-        import aiohttp
-        import edge_tts
-    except ImportError as exc:
-        raise SynthesisError("Edge TTS 运行依赖缺失；请重新运行 setup 修复基础依赖。") from exc
-
     from .audio import _run_ffmpeg
 
     voice = project.settings.tts_voice.strip() or TTS_BACKENDS["edge_tts"].default_voice
@@ -943,80 +936,22 @@ def _edge_tts_runner(
         voice = TTS_BACKENDS["edge_tts"].default_voice
     speed_percent = round((project.settings.tts_speed - 1.0) * 100)
     rate = f"{speed_percent:+d}%"
-    edge_exceptions = getattr(edge_tts, "exceptions", None)
-    no_audio_type = getattr(edge_exceptions, "NoAudioReceived", ())
-    retryable_edge_types = tuple(
-        error_type
-        for name in ("NoAudioReceived", "UnknownResponse", "WebSocketError", "SkewAdjustmentError")
-        if isinstance((error_type := getattr(edge_exceptions, name, None)), type)
-    )
-    retry_delays = (1.0, 2.0, 4.0)
-
-    def is_retryable(exc: Exception) -> bool:
-        if isinstance(exc, (TimeoutError, ConnectionError, OSError, aiohttp.ClientError)):
-            return True
-        return any(isinstance(exc, error_type) for error_type in retryable_edge_types)
-
-    def failure_message(exc: Exception) -> str:
-        if isinstance(no_audio_type, type) and isinstance(exc, no_audio_type):
-            return (
-                "Edge TTS 已连接 Microsoft 服务，但连续 4 次未收到音频。"
-                "该句已含可朗读文字，可能是服务临时异常；请稍后只重试失败句。"
-            )
-        message = str(exc)
-        lowered = message.casefold()
-        if "getaddrinfo" in lowered or "name or service not known" in lowered:
-            return (
-                "无法解析 Microsoft Edge TTS 服务地址。"
-                "请检查 DNS、代理或 TUN 后重试，成功缓存已保留。"
-            )
-        if isinstance(exc, TimeoutError) or "timed out" in lowered or "timeout" in lowered:
-            return (
-                "连接 Microsoft Edge TTS 服务超时，已自动重试 3 次。"
-                "请稍后重试或更换网络，成功缓存已保留。"
-            )
-        return (
-            "无法稳定连接 Microsoft Edge TTS 服务，已自动重试 3 次。"
-            "请检查网络、代理或 TUN，成功缓存已保留。"
-            f"原始错误：{message}"
-        )
 
     def run(sentence: Sentence, _reference: VoiceReference, output: Path) -> None:
         encoded = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.edge.mp3")
 
-        async def synthesize() -> None:
-            communicator = edge_tts.Communicate(sentence.zh_text, voice=voice, rate=rate)
-            await communicator.save(str(encoded))
-
         started = time.perf_counter()
         logger.info("API 请求开始：服务=Edge TTS 地址=Microsoft 在线语音服务")
         try:
-            last_retryable_error: Exception | None = None
-            for attempt in range(1, len(retry_delays) + 2):
-                encoded.unlink(missing_ok=True)
-                try:
-                    asyncio.run(synthesize())
-                    last_retryable_error = None
-                    break
-                except Exception as exc:
-                    if not is_retryable(exc):
-                        raise
-                    last_retryable_error = exc
-                    if attempt > len(retry_delays):
-                        break
-                    delay = retry_delays[attempt - 1]
-                    logger.warning(
-                        "Edge TTS 请求失败，将自动重试：句子=%s 尝试=%d/4 等待=%.1fs 错误=%s",
-                        sentence.id,
-                        attempt,
-                        delay,
-                        exc,
-                    )
-                    time.sleep(delay)
-            if last_retryable_error is not None:
-                raise SynthesisError(
-                    failure_message(last_retryable_error)
-                ) from last_retryable_error
+            from .edge_tts_client import save_audio
+
+            save_audio(
+                sentence.zh_text,
+                voice,
+                encoded,
+                rate=rate,
+                timeout_seconds=project.settings.tts_timeout_seconds,
+            )
             _run_ffmpeg(
                 [
                     "-y",
@@ -1032,7 +967,7 @@ def _edge_tts_runner(
                     str(output),
                 ]
             )
-        except SynthesisError:
+        except (SynthesisError, OperationCancelledError):
             raise
         except Exception as exc:
             raise SynthesisError(f"Edge TTS 生成失败：{exc}") from exc
