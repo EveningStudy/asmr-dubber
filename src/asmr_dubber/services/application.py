@@ -99,6 +99,14 @@ class Application:
         self.tasks.assert_idle(str(Path(project).resolve()))
         return self.projects.sentence(project, row, revision)
 
+    def resolve_proposals(self, project, revision, accept, reject):
+        self.tasks.assert_idle(str(Path(project).resolve()))
+        return self.projects.proposals(project, accept, reject, revision)
+
+    def choose_take(self, project, revision, sentence, attempt):
+        self.tasks.assert_idle(str(Path(project).resolve()))
+        return self.projects.take(project, sentence, attempt, revision)
+
     def remove_model(self, model):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
             raise ValueError("Wait for active tasks before deleting a model")
@@ -148,7 +156,9 @@ class Application:
             return {"message": result}
         result = self.projects.action(request, report, token)
         # Task results are persisted and polled; the browser reloads the project itself.
-        return {"manifest": result["manifest"]} if "manifest" in result else result
+        if "manifest" in result:
+            return {key: result[key] for key in ("manifest", "message") if key in result}
+        return result
 
     def storage(self):
         from ..project_origin import project_inventory
@@ -178,6 +188,17 @@ class Application:
             raise ValueError("Wait for active tasks before clearing caches")
         removed, skipped = cache_cleanup.clean_caches(plan, selected, confirmed)
         return {"removed": removed, "skipped": skipped}
+
+    def diagnostics(self, identifier=""):
+        """Bundle for a bug report; ``identifier`` limits it to one queued work."""
+
+        latest = max(
+            (task for task in self.tasks.list() if task["kind"] == "batch"),
+            key=lambda task: task["started_at"],
+            default=None,
+        )
+        outcomes = (latest or {}).get("plans")
+        return self.batch.diagnostics(identifier, outcomes)
 
     def logs(self):
         from ..storage import atomic_write_text

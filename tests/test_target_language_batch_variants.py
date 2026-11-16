@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from asmr_dubber import pipeline
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import project_cli
 from asmr_dubber.autoflow.output_policy import (
     configure_project,
     policy_for_settings,
@@ -137,7 +137,7 @@ def test_two_variants_reuse_synthesis_and_preserve_outputs(tmp_path, monkeypatch
             pytest.fail(f"unexpected inference: {command}")
         save_project(project, directory)
 
-    monkeypatch.setattr(engine, "run_asmr_cli", run)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", run)
     render_variants(None, path, tmp_path / "products", state)
     assert calls == ["mix", "subtitles", "mix", "subtitles"]
     assert Path(state["mix_variants"]["bilingual"]["audio"]).read_bytes() == b"bilingual"
@@ -160,7 +160,7 @@ def test_mix_failure_restores_settings_and_keeps_tts(tmp_path, monkeypatch):
     def fail(*args):
         raise RuntimeError("mix failed")
 
-    monkeypatch.setattr(engine, "run_asmr_cli", fail)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", fail)
     with pytest.raises(RuntimeError, match="mix failed"):
         render_variants(None, path, tmp_path, state)
     restored, _ = load_project(path)

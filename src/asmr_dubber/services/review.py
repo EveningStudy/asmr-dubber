@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from ..asr_review import REVIEW_VERSION, replace_window, rows_fingerprint, run_audio_review
-from ..audio import _run_ffmpeg, make_analysis_copy, verify_source
+from ..audio import (
+    ASR_ANALYSIS_NAME,
+    _run_ffmpeg,
+    make_asr_analysis_copy,
+    verify_source,
+)
 from ..errors import OperationCancelledError, ProjectError
 from ..lifecycle import invalidate_outputs
 from ..models import Sentence, load_project, save_project
@@ -280,9 +285,9 @@ def retry_review(
             from ..separation import ensure_separation
 
             source, _ = ensure_separation(project, directory, source, progress)
-            audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
+            audio = make_asr_analysis_copy(source, source.parent / ASR_ANALYSIS_NAME)
         else:
-            audio = make_analysis_copy(source, directory / "analysis/asr_16k_mono.wav")
+            audio = make_asr_analysis_copy(source, directory / "analysis" / ASR_ANALYSIS_NAME)
         try:
             project.sentences = run_audio_review(
                 audio,
@@ -320,9 +325,9 @@ def align_review(
             from ..separation import ensure_separation
 
             source, _ = ensure_separation(project, directory, source, progress)
-            audio = make_analysis_copy(source, source.parent / "asr_16k_mono.wav")
+            audio = make_asr_analysis_copy(source, source.parent / ASR_ANALYSIS_NAME)
         else:
-            audio = make_analysis_copy(source, directory / "analysis/asr_16k_mono.wav")
+            audio = make_asr_analysis_copy(source, directory / "analysis" / ASR_ANALYSIS_NAME)
         original = {row.id: row for row in project.sentences}
         proposed = [row.model_copy(deep=True) for row in project.sentences]
         identities = {id(row): row.id for row in proposed}

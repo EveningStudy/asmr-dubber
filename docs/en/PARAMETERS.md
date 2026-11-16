@@ -4,7 +4,7 @@ English | [中文](../PARAMETERS.md)
 
 # Complete parameter reference
 
-Generated from `services/parameters.py`: **219 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
+Generated from `services/parameters.py`: **236 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
 
 Project fields appear in project panels/new defaults; global fields affect future projects/queue entries. Always means no static visibility condition; expand advanced groups. Options can depend on backend. Validation also checks cross-field dependencies, language and JSON contracts.
 
@@ -40,17 +40,17 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 
 | Key / label | Type / scope | Default | Range / options | Display condition |
 |---|---|---|---|---|
-| `asr_backend`<br>ASR backend | string<br>project | `parakeet_nemo` | parakeet_nemo, moss_transcribe_diarize, kotoba_whisper, faster_whisper, generic_asr_api | Always |
-| `asr_model`<br>Version | string<br>project | `grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | Backend-dependent | Always |
-| `asr_batch_size`<br>Batch size | integer<br>project | `1` | ≥1; ≤32 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `asr_backend`<br>ASR backend | string<br>project | `anime_whisper` | parakeet_nemo, moss_transcribe_diarize, anime_whisper, kotoba_whisper, faster_whisper, qwen3_asr, generic_asr_api | Always |
+| `asr_model`<br>Version | string<br>project | `litagin/anime-whisper` | Backend-dependent | Always |
+| `asr_batch_size`<br>Batch size | integer<br>project | `1` | ≥1; ≤32 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_device`<br>Device | string<br>project | `cuda` | cuda, cpu | Always |
 | `asr_compute_type`<br>Compute precision | string<br>project | `float16` | — | asr_backend in ["faster_whisper","kotoba_whisper"] |
 | `asr_beam_size`<br>Beam size | integer<br>project | `5` | ≥1; ≤100 | asr_backend in ["faster_whisper"] |
-| `asr_vad_filter`<br>Use native VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `asr_vad_filter`<br>Use native VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_vad_mode`<br>Mode | string<br>project | `off` | off, backend, asmr | Always |
 | `asr_vad_min_silence_ms`<br>VAD minimum silence | integer<br>project | `500` | ≥50; ≤10000 | asr_vad_mode in ["backend"] |
-| `asr_asmr_vad_threshold`<br>ASMR VAD speech threshold | number<br>project | `0.5` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD minimum speech | integer<br>project | `250` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_threshold`<br>ASMR VAD speech threshold | number<br>project | `0.35` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD minimum speech | integer<br>project | `150` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
 | `asr_asmr_vad_min_silence_ms`<br>ASMR VAD minimum silence | integer<br>project | `100` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
 | `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD boundary padding | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
 | `aligner_model`<br>Alignment model | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
@@ -84,14 +84,14 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `asr_review_mode`<br>Review handling | string<br>project | `suggest` | suggest, conservative | asr_review_enabled in [true] |
 | `asr_review_window_seconds`<br>Common review clip target | number<br>project | `30.0` | ≥10.0; ≤90.0 | asr_review_enabled in [true] |
 | `asr_review_context_seconds`<br>Review context | number<br>project | `0.5` | ≥0.0; ≤3.0 | asr_review_enabled in [true] |
-| `asr_review_models`<br>Review models | array<br>project | `["parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo","kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2"]` | max items 6; moss_transcribe_diarize&#124;OpenMOSS-Team/MOSS-Transcribe-Diarize, parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo, parakeet_nemo&#124;nvidia/parakeet-tdt_ctc-0.6b-ja, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.1, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.0, faster_whisper&#124;large-v2, faster_whisper&#124;kotoba-tech/kotoba-whisper-v2.0-faster, faster_whisper&#124;distil-large-v2, faster_whisper&#124;large-v3, faster_whisper&#124;large-v3-turbo, faster_whisper&#124;medium, faster_whisper&#124;small | asr_review_enabled in [true] |
+| `asr_review_models`<br>Review models | array<br>project | `["parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo","kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2"]` | max items 6; moss_transcribe_diarize&#124;OpenMOSS-Team/MOSS-Transcribe-Diarize, parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo, parakeet_nemo&#124;nvidia/parakeet-tdt_ctc-0.6b-ja, qwen3_asr&#124;Qwen/Qwen3-ASR-1.7B, qwen3_asr&#124;jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame, anime_whisper&#124;litagin/anime-whisper, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.1, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.0, faster_whisper&#124;large-v2, faster_whisper&#124;kotoba-tech/kotoba-whisper-v2.0-faster, faster_whisper&#124;distil-large-v2, faster_whisper&#124;large-v3, faster_whisper&#124;large-v3-turbo, faster_whisper&#124;medium, faster_whisper&#124;small | asr_review_enabled in [true] |
 | `asr_review_text_priority_model`<br>Primary transcript source | string<br>project | `parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | — | asr_review_enabled in [true] |
 | `asr_review_timestamp_priority_model`<br>Final timestamp source | string<br>project | `qwen_forced_aligner&#124;Qwen/Qwen3-ForcedAligner-0.6B` | — | asr_review_enabled in [true] |
 | `asr_review_background`<br>Work, characters & scene context | string<br>project | Empty | — | asr_review_enabled in [true] |
 | `asr_review_prompt`<br>ASR review prompt | string<br>project | Built-in template; see [PROMPTS](PROMPTS.md) | — | asr_review_enabled in [true] |
 | `asr_review_max_drift_seconds`<br>Allowed timestamp drift | number<br>project | `1.5` | ≥0.1; ≤10.0 | asr_review_enabled in [true] |
-| `pause_split_seconds`<br>Pause ends a sentence after | number<br>project | `0.55` | ≥0.1; ≤5.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
-| `max_sentence_seconds`<br>Maximum sentence length | number<br>project | `15.0` | ≥2.0; ≤60.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `pause_split_seconds`<br>Pause ends a sentence after | number<br>project | `0.55` | ≥0.1; ≤5.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
+| `max_sentence_seconds`<br>Maximum sentence length | number<br>project | `15.0` | ≥2.0; ≤60.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `default_source_language`<br>Audio language | string<br>global | `ja` | ja, en, zh | Always |
 
 ## Translation
@@ -111,6 +111,9 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `translation_deepl_formality`<br>DeepL formality | string<br>project | `default` | — | translation_provider in ["deepl"] |
 | `translation_microsoft_region`<br>Azure Translator region | string<br>project | Empty | — | translation_provider in ["microsoft_translate"] |
 | `translation_extra_body`<br>TTS API extra parameters (JSON, optional) | string<br>project | `{}` | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_sound_policy`<br>Sound effects and nonverbal sounds | string<br>project | `skip` | skip, romaji, keep_source | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_length_budget`<br>Limit each translation's length by its line's duration | boolean<br>project | `true` | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_chars_per_second`<br>Characters per second | number<br>project | `4.5` | ≥2.0; ≤12.0 | translation_length_budget in [true] |
 | `translation_prompt_ja`<br>translation_prompt_ja | string<br>global | Empty | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
 | `translation_prompt_en`<br>translation_prompt_en | string<br>global | Empty | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
 | `translation_prompt_zh`<br>translation_prompt_zh | string<br>global | Empty | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
@@ -119,6 +122,7 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 
 | Key / label | Type / scope | Default | Range / options | Display condition |
 |---|---|---|---|---|
+| `reference_audio_mode`<br>Reference audio quality | string<br>project | `fullband` | legacy, fullband, fullband_vocals | Always |
 | `tts_target_language`<br>Dub into | string<br>project | `zh` | zh, en | Always |
 | `tts_backend`<br>TTS backend | string<br>project | `indextts2` | indextts2, indextts2_5, edge_tts, indextts2_api, gpt_sovits, cosyvoice, mimo_tts, minimax, fish_speech, generic_tts_api | Always |
 | `tts_model`<br>Models | string<br>project | `IndexTTS2` | Backend-dependent | Always |
@@ -174,6 +178,8 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `tts_gpt_text_split_method`<br>Text splitting method | string<br>project | `cut5` | — | tts_backend in ["gpt_sovits"] |
 | `tts_gpt_sample_steps`<br>Sampling steps | integer<br>project | `32` | ≥1; ≤64 | tts_backend in ["gpt_sovits"] |
 | `tts_cosyvoice_mode`<br>CosyVoice mode | string<br>project | `zero_shot` | zero_shot, cross_lingual | tts_backend in ["cosyvoice"] |
+| `tts_normalize_pauses`<br>Turn ellipses and other long pauses into commas before dubbing | boolean<br>project | `true` | — | Always |
+| `tts_quality_check`<br>Check every dub and regenerate broken ones with a new seed | boolean<br>project | `true` | — | Always |
 | `tts_clone_mode`<br>Reference strategy | string<br>project | `stable_reference` | stable_reference, reference_only | Always |
 | `tts_reference_sentence_id`<br>Shared reference sentence ID | string / nullable<br>project | `null` | — | Always |
 | `skip_japanese_fillers`<br>Skip nonsemantic Japanese fillers | boolean<br>project | `true` | — | Always |
@@ -196,9 +202,10 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `spatial_rtf_fft_size`<br>FFT window | integer<br>project | `0` | 0, 1024, 2048, 4096, 8192 | spatial_rtf_enabled in [true] |
 | `spatial_rtf_hop_divisor`<br>FFT hop divisor | integer<br>project | `8` | 4, 8, 16 | spatial_rtf_enabled in [true] |
 | `spatial_rtf_block_seconds`<br>Processing block | number<br>project | `10.0` | ≥1; ≤30 | spatial_rtf_enabled in [true] |
+| `spatial_rtf_vocal_weighting`<br>Spatial cues from vocals only (requires vocal separation) | boolean<br>project | `true` | — | spatial_rtf_enabled in [true] |
 | `chinese_dubbing_offset_ms`<br>Dub offset | integer<br>project | `500` | ≥-30000; ≤30000 | Always |
 | `chinese_max_auto_speed`<br>Maximum speed-up on overlap | number<br>project | `1.4` | ≥1.0; ≤4.0 | Always |
-| `chinese_dubbing_timing_mode`<br>When the dub is longer than the line | string<br>project | `fit_window` | fit_window, sequential | Always |
+| `chinese_dubbing_timing_mode`<br>When the dub is longer than the line | string<br>project | `fit_window` | fit_window, sequential, fit_then_shift | Always |
 | `chinese_gain_db`<br>Final gain adjustment | number<br>project | `0.0` | ≥-40.0; ≤20.0 | Always |
 | `normalize_chinese_loudness`<br>Volume processing | boolean<br>project | `true` | — | Always |
 | `match_source_loudness`<br>Match corresponding original | boolean<br>project | `true` | — | Always |
@@ -219,6 +226,14 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `replacement_chinese_line_peak_dbfs`<br>Sentence peak ceiling | number<br>project | `-6.0` | ≥-20.0; ≤-1.0 | Always |
 | `replacement_chinese_stem_peak_dbfs`<br>Dubbing track peak ceiling | number<br>project | `-3.0` | ≥-12.0; ≤-0.1 | Always |
 | `replacement_chinese_fade_ms`<br>Sentence fade in and out | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
+| `replacement_scope`<br>Original-vocal removal scope | string<br>project | `dubbed_speech` | dubbed_speech, all_vocals | separation_mix_mode in ["replace"] |
+| `replacement_dubbing_offset_ms`<br>Fully dubbed dub offset (ms) | integer<br>project | `0` | ≥-30000; ≤30000 | separation_mix_mode in ["replace"] |
+| `replacement_max_auto_speed`<br>Fully dubbed maximum auto speed-up | number<br>project | `1.2` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
+| `replacement_timing_mode`<br>Fully dubbed: when a dub is longer than its line | string<br>project | `fit_then_shift` | fit_then_shift, fit_window, sequential | separation_mix_mode in ["replace"] |
+| `replacement_voice_match_strength`<br>Match dub timbre to the original voice | number<br>project | `0.8` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_bandwidth_extension`<br>Restore missing dub highs (breath, sibilance) | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
+| `replacement_noise_fill`<br>Refill the recording's noise floor where voice is replaced | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
+| `replacement_whisper_match`<br>Turn the dub breathy where the original whispers (experimental) | number<br>project | `1.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `chinese_channel_routing`<br>Multichannel routing | string<br>project | `auto` | auto, all | Always |
 | `mix_peak_protection`<br>Final mix peak protection | boolean<br>project | `true` | — | Always |
 | `mix_peak_limit_dbfs`<br>Final peak ceiling | number<br>project | `-1.0` | ≥-6.0; ≤-0.1 | Always |
@@ -268,4 +283,6 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `autoflow_harmonized_volume_reduction_db`<br>Original attenuation | number<br>global | `10.0` | ≥0.0; ≤60.0 | Always |
 | `autoflow_harmonized_delay_minutes`<br>Delay original, dubbing & subtitles | number<br>global | `20.0` | ≥0.0; ≤1440.0 | Always |
 | `autoflow_timestamp_footer`<br>Timestamp document footer | string<br>global | `双语音声制作器：BV1f43G6YEov<br>内嵌字幕和配音为本地 AI 生成，内容仅供参考。<br>仅供日语学习，有能力请购买正版支持。` | — | Always |
+| `batch_failure_budget_count`<br>Sentences a work may lose (minimum) | integer<br>global | `3` | ≥0; ≤1000 | Always |
+| `batch_failure_budget_percent`<br>Share of sentences a work may lose | number<br>global | `2.0` | ≥0.0; ≤100.0 | Always |
 

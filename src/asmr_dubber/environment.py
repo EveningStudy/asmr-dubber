@@ -82,6 +82,18 @@ def require_cuda() -> None:
         )
 
 
+def _shards_present(snapshot: Path) -> bool:
+    """A sharded checkpoint is only usable when every listed shard exists."""
+    index = snapshot / "model.safetensors.index.json"
+    if not index.is_file():
+        return True
+    try:
+        shards = set(json.loads(index.read_text(encoding="utf-8"))["weight_map"].values())
+        return all((snapshot / name).is_file() for name in shards)
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        return False
+
+
 def _complete_model_snapshot(model_id: str, candidate: Path) -> Path | None:
     candidate = candidate.resolve()
     if not candidate.is_dir():
@@ -96,7 +108,7 @@ def _complete_model_snapshot(model_id: str, candidate: Path) -> Path | None:
         weight_patterns = ("*.safetensors", "model.bin", "pytorch_model*.bin")
         if not any(next(candidate.glob(pattern), None) for pattern in weight_patterns):
             return None
-        return candidate
+        return candidate if _shards_present(candidate) else None
     for relative, expected_size in required_files.items():
         file = candidate / relative
         try:

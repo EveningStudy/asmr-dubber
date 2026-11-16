@@ -14,8 +14,8 @@ import soundfile as sf
 
 from asmr_dubber import pipeline
 from asmr_dubber.api import API
+from asmr_dubber.autoflow import constants, failed_tasks, project_cli, runlog, title_translation
 from asmr_dubber.autoflow import engine as e
-from asmr_dubber.errors import TranslationError
 from asmr_dubber.models import Sentence, load_project, save_project
 from asmr_dubber.project_origin import project_inventory, record_batch_origin
 from asmr_dubber.services import batch_queue, settings
@@ -28,7 +28,7 @@ from asmr_dubber.translation import translate_sentences
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("ASMR_DUBBER_CONFIG_DIR", str(tmp_path / "home/config"))
-    monkeypatch.setattr(e, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(constants, "STATE_ROOT", tmp_path / "state")
     return Application(tmp_path / "tasks.json")
 
 
@@ -98,9 +98,9 @@ def test_subtitle_defaults_export_only_named_translation_and_translate_titles(
         else:
             pytest.fail(f"unexpected ASR/TTS/media operation: {command}")
 
-    monkeypatch.setattr(e, "translated_plan_titles", titles)
-    monkeypatch.setattr(e, "create_asmr_project", create)
-    monkeypatch.setattr(e, "run_asmr_cli", cli)
+    monkeypatch.setattr(title_translation, "translated_plan_titles", titles)
+    monkeypatch.setattr(project_cli, "create_asmr_project", create)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", cli)
     paths = SimpleNamespace(ffmpeg=Path(imageio_ffmpeg.get_ffmpeg_exe()))
     e.execute_prepared_smart_plan(paths, e.AppConfig(None, -10, 0, ""), plan)
     assert titles_calls == [{"translate_work_title": True, "translate_track_titles": True}]
@@ -174,10 +174,12 @@ def test_original_with_subtitles_exports_media_without_tts(app, tmp_path, monkey
         else:
             pytest.fail(f"unexpected inference: {command}")
 
-    monkeypatch.setattr(e, "create_asmr_project", create)
-    monkeypatch.setattr(e, "run_asmr_cli", cli)
+    monkeypatch.setattr(project_cli, "create_asmr_project", create)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", cli)
     monkeypatch.setattr(
-        e, "translated_plan_titles", lambda *a, **k: (folder.name, {"01-original.wav": "original"})
+        title_translation,
+        "translated_plan_titles",
+        lambda *a, **k: (folder.name, {"01-original.wav": "original"}),
     )
     paths = SimpleNamespace(
         ffmpeg=Path(imageio_ffmpeg.get_ffmpeg_exe()), video_encoder_options=("-c:v", "libx264")
@@ -226,21 +228,14 @@ def test_blank_semantic_translation_retries_without_disabling_or_losing_success(
         )
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-
-        def run():
-            translate_sentences(
-                sentences,
-                "not-real-test-key",
-                "deepseek-flash",
-                client=client,
-                on_batch=lambda: checkpoints.append([s.zh_text for s in sentences]),
-            )
-
-        if recover:
-            run()
-        else:
-            with pytest.raises(TranslationError, match="s2"):
-                run()
+        report = translate_sentences(
+            sentences,
+            "not-real-test-key",
+            "deepseek-flash",
+            client=client,
+            on_batch=lambda: checkpoints.append([s.zh_text for s in sentences]),
+        )
+        assert report.failed_ids == ([] if recover else ["s2"])
     assert len(calls) == 2 and sentences[0].zh_text == "第一句。"
     assert sentences[1].enabled
     assert checkpoints and checkpoints[-1][0] == "第一句。"
@@ -269,8 +264,9 @@ def test_queue_has_individual_statuses_and_preserves_partial_success(app, tmp_pa
         for i in range(3)
     ]
     app.batch._save(payloads)
-    for name in ("save_failed_task", "remove_failed_task", "log_event"):
-        monkeypatch.setattr(e, name, lambda *a, **k: None)
+    monkeypatch.setattr(failed_tasks, "save_failed_task", lambda *a, **k: None)
+    monkeypatch.setattr(failed_tasks, "remove_failed_task", lambda *a, **k: None)
+    monkeypatch.setattr(runlog, "log_event", lambda *a, **k: None)
 
     def run(payloads, *, cancel_event, reference_event_callback):
         plans = [

@@ -110,7 +110,8 @@ def test_chinese_transcript_mode_keeps_only_supported_timing_choices(app):
         TaskRequest(
             kind="import", project="project.json", revision=0, script_kind="zh", timing="qwen"
         )
-    for removed in ("qwen3_asr", "qwen3_tts", "voxcpm2", "whisperx", "funasr", "f5_tts", "xtts_v2"):
+    # qwen3_asr was removed once and re-added in 2.3 with forced-aligner timestamps.
+    for removed in ("qwen3_tts", "voxcpm2", "whisperx", "funasr", "f5_tts", "xtts_v2"):
         assert (
             removed not in parameters.choices()["asr"]
             and removed not in parameters.choices()["tts"]
@@ -417,7 +418,12 @@ def test_english_language_setting_filters_japanese_asr_backends(app):
         for _, value in descriptor["options"]
         if "source_language" not in descriptor["options_when"].get(value, {})
     ]
-    assert allowed == ["faster_whisper", "moss_transcribe_diarize", "generic_asr_api"]
+    assert allowed == [
+        "faster_whisper",
+        "moss_transcribe_diarize",
+        "qwen3_asr",
+        "generic_asr_api",
+    ]
     assert (
         "kotoba-tech/kotoba-whisper-v2.0-faster"
         not in parameters.choices()["asr"]["faster_whisper"]["models_by_language"]["en"]

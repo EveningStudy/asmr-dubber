@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import constants, engine, media_video, output_files, processes
 from asmr_dubber.services import parameters, settings
 from asmr_dubber.services.batch_configuration import config_from_settings
 from asmr_dubber.user_settings import UserSettings
@@ -90,8 +90,8 @@ def test_real_original_hardsub_video(tmp_path, monkeypatch):
     subtitle = tmp_path / "source.srt"
     subtitle.write_text("1\n00:00:00,000 --> 00:00:01,500\nHard subtitle test\n", encoding="utf-8")
     output = tmp_path / "original-subtitle.mp4"
-    monkeypatch.setattr(engine, "WORK_ROOT", tmp_path / "work")
-    monkeypatch.setattr(engine, "VIDEO_FILTER_SIZE", "640:360")
+    monkeypatch.setattr(constants, "WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(constants, "VIDEO_FILTER_SIZE", "640:360")
     paths = SimpleNamespace(
         ffmpeg=imageio_ffmpeg.get_ffmpeg_exe(),
         video_encoder_options=("-c:v", "libx264", "-preset", "ultrafast"),
@@ -110,15 +110,17 @@ def test_real_original_hardsub_video(tmp_path, monkeypatch):
 def test_hard_subtitle_failure_does_not_fallback(tmp_path, monkeypatch):
     subtitle = tmp_path / "source.srt"
     subtitle.write_text("example")
-    monkeypatch.setattr(engine, "WORK_ROOT", tmp_path)
-    monkeypatch.setattr(engine, "render_static_video", lambda *a, **k: None)
+    monkeypatch.setattr(constants, "WORK_ROOT", tmp_path)
+    monkeypatch.setattr(media_video, "render_static_video", lambda *a, **k: None)
 
     def fail(*a, **k):
         raise engine.VideoPreparerError("libass unavailable")
 
-    monkeypatch.setattr(engine, "run_ffmpeg", fail)
+    monkeypatch.setattr(processes, "run_ffmpeg", fail)
     monkeypatch.setattr(
-        engine, "remux_video_with_subtitle", lambda *a: pytest.fail("must not use soft subtitles")
+        media_video,
+        "remux_video_with_subtitle",
+        lambda *a: pytest.fail("must not use soft subtitles"),
     )
     with pytest.raises(engine.VideoPreparerError, match="libass"):
         engine.render_static_bilingual_video(
@@ -160,13 +162,15 @@ def test_original_hard_subtitle_execution(tmp_path, monkeypatch, mode, subtitles
     def copied(*a, **k):
         return {"srt": str(tmp_path / "out.srt"), "audio": str(master)}
 
-    monkeypatch.setattr(engine, "copy_final_outputs", copied)
-    monkeypatch.setattr(engine, "copy_subtitle_only_outputs", copied)
+    monkeypatch.setattr(output_files, "copy_final_outputs", copied)
+    monkeypatch.setattr(output_files, "copy_subtitle_only_outputs", copied)
     rendered = []
     monkeypatch.setattr(
-        engine, "render_static_bilingual_video", lambda *a, **k: rendered.append((a, k))
+        media_video, "render_static_bilingual_video", lambda *a, **k: rendered.append((a, k))
     )
-    monkeypatch.setattr(engine, "write_timestamp_document", lambda *a: tmp_path / "timestamp.txt")
+    monkeypatch.setattr(
+        output_files, "write_timestamp_document", lambda *a: tmp_path / "timestamp.txt"
+    )
     engine.execute_task(SimpleNamespace(), tmp_path, tmp_path / "state.json", state, [])
     assert len(rendered) == (0 if mode == engine.MODE_AUDIO else 1)
     if rendered:

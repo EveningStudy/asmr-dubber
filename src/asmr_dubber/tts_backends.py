@@ -43,7 +43,7 @@ from .task_control import (
     unregister_cancel_callback,
     unregister_process,
 )
-from .tts import tts_cache_key, valid_tts_cache
+from .tts import attempt_seed, spoken_text, tts_cache_key, valid_tts_cache
 from .user_settings import saved_service_key
 from .voice_reference import (
     VoiceReference,
@@ -162,7 +162,7 @@ def _load_indextts(project: DubProject) -> tuple[Any, Callable[[], None]]:
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         kwargs: dict[str, Any] = {
             "spk_audio_prompt": str(reference.path),
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "output_path": str(output),
             "emo_alpha": project.settings.tts_index_emo_alpha,
             "use_random": False,
@@ -171,7 +171,8 @@ def _load_indextts(project: DubProject) -> tuple[Any, Callable[[], None]]:
         if project.settings.tts_index_emotion_source == "text":
             kwargs.update(
                 use_emo_text=True,
-                emo_text=project.settings.tts_index_emo_text.strip() or sentence.zh_text,
+                emo_text=project.settings.tts_index_emo_text.strip()
+                or spoken_text(project.settings, sentence.zh_text),
             )
         elif reference.emotion_path is not None:
             kwargs["emo_audio_prompt"] = str(reference.emotion_path)
@@ -270,13 +271,13 @@ def _synthesize_indextts_cli_batch(
         output = (tts_dir / f".{sentence.id}.indextts2.tmp.wav").resolve()
         output.unlink(missing_ok=True)
         payload: dict[str, Any] = {
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "voice": str(reference.path.resolve()),
             "output": str(output),
         }
         if project.settings.tts_index_emotion_source == "text":
-            payload["emotion_text"] = (
-                project.settings.tts_index_emo_text.strip() or sentence.zh_text
+            payload["emotion_text"] = project.settings.tts_index_emo_text.strip() or spoken_text(
+                project.settings, sentence.zh_text
             )
             payload["emotion_weight"] = project.settings.tts_index_emo_alpha
         elif project.settings.tts_index_emotion_source == "vector":
@@ -499,7 +500,7 @@ def _synthesize_indextts25_batch(
         output.unlink(missing_ok=True)
         payload: dict[str, Any] = {
             "id": sentence.id,
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "voice": str(reference.path.resolve()),
             "output": str(output),
             "language": settings.tts_target_language,
@@ -517,10 +518,12 @@ def _synthesize_indextts25_batch(
             "num_beams": settings.tts_index25_num_beams,
             "repetition_penalty": settings.tts_index25_repetition_penalty,
             "max_mel_tokens": settings.tts_index25_max_mel_tokens,
-            "seed": settings.random_seed,
+            "seed": attempt_seed(settings.random_seed, sentence),
         }
         if settings.tts_index_emotion_source == "text":
-            payload["emotion_text"] = settings.tts_index_emo_text.strip() or sentence.zh_text
+            payload["emotion_text"] = settings.tts_index_emo_text.strip() or spoken_text(
+                project.settings, sentence.zh_text
+            )
         elif settings.tts_index_emotion_source == "vector":
             payload["emotion_vector"] = settings.tts_index25_emotion_vector
         elif emotion is not None:
@@ -724,7 +727,7 @@ def _gpt_sovits_runner(
 
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
         payload = {
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "text_lang": project.settings.tts_target_language,
             "ref_audio_path": str(reference.path),
             "prompt_lang": reference.language,
@@ -734,7 +737,7 @@ def _gpt_sovits_runner(
             "temperature": project.settings.tts_temperature,
             "text_split_method": project.settings.tts_gpt_text_split_method,
             "speed_factor": project.settings.tts_speed,
-            "seed": project.settings.random_seed,
+            "seed": attempt_seed(project.settings.random_seed, sentence),
             "media_type": "wav",
             "streaming_mode": False,
             "sample_steps": project.settings.tts_gpt_sample_steps,
@@ -756,7 +759,7 @@ def _cosyvoice_runner(
     client = logged_http_client("CosyVoice API", timeout=project.settings.tts_timeout_seconds)
 
     def run(sentence: Sentence, reference: VoiceReference, output: Path) -> None:
-        data = {"tts_text": sentence.zh_text}
+        data = {"tts_text": spoken_text(project.settings, sentence.zh_text)}
         if mode == "zero_shot":
             data["prompt_text"] = reference.text
         with reference.path.open("rb") as handle:
@@ -798,7 +801,7 @@ def _fish_runner(
                     reference_payloads.pop(next(iter(reference_payloads)))
                 reference_payloads[reference_key] = encoded_reference
         payload = {
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "format": "wav",
             "normalize": True,
             "references": [
@@ -841,7 +844,7 @@ def _indextts_api_runner(
         try:
             payload: dict[str, object] = {
                 "model": project.settings.tts_model or "IndexTTS2",
-                "text": sentence.zh_text,
+                "text": spoken_text(project.settings, sentence.zh_text),
                 "emotion_alpha": project.settings.tts_index_emo_alpha,
                 "temperature": project.settings.tts_temperature,
                 "top_p": project.settings.tts_top_p,
@@ -904,7 +907,7 @@ def _generic_tts_api_runner(
             payload = merge_extra_body(
                 {
                     "model": project.settings.tts_model or "tts-1",
-                    "input": sentence.zh_text,
+                    "input": spoken_text(project.settings, sentence.zh_text),
                     "voice": project.settings.tts_voice or "alloy",
                     "response_format": "wav",
                     "speed": project.settings.tts_speed,
@@ -946,7 +949,7 @@ def _edge_tts_runner(
             from .edge_tts_client import save_audio
 
             save_audio(
-                sentence.zh_text,
+                spoken_text(project.settings, sentence.zh_text),
                 voice,
                 encoded,
                 rate=rate,
@@ -1019,7 +1022,7 @@ def _mimo_runner(
         style = project.settings.tts_style_prompt.strip()
         messages = [
             {"role": "user", "content": style},
-            {"role": "assistant", "content": sentence.zh_text},
+            {"role": "assistant", "content": spoken_text(project.settings, sentence.zh_text)},
         ]
         audio: dict[str, object] = {"format": "wav"}
         if model == "mimo-v2.5-tts-voiceclone":
@@ -1085,7 +1088,7 @@ def _minimax_runner(
             voice_setting["emotion"] = emotion
         payload = {
             "model": project.settings.tts_model or TTS_BACKENDS["minimax"].default_model,
-            "text": sentence.zh_text,
+            "text": spoken_text(project.settings, sentence.zh_text),
             "stream": False,
             "voice_setting": voice_setting,
             "audio_setting": {

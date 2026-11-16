@@ -39,6 +39,9 @@ class PackDefinition:
     architectures: tuple[str, ...]
 
 
+# Experimental recognizers are built on request only, never by the default "all".
+OPTIONAL_PACKS = frozenset({"qwen3-asr-1.7b", "qwen3-asr-1.7b-ja-anime-galgame"})
+
 PACKS = {
     "parakeet-ja-windows": PackDefinition(
         pack_id="parakeet-ja-windows",
@@ -55,6 +58,24 @@ PACKS = {
     "faster-whisper-large-v2": PackDefinition(
         pack_id="faster-whisper-large-v2",
         display_name="Faster-Whisper large-v2",
+        platforms=("windows", "linux"),
+        architectures=("any",),
+    ),
+    "anime-whisper": PackDefinition(
+        pack_id="anime-whisper",
+        display_name="anime-whisper 日语（litagin/anime-whisper）",
+        platforms=("windows", "linux"),
+        architectures=("any",),
+    ),
+    "qwen3-asr-1.7b": PackDefinition(
+        pack_id="qwen3-asr-1.7b",
+        display_name="Qwen3-ASR 1.7B",
+        platforms=("windows", "linux"),
+        architectures=("any",),
+    ),
+    "qwen3-asr-1.7b-ja-anime-galgame": PackDefinition(
+        pack_id="qwen3-asr-1.7b-ja-anime-galgame",
+        display_name="Qwen3-ASR 1.7B 日语动画/Galgame 微调版",
         platforms=("windows", "linux"),
         architectures=("any",),
     ),
@@ -128,6 +149,12 @@ def _sources(pack_id: str) -> list[ModelPackSource]:
         return _hf_sources("kotoba-tech/kotoba-whisper-v2.2")
     if pack_id == "faster-whisper-large-v2":
         return _hf_sources("Systran/faster-whisper-large-v2")
+    if pack_id == "anime-whisper":
+        return _hf_sources("litagin/anime-whisper")
+    if pack_id == "qwen3-asr-1.7b":
+        return _hf_sources("Qwen/Qwen3-ASR-1.7B")
+    if pack_id == "qwen3-asr-1.7b-ja-anime-galgame":
+        return _hf_sources("jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame")
     if pack_id == "qwen3-forced-aligner":
         return _hf_sources(DEFAULT_ALIGNER_MODEL)
     if pack_id == "whisper-vad-asmr-onnx":
@@ -202,7 +229,7 @@ def main() -> int:
         help="覆盖已经存在的同名压缩包。",
     )
     arguments = parser.parse_args()
-    selected = arguments.packs or list(PACKS)
+    selected = arguments.packs or [name for name in PACKS if name not in OPTIONAL_PACKS]
     output_dir = arguments.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

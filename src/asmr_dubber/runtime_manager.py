@@ -20,12 +20,17 @@ from typing import Any, Literal
 from .constants import (
     ASMR_VAD_MODEL,
     DEFAULT_ALIGNER_MODEL,
+    FALLBACK_ASR_BACKEND,
+    FALLBACK_ASR_MODEL,
     INDEXTTS25_REQUIRED_DIRS,
     INDEXTTS25_REQUIRED_FILES,
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
     OPTIONAL_ASR_MODEL_REVISIONS,
     PROJECT_ROOT,
+    RECOMMENDED_ASR_BACKEND,
+    RECOMMENDED_ASR_MODEL,
+    RECOMMENDED_TTS_BACKEND,
 )
 from .environment import cached_model_path, cuda_summary
 from .errors import AsmrDubberError, EnvironmentError, InstallPausedError
@@ -202,11 +207,54 @@ _IMPORTS: dict[str, tuple[str, ...]] = {
     "edge_tts": ("edge_tts",),
     "faster_whisper": ("faster_whisper",),
     "kotoba_whisper": ("transformers",),
+    "qwen3_asr": ("transformers", "qwen_asr", "onnxruntime"),
+    "anime_whisper": ("transformers", "qwen_asr", "onnxruntime"),
 }
 
 _BACKEND_MODEL_REPOS: dict[str, tuple[str, ...]] = {
     "kotoba_whisper": ("kotoba-tech/kotoba-whisper-v2.2",),
     "faster_whisper": ("Systran/faster-whisper-large-v2",),
+    # Both new recognizers cut Japanese audio with the ASMR VAD and timestamp
+    # it with the Qwen3 aligner, so the install is only complete with them.
+    "anime_whisper": ("litagin/anime-whisper", DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL),
+    "qwen3_asr": (
+        "Qwen/Qwen3-ASR-1.7B",
+        "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",
+        DEFAULT_ALIGNER_MODEL,
+        ASMR_VAD_MODEL,
+    ),
+}
+
+# Backends whose Windows install goes through scripts/windows/install-backend.ps1
+# (CUDA PyTorch + the advanced dependency pack) instead of a plain uv install.
+_WINDOWS_SCRIPT_BACKENDS = frozenset(
+    {"faster_whisper", "kotoba_whisper", "anime_whisper", "qwen3_asr"}
+)
+_TORCH_BACKENDS = frozenset({"kotoba_whisper", "anime_whisper", "qwen3_asr"})
+
+# Repository files that inference never reads. The community Qwen3 fine-tune
+# ships ~8 GB of optimizer state next to the 4 GB checkpoint.
+_MODEL_DOWNLOAD_IGNORE: dict[str, tuple[str, ...]] = {
+    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame": (
+        "optimizer.pt",
+        "scheduler.pt",
+        "rng_state*",
+        "trainer_state.json",
+        "training_args.bin",
+        "checkpoint-*",
+        "*.pt",
+        "*.pth",
+        "*.bin",
+    ),
+    "litagin/anime-whisper": ("figs/*",),
+}
+
+# Models that have a ModelScope offline pack; everything else is Hugging Face only.
+_MODELSCOPE_PACK_FOR_MODEL = {
+    ASMR_VAD_MODEL: "whisper-vad-asmr-onnx",
+    DEFAULT_ALIGNER_MODEL: "qwen3-forced-aligner",
+    "kotoba-tech/kotoba-whisper-v2.2": "kotoba-whisper-v2.2",
+    "Systran/faster-whisper-large-v2": "faster-whisper-large-v2",
 }
 
 _PARAKEET_MODEL_FILES = {
@@ -528,7 +576,7 @@ def backend_status(
     if not _imports_available(backend.id):
         return BackendStatus("missing", "未安装", "缺少 Python 运行环境")
     if (
-        backend.id == "kotoba_whisper"
+        backend.id in _TORCH_BACKENDS
         and current_platform().is_windows
         and detect_hardware().cuda_available
         and not cuda_summary()["available"]
@@ -618,7 +666,7 @@ def backend_model_status(
     repository: str | None = None
     if backend.id == "faster_whisper":
         repository = _FASTER_WHISPER_REPOS.get(model_id, model_id if "/" in model_id else None)
-    elif backend.id == "kotoba_whisper":
+    elif backend.id in {"kotoba_whisper", "qwen3_asr", "anime_whisper"}:
         repository = model_id if "/" in model_id else None
     if repository is not None:
         path = _local_huggingface_snapshot(repository)
@@ -672,9 +720,9 @@ def ordered_backends(
     """Order UI choices by local readiness while keeping generic APIs last."""
     original_order = {backend_id: index for index, backend_id in enumerate(registry)}
 
-    def key(backend: ModelBackend) -> tuple[int, int, int, int]:
+    def key(backend: ModelBackend) -> tuple[int, int, int, int, int]:
         if backend.id.startswith("generic_"):
-            return (4, 1, 1, original_order[backend.id])
+            return (4, 1, 1, 1, original_order[backend.id])
         status = backend_status(backend, settings=settings)
         if backend.runtime == "http":
             group = 2
@@ -682,13 +730,29 @@ def ordered_backends(
             group = 0
         else:
             group = 1
+        # The product default leads its group; other tested defaults follow.
+        default = 0 if backend.id in {RECOMMENDED_ASR_BACKEND, RECOMMENDED_TTS_BACKEND} else 1
         recommended = 0 if backend.tested_default else 1
         support = {"verified": 0, "supported": 1, "experimental": 2, "community": 3}[
             backend.support_level
         ]
-        return (group, recommended, support, original_order[backend.id])
+        return (group, default, recommended, support, original_order[backend.id])
 
     return sorted(registry.values(), key=key)
+
+
+def asr_default_fallback(backend: str, model: str) -> tuple[str, str] | None:
+    """Return the Parakeet choice that replaces the recommended ASR until it is installed.
+
+    ``None`` means keep ``backend``/``model``: it is not the recommended default
+    or that model is ready. Callers apply this only to a default nobody chose
+    (no saved ``asr_backend``), never to an explicit selection.
+    """
+    if (backend, model) != (RECOMMENDED_ASR_BACKEND, RECOMMENDED_ASR_MODEL):
+        return None
+    if backend_model_status(ASR_BACKENDS[backend], model).state == "ready":
+        return None
+    return FALLBACK_ASR_BACKEND, FALLBACK_ASR_MODEL
 
 
 def available_asr_review_choices(settings: Any | None = None) -> list[tuple[str, str]]:
@@ -887,6 +951,15 @@ def backend_model_pack_ids(backend_id: str) -> set[str]:
         "indextts2": {"indextts2-checkpoints"},
         "kotoba_whisper": {"kotoba-whisper-v2.2"},
         "faster_whisper": {"faster-whisper-large-v2"},
+        # Only the VAD and aligner packs are published; the recognizer packs
+        # are picked up when a user drops them into model-packs/.
+        "anime_whisper": {"anime-whisper", "whisper-vad-asmr-onnx", "qwen3-forced-aligner"},
+        "qwen3_asr": {
+            "qwen3-asr-1.7b",
+            "qwen3-asr-1.7b-ja-anime-galgame",
+            "whisper-vad-asmr-onnx",
+            "qwen3-forced-aligner",
+        },
     }.get(backend_id, set())
 
 
@@ -1066,16 +1139,25 @@ def download_backend_models(
                     (index - 1) / len(model_ids),
                     desc=message,
                 )
+            # snapshot_download keeps real files (not symlinks) in the snapshot
+            # directory when the filesystem cannot symlink, as on Windows.
+            download_options: dict[str, Any] = {}
+            if model_id in _MODEL_DOWNLOAD_IGNORE:
+                download_options["ignore_patterns"] = list(_MODEL_DOWNLOAD_IGNORE[model_id])
             try:
                 snapshot_download_with_fallback(
                     repo_id=model_id,
                     revision=revision,
                     preferred_endpoint=endpoint,
                     max_workers=4,
+                    **download_options,
                 )
             except Exception as exc:
                 mirror = f"（当前端点：{endpoint}）" if endpoint else ""
-                raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}") from exc
+                hint = ""
+                if model_id not in _MODELSCOPE_PACK_FOR_MODEL and not external_downloads_allowed():
+                    hint = "\n该模型暂无国内镜像，需要在“设置 → 下载来源”选择“海外源”后重试。"
+                raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}{hint}") from exc
             path = cached_model_path(model_id)
             if path is None:
                 raise EnvironmentError(f"模型 {model_id} 下载后未通过完整性检查。")
@@ -1193,10 +1275,7 @@ def _install_backend_unlocked(
             return result
     if cancel_event is not None and cancel_event.is_set():
         raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-    defer_model_pack = current_platform().is_windows and backend_id in {
-        "faster_whisper",
-        "kotoba_whisper",
-    }
+    defer_model_pack = current_platform().is_windows and backend_id in _WINDOWS_SCRIPT_BACKENDS
     imported_packs = 0
     if not defer_model_pack:
         imported_packs = import_backend_model_packs(
@@ -1255,10 +1334,7 @@ def _install_backend_unlocked(
                 log_callback=log_callback,
                 cancel_event=cancel_event,
             )
-        elif current_platform().is_windows and backend_id in {
-            "faster_whisper",
-            "kotoba_whisper",
-        }:
+        elif current_platform().is_windows and backend_id in _WINDOWS_SCRIPT_BACKENDS:
             completed = _install_windows_backend(
                 backend_id,
                 timeout_seconds=timeout_seconds,

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import engine, output_files, project_cli, runlog
 from asmr_dubber.errors import ProjectError
 from asmr_dubber.services.batch_catalog import (
     preview_edition_for_ui,
@@ -170,8 +170,8 @@ def test_reference_wait_emits_best_effort_ui_events(
 ) -> None:
     project_json = tmp_path / "project.json"
     project_json.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(engine, "project_reference_id", lambda _path: "s000007")
-    monkeypatch.setattr(engine, "project_has_external_reference", lambda _path: False)
+    monkeypatch.setattr(project_cli, "project_reference_id", lambda _path: "s000007")
+    monkeypatch.setattr(project_cli, "project_has_external_reference", lambda _path: False)
     events: list[dict[str, object]] = []
 
     assert engine.wait_for_reference(
@@ -195,9 +195,9 @@ def test_reference_notification_failure_never_stops_task(
 ) -> None:
     project_json = tmp_path / "project.json"
     project_json.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(engine, "project_reference_id", lambda _path: "s000001")
-    monkeypatch.setattr(engine, "project_has_external_reference", lambda _path: False)
-    monkeypatch.setattr(engine, "log_event", lambda _message: None)
+    monkeypatch.setattr(project_cli, "project_reference_id", lambda _path: "s000001")
+    monkeypatch.setattr(project_cli, "project_has_external_reference", lambda _path: False)
+    monkeypatch.setattr(runlog, "log_event", lambda _message: None)
 
     def broken_notification(_payload: dict[str, object]) -> None:
         raise RuntimeError("browser closed")
@@ -365,17 +365,17 @@ def test_autoflow_subtitle_only_execution_skips_reference_tts_and_mix(
     commands: list[str] = []
 
     monkeypatch.setattr(
-        engine,
+        project_cli,
         "run_asmr_cli",
         lambda _paths, command, *_arguments: commands.append(command),
     )
     monkeypatch.setattr(
-        engine,
+        project_cli,
         "wait_for_reference",
         lambda *_args, **_kwargs: pytest.fail("仅字幕任务不应等待参考音频"),
     )
     monkeypatch.setattr(
-        engine,
+        output_files,
         "copy_subtitle_only_outputs",
         lambda *_args, **_kwargs: {
             "original": str(original),
@@ -389,7 +389,7 @@ def test_autoflow_subtitle_only_execution_skips_reference_tts_and_mix(
         path.write_text("00:00:00 第一轨\n", encoding="utf-8")
         return path
 
-    monkeypatch.setattr(engine, "write_timestamp_document", fake_timestamp)
+    monkeypatch.setattr(output_files, "write_timestamp_document", fake_timestamp)
 
     engine.execute_task(
         SimpleNamespace(),  # type: ignore[arg-type]

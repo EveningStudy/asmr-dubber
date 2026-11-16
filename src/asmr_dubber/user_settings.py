@@ -155,6 +155,8 @@ def _is_legacy_builtin_translation_prompt(value: str) -> bool:
     """Recognize packaged prompts saved verbatim by releases before 0.7.0."""
 
     normalized = " ".join(value.replace("\r\n", "\n").split())
+    if _is_packaged_translation_prompt(normalized):
+        return True
     if not normalized.endswith(
         '{"translations":[{"id":"s000001","zh":"中文台词；无实义时为空字符串"}]}'
     ):
@@ -164,7 +166,21 @@ def _is_legacy_builtin_translation_prompt(value: str) -> bool:
             "你是日语音声、广播剧和 ASMR 的简体中文配音翻译。",
             "你是音声、广播剧和 ASMR 的简体中文配音翻译。",
             "你负责把日语音声、广播剧和 ASMR 台词翻译成简体中文配音稿。",
+            "你负责把英语音声、广播剧和 ASMR 台词翻译成简体中文配音稿。",
+            "你负责把中文音声、广播剧和 ASMR 台词翻译成简体中文配音稿。",
         )
+    )
+
+
+def _is_packaged_translation_prompt(normalized: str) -> bool:
+    """Recognize a rendered packaged prompt, whichever sound policy it was rendered for."""
+
+    from .translation import SOUND_POLICIES, default_translation_prompt
+
+    return any(
+        normalized == " ".join(default_translation_prompt(language, "zh", policy).split())
+        for language in ("ja", "en", "zh")
+        for policy in SOUND_POLICIES
     )
 
 
@@ -237,6 +253,8 @@ class UserSettings(ProjectSettings):
                 "parakeet_nemo",
                 "kotoba_whisper",
                 "faster_whisper",
+                "qwen3_asr",
+                "anime_whisper",
             }:
                 value["asr_backend"] = "parakeet_nemo"
                 value["asr_model"] = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
@@ -359,6 +377,17 @@ def load_user_settings() -> UserSettings:
         settings = UserSettings.model_validate(payload)
     except ValidationError as exc:
         raise ProjectError(f"本地设置校验失败 {path}: {exc}") from exc
+    if "asr_backend" not in payload:
+        # anime-whisper is the recommended default, but a fresh or core install
+        # does not have it yet.  Nobody chose it, so quietly use Parakeet until
+        # the model is installed; an explicit choice is never replaced.
+        from .runtime_manager import asr_default_fallback
+
+        fallback = asr_default_fallback(settings.asr_backend, settings.asr_model)
+        if fallback is not None:
+            settings = settings.model_copy(
+                update={"asr_backend": fallback[0], "asr_model": fallback[1]}
+            )
     if settings.tts_backend in {"indextts2_5", "indextts2"}:
         # Keep the selected local IndexTTS backend when it is usable, but
         # do not leave a fresh/core installation pointing at a missing runtime.

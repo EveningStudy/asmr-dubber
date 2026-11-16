@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from heapq import nlargest
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 from .audio import extract_reference, probe_audio
@@ -97,6 +98,85 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
     )
 
 
+_PICK_FRAME_SECONDS = 0.02
+_PICK_MAX_CANDIDATES = 24
+
+
+def _frame_levels(audio: np.ndarray, rate: int) -> np.ndarray:
+    hop = max(1, round(rate * _PICK_FRAME_SECONDS))
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    count = len(mono) // hop
+    if count == 0:
+        return np.zeros(0)
+    frames = mono[: count * hop].astype(np.float64).reshape(count, hop)
+    return np.sqrt(np.mean(frames**2, axis=1))
+
+
+def _duration_score(seconds: float) -> float:
+    if 5.0 <= seconds <= 12.0:
+        return 1.0
+    if seconds < 5.0:
+        return max(0.0, (seconds - 2.0) / 3.0)
+    return max(0.0, 1.0 - (seconds - 12.0) / 8.0)
+
+
+def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | None:
+    """Choose the voice anchor by quality, not just length (F3).
+
+    Scores each candidate line on length (5-12 s is best), how far its voice
+    stands above the recording's noise floor, and how much of it is voiced:
+    a clear, normally spoken line gives a steadier cloned timbre than a long
+    whisper or a line full of effects.  Deterministic for a given source.
+    """
+    from .filtering import is_japanese_filler_only
+    from .voice_match import voiced_ratio
+
+    candidates = [
+        s
+        for s in project.sentences
+        if s.enabled
+        and s.source_text.strip()
+        and 2.0 <= s.end_seconds - s.start_seconds <= 20.0
+        and not is_japanese_filler_only(s.source_text)
+    ]
+    if not candidates:
+        return None
+    candidates = sorted(
+        candidates, key=lambda s: (-(s.end_seconds - s.start_seconds), s.start_seconds)
+    )[:_PICK_MAX_CANDIDATES]
+    try:
+        with sf.SoundFile(source) as audio:
+            rate = audio.samplerate
+            levels = np.concatenate(
+                [
+                    _frame_levels(block, rate)
+                    for block in audio.blocks(blocksize=rate * 30, dtype="float32", always_2d=True)
+                ]
+            )
+            floor = float(np.percentile(levels[levels > 0], 10)) if np.any(levels > 0) else 1e-9
+            scored = []
+            for sentence in candidates:
+                audio.seek(max(0, round(sentence.start_seconds * rate)))
+                frames = round((sentence.end_seconds - sentence.start_seconds) * rate)
+                clip = audio.read(frames, dtype="float32", always_2d=True)
+                clip_levels = _frame_levels(clip, rate)
+                if not len(clip_levels) or clip_levels.max() <= 0:
+                    continue
+                active = clip_levels[clip_levels >= clip_levels.max() * 0.1]
+                snr_db = 20 * math.log10(max(float(np.mean(active)), 1e-9) / max(floor, 1e-9))
+                score = (
+                    _duration_score(sentence.end_seconds - sentence.start_seconds)
+                    + 0.5 * min(max(snr_db, 0.0) / 30.0, 1.0)
+                    + 0.5 * voiced_ratio(clip.mean(axis=1), rate)
+                )
+                scored.append((score, -sentence.start_seconds, sentence))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not scored:
+        return None
+    return max(scored, key=lambda item: (item[0], item[1]))[2]
+
+
 def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sentence | None:
     """Choose a deterministic project reference that is not the rejected sentence."""
 
@@ -130,6 +210,13 @@ def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sent
             -item.start_seconds,
         ),
     )
+
+
+def reference_audio_signature(project: DubProject, source: Path) -> str:
+    """Identify how reference audio is cut, so caches never mix the two methods."""
+    mode = project.settings.reference_audio_mode
+    origin = "vocals" if source.name == "vocals.wav" and "separation" in source.parts else "mix"
+    return f"reference-audio-v2|{mode}|{origin}"
 
 
 def reference_plan_hash(project: DubProject) -> str:
@@ -203,6 +290,11 @@ def prepare_voice_reference(
             f"{project.settings.reference_padding_seconds:.6f}"
         )
         identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    fullband = project.settings.reference_audio_mode != "legacy"
+    if fullband:
+        identity = hashlib.sha256(
+            f"{identity}|{reference_audio_signature(project, source)}".encode()
+        ).hexdigest()
     destination = project_dir / "references" / f"{prefix}_{identity[:16]}.wav"
     if not destination.is_file():
         temporary = destination.with_name(f".{destination.stem}.tmp.wav")
@@ -213,6 +305,7 @@ def prepare_voice_reference(
                 start_seconds=reference_sentence.start_seconds,
                 end_seconds=reference_sentence.end_seconds,
                 padding_seconds=project.settings.reference_padding_seconds,
+                fullband=fullband,
             )
             temporary.replace(destination)
         finally:
@@ -371,6 +464,9 @@ def _index_sentence_reference(
         f"{reference_sentence.id}|{start_seconds:.6f}|{end_seconds:.6f}|"
         f"{reference_sentence.source_text}"
     )
+    fullband = project.settings.reference_audio_mode != "legacy"
+    if fullband:
+        payload += f"|{reference_audio_signature(project, source)}"
     identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     prefix = f"index_{role}_anchor" if shared else f"index_{role}_{reference_sentence.id}"
     destination = project_dir / "references" / f"{prefix}_{identity[:16]}.wav"
@@ -383,6 +479,7 @@ def _index_sentence_reference(
                 destination=temporary,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
+                fullband=fullband,
             )
             if not _valid_cached_index_reference(temporary):
                 raise SynthesisError(

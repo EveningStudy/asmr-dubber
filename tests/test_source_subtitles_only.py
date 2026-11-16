@@ -7,6 +7,13 @@ import soundfile as sf
 
 from asmr_dubber import pipeline
 from asmr_dubber.autoflow import engine as e
+from asmr_dubber.autoflow import (
+    media_audio,
+    media_video,
+    project_cli,
+    title_translation,
+    work_state,
+)
 from asmr_dubber.autoflow.source_subtitles import execute_source_subtitles
 from asmr_dubber.models import Sentence, load_project, save_project
 from asmr_dubber.services.batch_catalog import scan_for_ui
@@ -80,7 +87,9 @@ def test_new_plan_serialization_identity_and_queue(tmp_path):
 
 def mock_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        e, "planned_state_path", lambda folder, plan_id, job: tmp_path / "state" / f"{job}.json"
+        work_state,
+        "planned_state_path",
+        lambda folder, plan_id, job: tmp_path / "state" / f"{job}.json",
     )
     commands = []
 
@@ -109,22 +118,22 @@ def mock_runtime(tmp_path, monkeypatch):
         else:
             pytest.fail(f"forbidden command: {command}")
 
-    monkeypatch.setattr(e, "create_asmr_project", create)
-    monkeypatch.setattr(e, "run_asmr_cli", cli)
-    for name in (
-        "render_static_video",
-        "render_static_bilingual_video",
-        "normalize_and_concat",
+    monkeypatch.setattr(project_cli, "create_asmr_project", create)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", cli)
+    for module, name in (
+        (media_video, "render_static_video"),
+        (media_video, "render_static_bilingual_video"),
+        (media_audio, "normalize_and_concat"),
     ):
         monkeypatch.setattr(
-            e, name, lambda *a, **k: pytest.fail("unexpected media/translation work")
+            module, name, lambda *a, **k: pytest.fail("unexpected media/translation work")
         )
 
     def titles(plan_id, folder, sources, paths, **flags):
         assert not any(flags.values())
         return folder.name, {s.relative_path or s.path.name: s.title_ja for s in sources}
 
-    monkeypatch.setattr(e, "translated_plan_titles", titles)
+    monkeypatch.setattr(title_translation, "translated_plan_titles", titles)
     return commands
 
 
@@ -193,7 +202,9 @@ def test_timed_subtitles_real_cli_end_to_end(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        e, "planned_state_path", lambda folder, plan_id, job: tmp_path / "state" / f"{job}.json"
+        work_state,
+        "planned_state_path",
+        lambda folder, plan_id, job: tmp_path / "state" / f"{job}.json",
     )
     repo = Path(__file__).parents[1]
     paths = e.ToolPaths(

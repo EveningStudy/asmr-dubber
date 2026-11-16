@@ -94,6 +94,14 @@ The model name is wrong. Check which models your account can use in the provider
 
 Laughter, breathing, "mm" and similar sounds are not translated. That is normal. If a sentence with real content is empty, expand the task log to look for errors, then click **Translate remaining** again.
 
+**A line such as "ご視聴ありがとうございました" appears in a long silence**
+
+Speech models invent such outro phrases on silence or noise. These lines are disabled automatically after recognition (status shows hallucination). Listen first, and enable one manually only if someone really said it.
+
+**Some sentences are flagged after translation**
+
+When translation finishes it checks its own output: leftover Japanese kana, a line more than 20% over its length budget, a translation identical to the source, or identical to the previous line's translation while the source differs. Redo only the flagged sentences.
+
 **Translation overwrote my edits**
 
 **Translate remaining** never touches existing translations. **Translate everything again** does, and it asks for confirmation first.
@@ -145,9 +153,9 @@ Spatial following needs a stereo original. Turn it off for mono audio.
 
 That sentence has original text but an empty translation. Fill it in, or untick the sentence, and export again.
 
-**The original voice is still audible in the replacement mix**
+**The original voice is still audible in the fully dubbed mix**
 
-Vocal separation cannot be perfectly clean. This is a limit of the technology today. Also check whether **Original vocal reinsertion** is on, since it deliberately puts some of the original back.
+The most common cause is that recognition did not hear that line; with no sentence there is nothing to replace. In the sentence table choose **Needs checking** to see flagged lines, and compare with the "voice no sentence covers" figures in `mix/replacement-report.json` in the project. The second cause is that vocal separation cannot be perfectly clean. To keep the original of one line, set its **Original voice** to **Keep original**. See [Fully dubbed mix](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice).
 
 ## Settings
 
@@ -160,6 +168,24 @@ Batch works the same way: works already in the queue do not follow the defaults.
 **The interface is in English but the dub is still Chinese**
 
 The interface language and the dubbing language are separate. Choose the dubbing language under **Dub into** on the dubbing step.
+
+## Batch
+
+**"Pre-start checks failed" when starting**
+
+Before processing any file the program checked disk space, video memory, the translation key (with one minimal request) and the required models. The dialog states the reason for each item: free disk space or change the output location; check the key, quota and network under **Settings → Cloud services**; install missing models on the **Devices and models** page.
+
+**A yellow "Partly done" in the queue**
+
+The work finished, but a few sentences failed in translation or dubbing (within the allowed number, by default 3 sentences or 2%). Open it to see the sentences: those without a translation have source-language subtitles only, those without a dub keep the original voice. Open the project to redo the missing ones. Change the limit under **Settings → Batch**.
+
+**A work failed with "more than the N allowed"**
+
+More sentences failed than allowed, which points to a problem with the service or settings rather than a few odd sentences. Read the listed reasons, fix the cause and click **Resume**.
+
+**How to send a batch problem to someone**
+
+Click **Export diagnostics** beside the failed or partly done work and attach the zip to an issue. It holds the logs, that work's own log, the settings (no keys), the failed sentence list and the environment check, and never `secrets.json`.
 
 ## Still stuck
 

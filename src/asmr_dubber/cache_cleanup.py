@@ -75,6 +75,7 @@ def _candidates(directory: Path, categories: list[str]) -> list[Path]:
             directory / name
             for name in (
                 "analysis/asr_16k_mono.wav",
+                "analysis/asr_16k_dominant.wav",
                 "analysis/spatial-reference.wav",
                 "analysis/replacement_loudness_16k_mono.wav",
                 "analysis/replacement_loudness_source.sha256",
@@ -113,7 +114,9 @@ def _candidates(directory: Path, categories: list[str]) -> list[Path]:
                 # Do not leave a completion receipt after removing its stems.
                 if any(p.resolve() in protected for p in stems):
                     continue
-                files.extend([done, *stems, folder / "asr_16k_mono.wav"])
+                files.extend(
+                    [done, *stems, folder / "asr_16k_mono.wav", folder / "asr_16k_dominant.wav"]
+                )
     return [
         p
         for p in dict.fromkeys(files)

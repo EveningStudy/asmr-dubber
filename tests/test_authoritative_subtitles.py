@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import engine, project_cli
 from asmr_dubber.autoflow.catalog import _subtitle_content_language, scan_work
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 
@@ -62,7 +62,7 @@ def test_all_tracks_with_timed_subtitles_never_fall_back_to_asr(
         transcript(tmp_path, "02.mp3.vtt", "Second cue.", second_language, 10),
     ]
     monkeypatch.setattr(
-        engine,
+        project_cli,
         "run_asmr_cli",
         lambda *a, **k: pytest.fail("must not call ASR/translation during import"),
     )
@@ -127,8 +127,8 @@ def test_complete_chinese_pipeline_enters_tts_without_asr_or_translation(tmp_pat
             raise ReachedTTS
         pytest.fail(f"Unexpected stage before TTS: {command}")
 
-    monkeypatch.setattr(engine, "run_asmr_cli", cli)
-    monkeypatch.setattr(engine, "project_reference_id", lambda _: "s000001")
+    monkeypatch.setattr(project_cli, "run_asmr_cli", cli)
+    monkeypatch.setattr(project_cli, "project_reference_id", lambda _: "s000001")
     with pytest.raises(ReachedTTS):
         engine.execute_task(SimpleNamespace(), tmp_path, tmp_path / "state.json", state, [])
     assert calls == ["synthesize"]
@@ -148,7 +148,7 @@ def test_old_complete_overlay_task_is_not_silently_resumed(tmp_path, monkeypatch
     }
     original = manifest.read_bytes()
     monkeypatch.setattr(
-        engine, "run_asmr_cli", lambda *a: pytest.fail("must stop before synthesis")
+        project_cli, "run_asmr_cli", lambda *a: pytest.fail("must stop before synthesis")
     )
     with pytest.raises(engine.VideoPreparerError, match="旧版"):
         engine.execute_task(SimpleNamespace(), tmp_path, tmp_path / "state.json", state, [])

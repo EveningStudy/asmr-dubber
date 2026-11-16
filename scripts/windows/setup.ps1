@@ -194,6 +194,7 @@ if ($Profile -eq "进阶") {
     Write-SetupHost "  ASR（语音识别）Parakeet TDT/CTC 0.6B JA"
     Write-SetupHost "  ASR（语音识别）Kotoba-Whisper v2.2（kotoba-tech/kotoba-whisper-v2.2）"
     Write-SetupHost "  ASR（语音识别）Faster-Whisper large-v2（Systran/faster-whisper-large-v2）"
+    Write-SetupHost "  ASR（语音识别）anime-whisper（litagin/anime-whisper，仅海外源，失败不影响安装）"
     Write-SetupHost "  VAD（语音活动检测）日语 ASMR 专用 Whisper VAD ONNX"
     Write-SetupHost "  时间戳对齐：Qwen3 ForcedAligner 0.6B（阿里 Qwen）"
     Write-SetupHost "  TTS（语音合成）IndexTTS2 checkpoints（仅 NVIDIA GPU）"

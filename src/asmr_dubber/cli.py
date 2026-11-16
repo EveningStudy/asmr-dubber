@@ -108,6 +108,21 @@ def _fail(exc: Exception) -> NoReturn:
     raise typer.Exit(code=1) from exc
 
 
+ResultJsonOption = Annotated[
+    Path | None,
+    typer.Option("--result-json", help="把阶段结果和失败句写入 JSON，供批量引擎读取"),
+]
+
+
+def _stage_failed(
+    stage: str, project_path: Path, result_json: Path | None, exc: Exception
+) -> NoReturn:
+    from .stage_result import write_result
+
+    write_result(result_json, stage, project_path, exc)
+    _fail(exc)
+
+
 def _parse_setting_value(value: str) -> Any:
     try:
         return json.loads(value)
@@ -291,13 +306,20 @@ def analyze_command(
 def translate_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
     force: Annotated[bool, typer.Option("--force", help="重新翻译所有句子")] = False,
+    result_json: ResultJsonOption = None,
 ) -> None:
     """使用项目记录的翻译服务；API Key 从本机设置或环境变量读取。"""
+    from .stage_result import write_result
+
     try:
         project, directory = reload_project(project_path)
         translate_project(project, directory, force=force, progress=ConsoleProgress())
     except AsmrDubberError as exc:
-        _fail(exc)
+        _stage_failed("translate", project_path, result_json, exc)
+    except Exception as exc:
+        write_result(result_json, "translate", project_path, exc)
+        raise
+    write_result(result_json, "translate", project_path)
     console.print(directory / "exports" / "transcript.json")
 
 
@@ -308,8 +330,11 @@ def synthesize_command(
     sentence: Annotated[
         list[str] | None, typer.Option("--sentence", "-s", help="只重做指定句子 id，可重复")
     ] = None,
+    result_json: ResultJsonOption = None,
 ) -> None:
     """使用项目设置中选定的 TTS（语音合成）后端克隆全部中文。"""
+    from .stage_result import write_result
+
     try:
         project, directory = reload_project(project_path)
         synthesize_project(
@@ -320,7 +345,11 @@ def synthesize_command(
             progress=ConsoleProgress(),
         )
     except AsmrDubberError as exc:
-        _fail(exc)
+        _stage_failed("synthesize", project_path, result_json, exc)
+    except Exception as exc:
+        write_result(result_json, "synthesize", project_path, exc)
+        raise
+    write_result(result_json, "synthesize", project_path)
     console.print(directory / "chinese")
 
 
@@ -328,15 +357,30 @@ def synthesize_command(
 def mix_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
     output_variant: Annotated[str | None, typer.Option("--output-variant")] = None,
+    allow_missing: Annotated[
+        bool,
+        typer.Option("--allow-missing", help="缺配音的句子按不配音处理（保留原声），不中断混音"),
+    ] = False,
+    result_json: ResultJsonOption = None,
 ) -> None:
     """将中文轨与原轨相加；视频项目同时保留画面并输出视频。"""
+    from .stage_result import write_result
+
     try:
         project, directory = reload_project(project_path)
         output = mix_project(
-            project, directory, progress=ConsoleProgress(), output_variant=output_variant
+            project,
+            directory,
+            progress=ConsoleProgress(),
+            output_variant=output_variant,
+            allow_missing=allow_missing,
         )
     except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
+        _stage_failed("mix", project_path, result_json, exc)
+    except Exception as exc:
+        write_result(result_json, "mix", project_path, exc)
+        raise
+    write_result(result_json, "mix", project_path)
     console.print(f"[bold green]{output}[/bold green]")
     if project.output_video_file:
         console.print(f"[bold green]{directory / project.output_video_file}[/bold green]")

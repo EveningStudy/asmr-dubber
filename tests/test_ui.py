@@ -196,6 +196,7 @@ def test_output_media_reuses_portable_cache_and_native_audio_player(app, tmp_pat
 
 
 def test_edge_tts_voice_preview_is_cached_and_browser_safe(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.edge_tts_client.version", lambda _name: "7.3.1")
     home = tmp_path / "portable"
     calls: list[tuple[str, str]] = []
 
@@ -311,6 +312,8 @@ def test_ui_exposes_clear_five_step_workflow_and_only_supported_backends(app):
         "parakeet_nemo",
         "kotoba_whisper",
         "faster_whisper",
+        "qwen3_asr",
+        "anime_whisper",
         "generic_asr_api",
     }
     assert set(parameters.choices()["tts"]) == set(TTS_BACKENDS)

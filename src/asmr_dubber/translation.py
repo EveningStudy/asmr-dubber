@@ -6,20 +6,35 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
+from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .api_contracts import APIContractError, merge_extra_body
 from .api_logging import logged_http_client, safe_api_url
 from .constants import DEFAULT_DEEPSEEK_BASE_URL
 from .errors import TranslationError
-from .filtering import has_speakable_text, is_japanese_filler_only
+from .filtering import (
+    has_speakable_text,
+    is_japanese_filler_only,
+    kana_to_romaji,
+    looks_like_sound_effect,
+    speakable_character_count,
+)
 from .languages import (
     MACHINE_TRANSLATION_LANGUAGE_CODES,
     SourceLanguage,
@@ -39,6 +54,16 @@ Progress = Callable[[str, int, int], None]
 logger = logging.getLogger(__name__)
 
 
+SoundPolicy = Literal["skip", "romaji", "keep_source"]
+SOUND_POLICIES: tuple[SoundPolicy, ...] = ("skip", "romaji", "keep_source")
+
+# One failed request at most this many times while a batch is being split; the
+# whole batch already used the translator's full retry budget.
+_SPLIT_RETRY_ATTEMPTS = 2
+_MAX_CONSECUTIVE_BATCH_FAILURES = 3
+_FATAL_HTTP_STATUS = frozenset({401, 402, 403})
+
+
 def empty_translation_is_expected(sentence: Sentence) -> bool:
     return not has_speakable_text(sentence.source_text) or is_japanese_filler_only(
         sentence.source_text
@@ -47,6 +72,88 @@ def empty_translation_is_expected(sentence: Sentence) -> bool:
 
 class _NonRetryableTranslationError(TranslationError):
     """Authentication, billing, permission, and request-schema failures."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _is_fatal_translation_error(error: BaseException) -> bool:
+    """Credentials, billing and permission errors repeat for every request."""
+
+    return (
+        isinstance(error, _NonRetryableTranslationError) and error.status_code in _FATAL_HTTP_STATUS
+    )
+
+
+@dataclass(frozen=True)
+class TranslationEntry:
+    """One validated model answer: target text and what kind of line it is."""
+
+    zh: str
+    kind: Literal["speech", "sound"] | None = None
+
+
+@dataclass(frozen=True)
+class TranslationFailure:
+    sentence_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class TranslationFlag:
+    """A finished translation that looks wrong and is worth redoing.
+
+    ``code`` is one of ``kana_left``, ``too_long``, ``same_as_source`` and
+    ``repeats_previous``; ``reason`` is a user-facing sentence.
+    """
+
+    sentence_id: str
+    code: str
+    reason: str
+
+
+@dataclass
+class TranslationReport:
+    """What one ``translate_sentences`` call did, instead of an exception.
+
+    ``translated`` counts sentences that received target text; ``skipped_ids`` are
+    sentences deliberately left undubbed (sounds and fillers); ``failed`` are
+    sentences that still have no usable translation and can be retried.
+    """
+
+    translated: int = 0
+    skipped_ids: list[str] = field(default_factory=list)
+    failed: list[TranslationFailure] = field(default_factory=list)
+    stopped_reason: str | None = None
+    # Post-translation self-check of the sentences translated in this call.
+    flagged: list[TranslationFlag] = field(default_factory=list)
+
+    @property
+    def flagged_ids(self) -> list[str]:
+        return list(dict.fromkeys(item.sentence_id for item in self.flagged))
+
+    @property
+    def skipped(self) -> int:
+        return len(self.skipped_ids)
+
+    @property
+    def failed_ids(self) -> list[str]:
+        return [item.sentence_id for item in self.failed]
+
+    def summary(self) -> str:
+        parts = [f"成功 {self.translated} 句", f"跳过 {self.skipped} 句"]
+        if self.failed:
+            parts.append(f"失败 {len(self.failed)} 句")
+        return "，".join(parts)
+
+    def failure_message(self) -> str:
+        shown = "；".join(f"{item.sentence_id}：{item.reason}" for item in self.failed[:6])
+        extra = f"（另有 {len(self.failed) - 6} 句）" if len(self.failed) > 6 else ""
+        return (
+            f"{len(self.failed)} 句未取得译文：{shown}{extra}。"
+            "其他句子的译文已保存，修正或稍后再次点击翻译只会重试这些句子。"
+        )
 
 
 class _OutputLengthTranslationError(TranslationError):
@@ -58,6 +165,8 @@ class TranslationItem(BaseModel):
 
     id: str
     zh: str
+    # Optional so custom prompts that only know ``id`` and ``zh`` keep working.
+    kind: str | None = None
 
     @field_validator("id")
     @classmethod
@@ -71,6 +180,13 @@ class TranslationItem(BaseModel):
     @classmethod
     def normalize_translation(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("kind")
+    @classmethod
+    def normalize_kind(cls, value: str | None) -> str | None:
+        # An unknown label is treated as missing so the fallback rules decide.
+        normalized = (value or "").strip().casefold()
+        return normalized if normalized in {"speech", "sound"} else None
 
 
 class TranslationEnvelope(BaseModel):
@@ -127,6 +243,44 @@ class ScriptCorrectionEnvelope(BaseModel):
 @dataclass(frozen=True)
 class TranslationChunk:
     sentences: list[Sentence]
+    # Per-sentence length budget sent to the model ("max_chars" or "max_words").
+    budgets: dict[str, int] = field(default_factory=dict)
+    budget_key: str = "max_chars"
+
+
+_BUDGET_RULE = (
+    "每项的 {key} 是按原句说话时长估算的{unit}上限，用于让配音和原声对齐。"
+    "在不丢失意思的前提下尽量不超过它；需要删减时，先删重复、语气词和可以省略的修饰。"
+)
+
+
+def budget_rule(chunk: TranslationChunk) -> str:
+    """Prompt sentence explaining the length budget, or "" when there is none."""
+    if not chunk.budgets:
+        return ""
+    unit = "英文单词数" if chunk.budget_key == "max_words" else "字数（不含标点）"
+    return "\n" + _BUDGET_RULE.format(key=chunk.budget_key, unit=unit)
+
+
+def length_budgets(
+    sentences: list[Sentence], targets: list[Sentence], rate: float
+) -> dict[str, int]:
+    """How many characters (or words) each line can take when dubbed at ``rate`` per second.
+
+    A dub may run into the pause before the next line, but at most one second past
+    the line's own end, so a line before a long silence is not given a paragraph.
+    """
+    ordered = sorted(sentences, key=lambda s: (s.start_seconds, s.end_seconds, s.id))
+    next_start = {current.id: later.start_seconds for current, later in pairwise(ordered)}
+    budgets = {}
+    for sentence in targets:
+        own = sentence.end_seconds - sentence.start_seconds
+        available = min(
+            next_start.get(sentence.id, sentence.end_seconds + 1.0), sentence.end_seconds + 1.0
+        )
+        seconds = max(own, available - sentence.start_seconds)
+        budgets[sentence.id] = max(2, round(seconds * rate))
+    return budgets
 
 
 def _load_prompt(name: str) -> str:
@@ -183,18 +337,34 @@ _SOURCE_PROMPT_VALUES: dict[SpeechSourceLanguage, tuple[str, str, str]] = {
         "日语",
         "日语中的「あ」「え」「う」「ん」「ふふ」「えーと」",
         "\n   日语中的「しこしこ」「シコシコ」及其罗马字转写 “shiko shiko” 或 “shikoshiko” "
-        "一律按动作或摩擦拟声删除，不得翻译成“撸”“撸撸”等会被合成语音的文字；"
-        "同项还有实义台词时只翻译台词，除此之外没有实义时将 zh 设为空字符串。",
+        '一律按动作或摩擦拟声处理（`kind` 为 "sound"），不得翻译成“撸”“撸撸”等会被合成语音的文字；'
+        "同项还有实义台词时只翻译台词。",
     ),
     "en": ("英语", "英语中的 “uh”“um”“erm”", ""),
     "zh": ("中文", "中文中的“呃”“嗯……”", ""),
 }
 
 
+_SOUND_POLICY_RULES: dict[str, str] = {
+    "skip": '`kind` 为 "sound" 时 `zh` 必须是空字符串。',
+    "romaji": (
+        '`kind` 为 "sound" 时，`zh` 写这个声音的罗马字（小写，例如「き」写 ki），'
+        "不得翻成中文拟声词；无法拼写的呼吸声、笑声写空字符串。"
+    ),
+    "keep_source": '`kind` 为 "sound" 时，`zh` 原样抄写 `source`，不翻译。',
+}
+
+
+def sound_policy_rule(policy: str) -> str:
+    return _SOUND_POLICY_RULES.get(policy, _SOUND_POLICY_RULES["skip"])
+
+
 def default_translation_prompt(
-    source_language: SourceLanguage = "ja", target_language: str = "zh"
+    source_language: SourceLanguage = "ja",
+    target_language: str = "zh",
+    sound_policy: str = "skip",
 ) -> str:
-    """Render the packaged prompt for one source language."""
+    """Render the packaged prompt for one source language and sound policy."""
 
     prompt_language = source_language
     language, filler_examples, sound_rule = _SOURCE_PROMPT_VALUES[prompt_language]
@@ -205,6 +375,7 @@ def default_translation_prompt(
         template.replace("{{SOURCE_LANGUAGE}}", language)
         .replace("{{FILLER_EXAMPLES}}", filler_examples)
         .replace("{{SOURCE_SPECIFIC_SOUND_RULE}}", sound_rule)
+        .replace("{{SOUND_POLICY_RULE}}", sound_policy_rule(sound_policy))
     )
     if target_language == "en":
         prompt += "\n输出英语台词。JSON 键 zh 是兼容字段名，不表示输出中文；不得修改键名。"
@@ -219,9 +390,14 @@ def _deepseek_translation_request(
     target: str,
     expected_ids: list[str],
     attempt: int,
+    sound_policy: str = "skip",
 ) -> str:
     output_schema = json.dumps(
-        {"translations": [{"id": sentence_id, "zh": ""} for sentence_id in expected_ids]},
+        {
+            "translations": [
+                {"id": sentence_id, "zh": "", "kind": "speech"} for sentence_id in expected_ids
+            ]
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -234,7 +410,8 @@ def _deepseek_translation_request(
         )
     )
     return (
-        _DEEPSEEK_STRUCTURE_PROMPT.replace("{{RETRY_NOTE}}", retry_note)
+        _DEEPSEEK_STRUCTURE_PROMPT.replace("{{SOUND_POLICY_RULE}}", sound_policy_rule(sound_policy))
+        .replace("{{RETRY_NOTE}}", retry_note)
         .replace("{{OUTPUT_SCHEMA}}", output_schema)
         .replace("{{TARGET_JSON}}", target)
         .strip()
@@ -262,10 +439,17 @@ def _chunks(
     return result
 
 
-def _json_lines(sentences: Iterable[Sentence], field: str = "source") -> str:
+def _json_lines(
+    sentences: Iterable[Sentence],
+    field: str = "source",
+    budgets: dict[str, int] | None = None,
+    budget_key: str = "max_chars",
+) -> str:
     items = []
     for sentence in sentences:
-        item = {"id": sentence.id, "source": sentence.source_text}
+        item: dict[str, object] = {"id": sentence.id, "source": sentence.source_text}
+        if budgets and sentence.id in budgets:
+            item[budget_key] = budgets[sentence.id]
         if field == "both" and sentence.zh_text:
             item["existing_zh"] = sentence.zh_text
         items.append(item)
@@ -315,6 +499,36 @@ def _bounded_translation_memory(
     return _translation_memory(confirmed[-maximum_sentences:])
 
 
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Drop commas before ``}``/``]`` that sit outside JSON strings."""
+
+    pieces: list[str] = []
+    last = 0
+    in_string = False
+    escaped = False
+    for index, character in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character == ",":
+            match = _TRAILING_COMMA.match(text, index)
+            if match:
+                pieces.append(text[last:index])
+                last = index + 1
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
 def _extract_json(content: str) -> dict:
     value = content.strip()
     if value.startswith("```"):
@@ -323,23 +537,53 @@ def _extract_json(content: str) -> dict:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise TranslationError(f"翻译模型返回的不是有效 JSON：{exc}") from exc
+        # Models sometimes add a sentence before/after the object or leave a
+        # trailing comma.  Repair only those shapes; ids are still validated later.
+        start, end = value.find("{"), value.rfind("}")
+        parsed = None
+        if 0 <= start < end:
+            candidate = value[start : end + 1]
+            for text in (candidate, _strip_trailing_commas(candidate)):
+                try:
+                    parsed = json.loads(text)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        if parsed is None:
+            raise TranslationError(f"翻译模型返回的不是有效 JSON：{exc}") from exc
     if not isinstance(parsed, dict):
         raise TranslationError("翻译模型 JSON 顶层必须是对象。")
     return parsed
 
 
 def validate_translation(content: str, expected_ids: list[str]) -> dict[str, str]:
+    return {
+        sentence_id: entry.zh
+        for sentence_id, entry in validate_translation_entries(content, expected_ids).items()
+    }
+
+
+def validate_translation_entries(
+    content: str, expected_ids: list[str]
+) -> dict[str, TranslationEntry]:
     try:
         envelope = TranslationEnvelope.model_validate(_extract_json(content))
     except (ValidationError, TranslationError) as exc:
         raise TranslationError(f"翻译结构校验失败：{exc}") from exc
     actual_ids = [item.id for item in envelope.translations]
-    if actual_ids != expected_ids:
+    # Same ids in another order are matched by id; only missing, extra or
+    # duplicated ids make the answer unusable.
+    if len(actual_ids) != len(expected_ids) or set(actual_ids) != set(expected_ids):
         missing = [item for item in expected_ids if item not in actual_ids]
         extra = [item for item in actual_ids if item not in expected_ids]
-        raise TranslationError(f"翻译返回的 id/顺序不一致；缺少={missing[:8]}，多出={extra[:8]}")
-    return {item.id: item.zh for item in envelope.translations}
+        raise TranslationError(f"翻译返回的 id 不一致；缺少={missing[:8]}，多出={extra[:8]}")
+    return {
+        item.id: TranslationEntry(
+            item.zh,
+            "sound" if item.kind == "sound" else "speech" if item.kind == "speech" else None,
+        )
+        for item in envelope.translations
+    }
 
 
 def validate_script_reconciliation(content: str, expected_ids: list[str]) -> dict[str, str]:
@@ -566,6 +810,7 @@ class DeepSeekTranslator:
         minimum_output_tokens: int = 16_384,
         source_language: SourceLanguage = "ja",
         extra_body: str = "{}",
+        sound_policy: str = "skip",
     ) -> None:
         if not api_key.strip():
             raise TranslationError("缺少 DeepSeek API Key。请在 UI 中填写或设置 DEEPSEEK_API_KEY。")
@@ -573,7 +818,10 @@ class DeepSeekTranslator:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
-        self.system_prompt = system_prompt.strip() or default_translation_prompt(source_language)
+        self.sound_policy = sound_policy
+        self.system_prompt = system_prompt.strip() or default_translation_prompt(
+            source_language, sound_policy=sound_policy
+        )
         self.temperature = temperature
         self.top_p = top_p
         self.minimum_output_tokens = minimum_output_tokens
@@ -598,9 +846,9 @@ class DeepSeekTranslator:
         full_context: str,
         translation_memory: str,
         job_id: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, TranslationEntry]:
         expected_ids = [sentence.id for sentence in chunk.sentences]
-        target = _json_lines(chunk.sentences)
+        target = _json_lines(chunk.sentences, budgets=chunk.budgets, budget_key=chunk.budget_key)
         max_tokens = min(
             65_536,
             max(
@@ -634,7 +882,10 @@ class DeepSeekTranslator:
             messages.append(
                 {
                     "role": "user",
-                    "content": _deepseek_translation_request(target, expected_ids, attempt),
+                    "content": _deepseek_translation_request(
+                        target, expected_ids, attempt, self.sound_policy
+                    )
+                    + budget_rule(chunk),
                 }
             )
             payload: dict[str, object] = {
@@ -672,7 +923,8 @@ class DeepSeekTranslator:
                 if response.status_code in {401, 402, 403, 422}:
                     raise _NonRetryableTranslationError(
                         f"DeepSeek API 拒绝请求（HTTP {response.status_code}）："
-                        f"{response.text[:500]}"
+                        f"{response.text[:500]}",
+                        response.status_code,
                     )
                 response.raise_for_status()
                 data = response.json()
@@ -692,7 +944,7 @@ class DeepSeekTranslator:
                 content = choice.get("message", {}).get("content") or ""
                 if not content.strip():
                     raise TranslationError("DeepSeek 偶发返回了空内容。")
-                return validate_translation(content, expected_ids)
+                return validate_translation_entries(content, expected_ids)
             except _NonRetryableTranslationError:
                 raise
             except _OutputLengthTranslationError:
@@ -729,6 +981,7 @@ class LLMTranslator:
         client: httpx.Client | None = None,
         source_language: SourceLanguage = "ja",
         extra_body: str = "{}",
+        sound_policy: str = "skip",
     ) -> None:
         if not api_key.strip() and provider != "openai_compatible":
             raise TranslationError(f"{provider} 缺少 API Key。")
@@ -738,7 +991,10 @@ class LLMTranslator:
         self.api_key = api_key.strip()
         self.model = model.strip()
         self.base_url = base_url.rstrip("/")
-        self.system_prompt = system_prompt.strip() or default_translation_prompt(source_language)
+        self.sound_policy = sound_policy
+        self.system_prompt = system_prompt.strip() or default_translation_prompt(
+            source_language, sound_policy=sound_policy
+        )
         self.temperature = temperature
         self.top_p = top_p
         self.max_output_tokens = max_output_tokens
@@ -765,12 +1021,18 @@ class LLMTranslator:
         translation_memory: str,
         attempt: int,
     ) -> list[dict[str, str]]:
-        target = _json_lines(chunk.sentences)
+        target = _json_lines(chunk.sentences, budgets=chunk.budgets, budget_key=chunk.budget_key)
+        # Every item carries ``kind``; the sound rule matches the configured policy.
         correction = (
-            ""
-            if attempt == 1
-            else f"\n这是第 {attempt} 次校验重试：务必返回全部 id 和原顺序；无实义项用空 zh。"
+            '\n每项只输出 id、zh、kind 三个字段，kind 为 "speech" 或 "sound"。'
+            + sound_policy_rule(self.sound_policy)
+            + budget_rule(chunk)
         )
+        if attempt > 1:
+            correction += (
+                f"\n这是第 {attempt} 次校验重试：务必返回全部 id 和原顺序；"
+                '没有实义的项 kind 写 "sound"，不要省略。'
+            )
         messages = [{"role": "system", "content": self.system_prompt}]
         if full_context != "[]":
             messages.append(
@@ -927,7 +1189,8 @@ class LLMTranslator:
         if response.status_code in {400, 401, 402, 403, 404, 422}:
             raise _NonRetryableTranslationError(
                 f"{self.provider} API 拒绝请求（HTTP {response.status_code}）："
-                f"{response.text[:500]}"
+                f"{response.text[:500]}",
+                response.status_code,
             )
         response.raise_for_status()
 
@@ -937,7 +1200,7 @@ class LLMTranslator:
         full_context: str,
         translation_memory: str,
         job_id: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, TranslationEntry]:
         expected_ids = [sentence.id for sentence in chunk.sentences]
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
@@ -952,7 +1215,7 @@ class LLMTranslator:
                     )
                 if not content.strip():
                     raise TranslationError(f"{self.provider} 返回了空内容。")
-                return validate_translation(content, expected_ids)
+                return validate_translation_entries(content, expected_ids)
             except (_NonRetryableTranslationError, _OutputLengthTranslationError):
                 raise
             except TranslationError as exc:
@@ -1433,10 +1696,13 @@ class MachineTranslationAPI:
                 raise TranslationError(f"不支持的机器翻译服务：{self.provider}")
         except httpx.HTTPStatusError as exc:
             response = exc.response
-            raise TranslationError(
+            message = (
                 f"{self.provider} API 请求失败（HTTP {response.status_code}）："
                 f"{response.text[:500]}"
-            ) from exc
+            )
+            if response.status_code in _FATAL_HTTP_STATUS:
+                raise _NonRetryableTranslationError(message, response.status_code) from exc
+            raise TranslationError(message) from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise TranslationError(f"{self.provider} 返回格式无效：{exc}") from exc
         if len(translated) != len(chunk.sentences) or any(not item.strip() for item in translated):
@@ -1445,6 +1711,137 @@ class MachineTranslationAPI:
             sentence.id: text.strip()
             for sentence, text in zip(chunk.sentences, translated, strict=True)
         }
+
+
+def _as_entry(value: TranslationEntry | str) -> TranslationEntry:
+    """Machine translators and test doubles may still return plain strings."""
+
+    return value if isinstance(value, TranslationEntry) else TranslationEntry(str(value))
+
+
+def _clear_audio(sentence: Sentence) -> None:
+    sentence.tts_file = None
+    sentence.tts_cache_key = None
+    sentence.tts_duration_seconds = None
+
+
+def _mark_translated(sentence: Sentence, text: str) -> None:
+    if sentence.zh_text != text:
+        _clear_audio(sentence)
+    if sentence.status == "skipped_sound" and not sentence.chinese_audio_enabled:
+        # The row was a sound under an earlier run and is a real line now.
+        sentence.chinese_audio_enabled = True
+    sentence.zh_text = text
+    sentence.status = "translated"
+    sentence.error = None
+
+
+def _mark_filler(sentence: Sentence) -> None:
+    sentence.zh_text = ""
+    sentence.enabled = False
+    _clear_audio(sentence)
+    sentence.status = "skipped_filler"
+    sentence.error = None
+
+
+def _looks_like_romaji(text: str) -> bool:
+    return bool(text) and all(ord(character) < 128 or character in "…’‘—–" for character in text)
+
+
+def _sound_text(sentence: Sentence, model_text: str, policy: str) -> str:
+    """Subtitle text for a sound row under the romaji and keep_source policies."""
+
+    if policy == "keep_source":
+        return sentence.source_text
+    if _looks_like_romaji(model_text):
+        return model_text
+    converted = kana_to_romaji(sentence.source_text)
+    # Kanji cannot be spelled locally; the original is the honest subtitle then.
+    return sentence.source_text if re.search(r"[㐀-鿿]", converted) else converted
+
+
+def _mark_sound(sentence: Sentence, model_text: str, policy: str) -> None:
+    """Apply the sound policy: skip it, or keep a subtitle that is never voiced."""
+
+    _clear_audio(sentence)
+    text = "" if policy == "skip" else _sound_text(sentence, model_text, policy)
+    sentence.zh_text = text
+    sentence.status = "skipped_sound"
+    sentence.error = None
+    if text:
+        # Visible in subtitles, but the Chinese TTS must not read "ki" aloud.
+        sentence.chinese_audio_enabled = False
+    else:
+        sentence.enabled = False
+
+
+_KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fd-\u30ff\uff66-\uff9d]")
+# A line over its length budget by more than this share is flagged.
+LENGTH_OVERRUN_RATIO = 1.2
+
+
+def _same_text_key(text: str) -> str:
+    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text)).casefold()
+
+
+def check_translations(
+    sentences: list[Sentence],
+    budgets: dict[str, int] | None = None,
+    budget_key: str = "max_chars",
+    only_ids: Iterable[str] | None = None,
+) -> list[TranslationFlag]:
+    """Self-check finished translations; nothing is written to the sentences.
+
+    Flags leftover kana, a length over ``budgets`` by more than 20%, text equal to
+    the source, and text equal to the previous line's translation (unless the
+    source lines are equal too, which is ordinary repetition).  The check can be
+    run again on any project, so the result never needs to be stored.
+    """
+
+    wanted = None if only_ids is None else set(only_ids)
+    ordered = sorted(
+        (s for s in sentences if s.enabled and s.zh_text),
+        key=lambda s: (s.start_seconds, s.end_seconds, s.id),
+    )
+    flags: list[TranslationFlag] = []
+    previous: Sentence | None = None
+    for sentence in ordered:
+        before, previous = previous, sentence
+        if (wanted is not None and sentence.id not in wanted) or sentence.status != "translated":
+            continue
+        text = sentence.zh_text
+        if _KANA.search(text):
+            flags.append(
+                TranslationFlag(sentence.id, "kana_left", "译文里还有日文假名，可能漏译或没译完。")
+            )
+        budget = (budgets or {}).get(sentence.id)
+        if budget:
+            used = (
+                len(text.split()) if budget_key == "max_words" else speakable_character_count(text)
+            )
+            if used > budget * LENGTH_OVERRUN_RATIO:
+                flags.append(
+                    TranslationFlag(
+                        sentence.id,
+                        "too_long",
+                        f"译文 {used} 超出时长预算 {budget} 的 20% 以上，配音可能赶不上。",
+                    )
+                )
+        key = _same_text_key(text)
+        if key and key == _same_text_key(sentence.source_text) and has_speakable_text(text):
+            flags.append(TranslationFlag(sentence.id, "same_as_source", "译文与原文完全相同。"))
+        if (
+            before is not None
+            and key
+            and key == _same_text_key(before.zh_text)
+            and _same_text_key(sentence.source_text) != _same_text_key(before.source_text)
+        ):
+            flags.append(
+                TranslationFlag(
+                    sentence.id, "repeats_previous", "译文与上一句完全重复，原文并不相同。"
+                )
+            )
+    return flags
 
 
 def translate_sentences(
@@ -1470,25 +1867,60 @@ def translate_sentences(
     cancel_event: CancellationSignal | None = None,
     extra_body: str = "{}",
     target_language: str = "zh",
-) -> None:
+    sound_policy: str = "skip",
+    retranslate: bool = False,
+    overwrite_edited: bool = False,
+    length_budget_rate: float | None = None,
+    sentence_ids: Iterable[str] | None = None,
+) -> TranslationReport:
+    """Translate every pending sentence; one bad sentence never stops the others.
+
+    ``sentence_ids`` limits the call to those sentences and redoes them even when
+    they have text (like ``retranslate``), e.g. the ids in ``report.flagged_ids``.
+
+    Failures are collected in the returned report.  Only credential, billing and
+    permission errors (HTTP 401/402/403), cancellation and three consecutive failed
+    batches raise, and by then every finished translation has been checkpointed.
+
+    ``retranslate`` also selects sentences that already have text and replaces them
+    one by one, keeping the old text until the new text has arrived.  Rows the user
+    edited (``review_locked``) are skipped unless ``overwrite_edited`` is set.
+    """
+
     check_cancelled(cancel_event)
-    pending = [sentence for sentence in sentences if sentence.enabled and not sentence.zh_text]
+    if sound_policy not in SOUND_POLICIES:
+        sound_policy = "skip"
+    report = TranslationReport()
+    selected = None if sentence_ids is None else set(sentence_ids)
+    redo = retranslate or selected is not None
+    pending = [
+        sentence
+        for sentence in sentences
+        if sentence.enabled
+        and (selected is None or sentence.id in selected)
+        and (
+            not sentence.zh_text
+            or sentence.status == "translation_failed"
+            or (redo and (overwrite_edited or not sentence.review_locked))
+        )
+    ]
     if not pending:
         if progress:
             progress("所有句子已有目标语言文本", 1, 1)
-        return
+        return report
     if source_language == target_language:
         for sentence in pending:
-            sentence.zh_text = sentence.source_text
-            sentence.status = "translated"
+            _mark_translated(sentence, sentence.source_text)
+        report.translated = len(pending)
         if on_batch:
             on_batch()
-        return
-    if (
-        not system_prompt.strip()
-        or system_prompt.strip() == default_translation_prompt(source_language).strip()
-    ):
-        system_prompt = default_translation_prompt(source_language, target_language)
+        return report
+    default_prompts = {
+        default_translation_prompt(source_language, sound_policy=policy).strip()
+        for policy in SOUND_POLICIES
+    }
+    if not system_prompt.strip() or system_prompt.strip() in default_prompts:
+        system_prompt = default_translation_prompt(source_language, target_language, sound_policy)
     elif target_language == "en":
         system_prompt += (
             "\n本次覆盖目标语言为英语，输入原文语言为"
@@ -1497,7 +1929,7 @@ def translate_sentences(
         )
         system_prompt += "\n目标语言必须是英语；JSON 的 zh 字段存放英文译文，这是兼容字段名。"
     if not system_prompt.strip():
-        system_prompt = default_translation_prompt(source_language, target_language)
+        system_prompt = default_translation_prompt(source_language, target_language, sound_policy)
     logger.info(
         "翻译后端开始：服务=%s 模型=%s 地址=%s 句数=%d 源语言=%s",
         provider,
@@ -1507,6 +1939,19 @@ def translate_sentences(
         source_language,
     )
     batches = _chunks(pending)
+    budgets: dict[str, int] = {}
+    budget_key = "max_chars"
+    if length_budget_rate and provider not in {"deepl", "google_translate", "microsoft_translate"}:
+        budgets = length_budgets(list(sentences), pending, length_budget_rate)
+        budget_key = "max_words" if target_language == "en" else "max_chars"
+        batches = [
+            TranslationChunk(
+                chunk.sentences,
+                {s.id: budgets[s.id] for s in chunk.sentences},
+                budget_key,
+            )
+            for chunk in batches
+        ]
     if provider == "deepseek":
         translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(
             api_key=api_key,
@@ -1519,6 +1964,7 @@ def translate_sentences(
             minimum_output_tokens=max_output_tokens,
             source_language=source_language,
             extra_body=extra_body,
+            sound_policy=sound_policy,
         )
     elif provider in {
         "bailian",
@@ -1541,6 +1987,7 @@ def translate_sentences(
             client=client,
             source_language=source_language,
             extra_body=extra_body,
+            sound_policy=sound_policy,
         )
     elif provider in {"deepl", "google_translate", "microsoft_translate"}:
         translator = MachineTranslationAPI(
@@ -1557,104 +2004,556 @@ def translate_sentences(
     else:
         raise TranslationError(f"未知翻译服务：{provider}")
 
+    # Sentences whose old text is about to be replaced must not leak into the
+    # context or memory sent to the model; they are shown blank until redone.
+    stale_ids = {sentence.id for sentence in pending if sentence.zh_text}
+
+    def prompt_sentences() -> list[Sentence]:
+        if not stale_ids:
+            return sentences
+        return [
+            sentence.model_copy(update={"zh_text": ""}) if sentence.id in stale_ids else sentence
+            for sentence in sentences
+        ]
+
+    def context_for(chunk: TranslationChunk) -> tuple[str, str]:
+        if not send_context:
+            return "[]", "[]"
+        visible = prompt_sentences()
+        return (
+            _context_for_chunk(visible, chunk, context_sentences),
+            _bounded_translation_memory(visible, chunk, memory_sentences),
+        )
+
+    def request(chunk: TranslationChunk, attempts: int | None) -> dict[str, TranslationEntry]:
+        context, memory = context_for(chunk)
+        previous = getattr(translator, "max_retries", None)
+        if attempts is not None and previous is not None:
+            translator.max_retries = min(previous, attempts)  # type: ignore[union-attr]
+        try:
+            return translator.translate_chunk(chunk, context, memory, job_id)  # type: ignore[return-value]
+        finally:
+            if attempts is not None and previous is not None:
+                translator.max_retries = previous  # type: ignore[union-attr]
+
+    last_failure = ""
+    translated_ids: list[str] = []
+
+    def fail(sentence: Sentence, reason: str) -> None:
+        nonlocal last_failure
+        last_failure = reason
+        sentence.status = "translation_failed"
+        sentence.error = reason[:400]
+        report.failed.append(TranslationFailure(sentence.id, reason[:400]))
+
+    def settle(sentence: Sentence, entry: TranslationEntry, *, retry_allowed: bool) -> None:
+        text = entry.zh.strip()
+        duration = sentence.end_seconds - sentence.start_seconds
+        reason = ""
+        if entry.kind == "sound":
+            _mark_sound(sentence, text, sound_policy)
+            report.skipped_ids.append(sentence.id)
+            stale_ids.discard(sentence.id)
+            return
+        if text:
+            _mark_translated(sentence, text)
+            report.translated += 1
+            translated_ids.append(sentence.id)
+            stale_ids.discard(sentence.id)
+            return
+        if empty_translation_is_expected(sentence):
+            _mark_filler(sentence)
+            report.skipped_ids.append(sentence.id)
+            stale_ids.discard(sentence.id)
+            return
+        if retry_allowed:
+            # A blank semantic line is retried alone, rather than silently
+            # being classified as a sound effect.
+            try:
+                retried = request(TranslationChunk([sentence]), None)
+            except TranslationError as exc:
+                check_cancelled(cancel_event)
+                if _is_fatal_translation_error(exc):
+                    raise
+                reason = f"单句重试失败：{exc}"
+            else:
+                settle(sentence, _as_entry(retried[sentence.id]), retry_allowed=False)
+                return
+        if looks_like_sound_effect(sentence.source_text, duration):
+            _mark_sound(sentence, "", sound_policy)
+            report.skipped_ids.append(sentence.id)
+            stale_ids.discard(sentence.id)
+            return
+        fail(
+            sentence,
+            reason or "翻译服务未返回此句译文，单句重试后仍为空；保留启用，可再次翻译。",
+        )
+
+    def checkpoint() -> None:
+        if on_batch:
+            on_batch()
+
+    def run(chunk: TranslationChunk, attempts: int | None) -> None:
+        """Translate one chunk; on failure split it so the bad line is isolated."""
+
+        check_cancelled(cancel_event)
+        count = len(chunk.sentences)
+        try:
+            results = request(chunk, attempts)
+        except _OutputLengthTranslationError as exc:
+            if count == 1:
+                fail(
+                    chunk.sentences[0],
+                    f"即使提高输出预算仍超出长度上限：{exc}",
+                )
+                return
+            split_reason = "输出过长"
+            retry_attempts = attempts
+        except TranslationError as exc:
+            check_cancelled(cancel_event)
+            if _is_fatal_translation_error(exc):
+                raise
+            if count == 1:
+                fail(chunk.sentences[0], str(exc))
+                return
+            split_reason = str(exc)
+            retry_attempts = _SPLIT_RETRY_ATTEMPTS
+        else:
+            for sentence in chunk.sentences:
+                settle(sentence, _as_entry(results[sentence.id]), retry_allowed=True)
+            checkpoint()
+            return
+        middle = count // 2
+        logger.warning("翻译批次 %d 句失败，拆成两半重试：%s", count, split_reason[:200])
+        run(TranslationChunk(chunk.sentences[:middle]), retry_attempts)
+        run(TranslationChunk(chunk.sentences[middle:]), retry_attempts)
+
     cancel_translation = translator.close
     callback_signal = register_cancel_callback(cancel_translation, cancel_event)
     try:
         with translator:
-            index = 0
-            while index < len(batches):
+            consecutive_failures = 0
+            for index, chunk in enumerate(batches):
                 check_cancelled(cancel_event)
-                chunk = batches[index]
                 if progress:
                     progress(
                         f"{provider} · {model} 翻译第 {index + 1}/{len(batches)} 批",
                         index,
                         len(batches),
                     )
-                try:
-                    translations = translator.translate_chunk(
-                        chunk,
-                        (
-                            _context_for_chunk(sentences, chunk, context_sentences)
-                            if send_context
-                            else "[]"
-                        ),
-                        (
-                            _bounded_translation_memory(sentences, chunk, memory_sentences)
-                            if send_context
-                            else "[]"
-                        ),
-                        job_id,
-                    )
-                except _OutputLengthTranslationError as exc:
-                    if len(chunk.sentences) == 1:
-                        raise TranslationError(
-                            f"句子 {chunk.sentences[0].id} 即使提高输出预算仍超出长度上限。"
-                        ) from exc
-                    midpoint = len(chunk.sentences) // 2
-                    batches[index : index + 1] = [
-                        TranslationChunk(chunk.sentences[:midpoint]),
-                        TranslationChunk(chunk.sentences[midpoint:]),
-                    ]
-                    if progress:
-                        progress(
-                            f"第 {index + 1} 批输出过长，已自动拆成两个小批次",
-                            index,
-                            len(batches),
+                done_before = report.translated + report.skipped
+                failed_before = len(report.failed)
+                run(chunk, None)
+                if len(report.failed) != failed_before:
+                    checkpoint()
+                if report.translated + report.skipped > done_before:
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                        report.stopped_reason = (
+                            f"连续 {consecutive_failures} 批翻译失败，翻译服务可能不可用。"
                         )
-                    continue
-                except TranslationError:
-                    check_cancelled(cancel_event)
-                    raise
-                failed = []
-                for sentence in chunk.sentences:
-                    translation = translations[sentence.id].strip()
-                    if not translation and not empty_translation_is_expected(sentence):
-                        # A blank semantic line is retried alone, rather than
-                        # silently being classified as a sound effect.
-                        try:
-                            retried = translator.translate_chunk(
-                                TranslationChunk([sentence]),
-                                _context_for_chunk(
-                                    sentences, TranslationChunk([sentence]), context_sentences
-                                )
-                                if send_context
-                                else "[]",
-                                _bounded_translation_memory(sentences, chunk, memory_sentences)
-                                if send_context
-                                else "[]",
-                                job_id,
-                            )
-                            translation = retried[sentence.id].strip()
-                        except TranslationError:
-                            check_cancelled(cancel_event)
-                        if not translation:
-                            sentence.status = "translation_failed"
-                            sentence.error = (
-                                "翻译服务未返回此句译文，单句重试后仍为空；保留启用，可再次翻译。"
-                            )
-                            failed.append(sentence.id)
-                            continue
-                    sentence.zh_text = translation
-                    if translation:
-                        sentence.status = "translated"
-                    else:
-                        sentence.enabled = False
-                        sentence.tts_file = None
-                        sentence.tts_cache_key = None
-                        sentence.tts_duration_seconds = None
-                        sentence.status = "skipped_filler"
-                    sentence.error = None
-                if on_batch:
-                    on_batch()
-                if failed:
-                    raise TranslationError(
-                        f"{len(failed)} 句未取得译文（{', '.join(failed[:8])}）；"
-                        "其他已完成译文已保存，请再次翻译剩余句子。"
-                    )
+                        raise TranslationError(
+                            f"{report.stopped_reason}最后一次错误：{last_failure}。"
+                            f"已完成的 {report.translated} 句译文已保存，"
+                            "未处理的句子保持待翻译。"
+                        )
                 check_cancelled(cancel_event)
-                index += 1
                 if progress:
-                    progress(f"已翻译 {index}/{len(batches)} 批", index, len(batches))
+                    progress(f"已翻译 {index + 1}/{len(batches)} 批", index + 1, len(batches))
     finally:
         unregister_cancel_callback(cancel_translation, callback_signal)
+    report.flagged = check_translations(sentences, budgets, budget_key, only_ids=translated_ids)
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Revising existing translations on request ("按要求改译")
+#
+# Nothing below writes to a sentence.  The result is a list of proposals that the
+# caller stores and the user accepts or rejects one by one.
+# ---------------------------------------------------------------------------
+
+REVISION_BATCH_SIZE = 16
+LLM_REVISION_PROVIDERS = frozenset(
+    {
+        "deepseek",
+        "bailian",
+        "doubao",
+        "openai",
+        "anthropic",
+        "gemini",
+        "openai_compatible",
+        "sensenova",
+    }
+)
+MACHINE_REVISION_ERROR = (
+    "机器翻译服务（DeepL、Google 翻译、Microsoft 翻译）只能逐句直译，不能按要求改译。"
+    "请在设置的翻译服务里换成大模型服务（例如 DeepSeek）后再使用。"
+)
+
+
+class RevisionItem(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    id: str
+    zh: str
+    kind: Literal["speech", "sound"] = "speech"
+
+    @field_validator("id")
+    @classmethod
+    def nonempty_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("zh")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def speech_needs_text(self) -> RevisionItem:
+        if self.kind == "speech" and not self.zh:
+            raise ValueError('kind 为 "speech" 时 zh 不能为空')
+        return self
+
+
+class RevisionEnvelope(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    # An empty list is a valid answer: nothing in the batch needed to change.
+    revisions: list[RevisionItem]
+
+
+@dataclass(frozen=True)
+class RevisionProposal:
+    id: str
+    old_zh: str
+    new_zh: str
+    kind: Literal["speech", "sound"]
+
+
+@dataclass
+class RevisionReport:
+    """Outcome of one ``revise_translations`` call."""
+
+    proposals: list[RevisionProposal] = field(default_factory=list)
+    candidates: int = 0
+    unchanged: int = 0
+    skipped_edited: int = 0
+    failed: list[TranslationFailure] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (
+            f"已提出 {len(self.proposals)} 条改译提议，{self.unchanged} 句无需改动，"
+            f"{self.skipped_edited} 句手动改过的句子已跳过。"
+        )
+
+    def failure_message(self) -> str:
+        shown = "；".join(f"{item.sentence_id}：{item.reason}" for item in self.failed[:6])
+        extra = f"（另有 {len(self.failed) - 6} 句）" if len(self.failed) > 6 else ""
+        return (
+            f"{len(self.failed)} 句改译失败：{shown}{extra}。"
+            "已得到的改译提议已保存，其余句子的译文没有变化。"
+        )
+
+
+def validate_revisions(content: str, expected_ids: list[str]) -> dict[str, RevisionItem]:
+    """Strictly parse a revision answer; every id must belong to the batch."""
+
+    try:
+        envelope = RevisionEnvelope.model_validate(_extract_json(content))
+    except (ValidationError, TranslationError) as exc:
+        raise TranslationError(f"改译结构校验失败：{exc}") from exc
+    allowed = set(expected_ids)
+    result: dict[str, RevisionItem] = {}
+    for item in envelope.revisions:
+        if item.id not in allowed:
+            raise TranslationError(f"改译返回了不属于本批的 id：{item.id}")
+        if item.id in result:
+            raise TranslationError(f"改译返回了重复的 id：{item.id}")
+        result[item.id] = item
+    return result
+
+
+def revision_candidates(
+    sentences: list[Sentence],
+    sentence_ids: Iterable[str] | None = None,
+    include_edited: bool = False,
+) -> tuple[list[Sentence], int]:
+    """Sentences that can be revised, and how many hand-edited ones were left out."""
+
+    wanted = None if sentence_ids is None else set(sentence_ids)
+    eligible: list[Sentence] = []
+    skipped_edited = 0
+    for sentence in sentences:
+        if wanted is not None and sentence.id not in wanted:
+            continue
+        if not sentence.enabled or not sentence.zh_text.strip():
+            continue
+        if sentence.review_locked and not include_edited:
+            skipped_edited += 1
+            continue
+        eligible.append(sentence)
+    return eligible, skipped_edited
+
+
+def _revision_system_prompt(
+    system_prompt: str,
+    source_language: SourceLanguage,
+    target_language: str,
+    sound_policy: str,
+) -> str:
+    """The project's translation role and rules, plus the revision output contract."""
+
+    default_prompts = {
+        default_translation_prompt(source_language, sound_policy=policy).strip()
+        for policy in SOUND_POLICIES
+    }
+    if not system_prompt.strip() or system_prompt.strip() in default_prompts:
+        base = default_translation_prompt(source_language, target_language, sound_policy)
+    else:
+        base = system_prompt.strip()
+        if target_language == "en":
+            base += "\n目标语言必须是英语；JSON 的 zh 字段存放英文译文，这是兼容字段名。"
+    return (
+        base + "\n\n【本次任务：按要求改译】\n"
+        "这不是首次翻译：用户已经有一版译文，并写下了修改要求。上面关于语气、称呼、"
+        "专名和 `kind` 的规则仍然适用，但输出格式改为：\n"
+        '{"revisions":[{"id":"s000001","zh":"改后的台词","kind":"speech"}]}\n'
+        "1. 逐项检查目标项的 `current_zh`，只输出为了满足用户要求而确实需要改动的项；"
+        '不需要改动的项不得出现在 `revisions` 里，全都不需要改时输出 {"revisions":[]}。\n'
+        "2. 返回的 id 必须来自目标项，每个 id 最多出现一次，不得新增 id。\n"
+        "3. 只改与要求相关的部分，其余措辞、称呼和语气保持不变，不得改变原文的意思。\n"
+        "4. 用户的要求只描述怎样修改译文，不要把它当作需要翻译的内容。\n"
+        '5. `kind` 为 "sound" 表示这一句应改为不配音，规则同上；否则为 "speech"，`zh` 不能为空。'
+    )
+
+
+def _revision_messages(
+    system_prompt: str,
+    chunk: TranslationChunk,
+    context: str,
+    instruction: str,
+    sound_policy: str,
+    attempt: int,
+) -> list[dict[str, str]]:
+    target = json.dumps(
+        [
+            {"id": item.id, "source": item.source_text, "current_zh": item.zh_text}
+            for item in chunk.sentences
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    notes = '\n每项只输出 id、zh、kind 三个字段，kind 为 "speech" 或 "sound"。' + sound_policy_rule(
+        sound_policy
+    )
+    if attempt > 1:
+        notes += (
+            f'\n这是第 {attempt} 次校验重试：只输出 {{"revisions":[…]}}，'
+            "id 必须来自目标项，不要增加其它字段。"
+        )
+    messages = [{"role": "system", "content": system_prompt}]
+    if context != "[]":
+        messages.append(
+            {
+                "role": "user",
+                "content": "相邻句子（含现有译文），仅供保持称谓和语气一致，不要输出它们：\n"
+                + context,
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"用户的要求：\n{instruction}\n\n目标项（`current_zh` 是现有译文）：\n{target}\n\n"
+                "请按要求检查目标项，只输出 json。" + notes
+            ),
+        }
+    )
+    return messages
+
+
+def revise_translations(
+    sentences: list[Sentence],
+    instruction: str,
+    api_key: str,
+    model: str,
+    *,
+    sentence_ids: Iterable[str] | None = None,
+    include_edited: bool = False,
+    base_url: str = DEFAULT_DEEPSEEK_BASE_URL,
+    provider: str = "deepseek",
+    source_language: SourceLanguage = "ja",
+    target_language: str = "zh",
+    system_prompt: str = "",
+    temperature: float = 0.1,
+    top_p: float = 1.0,
+    max_output_tokens: int = 16_384,
+    send_context: bool = True,
+    context_sentences: int = 24,
+    job_id: str = "asmr_dubber",
+    progress: Progress | None = None,
+    on_batch: Callable[[RevisionReport], None] | None = None,
+    client: httpx.Client | None = None,
+    cancel_event: CancellationSignal | None = None,
+    extra_body: str = "{}",
+    sound_policy: str = "skip",
+    max_retries: int = 5,
+) -> RevisionReport:
+    """Ask the translation model to revise existing translations as the user said.
+
+    Returns proposals only; no sentence is modified.  Batches of at most
+    ``REVISION_BATCH_SIZE`` sentences are sent with their neighbours as context.
+    A failing batch is split so one bad sentence cannot block the others.  Only
+    credential/billing/permission errors, cancellation and three batches in a row
+    that fail completely raise.
+    """
+
+    check_cancelled(cancel_event)
+    instruction = instruction.strip()
+    if not instruction:
+        raise TranslationError("请先写下改译要求。")
+    if provider in {"deepl", "google_translate", "microsoft_translate"}:
+        raise TranslationError(MACHINE_REVISION_ERROR)
+    if provider not in LLM_REVISION_PROVIDERS:
+        raise TranslationError(f"未知翻译服务：{provider}")
+    if sound_policy not in SOUND_POLICIES:
+        sound_policy = "skip"
+    eligible, skipped_edited = revision_candidates(sentences, sentence_ids, include_edited)
+    report = RevisionReport(candidates=len(eligible), skipped_edited=skipped_edited)
+    if not eligible:
+        return report
+    prompt = _revision_system_prompt(system_prompt, source_language, target_language, sound_policy)
+    translator = LLMTranslator(
+        provider=provider,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        system_prompt=prompt,
+        temperature=temperature,
+        top_p=top_p,
+        max_output_tokens=max_output_tokens,
+        max_retries=max_retries,
+        client=client,
+        source_language=source_language,
+        extra_body=extra_body,
+        sound_policy=sound_policy,
+    )
+    logger.info(
+        "改译开始：服务=%s 模型=%s 地址=%s 句数=%d",
+        provider,
+        model,
+        safe_api_url(base_url),
+        len(eligible),
+    )
+    batches = _chunks(eligible, max_lines=REVISION_BATCH_SIZE)
+
+    def request(chunk: TranslationChunk, attempts: int) -> dict[str, RevisionItem]:
+        expected = [item.id for item in chunk.sentences]
+        context = _context_for_chunk(sentences, chunk, context_sentences) if send_context else "[]"
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            messages = _revision_messages(
+                prompt, chunk, context, instruction, sound_policy, attempt
+            )
+            try:
+                content, output_limited = translator._request(messages, job_id)
+                if output_limited:
+                    raise _OutputLengthTranslationError(
+                        f"{provider} 输出达到长度上限（{max_output_tokens} tokens）。"
+                    )
+                if not content.strip():
+                    raise TranslationError(f"{provider} 返回了空内容。")
+                return validate_revisions(content, expected)
+            except (_NonRetryableTranslationError, _OutputLengthTranslationError):
+                raise
+            except TranslationError as exc:
+                last_error = exc
+            except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+                last_error = exc
+            if attempt < attempts:
+                time.sleep(min(20.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.75)))
+        raise TranslationError(
+            f"{provider} 改译在 {attempts} 次尝试后仍失败：{last_error}"
+        ) from last_error
+
+    def settle(chunk: TranslationChunk, answers: dict[str, RevisionItem]) -> None:
+        for sentence in chunk.sentences:
+            item = answers.get(sentence.id)
+            if item is None:
+                report.unchanged += 1
+                continue
+            if item.kind == "sound":
+                if sentence.status == "skipped_sound":
+                    report.unchanged += 1
+                    continue
+            elif item.zh == sentence.zh_text.strip():
+                report.unchanged += 1
+                continue
+            report.proposals.append(
+                RevisionProposal(sentence.id, sentence.zh_text, item.zh, item.kind)
+            )
+
+    def run(chunk: TranslationChunk, attempts: int) -> None:
+        check_cancelled(cancel_event)
+        count = len(chunk.sentences)
+        try:
+            answers = request(chunk, attempts)
+        except _OutputLengthTranslationError as exc:
+            if count == 1:
+                report.failed.append(
+                    TranslationFailure(chunk.sentences[0].id, f"输出超出长度上限：{exc}"[:400])
+                )
+                return
+            reason = "输出过长"
+        except TranslationError as exc:
+            check_cancelled(cancel_event)
+            if _is_fatal_translation_error(exc):
+                raise
+            if count == 1:
+                report.failed.append(TranslationFailure(chunk.sentences[0].id, str(exc)[:400]))
+                return
+            reason = str(exc)
+            attempts = _SPLIT_RETRY_ATTEMPTS
+        else:
+            settle(chunk, answers)
+            return
+        middle = count // 2
+        logger.warning("改译批次 %d 句失败，拆成两半重试：%s", count, reason[:200])
+        run(TranslationChunk(chunk.sentences[:middle]), attempts)
+        run(TranslationChunk(chunk.sentences[middle:]), attempts)
+
+    cancel_revision = translator.close
+    callback_signal = register_cancel_callback(cancel_revision, cancel_event)
+    try:
+        with translator:
+            consecutive_failures = 0
+            for index, chunk in enumerate(batches):
+                check_cancelled(cancel_event)
+                if progress:
+                    progress(f"按要求改译第 {index + 1}/{len(batches)} 批", index, len(batches))
+                failed_before = len(report.failed)
+                run(chunk, max_retries)
+                if len(report.failed) - failed_before >= len(chunk.sentences):
+                    consecutive_failures += 1
+                    if consecutive_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                        last = report.failed[-1].reason
+                        raise TranslationError(
+                            f"连续 {consecutive_failures} 批改译失败，翻译服务可能不可用。"
+                            f"最后一次错误：{last}。已得到的改译提议已保存。"
+                        )
+                else:
+                    consecutive_failures = 0
+                if on_batch:
+                    on_batch(report)
+                check_cancelled(cancel_event)
+    finally:
+        unregister_cancel_callback(cancel_revision, callback_signal)
+    if progress:
+        progress(report.summary(), len(batches), len(batches))
+    return report

@@ -7,6 +7,7 @@
             "indextts2-checkpoints",
             "kotoba-whisper-v2.2",
             "faster-whisper-large-v2",
+            "anime-whisper",
             "qwen3-forced-aligner",
             "whisper-vad-asmr-onnx"
         )
@@ -33,6 +34,21 @@ if ($InstallAdvancedModels) {
             "-m", "asmr_dubber.cli", "download-models", "--backend", "进阶语音识别"
         ) `
         -FailureMessage "进阶识别、VAD 与时间戳模型下载或校验失败"
+}
+
+if ($InstallAdvancedModels) {
+    # Recommended recognizer. It has no ModelScope copy yet, so a failure here
+    # must not abort Setup: Parakeet (the fallback) is already installed or
+    # being installed, and the Models page can retry the download.
+    Write-SetupHost "正在准备 anime-whisper 日语识别模型（约 3 GB）..." -ForegroundColor Cyan
+    try {
+        Invoke-Checked -FilePath $Python `
+            -ArgumentList @("-m", "asmr_dubber.cli", "download-backend-models", "anime_whisper") `
+            -FailureMessage "anime-whisper 下载失败"
+    } catch {
+        Write-Warning ("anime-whisper 未能下载，识别将先使用 Parakeet。" +
+            "需要海外源时，请在设置中把“下载来源”改为“海外源”后，到“设备与模型”页重试。")
+    }
 }
 
 if ($InstallParakeet) {

@@ -31,6 +31,8 @@ from .constants import (
     DEFAULT_INDEXTTS_EMOTION_WEIGHT,
     DEFAULT_INDEXTTS_MODEL_DIR,
     DEFAULT_TRANSLATION_MODEL,
+    FALLBACK_ASR_BACKEND,
+    FALLBACK_ASR_MODEL,
     MAX_CHINESE_AUTO_SPEED,
     PROJECT_SCHEMA_VERSION,
     RECOMMENDED_ASR_BACKEND,
@@ -88,6 +90,14 @@ class Sentence(BaseModel):
     original_audio_gain_db: float = Field(default=0, ge=-60, le=12)
     chinese_audio_enabled: bool = True
     chinese_audio_gain_db: float = Field(default=0, ge=-60, le=12)
+    # Times the dub was regenerated because the automatic check rejected it.
+    tts_attempt: int = Field(default=0, ge=0, le=100_000)
+    # Set when the dub still failed the automatic check after the retries.
+    tts_warning: str | None = None
+    # Set when the automatic check after translation found a likely problem (D5).
+    translation_warning: str | None = None
+    # Alternative takes of this line (F1): {attempt, file, duration, warning}.
+    tts_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("source_text", "zh_text")
     @classmethod
@@ -165,6 +175,8 @@ class ProjectSettings(BaseModel):
     spatial_rtf_fft_size: Literal[0, 1024, 2048, 4096, 8192] = 0
     spatial_rtf_hop_divisor: Literal[4, 8, 16] = 8
     spatial_rtf_block_seconds: float = Field(default=10, ge=1, le=30)
+    spatial_rtf_vocal_weighting: bool = True
+    reference_audio_mode: Literal["legacy", "fullband", "fullband_vocals"] = "fullband"
 
     @field_validator(
         "separation_mdx_params",
@@ -239,6 +251,8 @@ class ProjectSettings(BaseModel):
         "parakeet_nemo",
         "kotoba_whisper",
         "faster_whisper",
+        "qwen3_asr",
+        "anime_whisper",
     ] = RECOMMENDED_ASR_BACKEND
     asr_model: str = RECOMMENDED_ASR_MODEL
     asr_batch_size: int = Field(default=1, ge=1, le=32)
@@ -248,8 +262,8 @@ class ProjectSettings(BaseModel):
     asr_vad_filter: bool = False
     asr_vad_mode: Literal["off", "backend", "asmr"] = "off"
     asr_vad_min_silence_ms: int = Field(default=500, ge=50, le=10_000)
-    asr_asmr_vad_threshold: float = Field(default=0.5, ge=0.05, le=0.95)
-    asr_asmr_vad_min_speech_ms: int = Field(default=250, ge=20, le=10_000)
+    asr_asmr_vad_threshold: float = Field(default=0.35, ge=0.05, le=0.95)
+    asr_asmr_vad_min_speech_ms: int = Field(default=150, ge=20, le=10_000)
     asr_asmr_vad_min_silence_ms: int = Field(default=100, ge=20, le=10_000)
     asr_asmr_vad_speech_pad_ms: int = Field(default=200, ge=0, le=5_000)
     aligner_model: str = DEFAULT_ALIGNER_MODEL
@@ -308,6 +322,7 @@ class ProjectSettings(BaseModel):
     translation_deepl_formality: str = "default"
     translation_microsoft_region: str = ""
     translation_extra_body: str = "{}"
+    translation_sound_policy: Literal["skip", "romaji", "keep_source"] = "skip"
     tts_backend: Literal[
         "indextts2_5",
         "indextts2",
@@ -392,6 +407,14 @@ class ProjectSettings(BaseModel):
     tts_gpt_text_split_method: str = "cut5"
     tts_gpt_sample_steps: int = Field(default=32, ge=1, le=64)
     tts_cosyvoice_mode: Literal["zero_shot", "cross_lingual"] = "zero_shot"
+    # Long ellipses make zero-shot TTS pause for a second or more per line.
+    tts_normalize_pauses: bool = True
+    # Ask the translator for lines that fit the source timing (B6).  The rate is
+    # Chinese characters per second; English uses 0.6 of it as words per second.
+    translation_length_budget: bool = True
+    translation_chars_per_second: float = Field(default=4.5, ge=2.0, le=12.0)
+    # Reject empty, truncated, runaway or clipped dubs and regenerate them.
+    tts_quality_check: bool = True
     tts_clone_mode: Literal["stable_reference", "reference_only"] = "stable_reference"
     tts_reference_sentence_id: str | None = None
 
@@ -405,7 +428,9 @@ class ProjectSettings(BaseModel):
         ge=1.0,
         le=MAX_CHINESE_AUTO_SPEED,
     )
-    chinese_dubbing_timing_mode: Literal["fit_window", "sequential"] = "fit_window"
+    chinese_dubbing_timing_mode: Literal["fit_window", "sequential", "fit_then_shift"] = (
+        "fit_window"
+    )
     chinese_gain_db: float = Field(default=0.0, ge=-40.0, le=20.0)
     normalize_chinese_loudness: bool = True
     match_source_loudness: bool = True
@@ -430,6 +455,18 @@ class ProjectSettings(BaseModel):
     replacement_chinese_line_peak_dbfs: float = Field(default=-6.0, ge=-20.0, le=-1.0)
     replacement_chinese_stem_peak_dbfs: float = Field(default=-3.0, ge=-12.0, le=-0.1)
     replacement_chinese_fade_ms: float = Field(default=8.0, ge=0.0, le=100.0)
+    # Replacement 2.0: the dub sits on the original sentence instead of trailing it.
+    replacement_scope: Literal["dubbed_speech", "all_vocals"] = "dubbed_speech"
+    replacement_dubbing_offset_ms: int = Field(default=0, ge=-30_000, le=30_000)
+    replacement_max_auto_speed: float = Field(default=1.2, ge=1.0, le=MAX_CHINESE_AUTO_SPEED)
+    replacement_timing_mode: Literal["fit_window", "sequential", "fit_then_shift"] = (
+        "fit_then_shift"
+    )
+    replacement_voice_match_strength: float = Field(default=0.8, ge=0.0, le=1.0)
+    replacement_bandwidth_extension: bool = True
+    replacement_noise_fill: bool = True
+    # Experimental: push a voiced dub towards a whisper where the original whispers.
+    replacement_whisper_match: float = Field(default=1.0, ge=0.0, le=1.0)
     chinese_channel_routing: Literal["auto", "all"] = "auto"
     mix_peak_protection: bool = True
     mix_peak_limit_dbfs: float = Field(default=-1.0, ge=-6.0, le=-0.1)
@@ -489,6 +526,8 @@ class ProjectSettings(BaseModel):
                 "parakeet_nemo",
                 "kotoba_whisper",
                 "faster_whisper",
+                "qwen3_asr",
+                "anime_whisper",
             }
             supported_tts = {
                 "indextts2_5",
@@ -503,8 +542,8 @@ class ProjectSettings(BaseModel):
                 "minimax",
             }
             if "asr_backend" in value and value.get("asr_backend") not in supported_asr:
-                value["asr_backend"] = RECOMMENDED_ASR_BACKEND
-                value["asr_model"] = RECOMMENDED_ASR_MODEL
+                value["asr_backend"] = FALLBACK_ASR_BACKEND
+                value["asr_model"] = FALLBACK_ASR_MODEL
             if "tts_backend" in value and value.get("tts_backend") not in supported_tts:
                 value["tts_backend"] = RECOMMENDED_TTS_BACKEND
                 value["tts_model"] = RECOMMENDED_TTS_MODEL
@@ -592,7 +631,7 @@ def settings_for_source_language(
     model = str(values.get("asr_model", ""))
     if (
         values.get("asr_backend")
-        not in {"faster_whisper", "generic_asr_api", "moss_transcribe_diarize"}
+        not in {"faster_whisper", "generic_asr_api", "moss_transcribe_diarize", "qwen3_asr"}
         or model.startswith("kotoba-tech/")
         or (source_language == "zh" and (model.endswith(".en") or "distil" in model.lower()))
     ):
@@ -648,6 +687,8 @@ class DubProject(BaseModel):
     subtitle_srt_file: str | None = None
     subtitle_lrc_file: str | None = None
     subtitle_video_file: str | None = None
+    # Pending "revise on request" suggestions; see translation_revision.py for the shape.
+    translation_proposals: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("schema_version")
     @classmethod
@@ -796,8 +837,8 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
         }
         if settings.get("asr_backend") not in supported_asr:
             old = settings.get("asr_backend", "未知")
-            settings["asr_backend"] = RECOMMENDED_ASR_BACKEND
-            settings["asr_model"] = RECOMMENDED_ASR_MODEL
+            settings["asr_backend"] = FALLBACK_ASR_BACKEND
+            settings["asr_model"] = FALLBACK_ASR_MODEL
             warnings.append(f"旧语音识别后端 {old} 已停止支持，已切换为 Parakeet。")
         if settings.get("tts_backend") not in supported_tts:
             old = settings.get("tts_backend", "未知")
@@ -861,4 +902,18 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
         version = 3
     if version != PROJECT_SCHEMA_VERSION:
         raise ValueError(f"unsupported project schema {version}")
+    # Settings added in 2.3 change how dubs are generated.  A project written before
+    # them keeps the old behaviour, so its existing dubs stay valid; new projects
+    # get the improved defaults.
+    settings = payload.get("settings")
+    if isinstance(settings, dict):
+        legacy = {key: value for key, value in _PRE_2_3_SETTINGS.items() if key not in settings}
+        if legacy:
+            payload["settings"] = {**settings, **legacy}
     return payload
+
+
+_PRE_2_3_SETTINGS: dict[str, Any] = {
+    "reference_audio_mode": "legacy",
+    "tts_normalize_pauses": False,
+}

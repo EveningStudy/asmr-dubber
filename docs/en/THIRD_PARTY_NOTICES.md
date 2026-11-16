@@ -14,6 +14,9 @@ ASMR Dubber code is [MIT licensed](../../LICENSE). This does not relicense model
 | Parakeet CTC 1.1B JA | [Model card](https://huggingface.co/grider-transwithai/parakeet-ctc-1.1b-ja) | Apache-2.0 |
 | Parakeet TDT/CTC 0.6B JA | [Model card](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | CC BY 4.0 |
 | Kotoba-Whisper v2.2 | [Model card](https://huggingface.co/kotoba-tech/kotoba-whisper-v2.2) | Apache-2.0 |
+| anime-whisper | [Model card](https://huggingface.co/litagin/anime-whisper) | MIT; fine-tuned from Kotoba-Whisper v2.0 |
+| Qwen3-ASR 1.7B | [Model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | Apache-2.0 |
+| Qwen3-ASR 1.7B JA Anime/Galgame fine-tune | [Model card](https://huggingface.co/jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame) | Model card says "other"; read it before use. Fetched only when the user downloads it |
 | Faster-Whisper large-v2 | [Model card](https://huggingface.co/Systran/faster-whisper-large-v2) | MIT; converted from Whisper |
 | Faster-Whisper code | [Repository](https://github.com/SYSTRAN/faster-whisper) | See shipped LICENSE; CTranslate2 separate |
 | Japanese ASMR VAD | [Model card](https://huggingface.co/TransWithAI/Whisper-Vad-EncDec-ASMR-onnx) | MIT |

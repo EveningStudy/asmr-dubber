@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import engine, plan_files, title_translation
 from asmr_dubber.errors import ProjectError
 from asmr_dubber.models import ProjectSettings
 from asmr_dubber.services.batch_catalog import (
@@ -133,10 +133,12 @@ def test_autoflow_can_keep_original_work_and_track_titles(
     scanned = scan_for_ui(work, settings=UserSettings())
     sources = [engine.deserialize_audio_source(item) for item in scanned.source_payloads]
     saved: dict[str, object] = {}
-    monkeypatch.setattr(engine, "load_plan_metadata", lambda _plan_id: dict(saved))
-    monkeypatch.setattr(engine, "save_plan_metadata", lambda _plan_id, value: saved.update(value))
+    monkeypatch.setattr(plan_files, "load_plan_metadata", lambda _plan_id: dict(saved))
     monkeypatch.setattr(
-        engine,
+        plan_files, "save_plan_metadata", lambda _plan_id, value: saved.update(value)
+    )
+    monkeypatch.setattr(
+        title_translation,
         "translate_titles",
         lambda *_args, **_kwargs: pytest.fail("关闭标题翻译时不应调用翻译服务"),
     )

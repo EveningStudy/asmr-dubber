@@ -153,6 +153,36 @@ class Batch:
         with self.lock:
             return self._save(batch_queue.toggle_plan_rebuild(self.list(), identifier))
 
+    def preflight(self):
+        """The checks a batch start runs, on demand: disk, video memory, key and models."""
+
+        from .batch_plan import deserialize_plan
+        from .batch_preflight import run_preflight
+
+        queue = self.list()
+        if not queue:
+            raise ValueError("队列没有作品：请先添加作品，再做开始前检查。")
+        return run_preflight([deserialize_plan(item) for item in queue]).as_dict()
+
+    def diagnostics(self, identifier="", outcomes=None):
+        """Zip the logs, settings (no keys), failed sentences and doctor output."""
+
+        from . import diagnostics
+        from .batch_plan import deserialize_plan
+        from .settings import current as current_settings
+
+        queue = [item for item in self.list() if not identifier or item["plan_id"] == identifier]
+        plans = []
+        for item in queue:
+            try:
+                plans.append(deserialize_plan(item))
+            except Exception:
+                continue
+        path, names = diagnostics.build_bundle(
+            plans, current_settings().model_dump(mode="json"), outcomes=outcomes
+        )
+        return {"path": str(path), "url": self.media.register(path), "files": names}
+
     def run(self, request, report, token, reference):
         queue = self.list()
         with self.lock:

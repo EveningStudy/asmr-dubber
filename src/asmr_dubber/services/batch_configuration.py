@@ -43,8 +43,18 @@ def _preferred_formats(value: str) -> tuple[str, ...]:
     return tuple(formats)
 
 
+def failure_budget() -> tuple[int, float]:
+    """The saved "how many lost sentences still deliver a work" setting."""
+
+    from .settings import current as saved_interface_settings
+
+    saved = saved_interface_settings()
+    return saved.batch_failure_budget_count, saved.batch_failure_budget_percent
+
+
 def config_from_settings(settings: UserSettings | None = None) -> engine.AppConfig:
     current = settings or load_user_settings()
+    budget_count, budget_percent = failure_budget()
     output_name = current.autoflow_output_folder_name.strip()
     if (
         not output_name
@@ -73,4 +83,6 @@ def config_from_settings(settings: UserSettings | None = None) -> engine.AppConf
             if current.autoflow_reference_wait_enabled
             else 0
         ),
+        failure_budget_count=budget_count,
+        failure_budget_percent=budget_percent,
     )

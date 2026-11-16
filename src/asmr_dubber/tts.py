@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Iterable
 from functools import lru_cache
 from pathlib import Path
@@ -10,8 +11,9 @@ import numpy as np
 import soundfile as sf
 
 from .errors import SynthesisError
+from .filtering import has_speakable_text
 from .hashing import cached_sha256_file
-from .models import DubProject, Sentence
+from .models import DubProject, ProjectSettings, Sentence
 from .task_control import CancellationSignal
 from .voice_reference import (
     STABLE_CLONE_MODES,
@@ -92,6 +94,34 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
     return payload
 
 
+_ELLIPSIS = re.compile(r"[…⋯]+|\.{3,}|・{2,}|[—―]{2,}|[～〜~]{2,}")
+_COMMA_RUN = re.compile(r"[，,、\s]*[，,、][，,、\s]*")
+_COMMA_BEFORE_END = re.compile(r"[，,、\s]+([。！？!?」』）)])")
+
+
+def normalize_pauses(text: str) -> str:
+    """Turn long-pause punctuation into ordinary commas before synthesis.
+
+    Zero-shot TTS renders 「……」 as a second or more of silence, so a line full of
+    ellipses runs far longer than the source it replaces.  Idempotent.
+    """
+    value = _ELLIPSIS.sub("，", text)
+    value = _COMMA_RUN.sub("，", value)
+    value = _COMMA_BEFORE_END.sub(r"\1", value)
+    value = value.strip().strip("，,、").strip()
+    return value or text
+
+
+def spoken_text(settings: ProjectSettings, text: str) -> str:
+    """The exact text sent to a TTS backend for a translated line."""
+    return normalize_pauses(text) if settings.tts_normalize_pauses else text
+
+
+def attempt_seed(seed: int, sentence: Sentence) -> int:
+    """A different but reproducible seed for each automatic regeneration."""
+    return (seed + 1009 * sentence.tts_attempt) % (2**32)
+
+
 def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
     """Return a stable cache key using one cached digest per external reference."""
 
@@ -125,7 +155,7 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "gpt_split": settings.tts_gpt_text_split_method,
         "gpt_sample_steps": settings.tts_gpt_sample_steps,
         "cosyvoice_mode": settings.tts_cosyvoice_mode,
-        "zh": sentence.zh_text,
+        "zh": spoken_text(settings, sentence.zh_text),
         "sentence_id": sentence.id,
         "implementation": (
             "supported-backends-v7-stable-seed"
@@ -183,6 +213,16 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
             "ja": sentence.source_text,
             "padding": settings.reference_padding_seconds,
         }
+    if settings.tts_normalize_pauses:
+        payload["pauses"] = "normalized-v1"
+    if sentence.tts_attempt:
+        payload["attempt"] = sentence.tts_attempt
+    if settings.reference_audio_mode != "legacy":
+        payload["reference_audio"] = [
+            "reference-audio-v2",
+            settings.reference_audio_mode,
+            settings.separation_enabled and settings.reference_audio_mode == "fullband_vocals",
+        ]
     if project.source_language != "ja":
         payload["source_language"] = project.source_language
     if settings.tts_backend == "gpt_sovits":
@@ -219,6 +259,39 @@ def valid_tts_cache(project: DubProject, sentence: Sentence, directory: Path) ->
     return _readable_audio(str(path), stat.st_size, stat.st_mtime_ns)
 
 
+_QC_RETRIES = 2
+_SPOKEN_UNITS = re.compile(r"[\w\u3040-\u30ff\u3400-\u9fff]", re.UNICODE)
+
+
+def dub_problem(path: Path, text: str) -> str | None:
+    """Return why a synthesized line looks broken, or None when it looks usable.
+
+    Only gross failures are caught: no sound, far too short for the text (words
+    dropped), far too long (rambling or repeated audio), or clipped samples.
+    """
+    from .audio import speech_bounds
+
+    try:
+        data, _rate = sf.read(path, dtype="float32", always_2d=True)
+    except (OSError, RuntimeError):
+        return "无法读取配音文件"
+    units = len(_SPOKEN_UNITS.findall(text))
+    level = float(np.sqrt(np.mean(np.square(data, dtype=np.float64)))) if data.size else 0.0
+    if level < 10 ** (-60 / 20):
+        return "配音几乎没有声音"
+    start, end = speech_bounds(path)
+    seconds = end - start
+    if units >= 2 and seconds < 0.2:
+        return "配音几乎没有声音"
+    if units >= 3 and seconds < units * 0.06:
+        return f"配音只有 {seconds:.1f} 秒，比文字短太多，可能漏字"
+    if seconds > max(3.0, units * 0.6):
+        return f"配音长达 {seconds:.1f} 秒，比文字长太多，可能有多余内容"
+    if float(np.mean(np.abs(data) >= 0.999)) > 0.001:
+        return "配音有削波失真"
+    return None
+
+
 def synthesize_sentences(
     project: DubProject,
     project_dir: Path,
@@ -229,15 +302,61 @@ def synthesize_sentences(
     on_sentence: Callable[[], None] | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> list[str]:
+    from .audio import resolve_project_path
     from .tts_backends import synthesize_with_selected_backend
 
-    return synthesize_with_selected_backend(
-        project,
-        project_dir,
-        source,
-        force=force,
-        sentence_ids=sentence_ids,
-        progress=progress,
-        on_sentence=on_sentence,
-        cancel_event=cancel_event,
+    requested = set(sentence_ids) if sentence_ids is not None else None
+    options = {"progress": progress, "on_sentence": on_sentence, "cancel_event": cancel_event}
+    if project.settings.tts_reference_sentence_id is None and not any(
+        sentence.tts_file for sentence in project.sentences
+    ):
+        # Fix the voice anchor once, before the first line is synthesized, so every
+        # cache key refers to the same line.  Projects that already have dubs keep
+        # the previous (longest-line) choice and their dubs stay valid.
+        from .voice_reference import pick_reference_sentence
+
+        picked = pick_reference_sentence(project, source)
+        if picked is not None:
+            project.settings.tts_reference_sentence_id = picked.id
+    failures = synthesize_with_selected_backend(
+        project, project_dir, source, force=force, sentence_ids=sentence_ids, **options
     )
+    settings = project.settings
+    if not settings.tts_quality_check:
+        return failures
+    first_attempt = {sentence.id: sentence.tts_attempt for sentence in project.sentences}
+    for _round in range(_QC_RETRIES + 1):
+        retry: list[Sentence] = []
+        for sentence in project.sentences:
+            if not (
+                sentence.enabled
+                and sentence.chinese_audio_enabled
+                and sentence.tts_file
+                and has_speakable_text(sentence.zh_text)
+                and (requested is None or sentence.id in requested)
+            ):
+                continue
+            try:
+                path = resolve_project_path(project_dir, sentence.tts_file, sentence.id)
+            except Exception:  # missing or unsafe path: synthesis already reported it
+                continue
+            sentence.tts_warning = dub_problem(path, spoken_text(settings, sentence.zh_text))
+            used = sentence.tts_attempt - first_attempt.get(sentence.id, 0)
+            if sentence.tts_warning and used < _QC_RETRIES:
+                retry.append(sentence)
+        if not retry:
+            break
+        for sentence in retry:
+            sentence.tts_attempt += 1
+        if progress:
+            progress(f"配音自动检查：{len(retry)} 句不合格，换随机种子重新生成", 0, len(retry))
+        again = synthesize_with_selected_backend(
+            project,
+            project_dir,
+            source,
+            force=True,
+            sentence_ids=[sentence.id for sentence in retry],
+            **options,
+        )
+        failures = list(dict.fromkeys([*failures, *again]))
+    return failures

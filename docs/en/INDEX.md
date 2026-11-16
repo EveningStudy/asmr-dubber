@@ -18,7 +18,7 @@ If this is your first time, read these two in order:
 | Get translated subtitles without dubbing | [Subtitles and scripts](SUBTITLE_WORKFLOW.md#subtitles-only-no-dubbing) |
 | Make the dub follow the position of the original voice | [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#spatial-following) |
 | Adjust dub volume and timing | [Mixing and spatial following](EXPERIMENTAL_AUDIO.md) |
-| Remove the original voice | [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#replacement-mix-removing-the-original-voice) |
+| Remove the original voice | [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice) |
 | Have several models cross-check recognition | [Multi-model review](AUDIO_REVIEW_TUTORIAL.md) |
 | Switch recognition models, dubbing services or translation providers | [Models and services](BACKENDS.md) |
 | Understand where settings are stored | [Settings and storage](CONFIGURATION.md) |

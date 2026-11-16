@@ -125,7 +125,7 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
     ),
     "parakeet_nemo": ModelBackend(
         id="parakeet_nemo",
-        label="Parakeet 日语 · CrispASR（推荐）",
+        label="Parakeet 日语 · CrispASR（轻量）",
         kind="asr",
         runtime="command",
         default_model="grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
@@ -145,6 +145,57 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
         execution=ExecutionCapabilities(
             batch_strategy="native_list",
             progress_strategy="streamed_process",
+        ),
+    ),
+    "qwen3_asr": ModelBackend(
+        id="qwen3_asr",
+        label="Qwen3-ASR",
+        kind="asr",
+        runtime="optional_python",
+        default_model="Qwen/Qwen3-ASR-1.7B",
+        models=("Qwen/Qwen3-ASR-1.7B", "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame"),
+        help="阿里通义的识别模型，配合 Qwen3 ForcedAligner 输出逐字时间戳；"
+        "另有社区的日语动画/Galgame 微调版。实验性。",
+        setup="点击安装会下载两款 Qwen3-ASR 模型、时间戳对齐和 ASMR VAD；"
+        "没有国内镜像，需把“下载来源”改为“海外源”。",
+        tested_default=False,
+        support_level="experimental",
+        devices=("cpu", "cuda"),
+        minimum_vram_gb=6,
+        recommended_vram_gb=8,
+        disk_gb=11,
+        installer="python-extra",
+        python_extra="asr-forced-aligner,asr-asmr-vad",
+        homepage="https://huggingface.co/Qwen/Qwen3-ASR-1.7B",
+        execution=ExecutionCapabilities(
+            batch_strategy="internal_chunks",
+            quality_sensitive_batch=True,
+        ),
+    ),
+    "anime_whisper": ModelBackend(
+        id="anime_whisper",
+        label="anime-whisper 日语（推荐）",
+        kind="asr",
+        runtime="optional_python",
+        default_model="litagin/anime-whisper",
+        models=("litagin/anime-whisper",),
+        help="在动画和游戏语音上微调的 Kotoba-Whisper，擅长耳语和成人向台词，"
+        "文字准确度高于 Parakeet；先用 ASMR 专用 VAD 切段，再用 Qwen3 ForcedAligner 补"
+        "逐字时间戳。需要“进阶”档位的组件，未安装时会自动改用 Parakeet。",
+        setup="“进阶”档位会安装运行依赖；点击安装会下载 anime-whisper、时间戳对齐和 ASMR VAD 模型。"
+        "anime-whisper 没有国内镜像，需把“下载来源”改为“海外源”。",
+        tested_default=True,
+        support_level="supported",
+        devices=("cpu", "cuda"),
+        minimum_vram_gb=4,
+        recommended_vram_gb=6,
+        disk_gb=5,
+        installer="python-extra",
+        python_extra="asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad",
+        homepage="https://huggingface.co/litagin/anime-whisper",
+        execution=ExecutionCapabilities(
+            batch_strategy="internal_chunks",
+            quality_sensitive_batch=True,
         ),
     ),
     "kotoba_whisper": ModelBackend(

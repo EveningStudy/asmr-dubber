@@ -27,6 +27,10 @@ class AppConfig:
     background_policy: str = "ask"
     reference_wait_seconds: int = REFERENCE_SELECTION_TIMEOUT_SECONDS
     output_policy: dict[str, Any] = field(default_factory=dict)
+    # Sentences a work may lose in translation or dubbing and still be delivered:
+    # max(failure_budget_count, failure_budget_percent % of its sentences).
+    failure_budget_count: int = 3
+    failure_budget_percent: float = 2.0
 
 
 @dataclass(frozen=True)

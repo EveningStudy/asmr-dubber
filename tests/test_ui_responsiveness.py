@@ -32,7 +32,10 @@ def test_parakeet_one_bad_window_does_not_discard_good_ones(monkeypatch, tmp_pat
     monkeypatch.setattr("asmr_dubber.asr._transcribe_parakeet", process)
     results = list(
         recognize_windows(
-            [(f"w{i}", tmp_path / f"w{i}.wav") for i in range(1, 4)], ProjectSettings(), "ja", None
+            [(f"w{i}", tmp_path / f"w{i}.wav") for i in range(1, 4)],
+            ProjectSettings(asr_backend="parakeet_nemo"),
+            "ja",
+            None,
         )
     )
     assert results[0][1] == [sentence]

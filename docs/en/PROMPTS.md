@@ -8,8 +8,8 @@
 
 | File | Contract |
 |---|---|
-| `translation.md` | Every input ID once, original order, Chinese body or empty text |
-| `translation-structure.md` | `translations` array with `id` and `zh`; required placeholders |
+| `translation.md` | Every input ID once, original order, with `kind` (`speech` or `sound`); the `zh` of a `sound` item follows the sound policy setting |
+| `translation-structure.md` | `translations` array with `id`, `zh` and optional `kind`; required placeholders |
 | `script-reconciliation.md` | `corrections` ordered by recognition ID; literal `script_quotes`, unchanged audio intervals |
 
 Script quotes contain `id`, exact `quote` and optional literal `skip_before`. Python computes offsets; the model does not count characters. Skips are recorded. Overlap, backward allocation and invented text are rejected. Legacy `script_spans`/`script_ids` responses remain supported under their strict validators.

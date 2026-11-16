@@ -7,7 +7,7 @@ from .. import pipeline
 from ..audio import verify_source
 from ..lifecycle import browser_revision_scope
 from ..models import load_project
-from . import project_audio, project_operations, project_records, review
+from . import project_audio, project_operations, project_records, project_review, review
 from .media import discard_upload
 from .settings import current
 
@@ -50,11 +50,21 @@ class Projects:
                 candidate.relative_to(directory.resolve())
                 outputs[name] = {"name": candidate.name, "url": self.media.register(candidate)}
         result["outputs"] = outputs
+        result["replacement_report"] = project_review.replacement_flags(active, directory)
+        result["compare_tracks"] = project_review.compare_tracks(
+            active, directory, result["source_url"], self.media.register
+        )
         for sentence in result["sentences"]:
             stored = sentence.get("tts_file")
             sentence["tts_url"] = self.media.register(directory / stored) if stored else None
+            for take in sentence.get("tts_candidates") or []:
+                path = directory / take["file"] if take.get("file") else None
+                take["url"] = self.media.register(path) if path and path.is_file() else None
         result["diagnostics"] = project_records.diagnostics(active)
         from ..translation import empty_translation_is_expected
+        from ..translation_backup import backup_summary
+
+        result["translation_backup"] = backup_summary(directory)
 
         result["recoverable_translations"] = [
             s.id
@@ -107,6 +117,32 @@ class Projects:
                 raise ValueError("Sentence no longer exists")
             rows[matched] = row
             project_operations.save_table(project, rows)
+        return self.get(project)
+
+    def proposals(self, project, accept, reject, revision):
+        """Accept or reject pending translation proposals and save the result."""
+
+        from ..models import save_project
+        from ..translation_revision import resolve_proposals
+
+        with browser_revision_scope(project, revision):
+            active, directory = load_project(project)
+            counts = resolve_proposals(active, accept, reject)
+            if counts["accepted"] or counts["rejected"] or counts["stale"]:
+                save_project(active, directory)
+                pipeline.export_transcript(active, directory)
+        return {**self.get(project), "proposal_result": counts}
+
+    def take(self, project, sentence, attempt, revision):
+        """Make one of a sentence's candidate dubs the active one (F1)."""
+
+        from ..models import save_project
+
+        with browser_revision_scope(project, revision):
+            active, directory = load_project(project)
+            project_operations.choose_dub_candidate(active, directory, sentence, attempt)
+            save_project(active, directory)
+            pipeline.export_transcript(active, directory)
         return self.get(project)
 
     def open(self, project, output=False):
@@ -180,7 +216,24 @@ class Projects:
                 "synthesize": project_operations.synthesize,
                 "mix": project_operations.mix,
             }
-            if kind in actions:
+            if kind == "synthesize" and request.get("candidates") and request.get("sentence_ids"):
+                project_operations.generate_dub_candidates(
+                    manifest,
+                    rows,
+                    request["sentence_ids"],
+                    int(request["candidates"]),
+                    report,
+                    token,
+                )
+            elif kind == "synthesize" and request.get("sentence_ids"):
+                project_operations.regenerate_dubs(
+                    manifest, rows, request["sentence_ids"], report, token
+                )
+            elif kind == "translate" and request.get("sentence_ids"):
+                project_operations.retranslate(
+                    manifest, rows, request["sentence_ids"], report, token
+                )
+            elif kind in actions:
                 if kind == "translate" and request.get("force"):
                     from ..user_settings import resolve_api_key
 
@@ -191,6 +244,7 @@ class Projects:
                         force=True,
                         progress=report,
                         cancel_event=token,
+                        overwrite_edited=bool(request.get("overwrite_edited")),
                     )
                 else:
                     actions[kind](manifest, rows, report, token)
@@ -233,6 +287,24 @@ class Projects:
                 review.retry_review(manifest, rows, report, token)
             elif kind == "align_review":
                 review.align_review(manifest, rows, report, token)
+            elif kind == "restore_translations":
+                from ..translation_backup import restore_project_translations
+
+                restore_project_translations(manifest)
+                return {**self.get(manifest), "message": "已恢复上一版译文。"}
+            elif kind == "revise_translations":
+                from ..translation_revision import revise_project_translations
+
+                outcome = revise_project_translations(
+                    active,
+                    directory,
+                    request.get("sentence_ids", []),
+                    request.get("instruction", ""),
+                    include_edited=bool(request.get("include_edited")),
+                    progress=report,
+                    cancel_event=token,
+                )
+                return {**self.get(manifest), "message": outcome.summary()}
             elif kind == "preview_reference":
                 return {
                     "url": self.media.register(

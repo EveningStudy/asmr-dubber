@@ -96,9 +96,9 @@ export async function upload(file) {
   return result;
 }
 let noticeTimer, lastNotice = '', lastNoticeAt = 0;
-export function notice(message, error = false) {
+export function notice(message, error = false, { dedupe = false, sticky = false } = {}) {
   const signature = `${error}:${message}`;
-  if (signature === lastNotice && Date.now() - lastNoticeAt < 30000) return;
+  if (dedupe && signature === lastNotice && Date.now() - lastNoticeAt < 30000) return;
   lastNotice = signature;
   lastNoticeAt = Date.now();
   clearTimeout(noticeTimer);
@@ -107,7 +107,7 @@ export function notice(message, error = false) {
   box.querySelector('button').onclick = () => { box.hidden = true; clearTimeout(noticeTimer); };
   box.hidden = false;
   box.classList.toggle('error', error);
-  noticeTimer = setTimeout(() => (box.hidden = true), error ? 10000 : 5000);
+  if (!sticky) noticeTimer = setTimeout(() => (box.hidden = true), error ? 10000 : 5000);
 }
 export function guard(action) {
   return async (event) => {

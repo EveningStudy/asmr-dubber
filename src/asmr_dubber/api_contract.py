@@ -68,6 +68,8 @@ class TaskRequest(Request):
         "unlock_review",
         "retry_review",
         "align_review",
+        "restore_translations",
+        "revise_translations",
         "preview_reference",
         "preview_edge",
         "download",
@@ -84,6 +86,7 @@ class TaskRequest(Request):
     source_language: Literal["ja", "en", "zh"] = "ja"
     target_language: Literal["zh", "en"] | None = None
     force: bool = False
+    overwrite_edited: bool = False
     audio: bool = True
     language: Literal["bilingual", "source", "zh", "none"] = "bilingual"
     file: str | None = None
@@ -99,6 +102,11 @@ class TaskRequest(Request):
     backend: str = ""
     action: str = ""
     service: Literal["asr", "translation", "tts"] = "translation"
+    sentence_ids: list[str] = Field(default_factory=list)
+    # synthesize: number of alternative takes to make for one sentence (F1).
+    candidates: int = Field(default=0, ge=0, le=4)
+    instruction: str = ""
+    include_edited: bool = False
 
     @model_validator(mode="after")
     def required_fields(self):
@@ -120,13 +128,31 @@ class TaskRequest(Request):
             "unlock_review",
             "retry_review",
             "align_review",
+            "restore_translations",
+            "revise_translations",
             "preview_reference",
         }
         if self.kind in project_actions and (not self.project or self.revision is None):
             raise ValueError("project and revision are required")
+        if self.kind == "revise_translations" and (
+            not self.instruction.strip() or not self.sentence_ids
+        ):
+            raise ValueError("instruction and sentence_ids are required")
         if self.kind == "download" and not self.model:
             raise ValueError("model is required")
         return self
+
+
+class ProposalRequest(ProjectRequest):
+    revision: int = Field(ge=0)
+    accept: list[str] = Field(default_factory=list)
+    reject: list[str] = Field(default_factory=list)
+
+
+class TakeRequest(ProjectRequest):
+    revision: int = Field(ge=0)
+    sentence: str
+    attempt: int = Field(ge=0)
 
 
 class ReferenceRequest(ProjectRequest):

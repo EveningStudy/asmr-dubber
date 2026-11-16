@@ -67,7 +67,14 @@ def render_variants(paths: Any, project_json: Path, folder: Path, state: dict[st
             project.settings.separation_mix_mode = variant
             project.settings.mix_output_mode = "mixed"
             save_project(project, directory)
-            e.run_asmr_cli(paths, "mix", str(project_json), "--output-variant", variant)
+            e.run_asmr_cli(
+                paths,
+                "mix",
+                str(project_json),
+                "--output-variant",
+                variant,
+                *e.stages.mix_arguments(state),
+            )
             e.run_asmr_cli(
                 paths,
                 "subtitles",

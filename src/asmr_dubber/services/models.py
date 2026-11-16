@@ -104,7 +104,7 @@ def catalog():
                     else status.detail
                 ),
                 "models": list(spec.models),
-                "recommended": spec.id in {"parakeet_nemo", "indextts2"},
+                "recommended": spec.id in {"parakeet_nemo", "anime_whisper", "indextts2"},
             }
         )
     for identifier, name, status in (

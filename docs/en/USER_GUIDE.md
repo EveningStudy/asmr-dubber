@@ -73,7 +73,7 @@ Settings changed in the right panel belong to this project only. They save autom
 
 Recognition turns the speech into text with timing.
 
-1. Check **ASR backend**. Use Parakeet for Japanese and Faster-Whisper for English or Chinese.
+1. Check **ASR backend**. Use anime-whisper for Japanese (Parakeet until it is installed) and Faster-Whisper for English or Chinese.
 2. Click **Run recognition again**. The button has this name even on the first run.
 3. Wait. An hour of audio takes a few minutes on a GPU.
 
@@ -101,6 +101,18 @@ The translations fill into the table. **The translation is the script the dub wi
 - Laughter, breathing and other sounds with no real content are not translated. An empty translation there is normal.
 
 **Translate remaining** only fills in sentences that have no translation and leaves your edits alone. **Translate everything again** retranslates every sentence, including the ones you edited by hand, and asks for confirmation first.
+
+### Revise on request
+
+When the translation is mostly right but one kind of problem keeps showing up (for example "do not use 'darling'", "make the tone softer", or "these lines sound too formal"), click **Revise on request** on the Translation page:
+
+1. Choose the range: the selected sentence, the sentences matching the table's current search, or all translated sentences.
+2. Write your request in **Your request**. Tick **Also include sentences I edited by hand** only if you want those revised too; by default sentences you edited yourself are left out.
+3. Click **Start revising**. The program sends those sentences, their neighbours and your request to the translation model, which returns only the sentences that really need a change.
+
+Nothing changes right away. When the run finishes, a **Revision proposals** list appears on the Translation page showing the source text, the old translation and the new translation for each sentence. Click the sentence number to find it in the table. **Accept** writes the new translation, **Reject** keeps the old one, and there are **Accept all** and **Reject all** buttons. An accepted sentence counts as edited by hand, and its dubbing has to be generated again. If the model suggests that a line should not be dubbed, accepting it follows your **Sound effects and nonverbal sounds** setting.
+
+This needs a language-model translation service (DeepSeek, Bailian, OpenAI and so on). DeepL, Google Translate and Microsoft Translate translate sentence by sentence and are not supported. If you edit a sentence by hand after its proposal appeared, that proposal is discarded when you click **Accept**, so your edit is never overwritten.
 
 To fit the translation to the work, expand **Translation parameters** and describe the characters, how they address each other, and the tone in **Translation prompt**. Context size and other parameters are here as well. **Restore built-in prompt** undoes your changes.
 
@@ -149,7 +161,7 @@ Click **Export** at the top.
 
 From top to bottom:
 
-- **Mix mode**: **Bilingual mix** is the original plus the dub. **Replacement mix** removes the original voice and keeps only the dub. It is experimental; see [Mixing and spatial following](EXPERIMENTAL_AUDIO.md).
+- **Mix mode**: **Bilingual mix** is the original plus the dub. **Replacement mix (experimental)** is the fully dubbed mix: the original voice is replaced by the dub in dubbed sentences and everything else stays as recorded. See [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice).
 - **Spatial following**: when on, the dub follows the left-right position and distance of the original voice. Recommended for stereo works.
 - **Audio output layout**: besides the mix, you can save a separate track with only the dub, for further work in other software.
 - **Output**: **Audio** exports normally. **Subtitles only** produces no audio.
@@ -178,6 +190,8 @@ Click a row in the table to select it. Buttons appear below the table, and **Sel
 | Adjust when the sentence starts and ends | Change **Start (s)** and **End (s)** |
 | Make this sentence's dub louder or quieter | Change **Dubbing adjustment (dB)**. Positive is louder, negative is quieter |
 | Leave the dub out of the export but keep what was generated | Untick **Play dub** |
+| Keep the original voice of a line in the fully dubbed mix, or force it out | Set **Original voice** in the table to **Keep original** or **Replace the original**; **Auto** replaces it when there is a dub |
+| A dub came out wrong and you want another take | Click the ↻ in the dub column to redo only that line. The **Needs checking** filter lists lines that failed the check or may still carry the original voice |
 | Add a sentence that was missed | Click **Add sentence** |
 | Remove this sentence | Click **Delete sentence** |
 | Use this sentence as the voice reference | Click **Set as project voice reference** |
@@ -213,4 +227,4 @@ Closing the black window that appeared at startup stops the program. Closing the
 
 ## Missing translations and retry
 
-Blank translations of meaningful speech are retried individually. Persistent failures remain enabled with a retry message; successful translations are saved. Use the ordinary remaining-translations button to retry. Older incorrectly skipped speech can be restored together or enabled individually, updating row appearance and counts immediately. No inserted blank sentence or project reload is needed. Nonverbal laughter and breathing can still be skipped.
+Blank translations of meaningful speech are retried individually. Sentences that still fail stay enabled and never block the other batches: after every batch has run, the Translation panel shows a result card (translated, skipped and failed counts with the reasons). Click a sentence ID to find it in the table, then retry only the failed sentences or mark them as not dubbed. Only three consecutive failed batches, or key, billing and permission errors (HTTP 401/402/403), stop the run early, and finished translations are always saved. Interjections and short nonverbal sounds are flagged as `sound` by the model and handled by the Sound effects and nonverbal sounds setting: skip and keep the original (default), write romaji into subtitles only, or keep the source text in subtitles only. Translate all again replaces sentences one by one and keeps the old text until the new text arrives. A backup is written first and can be restored with Restore the previous translation; sentences you edited by hand are not overwritten unless you tick the option. Older incorrectly skipped speech can be restored together or enabled individually, updating row appearance and counts immediately. No inserted blank sentence or project reload is needed. Nonverbal laughter and breathing can still be skipped.

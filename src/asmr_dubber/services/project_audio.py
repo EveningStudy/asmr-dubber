@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
+from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -140,6 +141,26 @@ def preview_edge_tts_voice(voice: str) -> str:
     return str(destination.resolve())
 
 
+@lru_cache(maxsize=16)
+def _scored_reference_id(source: str, stamp: tuple, project_json: str) -> str | None:
+    from ..models import DubProject
+    from ..voice_reference import pick_reference_sentence
+
+    picked = pick_reference_sentence(DubProject.model_validate_json(project_json), Path(source))
+    return picked.id if picked is not None else None
+
+
+def recommended_reference_id(project, directory: Path) -> str | None:
+    """The line synthesis will pick as voice anchor (F3), cached per source and sentence set."""
+    source = directory / project.source.path
+    try:
+        info = source.stat()
+    except OSError:
+        return None
+    lines = project.model_dump_json(include={"source", "sentences"})
+    return _scored_reference_id(str(source), (info.st_size, info.st_mtime_ns), lines)
+
+
 def reference_picker(
     project_path: str, *, include_preview: bool = True
 ) -> tuple[list[tuple[str, str]], str | None, str | None]:
@@ -151,7 +172,10 @@ def reference_picker(
 
     recommended_id: str | None = None
     with suppress(Exception):
-        recommended_id = shared_reference_sentence(project).id
+        recommended_id = recommended_reference_id(project, directory)
+    if recommended_id is None:
+        with suppress(Exception):
+            recommended_id = shared_reference_sentence(project).id
     selected = project.settings.tts_reference_sentence_id or recommended_id
     choices: list[tuple[str, str]] = []
     for sentence in project.sentences:

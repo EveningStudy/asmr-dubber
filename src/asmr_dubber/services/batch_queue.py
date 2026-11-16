@@ -186,6 +186,7 @@ def run_queue(
     *,
     cancel_event: CancellationSignal | None = None,
     reference_event_callback: engine.ReferenceEventCallback | None = None,
+    preflight: bool = True,
 ) -> tuple[int, list[str]]:
     plans = [deserialize_plan(payload) for payload in (queue_payload or [])]
     if not plans:
@@ -194,6 +195,17 @@ def run_queue(
     config = config_from_settings()
     paths = engine.find_tool_paths(config)
     engine.validate_asmr_version()
+    if preflight:
+        from .batch_preflight import WARN, run_preflight
+
+        print("开始前检查：磁盘空间、显存、翻译服务、所需模型……")
+        checked = run_preflight(plans)
+        for check in checked.checks:
+            if check.status == WARN:
+                print(f"提示：{check.title}：{check.message}")
+        if not checked.ok:
+            raise ProjectError(checked.summary())
+        check_cancelled(cancel_event)
     result = engine.execute_smart_queue(
         paths,
         config,

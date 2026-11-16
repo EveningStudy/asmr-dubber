@@ -160,6 +160,32 @@ def translate(
     return view(project, directory, "翻译完成。请检查中文后保存表格。")
 
 
+def retranslate(
+    project_path: str,
+    table: Any,
+    sentence_ids: list[str],
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    """Translate only the listed sentences again, e.g. the ones the self-check flagged."""
+    project, directory = pipeline.reload_project(project_path)
+    apply_table(project, table)
+    wanted = set(sentence_ids)
+    chosen = [s.id for s in project.sentences if s.id in wanted and s.enabled]
+    if not chosen:
+        raise ProjectError("所选句子都已停用，没有可以重译的句子。")
+    pipeline.translate_project(
+        project,
+        directory,
+        api_key=resolve_api_key(project.settings.translation_provider),
+        progress=progress,
+        cancel_event=cancel_event,
+        overwrite_edited=True,
+        sentence_ids=chosen,
+    )
+    return view(project, directory, f"已重译 {len(chosen)} 句。")
+
+
 def synthesize(
     project_path: str,
     table: Any,
@@ -179,6 +205,118 @@ def synthesize(
         directory,
         "TTS（语音合成）完成。可以直接混音；之后调整混音设置不需要重做配音。",
     )
+
+
+def regenerate_dubs(
+    project_path: str,
+    table: Any,
+    sentence_ids: list[str],
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    """Make a new take of the listed sentences; every other dub is left alone.
+
+    Raising ``tts_attempt`` changes the random seed (and the cache key), so the result is a
+    different take instead of the cached file coming back.
+    """
+    project, directory = pipeline.reload_project(project_path)
+    apply_table(project, table)
+    wanted = set(sentence_ids)
+    chosen = [s.id for s in project.sentences if s.id in wanted and s.enabled and s.zh_text]
+    if not chosen:
+        raise ProjectError("所选句子没有可生成配音的译文。")
+    for sentence in project.sentences:
+        if sentence.id in chosen:
+            sentence.tts_attempt += 1
+            sentence.tts_warning = None
+    pipeline.synthesize_project(
+        project,
+        directory,
+        force=True,
+        sentence_ids=chosen,
+        progress=progress,
+        cancel_event=cancel_event,
+    )
+    return view(project, directory, f"已重新生成 {len(chosen)} 句配音。")
+
+
+def generate_dub_candidates(
+    project_path: str,
+    table: Any,
+    sentence_ids: list[str],
+    count: int,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    """Make several takes of one line so the user can pick the best by ear (F1).
+
+    Each take uses its own ``tts_attempt`` (seed) and therefore its own file; the
+    current take, if valid, is kept as one of the candidates.  The last take
+    generated becomes the active one until the user chooses.
+    """
+    from ..tts import tts_cache_key
+
+    project, directory = pipeline.reload_project(project_path)
+    apply_table(project, table)
+    wanted = set(sentence_ids)
+    sentence = next(
+        (s for s in project.sentences if s.id in wanted and s.enabled and s.zh_text), None
+    )
+    if sentence is None:
+        raise ProjectError("所选句子没有可生成配音的译文。")
+    candidates: list[dict[str, Any]] = []
+
+    def remember() -> None:
+        candidates.append(
+            {
+                "attempt": sentence.tts_attempt,
+                "file": sentence.tts_file,
+                "duration": sentence.tts_duration_seconds,
+                "warning": sentence.tts_warning,
+            }
+        )
+
+    if sentence.tts_file and sentence.tts_cache_key == tts_cache_key(project, sentence):
+        remember()
+    start = max([sentence.tts_attempt, *(c["attempt"] for c in sentence.tts_candidates)])
+    for offset in range(1, max(1, count - len(candidates)) + 1):
+        sentence.tts_attempt = start + offset
+        sentence.tts_warning = None
+        pipeline.synthesize_project(
+            project,
+            directory,
+            force=True,
+            sentence_ids=[sentence.id],
+            progress=progress,
+            cancel_event=cancel_event,
+        )
+        if sentence.tts_file:
+            remember()
+    sentence.tts_candidates = candidates
+    save_project(project, directory)
+    return view(project, directory, f"已为 {sentence.id} 生成 {len(candidates)} 个候选配音。")
+
+
+def choose_dub_candidate(project, directory: Path, sentence_id: str, attempt: int) -> None:
+    """Make one of a line's candidate takes the active dub (caller saves the project)."""
+    from ..audio import resolve_project_path
+    from ..tts import tts_cache_key
+
+    sentence = next((s for s in project.sentences if s.id == sentence_id), None)
+    if sentence is None:
+        raise ProjectError(f"找不到句子 {sentence_id}。")
+    take = next((c for c in sentence.tts_candidates if c.get("attempt") == attempt), None)
+    if take is None or not take.get("file"):
+        raise ProjectError("这个候选配音已经不存在，请重新生成候选。")
+    resolve_project_path(directory, take["file"], sentence.id)
+    sentence.tts_attempt = int(take["attempt"])
+    sentence.tts_file = take["file"]
+    sentence.tts_duration_seconds = take.get("duration")
+    sentence.tts_warning = take.get("warning")
+    sentence.tts_cache_key = tts_cache_key(project, sentence)
+    sentence.status = "synthesized"
+    sentence.error = None
+    invalidate_outputs(project)
 
 
 def mix(

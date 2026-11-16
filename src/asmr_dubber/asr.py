@@ -1140,6 +1140,18 @@ def _transcribe_moss(
         shutil.rmtree(run_directory, ignore_errors=True)
 
 
+def _transcribe_qwen3_asr(*args: Any, **kwargs: Any) -> tuple[list[Sentence], str]:
+    from .asr_candidates import transcribe_qwen3_asr
+
+    return transcribe_qwen3_asr(*args, **kwargs)
+
+
+def _transcribe_anime_whisper(*args: Any, **kwargs: Any) -> tuple[list[Sentence], str]:
+    from .asr_candidates import transcribe_anime_whisper
+
+    return transcribe_anime_whisper(*args, **kwargs)
+
+
 def transcribe_source(
     analysis_audio: Path,
     settings: ProjectSettings,
@@ -1153,6 +1165,7 @@ def transcribe_source(
         "faster_whisper",
         "generic_asr_api",
         "moss_transcribe_diarize",
+        "qwen3_asr",
     }:
         raise AsmrDubberError("英语识别可使用 Faster-Whisper 或通用 ASR API。")
 
@@ -1176,6 +1189,8 @@ def transcribe_source(
         "parakeet_nemo": _transcribe_parakeet,
         "kotoba_whisper": _transcribe_kotoba_whisper,
         "faster_whisper": _transcribe_faster_whisper,
+        "qwen3_asr": _transcribe_qwen3_asr,
+        "anime_whisper": _transcribe_anime_whisper,
     }
     try:
         runner = runners[settings.asr_backend]
@@ -1184,7 +1199,11 @@ def transcribe_source(
             f"不支持的 ASR（语音识别）后端：{settings.asr_backend}。"
             "请选择 Parakeet、Kotoba-Whisper、Faster-Whisper 或通用 ASR API。"
         ) from exc
-    if settings.asr_vad_mode == "asmr":
+    # anime-whisper and Japanese Qwen3-ASR cut speech with the ASMR VAD themselves.
+    self_segmenting = settings.asr_backend == "anime_whisper" or (
+        settings.asr_backend == "qwen3_asr" and source_language == "ja"
+    )
+    if settings.asr_vad_mode == "asmr" and not self_segmenting:
         if source_language != "ja":
             raise AsmrDubberError("日语 ASMR 专用 VAD 不用于英语项目；请选择关闭或后端 VAD。")
         cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}

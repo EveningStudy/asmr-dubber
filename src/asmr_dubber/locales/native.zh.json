@@ -7,7 +7,7 @@
   "preview_edge": "试听", "preview_reference": "音色参考",
   "accept_review": "采纳所选候选", "keep_review": "保留并确认主稿",
   "undo_review": "撤销上一次采纳或确认", "unlock_review": "解除人工确认锁定",
-  "retry_review": "只重试音频复核", "align_review": "仅重新对齐时间",
+  "retry_review": "只重试音频复核", "align_review": "仅重新对齐时间", "revise_translations": "按要求改译",
   "queued": "等待中", "running": "正在处理…", "cancelling": "正在暂停…",
   "completed": "已完成", "cancelled": "已暂停", "failed": "失败", "interrupted": "已中断",
   "missing": "未安装", "ready": "已安装", "broken": "需要修复", "partial": "未完成",

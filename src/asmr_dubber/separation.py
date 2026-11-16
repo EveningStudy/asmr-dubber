@@ -487,7 +487,7 @@ def _ensure_separation_impl(
                 "source": project.source.sha256,
                 "settings": fields,
                 "model": model_hash,
-                "implementation": "separation-v1",
+                "implementation": "separation-v2",
             },
             sort_keys=True,
         ).encode()
@@ -554,6 +554,10 @@ def _ensure_separation_impl(
             ) as bed,
         ):
             total = (original.frames + block - 1) // block
+            # Neighbouring chunks overlap by ``padding``; blend across the seam instead
+            # of switching outputs abruptly, which could click every chunk.
+            seam = min(padding, round(rate * 0.25))
+            previous_tail: np.ndarray | None = None
             for index, start in enumerate(range(0, original.frames, block)):
                 check_cancelled()
                 end = min(original.frames, start + block)
@@ -575,7 +579,7 @@ def _ensure_separation_impl(
                             temp / "input.wav",
                             original.read(hi - lo, dtype="float32", always_2d=True),
                             rate,
-                            subtype="PCM_16",
+                            subtype="FLOAT",  # whispers sit far below full scale
                         )
                         if settings.separation_backend == "local":
                             job = {
@@ -627,7 +631,12 @@ def _ensure_separation_impl(
                     or not np.isfinite(separated).all()
                 ):
                     raise ProjectError("分离片段缓存损坏，请移除该项目的分离缓存后重试。")
-                selected = separated[start - lo : end - lo]
+                selected = separated[start - lo : end - lo].copy()
+                if previous_tail is not None and len(previous_tail):
+                    count = min(len(previous_tail), len(selected))
+                    ramp = np.linspace(0.0, 1.0, count, dtype=np.float32)[:, None]
+                    selected[:count] = previous_tail[:count] * (1 - ramp) + selected[:count] * ramp
+                previous_tail = separated[end - lo : min(hi, end + seam) - lo]
                 original.seek(start)
                 raw = original.read(end - start, dtype="float32", always_2d=True)
                 voice.write(selected)

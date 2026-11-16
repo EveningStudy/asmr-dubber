@@ -12,6 +12,12 @@ from asmr_dubber.asr import _clock
 from asmr_dubber.errors import AsmrDubberError
 from asmr_dubber.models import ProjectSettings
 
+# The product default is anime-whisper; these tests exercise the Parakeet runner.
+PARAKEET = {
+    "asr_backend": "parakeet_nemo",
+    "asr_model": "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
+}
+
 
 def test_clock_formats_long_audio_positions() -> None:
     assert _clock(89.9) == "1:29"
@@ -396,7 +402,7 @@ def test_parakeet_windows_unicode_portable_home_uses_ascii_relative_paths(
     )
     monkeypatch.setattr(asr.subprocess, "Popen", FakeProcess)
 
-    sentences, _ = asr._transcribe_parakeet(audio, ProjectSettings(), None)
+    sentences, _ = asr._transcribe_parakeet(audio, ProjectSettings(**PARAKEET), None)
 
     command, cwd = calls[0]
     model_argument = command[command.index("-m") + 1]
@@ -466,6 +472,7 @@ def test_parakeet_command_pins_backend_cache_and_supported_vad(tmp_path, monkeyp
     sentences, _ = asr._transcribe_parakeet(
         audio,
         ProjectSettings(
+            **PARAKEET,
             asr_vad_filter=True,
             asr_vad_min_silence_ms=650,
         ),
@@ -565,7 +572,7 @@ def test_parakeet_long_audio_uses_one_process_and_bounded_multifile_chunks(
 
     sentences, _ = asr._transcribe_parakeet(
         audio,
-        ProjectSettings(asr_model=model_id, asr_chunk_seconds=30),
+        ProjectSettings(asr_backend="parakeet_nemo", asr_model=model_id, asr_chunk_seconds=30),
         None,
     )
 
@@ -641,7 +648,7 @@ def test_parakeet_retries_with_smaller_chunks_after_cuda_oom(tmp_path, monkeypat
 
     sentences, _ = asr._transcribe_parakeet(
         audio,
-        ProjectSettings(asr_chunk_seconds=30),
+        ProjectSettings(**PARAKEET, asr_chunk_seconds=30),
         None,
     )
 
@@ -689,4 +696,4 @@ def test_parakeet_error_keeps_leading_argument_diagnostic(tmp_path, monkeypatch)
     monkeypatch.setattr(asr.subprocess, "Popen", FakeProcess)
 
     with pytest.raises(AsmrDubberError, match="argument error: invalid option"):
-        asr._transcribe_parakeet(audio, ProjectSettings(), None)
+        asr._transcribe_parakeet(audio, ProjectSettings(**PARAKEET), None)

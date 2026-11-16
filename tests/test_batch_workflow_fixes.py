@@ -9,7 +9,7 @@ import pytest
 import soundfile as sf
 
 from asmr_dubber.api import API
-from asmr_dubber.autoflow import engine
+from asmr_dubber.autoflow import engine, project_cli
 from asmr_dubber.models import AudioInfo, DubProject, ProjectSettings, load_project, save_project
 from asmr_dubber.services import batch_queue, settings
 from asmr_dubber.services.application import Application
@@ -154,7 +154,7 @@ def test_live_queue_reference_applies_at_synthesis_after_snapshot_and_survives_r
                 )
         return 0, []
 
-    monkeypatch.setattr(engine, "run_asmr_cli", synthesize)
+    monkeypatch.setattr(project_cli, "run_asmr_cli", synthesize)
     monkeypatch.setattr(batch_queue, "run_queue", run)
     result = app.batch.run({}, lambda *args: None, Event(), lambda event: None)
     assert result["exit_code"] == 0

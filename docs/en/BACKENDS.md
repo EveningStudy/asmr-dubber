@@ -10,12 +10,18 @@ The registry is the capability source of truth. A listed interface is not a prom
 
 | Backend | Language / notes |
 |---|---|
-| Parakeet via CrispASR | Japanese; CTC 1.1B GAL quality baseline, 0.6B TDT/CTC lower-resource alternative |
+| anime-whisper | Japanese; recommended default. Fine-tuned on anime and game voices; cut with the ASMR VAD and timestamped by Qwen3 ForcedAligner. Model download installs all three |
+| Parakeet via CrispASR | Japanese; lightweight, part of the Recommended tier and the default while anime-whisper is not installed. CTC 1.1B GAL quality baseline, 0.6B TDT/CTC lower-resource alternative |
+| Qwen3-ASR | Japanese/English/Chinese; experimental. Alibaba model plus a community Japanese fine-tune; model download installs both, the aligner and the ASMR VAD |
 | Kotoba-Whisper | Japanese; Model download prepares v2.2 only |
 | Faster-Whisper | Japanese/English/Chinese with a suitable multilingual model; Model download prepares large-v2 |
 | Generic ASR API | OpenAI-compatible `/v1/audio/transcriptions`; uploads audio |
 
 Parakeet uses its own executable/models, not the main Torch runtime. Its chunk size defaults to 120 s and idle timeout to 600 s. Punctuation restoration is disabled by default. Kotoba defaults to 30 s chunks. Faster-Whisper generally uses float16/int8_float16 on GPU or int8 on CPU; device support depends on the installed runtime.
+
+anime-whisper (`litagin/anime-whisper`, MIT) is the recommended recognizer for new projects. Japanese audio is cut by the ASMR VAD (neighbouring pieces are merged up to 8 s, longer ones are split at the quietest point), recognized piece by piece, and timestamped per character by Qwen3 ForcedAligner; a piece that cannot be aligned keeps its whole-piece span. Installing it adds the `asr-kotoba-whisper`, `asr-forced-aligner` and `asr-asmr-vad` dependency groups and downloads the pinned anime-whisper, aligner and VAD. The aligner and VAD have ModelScope packs; anime-whisper is Hugging Face only for now, so switch the download source to International sources, or drop a pack built with `scripts/create-model-packs.py anime-whisper` into `model-packs`. The experimental Qwen3-ASR backend installs the same way and skips the fine-tune's roughly 8 GB of optimizer state.
+
+**When it is not installed:** for a user who never saved settings, new projects use Parakeet until anime-whisper is complete. Saved settings and projects that name `parakeet_nemo` are never changed. Selecting anime-whisper by hand without installing it fails with a message pointing to Devices & models; nothing is downloaded in the background.
 
 Other registered Whisper weights such as large-v3 are not included automatically. Use the model's expected local snapshot layout and verify completeness before selecting it; a model ID alone is not an installation.
 

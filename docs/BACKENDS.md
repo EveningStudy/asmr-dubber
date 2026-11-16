@@ -4,7 +4,7 @@
 
 # 后端指南
 
-ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper、MOSS-Transcribe-Diarize，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS-2.5、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
+ASR（语音识别）接入 anime-whisper、Parakeet、Kotoba-Whisper、Qwen3-ASR、Faster-Whisper、MOSS-Transcribe-Diarize，以及兼容 OpenAI `/v1/audio/transcriptions` 的通用 ASR API。TTS（语音合成）可使用本地 IndexTTS2、IndexTTS-2.5、IndexTTS2 API、通用 OpenAI `/v1/audio/speech` API、Edge 在线语音，以及 MiMo、MiniMax、GPT-SoVITS、CosyVoice 和 Fish Speech/Fish Audio API。
 
 程序启动时会检查 IndexTTS2 是否完整；未安装时，新项目默认使用 Edge TTS。项目开始执行后不会再静默切换后端。
 
@@ -16,8 +16,10 @@ ASR（语音识别）接入 Parakeet、Kotoba-Whisper、Faster-Whisper、MOSS-Tr
 
 | 后端 | 设备 | 建议显存 | 下载准备的模型 | 适合场景 |
 |---|---|---:|---|---|
-| Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 模型页下载 | 默认主识别，日语质量优先 |
+| anime-whisper（日语） | CPU、NVIDIA CUDA | 6 GB | 模型页下载 anime-whisper、Qwen3 对齐和 ASMR VAD | 推荐的主识别；耳语和低声台词更准 |
+| Parakeet（日语）/ CrispASR | CPU、NVIDIA CUDA | 6 GB | 模型页下载 | 轻量，推荐档位自带；anime-whisper 未安装时的默认 |
 | Kotoba-Whisper（日语）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 v2.2 | 日语 Whisper 对照与复核 |
+| Qwen3-ASR（日语/英语/中文，实验性）| CPU、NVIDIA CUDA | 8 GB | 模型页下载两款 Qwen3-ASR、Qwen3 对齐和 ASMR VAD | 与 anime-whisper 对照 |
 | Faster-Whisper（日语/英语/中文）| CPU、NVIDIA CUDA | 6 GB | 模型页准备 large-v2 | 多语言本地 ASR；CPU `int8`、词级时间戳 |
 | MOSS-Transcribe-Diarize 0.9B | CPU、NVIDIA CUDA | 依分块长度而变；已验证 12 GB | 模型页下载，独立 Transformers 5 环境 | 日/英/中转写、段级时间戳与说话人标签 |
 | 通用 ASR API | 服务端 | — | 不安装本地模型 | 兼容 OpenAI 转写接口的本地或云端服务 |
@@ -75,6 +77,16 @@ Parakeet 通过固定的 CrispASR F16 运行时执行，不在主 Python 环境�
 ```bash
 bash scripts/linux/install-parakeet.sh
 ```
+
+## anime-whisper 与 Qwen3-ASR
+
+`litagin/anime-whisper`（MIT）是在动画和游戏语音上微调的 Kotoba-Whisper，现在是新项目的推荐识别模型。日语音频先由 ASMR 专用 VAD 切段（相邻片段并成不超过 8 秒，超长片段在最静处切开），逐段识别，再用 Qwen3 ForcedAligner 补逐字时间戳；某段对不上时退回整段起止。
+
+模型页的“下载”会安装 `asr-kotoba-whisper`、`asr-forced-aligner`、`asr-asmr-vad` 三组依赖，并下载固定版本的 anime-whisper、Qwen3 ForcedAligner 和 ASMR VAD。后两者有 ModelScope 离线包；anime-whisper 暂时只有 Hugging Face，需把“下载来源”切到“海外源”。也可以把自己打好的 `anime-whisper` 离线包放进 `model-packs`（`scripts/create-model-packs.py anime-whisper` 可以从已安装的模型生成）。
+
+**没装时的行为：** 从未保存过设置的新用户，如果 anime-whisper 没装完整，新项目的识别模型自动是 Parakeet，装好后才变回 anime-whisper。已经保存的设置和写明 `parakeet_nemo` 的项目不会被改动。手动选了 anime-whisper 但没装时，识别会明确提示去“设备与模型”页安装，不会在后台下载。
+
+Qwen3-ASR（`Qwen/Qwen3-ASR-1.7B` 与社区的 `jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame`）仍是实验性后端，安装方式相同。下载微调版时会跳过仓库里约 8 GB 的优化器状态文件。
 
 ## Kotoba-Whisper
 

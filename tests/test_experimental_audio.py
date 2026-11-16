@@ -380,7 +380,7 @@ def test_asr_uses_vocals_only_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "verify_source", lambda *a: source)
     monkeypatch.setattr(separation, "ensure_separation", lambda *a: (vocal, source))
     seen = []
-    monkeypatch.setattr(pipeline, "make_analysis_copy", lambda s, d: seen.append(s) or d)
+    monkeypatch.setattr(pipeline, "make_asr_analysis_copy", lambda s, d: seen.append(s) or d)
     monkeypatch.setattr(
         pipeline,
         "transcribe_source",

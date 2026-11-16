@@ -1,4 +1,4 @@
-import { renderRecovery, initializeRecovery } from './project_translation.js';
+import { renderTranslationPanels, initializeRecovery, initializeTranslateAll } from './project_translation.js';
 import {
   $,
   $$,
@@ -20,7 +20,10 @@ import {
   projectBusy,
 } from './session.js';
 import { renderForms } from './forms.js';
+import { matchesRowFilter } from './project_revise.js';
 import { transcriptDialog, referenceDialog } from './project_dialogs.js';
+import { dubCell, originalCell, flagsCell, initializeReview } from './project_review.js';
+import { initializeCompare, renderCompare } from './compare_player.js';
 
 let selected = '',
   rowPage = 0,
@@ -63,7 +66,7 @@ export function renderProject() {
     count: project.sentences.length,
   });
   $('#translateRemaining').textContent = t('翻译剩余 {count} 句', { count: enabled.length - translated });
-  renderRecovery(project);
+  renderTranslationPanels(project);
   $('#translationStat').textContent = t('已翻译 {done} / {total} 句。', {
     done: translated,
     total: enabled.length,
@@ -103,23 +106,16 @@ export function renderProject() {
   $$('[data-task],#translateAll,#exportProject').forEach((button) => (button.disabled = projectBusy()));
   renderRows();
   renderForms();
+  renderCompare(project);
 }
 function renderRows() {
   if (!state.project) return;
-  const query = $('#search').value.toLowerCase();
-  const sentences = state.project.sentences.filter(
-    (s) =>
-      `${s.source_text} ${s.zh_text}`.toLowerCase().includes(query) &&
-      (state.filter === 'all' ||
-        (state.filter === 'translation' && !s.zh_text) ||
-        (state.filter === 'tts' && !s.tts_file) ||
-        (state.filter === 'review' && s.script_review_note)),
-  );
+  const sentences = state.project.sentences.filter(matchesRowFilter);
   const page = sentences.slice(rowPage * 50, (rowPage + 1) * 50);
   $('#rows').innerHTML = page
     .map(
       (sentence) =>
-        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!projectBusy()}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!projectBusy()}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${sentence.tts_url ? `<button class="play" data-play="${esc(sentence.id)}" aria-label="${t('试听')}">▶</button>${Number(sentence.tts_duration_seconds || 0).toFixed(1)} ${t('秒')}` : sentence.error ? `<span class="batch-error" title="${esc(sentence.error)}">${t('翻译或配音待重试')}</span>` : t(sentence.enabled ? '未生成' : '不配音')}</td></tr>`,
+        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!projectBusy()}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!projectBusy()}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
     )
     .join('');
   renderControls();
@@ -129,21 +125,7 @@ function renderControls() {
   $('#sentenceControls').innerHTML =
     `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${state.project.sentences.length > 50 ? `<button class="btn" id="prevRows">‹</button> ${rowPage + 1} / ${Math.ceil(state.project.sentences.length / 50)} <button class="btn" id="nextRows">›</button>` : ''}</span></div>${
       sentence
-        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${sentence.speaker_id ? field('说话人（仅当前分块）', `<span>${esc(sentence.speaker_id)}</span>`) : ''}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field(
-            '原声开关（仅分离时）',
-            `<select data-detail="original_audio_enabled">${options(
-              [
-                ['默认', 'default'],
-                ['开启', 'on'],
-                ['关闭', 'off'],
-              ],
-              sentence.original_audio_enabled === null
-                ? 'default'
-                : sentence.original_audio_enabled
-                  ? 'on'
-                  : 'off',
-            )}</select>`,
-          )}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
+        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${sentence.speaker_id ? field('说话人（仅当前分块）', `<span>${esc(sentence.speaker_id)}</span>`) : ''}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
         : ''
     }`;
 }
@@ -305,15 +287,21 @@ export function initializeProjects() {
   $('#changeReference').onclick = guard(() => referenceDialog());
   $('#showReview').onclick = guard(reviewDialog);
   $('#openProjectFolder').onclick = guard(() => api('projects/open', { project: state.project.manifest }));
-  $('#translateAll').onclick = guard(() =>
-    dialog(
-      '全部重新翻译',
-      `<p>${t('现有译文会被新的翻译覆盖，包括你手动改过的句子。已生成的配音需要重做。')}</p>`,
-      '重新翻译',
-      () => startTask('translate', { force: true }),
-    ),
-  );
-  initializeRecovery(saveRows, renderProject);
+  initializeTranslateAll(dialog, field, () => selected);
+  initializeRecovery(saveRows, renderProject, dialog);
+  initializeReview({ save: saveRows, render: renderProject, getSelected: () => selected });
+  initializeCompare();
+  window.addEventListener('locate-sentence', (event) => {
+    const index = state.project?.sentences.findIndex((s) => s.id === event.detail);
+    if (index === undefined || index < 0) return;
+    state.filter = 'all';
+    $('#search').value = '';
+    $$('[data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === 'all'));
+    rowPage = Math.floor(index / 50);
+    selected = event.detail;
+    renderRows();
+    $(`#rows [data-sentence="${CSS.escape(event.detail)}"]`)?.scrollIntoView({ block: 'center' });
+  });
   $('#exportProject').onclick = guard(() =>
     startTask('export', { audio: $('#exportAudio').value === 'true', language: $('#exportSubtitle').value }),
   );

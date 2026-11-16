@@ -83,3 +83,46 @@ jobs:
         run: uv run --no-sync pytest tests/test_user_workflow.py -m linux -q
       - name: Run AutoFlow media smoke
         run: uv run --no-sync pytest tests/test_user_workflow.py -m "integration and slow" -q
+
+  frontend:
+    name: Windows / native interface (Node)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install core and development dependencies
+        run: uv sync --locked --extra dev
+      # The runner image ships Node.js; the scripts only need node:assert (Node 18+).
+      - name: Check Node scripts
+        shell: pwsh
+        run: |
+          node --version
+          Get-ChildItem tests/*.cjs | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
+      - name: Install Playwright client
+        shell: pwsh
+        run: |
+          npm install --prefix "$env:RUNNER_TEMP\pw" playwright@1.49.1 --no-audit --no-fund
+      - name: Viewport regression against the running interface
+        shell: pwsh
+        env:
+          ASMR_TEST_PLAYWRIGHT: ${{ runner.temp }}\pw\node_modules\playwright
+        run: |
+          $server = Start-Process -FilePath ".venv/Scripts/asmr-dubber.exe" -ArgumentList "ui", "--port", "7860" -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            foreach ($i in 1..60) {
+              try { Invoke-WebRequest -Uri "http://127.0.0.1:7860/" -UseBasicParsing | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw "Interface did not start" }
+            node tests/native_viewport.cjs
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+      # tests/native_cleanup.cjs needs a previously exported real project, so CI only syntax-checks it above.

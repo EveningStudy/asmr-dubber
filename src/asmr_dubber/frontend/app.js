@@ -80,12 +80,12 @@ async function pollTasks() {
           state.project = await api('projects/get', {project: state.project.manifest});
           renderProject();
         }
-        notice(task.error, true);
+        notice(task.error, true, { sticky: true });
       }
     }
     refreshTaskViews();
   } catch (error) {
-    if (pollingError !== error.message) notice(error.message, true);
+    if (pollingError !== error.message) notice(error.message, true, { dedupe: true });
     pollingError = error.message;
   } finally {
     polling = false;

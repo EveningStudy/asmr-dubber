@@ -421,7 +421,10 @@ def test_deepseek_flash_retries_with_exact_structure_after_validation_failure(
         )
 
     assert len(payloads) == 2
-    expected_shape = '{"translations":[{"id":"s000001","zh":""},{"id":"s000002","zh":""}]}'
+    expected_shape = (
+        '{"translations":[{"id":"s000001","zh":"","kind":"speech"},'
+        '{"id":"s000002","zh":"","kind":"speech"}]}'
+    )
     assert payloads[0]["messages"][0]["content"] == "译文尽量简洁。"
     assert expected_shape in payloads[0]["messages"][-1]["content"]
     assert "{{OUTPUT_SCHEMA}}" not in payloads[0]["messages"][-1]["content"]

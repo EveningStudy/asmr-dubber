@@ -7,8 +7,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_SCHEMA_VERSION = 3
 DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 ASMR_VAD_MODEL = "TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
-RECOMMENDED_ASR_BACKEND = "parakeet_nemo"
-RECOMMENDED_ASR_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
+RECOMMENDED_ASR_BACKEND = "anime_whisper"
+RECOMMENDED_ASR_MODEL = "litagin/anime-whisper"
+# Part of the Recommended tier, so it is the replacement while the recommended
+# model above is not installed.
+FALLBACK_ASR_BACKEND = "parakeet_nemo"
+FALLBACK_ASR_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
 DEFAULT_ASR_REVIEW_TEXT_PRIORITY = (
     "parakeet_nemo|grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo"
 )
@@ -110,6 +114,9 @@ OPTIONAL_ASR_MODEL_REVISIONS = {
     "kotoba-tech/kotoba-whisper-v2.0": "7eb575277d18909a4af8a24e3ae8cce2e99794ae",
     "Systran/faster-whisper-large-v2": "f0fe81560cb8b68660e564f55dd99207059c092e",
     "kotoba-tech/kotoba-whisper-v2.0-faster": ("f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"),
+    "litagin/anime-whisper": "22e2008a8182b357da3922a6308d095008f72973",
+    "Qwen/Qwen3-ASR-1.7B": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame": "6db0efecd56d4a7e0003190a6bd4cac056d0f390",
 }
 
 # Exact runtime files and byte sizes from those three repository revisions.

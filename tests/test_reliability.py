@@ -359,3 +359,26 @@ def test_readable_cache_rechecks_after_file_change(tmp_path):
     assert valid_tts_cache(p, sentence, tmp_path)
     path.write_bytes(b"corrupted")
     assert not valid_tts_cache(p, sentence, tmp_path)
+
+
+def test_translation_self_check_is_stored_on_changed_lines_only(tmp_path, monkeypatch):
+    from asmr_dubber.pipeline import _translate_project_impl
+    from asmr_dubber.translation import TranslationFlag, TranslationReport
+
+    p = project()
+    p.sentences[1].translation_warning = "旧的提示"
+    save_project(p, tmp_path)
+    monkeypatch.setattr("asmr_dubber.pipeline.resolve_api_key", lambda *a: "FAKE")
+
+    def translate(sentences, **kw):
+        sentences[0].zh_text = "まだ残っている"
+        return TranslationReport(
+            translated=1,
+            flagged=[TranslationFlag(sentences[0].id, "kana_left", "译文里还有假名")],
+        )
+
+    monkeypatch.setattr("asmr_dubber.pipeline.translate_sentences", translate)
+    _translate_project_impl(p, tmp_path, force=True)
+    saved = load_project(tmp_path)[0]
+    assert saved.sentences[0].translation_warning == "译文里还有假名"
+    assert saved.sentences[1].translation_warning == "旧的提示"  # not re-translated

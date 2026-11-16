@@ -140,7 +140,11 @@ class Tasks:
                 elif kind in {"plan_started", "plan_finished"}:
                     entry = task.setdefault("plans", {}).setdefault(payload["plan_id"], {})
                     entry.update(
-                        {k: payload[k] for k in ("work", "output", "error") if k in payload}
+                        {
+                            k: payload[k]
+                            for k in ("work", "output", "error", "warnings", "log")
+                            if k in payload
+                        }
                     )
                     if entry.get("error"):
                         entry["error"] = redact_sensitive(entry["error"])

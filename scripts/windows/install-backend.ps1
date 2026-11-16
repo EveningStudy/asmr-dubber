@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("faster_whisper", "kotoba_whisper")]
+    [ValidateSet("faster_whisper", "kotoba_whisper", "anime_whisper", "qwen3_asr")]
     [string]$Backend,
     [string]$TorchIndexUrl = ""
 )
@@ -35,6 +35,10 @@ $PreferredIndex = if ($env:ASMR_DUBBER_PYPI_MIRROR) {
 $Extra = switch ($Backend) {
     "faster_whisper" { "asr-faster-whisper" }
     "kotoba_whisper" { "asr-kotoba-whisper" }
+    # anime-whisper loads through transformers and needs the ASMR VAD plus the
+    # Qwen3 aligner; Qwen3-ASR needs the aligner package and the same VAD.
+    "anime_whisper" { "asr-kotoba-whisper,asr-forced-aligner,asr-asmr-vad" }
+    "qwen3_asr" { "asr-forced-aligner,asr-asmr-vad" }
 }
 
 function Invoke-Checked {
@@ -85,7 +89,7 @@ if (-not $NvidiaSmi) {
         $NvidiaSmi = $SystemNvidiaSmi
     }
 }
-$InstallCudaTorch = ($Backend -eq "kotoba_whisper") -and $NvidiaSmi
+$InstallCudaTorch = (@("kotoba_whisper", "anime_whisper", "qwen3_asr") -contains $Backend) -and $NvidiaSmi
 if ($InstallCudaTorch) {
     Write-Host "检测到 NVIDIA GPU，正在安装 CUDA PyTorch..." -ForegroundColor Cyan
     $CudaArguments = @(

@@ -4,7 +4,7 @@
 
 # 完整参数参考
 
-按当前 `services/parameters.py` 清单生成，**219 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
+按当前 `services/parameters.py` 清单生成，**236 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
 
 项目字段出现在项目/新默认中；全局字段作用于全局/新项目/新队列。Always 表示无静态显示条件，高级分组仍需展开。选项可能随后端变化；校验还包括跨字段依赖、语言能力与 JSON 合同。
 
@@ -40,17 +40,17 @@
 
 | 键 / 界面名称 | 类型 / 范围归属 | 默认值 | 范围 / 可选值 | 显示条件 |
 |---|---|---|---|---|
-| `asr_backend`<br>识别模型 | string<br>project | `parakeet_nemo` | parakeet_nemo, moss_transcribe_diarize, kotoba_whisper, faster_whisper, generic_asr_api | Always |
-| `asr_model`<br>版本 | string<br>project | `grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | 随所选后端 | Always |
-| `asr_batch_size`<br>批量大小 | integer<br>project | `1` | ≥1; ≤32 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `asr_backend`<br>识别模型 | string<br>project | `anime_whisper` | parakeet_nemo, moss_transcribe_diarize, anime_whisper, kotoba_whisper, faster_whisper, qwen3_asr, generic_asr_api | Always |
+| `asr_model`<br>版本 | string<br>project | `litagin/anime-whisper` | 随所选后端 | Always |
+| `asr_batch_size`<br>批量大小 | integer<br>project | `1` | ≥1; ≤32 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_device`<br>运行在 | string<br>project | `cuda` | cuda, cpu | Always |
 | `asr_compute_type`<br>精度 | string<br>project | `float16` | — | asr_backend in ["faster_whisper","kotoba_whisper"] |
 | `asr_beam_size`<br>束搜索大小 | integer<br>project | `5` | ≥1; ≤100 | asr_backend in ["faster_whisper"] |
-| `asr_vad_filter`<br>使用模型自带 VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `asr_vad_filter`<br>使用模型自带 VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_vad_mode`<br>方式 | string<br>project | `off` | off, backend, asmr | Always |
 | `asr_vad_min_silence_ms`<br>VAD 最短静音 | integer<br>project | `500` | ≥50; ≤10000 | asr_vad_mode in ["backend"] |
-| `asr_asmr_vad_threshold`<br>ASMR VAD 语音阈值 | number<br>project | `0.5` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD 最短语音 | integer<br>project | `250` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_threshold`<br>ASMR VAD 语音阈值 | number<br>project | `0.35` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD 最短语音 | integer<br>project | `150` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
 | `asr_asmr_vad_min_silence_ms`<br>ASMR VAD 最短静音 | integer<br>project | `100` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
 | `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD 边界保留 | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
 | `aligner_model`<br>时间对齐模型 | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
@@ -84,14 +84,14 @@
 | `asr_review_mode`<br>复核方式 | string<br>project | `suggest` | suggest, conservative | asr_review_enabled in [true] |
 | `asr_review_window_seconds`<br>每段长度 | number<br>project | `30.0` | ≥10.0; ≤90.0 | asr_review_enabled in [true] |
 | `asr_review_context_seconds`<br>前后多听 | number<br>project | `0.5` | ≥0.0; ≤3.0 | asr_review_enabled in [true] |
-| `asr_review_models`<br>复核模型 | array<br>project | `["parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo","kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2"]` | max items 6; moss_transcribe_diarize&#124;OpenMOSS-Team/MOSS-Transcribe-Diarize, parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo, parakeet_nemo&#124;nvidia/parakeet-tdt_ctc-0.6b-ja, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.1, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.0, faster_whisper&#124;large-v2, faster_whisper&#124;kotoba-tech/kotoba-whisper-v2.0-faster, faster_whisper&#124;distil-large-v2, faster_whisper&#124;large-v3, faster_whisper&#124;large-v3-turbo, faster_whisper&#124;medium, faster_whisper&#124;small | asr_review_enabled in [true] |
+| `asr_review_models`<br>复核模型 | array<br>project | `["parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo","kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2"]` | max items 6; moss_transcribe_diarize&#124;OpenMOSS-Team/MOSS-Transcribe-Diarize, parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo, parakeet_nemo&#124;nvidia/parakeet-tdt_ctc-0.6b-ja, qwen3_asr&#124;Qwen/Qwen3-ASR-1.7B, qwen3_asr&#124;jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame, anime_whisper&#124;litagin/anime-whisper, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.2, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.1, kotoba_whisper&#124;kotoba-tech/kotoba-whisper-v2.0, faster_whisper&#124;large-v2, faster_whisper&#124;kotoba-tech/kotoba-whisper-v2.0-faster, faster_whisper&#124;distil-large-v2, faster_whisper&#124;large-v3, faster_whisper&#124;large-v3-turbo, faster_whisper&#124;medium, faster_whisper&#124;small | asr_review_enabled in [true] |
 | `asr_review_text_priority_model`<br>文字优先 | string<br>project | `parakeet_nemo&#124;grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo` | — | asr_review_enabled in [true] |
 | `asr_review_timestamp_priority_model`<br>时间优先 | string<br>project | `qwen_forced_aligner&#124;Qwen/Qwen3-ForcedAligner-0.6B` | — | asr_review_enabled in [true] |
 | `asr_review_background`<br>背景说明 | string<br>project | 空 | — | asr_review_enabled in [true] |
 | `asr_review_prompt`<br>复核 Prompt | string<br>project | 内置模板，见 [Prompt](PROMPTS.md) | — | asr_review_enabled in [true] |
 | `asr_review_max_drift_seconds`<br>最大时间偏差 | number<br>project | `1.5` | ≥0.1; ≤10.0 | asr_review_enabled in [true] |
-| `pause_split_seconds`<br>停顿多久算一句结束 | number<br>project | `0.55` | ≥0.1; ≤5.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
-| `max_sentence_seconds`<br>单句最长 | number<br>project | `15.0` | ≥2.0; ≤60.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api"] |
+| `pause_split_seconds`<br>停顿多久算一句结束 | number<br>project | `0.55` | ≥0.1; ≤5.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
+| `max_sentence_seconds`<br>单句最长 | number<br>project | `15.0` | ≥2.0; ≤60.0 | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `default_source_language`<br>音频里说的是 | string<br>global | `ja` | ja, en, zh | Always |
 
 ## 翻译
@@ -111,6 +111,9 @@
 | `translation_deepl_formality`<br>正式程度 | string<br>project | `default` | — | translation_provider in ["deepl"] |
 | `translation_microsoft_region`<br>区域 | string<br>project | 空 | — | translation_provider in ["microsoft_translate"] |
 | `translation_extra_body`<br>附加请求参数 | string<br>project | `{}` | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_sound_policy`<br>拟声词和无实义声音 | string<br>project | `skip` | skip, romaji, keep_source | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_length_budget`<br>按原句时长给译文定字数上限 | boolean<br>project | `true` | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
+| `translation_chars_per_second`<br>按每秒多少字估算 | number<br>project | `4.5` | ≥2.0; ≤12.0 | translation_length_budget in [true] |
 | `translation_prompt_ja`<br>translation_prompt_ja | string<br>global | 空 | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
 | `translation_prompt_en`<br>translation_prompt_en | string<br>global | 空 | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
 | `translation_prompt_zh`<br>translation_prompt_zh | string<br>global | 空 | — | translation_provider in ["deepseek","bailian","doubao","openai","anthropic","gemini","openai_compatible","sensenova"] |
@@ -119,6 +122,7 @@
 
 | 键 / 界面名称 | 类型 / 范围归属 | 默认值 | 范围 / 可选值 | 显示条件 |
 |---|---|---|---|---|
+| `reference_audio_mode`<br>参考音频质量 | string<br>project | `fullband` | legacy, fullband, fullband_vocals | Always |
 | `tts_target_language`<br>配音成 | string<br>project | `zh` | zh, en | Always |
 | `tts_backend`<br>配音模型 | string<br>project | `indextts2` | indextts2, indextts2_5, edge_tts, indextts2_api, gpt_sovits, cosyvoice, mimo_tts, minimax, fish_speech, generic_tts_api | Always |
 | `tts_model`<br>模型 | string<br>project | `IndexTTS2` | 随所选后端 | Always |
@@ -174,6 +178,8 @@
 | `tts_gpt_text_split_method`<br>文本切分方法 | string<br>project | `cut5` | — | tts_backend in ["gpt_sovits"] |
 | `tts_gpt_sample_steps`<br>采样步数 | integer<br>project | `32` | ≥1; ≤64 | tts_backend in ["gpt_sovits"] |
 | `tts_cosyvoice_mode`<br>模式 | string<br>project | `zero_shot` | zero_shot, cross_lingual | tts_backend in ["cosyvoice"] |
+| `tts_normalize_pauses`<br>配音前把省略号等长停顿改成逗号 | boolean<br>project | `true` | — | Always |
+| `tts_quality_check`<br>自动检查配音，坏的换种子重做 | boolean<br>project | `true` | — | Always |
 | `tts_clone_mode`<br>模仿方式 | string<br>project | `stable_reference` | stable_reference, reference_only | Always |
 | `tts_reference_sentence_id`<br>项目统一参考句 ID | string / nullable<br>project | `null` | — | Always |
 | `skip_japanese_fillers`<br>跳过纯语气词 | boolean<br>project | `true` | — | Always |
@@ -196,9 +202,10 @@
 | `spatial_rtf_fft_size`<br>FFT 窗口 | integer<br>project | `0` | 0, 1024, 2048, 4096, 8192 | spatial_rtf_enabled in [true] |
 | `spatial_rtf_hop_divisor`<br>FFT 步长除数 | integer<br>project | `8` | 4, 8, 16 | spatial_rtf_enabled in [true] |
 | `spatial_rtf_block_seconds`<br>内存分块 | number<br>project | `10.0` | ≥1; ≤30 | spatial_rtf_enabled in [true] |
+| `spatial_rtf_vocal_weighting`<br>空间线索只参考人声（需开启人声分离） | boolean<br>project | `true` | — | spatial_rtf_enabled in [true] |
 | `chinese_dubbing_offset_ms`<br>整体偏移 | integer<br>project | `500` | ≥-30000; ≤30000 | Always |
 | `chinese_max_auto_speed`<br>最多加速到 | number<br>project | `1.4` | ≥1.0; ≤4.0 | Always |
-| `chinese_dubbing_timing_mode`<br>配音比原句长时 | string<br>project | `fit_window` | fit_window, sequential | Always |
+| `chinese_dubbing_timing_mode`<br>配音比原句长时 | string<br>project | `fit_window` | fit_window, sequential, fit_then_shift | Always |
 | `chinese_gain_db`<br>处理后整体微调 | number<br>project | `0.0` | ≥-40.0; ≤20.0 | Always |
 | `normalize_chinese_loudness`<br>音量处理方式 | boolean<br>project | `true` | — | Always |
 | `match_source_loudness`<br>跟随对应原声 | boolean<br>project | `true` | — | Always |
@@ -219,6 +226,14 @@
 | `replacement_chinese_line_peak_dbfs`<br>单句峰值上限 | number<br>project | `-6.0` | ≥-20.0; ≤-1.0 | Always |
 | `replacement_chinese_stem_peak_dbfs`<br>配音轨峰值上限 | number<br>project | `-3.0` | ≥-12.0; ≤-0.1 | Always |
 | `replacement_chinese_fade_ms`<br>句首句尾淡入淡出 | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
+| `replacement_scope`<br>原人声去除范围 | string<br>project | `dubbed_speech` | dubbed_speech, all_vocals | separation_mix_mode in ["replace"] |
+| `replacement_dubbing_offset_ms`<br>完全配音版的配音偏移（毫秒） | integer<br>project | `0` | ≥-30000; ≤30000 | separation_mix_mode in ["replace"] |
+| `replacement_max_auto_speed`<br>完全配音版的最大自动加速 | number<br>project | `1.2` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
+| `replacement_timing_mode`<br>完全配音版：配音比原句长时 | string<br>project | `fit_then_shift` | fit_then_shift, fit_window, sequential | separation_mix_mode in ["replace"] |
+| `replacement_voice_match_strength`<br>配音音色贴合原声的强度 | number<br>project | `0.8` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_bandwidth_extension`<br>补全配音缺少的高频（气声、齿音） | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
+| `replacement_noise_fill`<br>替换处补回原录音的底噪 | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
+| `replacement_whisper_match`<br>原声是耳语时把配音转成气声（实验） | number<br>project | `1.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `chinese_channel_routing`<br>多声道时配音放在 | string<br>project | `auto` | auto, all | Always |
 | `mix_peak_protection`<br>成品峰值保护 | boolean<br>project | `true` | — | Always |
 | `mix_peak_limit_dbfs`<br>峰值上限 | number<br>project | `-1.0` | ≥-6.0; ≤-0.1 | Always |
@@ -268,4 +283,6 @@
 | `autoflow_harmonized_volume_reduction_db`<br>原声降低 | number<br>global | `10.0` | ≥0.0; ≤60.0 | Always |
 | `autoflow_harmonized_delay_minutes`<br>原声、配音和字幕整体延后 | number<br>global | `20.0` | ≥0.0; ≤1440.0 | Always |
 | `autoflow_timestamp_footer`<br>附加文字 | string<br>global | `双语音声制作器：BV1f43G6YEov<br>内嵌字幕和配音为本地 AI 生成，内容仅供参考。<br>仅供日语学习，有能力请购买正版支持。` | — | Always |
+| `batch_failure_budget_count`<br>单个作品最多允许失败句数（下限） | integer<br>global | `3` | ≥0; ≤1000 | Always |
+| `batch_failure_budget_percent`<br>单个作品允许失败的比例 | number<br>global | `2.0` | ≥0.0; ≤100.0 | Always |
 

@@ -18,7 +18,7 @@
 | 只要翻译字幕，不要配音 | [字幕与台本](SUBTITLE_WORKFLOW.md#只要字幕不要配音) |
 | 让配音跟着原声的位置移动 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md#空间跟随) |
 | 调配音的音量和时间 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md) |
-| 去掉原来的人声 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md#替换版去掉原来的人声) |
+| 去掉原来的人声 | [混音与空间跟随](EXPERIMENTAL_AUDIO.md#完全配音版去掉原来的人声) |
 | 让多个模型互相校对识别结果 | [多模型复核](AUDIO_REVIEW_TUTORIAL.md) |
 | 换别的识别模型、配音服务、翻译服务 | [模型与服务](BACKENDS.md) |
 | 弄清设置存在哪 | [设置与存储](CONFIGURATION.md) |

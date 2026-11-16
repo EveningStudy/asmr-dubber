@@ -235,6 +235,8 @@ def test_backend_order_places_ready_recommended_first_and_generic_last(monkeypat
         "parakeet_nemo": BackendStatus("ready", "可用"),
         "kotoba_whisper": BackendStatus("missing", "未安装"),
         "faster_whisper": BackendStatus("ready", "可用"),
+        "qwen3_asr": BackendStatus("missing", "未安装"),
+        "anime_whisper": BackendStatus("missing", "未安装"),
         "generic_asr_api": BackendStatus("external", "外部服务"),
     }
     monkeypatch.setattr(

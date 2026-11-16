@@ -5,11 +5,12 @@ from asmr_dubber.runtime_manager import installable_backend_ids
 
 def test_default_backends_use_verified_recommendations() -> None:
     settings = ProjectSettings()
-    assert settings.asr_backend == "parakeet_nemo"
-    assert settings.asr_model == ASR_BACKENDS["parakeet_nemo"].default_model
+    assert settings.asr_backend == "anime_whisper"
+    assert settings.asr_model == ASR_BACKENDS["anime_whisper"].default_model
     assert settings.tts_backend == "indextts2"
     assert settings.tts_model == TTS_BACKENDS["indextts2"].default_model
     assert ASR_BACKENDS["parakeet_nemo"].tested_default is True
+    assert ASR_BACKENDS["anime_whisper"].tested_default is True
     assert TTS_BACKENDS["indextts2"].support_level == "verified"
 
 
@@ -17,6 +18,8 @@ def test_only_supported_asr_and_tts_backends_are_registered() -> None:
     assert set(ASR_BACKENDS) == {
         "moss_transcribe_diarize",
         "generic_asr_api",
+        "qwen3_asr",
+        "anime_whisper",
         "parakeet_nemo",
         "kotoba_whisper",
         "faster_whisper",

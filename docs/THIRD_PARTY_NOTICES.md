@@ -16,6 +16,9 @@ ASMR Dubber 自身代码采用[MIT License](../LICENSE)。这个许可证只覆�
 | Parakeet CTC 1.1B JA | [grider-transwithai/parakeet-ctc-1.1b-ja](https://huggingface.co/grider-transwithai/parakeet-ctc-1.1b-ja) | Apache-2.0 |
 | Parakeet TDT/CTC 0.6B JA | [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | CC BY 4.0 |
 | Kotoba-Whisper v2.2 | [kotoba-tech/kotoba-whisper-v2.2](https://huggingface.co/kotoba-tech/kotoba-whisper-v2.2) | Apache-2.0 |
+| anime-whisper | [litagin/anime-whisper](https://huggingface.co/litagin/anime-whisper) | MIT；基于 Kotoba-Whisper v2.0 微调 |
+| Qwen3-ASR 1.7B | [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | Apache-2.0 |
+| Qwen3-ASR 1.7B 日语动画/Galgame 微调版 | [jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame](https://huggingface.co/jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame) | 模型卡标为 other，使用前请自行阅读；仅在用户主动下载时获取 |
 | Faster-Whisper large-v2 权重 | [Systran/faster-whisper-large-v2](https://huggingface.co/Systran/faster-whisper-large-v2) | MIT；由 OpenAI Whisper large-v2 转换 |
 | Faster-Whisper 代码 | [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) | 以仓库 LICENSE 为准；同时依赖 CTranslate2 |
 | 日语 ASMR Whisper VAD ONNX | [TransWithAI/Whisper-Vad-EncDec-ASMR-onnx](https://huggingface.co/TransWithAI/Whisper-Vad-EncDec-ASMR-onnx) | MIT；模型卡同时说明其基于 Whisper 表征 |

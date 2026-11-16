@@ -16,9 +16,11 @@ from typing import Literal, cast
 from .asr import transcribe_source
 from .asr_review import run_audio_review
 from .audio import (
+    ASR_ANALYSIS_NAME,
     build_chinese_stem,
     copy_source_verbatim,
     make_analysis_copy,
+    make_asr_analysis_copy,
     mix_original_and_stem,
     mux_mixed_video,
     project_file_exists,
@@ -28,8 +30,13 @@ from .audio import (
     verify_source,
 )
 from .constants import DEFAULT_PROJECTS_DIR
-from .errors import ProjectError, SynthesisError
-from .filtering import has_speakable_text, implausible_asr_reason, is_japanese_filler_only
+from .errors import ProjectError, SynthesisError, TranslationError
+from .filtering import (
+    has_speakable_text,
+    implausible_asr_reason,
+    is_japanese_filler_only,
+    is_negligible_sound_segment,
+)
 from .forced_alignment import align_script_sentences_with_qwen, align_sentences_with_qwen
 from .languages import SourceLanguage, source_language_label
 from .lifecycle import invalidate_outputs, project_operation
@@ -613,9 +620,9 @@ def _analyze_project_impl(
         from .separation import ensure_separation
 
         vocals, _background = ensure_separation(project, project_dir, source, progress)
-        analysis = make_analysis_copy(vocals, vocals.parent / "asr_16k_mono.wav")
+        analysis = make_asr_analysis_copy(vocals, vocals.parent / ASR_ANALYSIS_NAME)
     else:
-        analysis = make_analysis_copy(source, project_dir / "analysis" / "asr_16k_mono.wav")
+        analysis = make_asr_analysis_copy(source, project_dir / "analysis" / ASR_ANALYSIS_NAME)
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     sentences, language = transcribe_source(
         analysis,
@@ -651,11 +658,15 @@ def _analyze_project_impl(
     # Encoded containers and the decoded analysis WAV can differ by a few samples
     # because of codec padding. Keep every reference boundary inside the real source.
     bounded_sentences = []
+    previous_text: str | None = None
     for sentence in sentences:
         sentence.end_seconds = min(sentence.end_seconds, project.source.duration_seconds)
         if sentence.end_seconds > sentence.start_seconds:
             duration = sentence.end_seconds - sentence.start_seconds
-            hallucination_reason = implausible_asr_reason(sentence.source_text, duration)
+            hallucination_reason = implausible_asr_reason(
+                sentence.source_text, duration, previous_text
+            )
+            previous_text = sentence.source_text
             if hallucination_reason:
                 sentence.enabled = False
                 sentence.status = "skipped_hallucination"
@@ -670,6 +681,11 @@ def _analyze_project_impl(
                 # can opt a row back in from the table.
                 sentence.enabled = False
                 sentence.status = "skipped_filler"
+            elif is_negligible_sound_segment(sentence.source_text, duration):
+                # A fraction of a second with one character is a click or a
+                # breath.  Keep the row visible; the user can enable it again.
+                sentence.enabled = False
+                sentence.status = "skipped_sound"
             bounded_sentences.append(sentence)
     if not bounded_sentences:
         raise ProjectError("识别时间戳全部落在源音频范围之外。")
@@ -767,6 +783,8 @@ def _translate_project_impl(
     force: bool = False,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    overwrite_edited: bool = False,
+    sentence_ids: list[str] | None = None,
 ) -> None:
     check_cancelled(cancel_event)
     require_supported_platform()
@@ -784,18 +802,15 @@ def _translate_project_impl(
         project.translation_language = project.settings.tts_target_language
         save_project(project, project_dir)
     will_translate = force or any(
-        sentence.enabled and not sentence.zh_text for sentence in project.sentences
+        sentence.enabled and (not sentence.zh_text or sentence.status == "translation_failed")
+        for sentence in project.sentences
     )
     if force:
-        for sentence in project.sentences:
-            if not sentence.enabled:
-                continue
-            sentence.zh_text = ""
-            sentence.tts_file = None
-            sentence.tts_cache_key = None
-            sentence.tts_duration_seconds = None
-            sentence.status = "pending"
-            sentence.error = None
+        # Keep the old text until its replacement has arrived, and leave a copy so
+        # an interrupted or disappointing run can be undone.
+        from .translation_backup import write_translation_backup
+
+        write_translation_backup(project, project_dir)
     if will_translate:
         project.chinese_stem_file = None
         project.output_file = None
@@ -818,7 +833,8 @@ def _translate_project_impl(
         save_project(project, project_dir)
         export_transcript(project, project_dir)
 
-    translate_sentences(
+    before_translation = {sentence.id: sentence.zh_text for sentence in project.sentences}
+    report = translate_sentences(
         project.sentences,
         api_key=key,
         model=project.settings.translation_model,
@@ -840,8 +856,34 @@ def _translate_project_impl(
         progress=progress,
         on_batch=checkpoint,
         cancel_event=cancel_event,
+        sound_policy=project.settings.translation_sound_policy,
+        retranslate=force,
+        overwrite_edited=overwrite_edited,
+        sentence_ids=sentence_ids,
+        length_budget_rate=(
+            (
+                project.settings.translation_chars_per_second
+                if project.settings.tts_target_language != "en"
+                else project.settings.translation_chars_per_second * 0.6
+            )
+            if project.settings.translation_length_budget
+            else None
+        ),
     )
+    if report is not None:
+        # Lines translated in this run get the post-translation check's verdict;
+        # untouched lines keep theirs.
+        reasons: dict[str, list[str]] = {}
+        for flag in report.flagged:
+            reasons.setdefault(flag.sentence_id, []).append(flag.reason)
+        for sentence in project.sentences:
+            if sentence.zh_text != before_translation.get(sentence.id):
+                found = reasons.get(sentence.id)
+                sentence.translation_warning = "；".join(found) if found else None
     checkpoint()
+    if report is not None and report.failed:
+        # Every other sentence is already saved; say which ones are missing.
+        raise TranslationError(report.failure_message())
 
 
 @project_operation
@@ -852,6 +894,8 @@ def translate_project(
     force: bool = False,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
+    overwrite_edited: bool = False,
+    sentence_ids: list[str] | None = None,
 ) -> None:
     with measure_stage(
         project_dir,
@@ -868,6 +912,8 @@ def translate_project(
             force=force,
             progress=progress,
             cancel_event=cancel_event,
+            overwrite_edited=overwrite_edited,
+            sentence_ids=sentence_ids,
         )
         metrics["translated_before"] = before
         metrics["translated_after"] = sum(bool(sentence.zh_text) for sentence in project.sentences)
@@ -920,10 +966,21 @@ def _synthesize_project_impl(
             last_checkpoint = now
 
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
+    reference_source = source
+    if (
+        needs_generation
+        and project.settings.reference_audio_mode == "fullband_vocals"
+        and project.settings.separation_enabled
+        and project.source.channels in {1, 2}
+    ):
+        # Clone from the isolated voice so effects and music never leak into the timbre.
+        from .separation import _ensure_separation_impl
+
+        reference_source, _ = _ensure_separation_impl(project, project_dir, source, progress)
     failures = synthesize_sentences(
         project,
         project_dir,
-        source,
+        reference_source,
         force=force,
         sentence_ids=sentence_ids,
         progress=progress,
@@ -1018,29 +1075,13 @@ def _mix_project_impl(
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
     output_variant: str | None = None,
+    allow_missing: bool = False,
 ) -> Path:
     check_cancelled(cancel_event)
     require_supported_platform()
     source = verify_source(project_dir, project.source)
     if project.settings.spatial_rtf_enabled and project.source.channels != 2:
         raise ProjectError("RTF 处理，仅支持双声道原音频；请关闭 RTF 后继续。")
-    mixing_source = source
-    replacing = project.settings.separation_mix_mode == "replace"
-    reference_source = source
-    if project.settings.separation_enabled:
-        from .experimental_mix import compose_replacement_bed
-        from .separation import ensure_separation
-
-        vocals, background = ensure_separation(project, project_dir, source, progress)
-        if replacing:
-            reference_source = vocals
-        if project.settings.separation_mix_mode == "replace" or any(
-            s.original_audio_enabled is not None or s.original_audio_gain_db != 0
-            for s in project.sentences
-        ):
-            mixing_source = compose_replacement_bed(project, project_dir, vocals, background)
-    elif project.settings.separation_mix_mode == "replace":
-        raise ProjectError("中文替换模式必须开启人声分离；不会静默改成原声叠加。")
     missing = [
         sentence.id
         for sentence in project.sentences
@@ -1050,16 +1091,62 @@ def _mix_project_impl(
         and has_speakable_text(sentence.zh_text)
         and (not sentence.tts_file or sentence.tts_cache_key != tts_cache_key(project, sentence))
     ]
+    if missing and allow_missing:
+        # Sentences without a usable dub are treated as "not dubbed": the original
+        # voice stays in the bilingual and the fully dubbed version alike.  This runs
+        # before the replacement bed is composed so no original voice is removed for
+        # a sentence that will not be replaced.
+        lost = set(missing)
+        for sentence in project.sentences:
+            if sentence.id in lost:
+                sentence.tts_file = None
+        missing = []
     if missing:
         raise ProjectError(
             f"仍有 {len(missing)} 句的中文配音缺失或已过期：{', '.join(missing[:12])}"
         )
+    mixing_source = source
+    replacing = project.settings.separation_mix_mode == "replace"
+    reference_source = source
+    separated_vocals: Path | None = None
+    if project.settings.separation_enabled:
+        from .experimental_mix import compose_replacement_bed
+        from .separation import ensure_separation
+
+        vocals, background = ensure_separation(project, project_dir, source, progress)
+        separated_vocals = vocals
+        if replacing:
+            reference_source = vocals
+        if replacing and project.settings.replacement_scope == "dubbed_speech":
+            from .experimental_mix import compose_speech_replacement
+
+            mixing_source = compose_speech_replacement(project, project_dir, source, vocals)
+        elif replacing or any(
+            s.original_audio_enabled is not None or s.original_audio_gain_db != 0
+            for s in project.sentences
+        ):
+            mixing_source = compose_replacement_bed(project, project_dir, vocals, background)
+    elif project.settings.separation_mix_mode == "replace":
+        raise ProjectError("中文替换模式必须开启人声分离；不会静默改成原声叠加。")
     events = sentence_events(
         project_dir,
         project.sentences,
-        project.settings.chinese_dubbing_offset_ms,
-        project.settings.chinese_max_auto_speed,
-        project.settings.chinese_dubbing_timing_mode,
+        (
+            project.settings.replacement_dubbing_offset_ms
+            if replacing
+            else project.settings.chinese_dubbing_offset_ms
+        ),
+        (
+            project.settings.replacement_max_auto_speed
+            if replacing
+            else project.settings.chinese_max_auto_speed
+        ),
+        (
+            project.settings.replacement_timing_mode
+            if replacing
+            else project.settings.chinese_dubbing_timing_mode
+        ),
+        trim_silence=replacing,
     )
     if not events and not any(not s.chinese_audio_enabled for s in project.sentences):
         raise ProjectError("没有可混入的中文配音。")
@@ -1097,8 +1184,14 @@ def _mix_project_impl(
     if project.settings.spatial_rtf_enabled:
         from .experimental_mix import stereo_reference
 
+        if separated_vocals is not None and project.settings.spatial_rtf_vocal_weighting:
+            from .experimental_mix import vocal_weighted_reference
+
+            spatial_reference = vocal_weighted_reference(source, separated_vocals, project_dir)
+        else:
+            spatial_reference = stereo_reference(source, project_dir)
         spatial_kwargs = {
-            "spatial_reference_path": stereo_reference(source, project_dir),
+            "spatial_reference_path": spatial_reference,
             "spatial_settings": project.settings,
         }
     stem_builder = (
@@ -1111,6 +1204,14 @@ def _mix_project_impl(
     def loudness(name):
         return getattr(project.settings, loudness_prefix + name)
 
+    match_kwargs = {}
+    if replacing and separated_vocals is not None:
+        match_kwargs = {
+            "voice_match_path": str(separated_vocals),
+            "voice_match_strength": project.settings.replacement_voice_match_strength,
+            "bandwidth_extension": project.settings.replacement_bandwidth_extension,
+            "whisper_match": project.settings.replacement_whisper_match,
+        }
     spatial_kwargs = dict(spatial_kwargs)
     if "spatial_settings" in spatial_kwargs:
         spatial_kwargs["spatial_settings"] = project.settings.model_copy(
@@ -1134,6 +1235,7 @@ def _mix_project_impl(
         channel_routing=project.settings.chinese_channel_routing,
         progress=progress,
         **spatial_kwargs,
+        **match_kwargs,
     )
     check_cancelled(cancel_event)
     mixed_output: Path | None = None
@@ -1195,6 +1297,7 @@ def mix_project(
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
     output_variant: str | None = None,
+    allow_missing: bool = False,
 ) -> Path:
     with measure_stage(
         project_dir,
@@ -1210,6 +1313,7 @@ def mix_project(
             progress=progress,
             cancel_event=cancel_event,
             output_variant=output_variant,
+            allow_missing=allow_missing,
         )
         metrics["output_bytes"] = output.stat().st_size
         if project.chinese_stem_file:

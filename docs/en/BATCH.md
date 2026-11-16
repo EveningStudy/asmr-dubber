@@ -77,6 +77,15 @@ Works in the queue are processed from top to bottom. Before starting you can:
 
 Click **Start queue** to begin.
 
+Before touching any file, the program runs **pre-start checks**:
+
+- Disk space: the need is estimated from the audio length and checked on the output drive and on the drive holding the program.
+- Video memory: what the chosen recognition and dubbing backends need, against your GPU.
+- Translation service: the key is saved, and one minimal request confirms it really works.
+- Required models: recognition and dubbing models (plus vocal separation for the fully dubbed version) are all present.
+
+Anything that fails is listed with its reason and nothing is processed this time. Items that only warn (tight disk, VRAM below the recommendation) let you choose **Start anyway**.
+
 One thing to remember: **the recognition, translation and dubbing settings are recorded at the moment a work is added to the queue.** Changing the defaults in Settings afterwards does not affect works already queued. To apply new settings, click **Edit** and save again.
 
 <img src="../../assets/screenshots/en/batch-edit.png" width="640" alt="Editing a queued work">
@@ -101,7 +110,20 @@ Finished works appear under **Completed**. Click **Open folder** to see the file
 
 Results are placed in a new folder inside the work folder (named `AutoFlow输出` by default; you can change the name in Settings). The original files are not modified.
 
-If a work fails, read its log first. Fix the problem and click **Resume**. Tracks and sentences that already finished are not redone.
+If a work fails, the queue states the reason, for example "Translation failed: ... no API key saved", instead of only "exit code 1". Fix the problem and click **Resume**. Tracks and sentences that already finished are not redone.
+
+### Partly done
+
+A few failed sentences no longer sink a whole work. When the sentences that failed in translation, or in dubbing, number at most `max(minimum, share)` (default: 3 sentences or 2%, whichever is larger), the program finishes the work and shows a yellow **Partly done** in the queue, listing the sentences:
+
+- Sentences without a translation: the subtitles show the source text only and they are not dubbed.
+- Sentences without a dub: the original voice is kept for them in the result (in both the bilingual and the fully dubbed version).
+
+Only beyond that number does the work count as failed, and the reason lists the sentence ids with their causes. Change the two numbers under **Settings → Batch**: "Sentences a work may lose (minimum)" and "Share of sentences a work may lose". The work's `处理清单.json` records these sentences too. To fill them in, open the project and use **Translate remaining** or generate the dubbing again for the missing sentences only, then export again.
+
+### Export diagnostics
+
+Failed and partly done works have an **Export diagnostics** button. It builds a zip with the application log, that work's own log, the settings (no keys), the list of failed sentences (ids, times and reasons only, no sentence text) and the environment check. `secrets.json` is never included and keys in logs are hidden, but logs contain local paths, so look them over before sharing. Attach this file when reporting a problem.
 
 To redo a completed work from scratch, edit it and tick **Reprocess**. This overwrites the earlier results, so copy anything you want to keep.
 
@@ -113,7 +135,7 @@ To redo a completed work from scratch, edit it and tick **Reprocess**. This over
 
 | Group | Contents |
 |---|---|
-| Batch | Output folder name, default format, default merge mode, default video background, whether to include bonus tracks, whether to translate folder names and track titles |
+| Batch | Output folder name, default format, default merge mode, default video background, whether to include bonus tracks, whether to translate folder names and track titles, how many sentences (and what share) a work may lose |
 | Subtitle only | Default subtitle content and how subtitle files are named |
 | Harmonized video | How much to lower the original, how long to delay, whether the original-audio video also gets burned-in subtitles |
 | Timestamp document | Optional text added to the timestamp document that comes with a merged result |

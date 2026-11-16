@@ -46,6 +46,9 @@ class StemEvent:
     effective_duration_seconds: float | None = None
     remaining_overlap_seconds: float = 0.0
     gain_db: float = 0.0
+    # Part of the synthesized file that is actually placed (seconds, before tempo).
+    trim_start_seconds: float = 0.0
+    trim_end_seconds: float | None = None
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -282,10 +285,14 @@ def extract_reference(
     start_seconds: float,
     end_seconds: float,
     padding_seconds: float = 0.0,
+    *,
+    fullband: bool = False,
 ) -> Path:
     start = max(0.0, start_seconds - padding_seconds)
     end = max(start + 0.05, end_seconds + padding_seconds)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if fullband:
+        return _extract_fullband_reference(source, destination, start, end)
     _run_ffmpeg(
         [
             "-y",
@@ -308,6 +315,149 @@ def extract_reference(
         ]
     )
     return destination
+
+
+def dominant_channel_mono(audio: np.ndarray, rate: int) -> np.ndarray:
+    """Fold a binaural clip to mono without the comb filtering of a plain L+R sum.
+
+    A voice at one ear arrives louder and earlier on that side.  When one channel
+    clearly dominates it is used alone; otherwise the channels are time-aligned by
+    cross-correlation (up to 1 ms, the largest interaural delay) before averaging.
+    """
+    data = np.asarray(audio, dtype=np.float32)
+    if data.ndim == 1 or data.shape[1] == 1:
+        return data.reshape(-1)
+    left, right = data[:, 0].astype(np.float64), data[:, 1].astype(np.float64)
+    power_left, power_right = float(np.mean(left**2)), float(np.mean(right**2))
+    if min(power_left, power_right) <= 1e-14:
+        return (left if power_left >= power_right else right).astype(np.float32)
+    ratio_db = 10.0 * math.log10(power_left / power_right)
+    if abs(ratio_db) >= 3.0:
+        return (left if ratio_db > 0 else right).astype(np.float32)
+    limit = max(1, round(rate * 0.001))
+    size = 1 << (2 * len(left) - 1).bit_length()
+    spectrum = np.fft.rfft(left, size) * np.conj(np.fft.rfft(right, size))
+    correlation = np.fft.irfft(spectrum / np.maximum(np.abs(spectrum), 1e-12), size)
+    lags = np.concatenate((np.arange(0, limit + 1), np.arange(-limit, 0)))
+    lag = int(lags[np.argmax(correlation[lags])])
+    # ``lag`` > 0 means the left channel is late; delay the right one to match.
+    shifted = np.zeros_like(right)
+    if lag > 0:
+        shifted[lag:] = right[:-lag]
+    elif lag < 0:
+        shifted[:lag] = right[-lag:]
+    else:
+        shifted = right
+    return ((left + shifted) * 0.5).astype(np.float32)
+
+
+def _extract_fullband_reference(source: Path, destination: Path, start: float, end: float) -> Path:
+    """Reference at the source bandwidth (capped at 48 kHz), folded by dominant channel."""
+    temporary = destination.with_name(f".{destination.stem}.{uuid.uuid4().hex}.full.wav")
+    try:
+        _run_ffmpeg(
+            [
+                "-y",
+                "-ss",
+                f"{start:.6f}",
+                "-i",
+                str(source),
+                "-t",
+                f"{end - start:.6f}",
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-c:a",
+                "pcm_f32le",
+                str(temporary),
+            ]
+        )
+        audio, rate = sf.read(temporary, dtype="float32", always_2d=True)
+    finally:
+        temporary.unlink(missing_ok=True)
+    mono = dominant_channel_mono(audio[:, :2], rate)
+    if rate > 48_000:
+        mono = soxr.resample(mono, rate, 48_000, quality="VHQ")
+        rate = 48_000
+    sf.write(destination, mono, rate, subtype="FLOAT", format="WAV")
+    return destination
+
+
+ASR_ANALYSIS_NAME = "asr_16k_dominant.wav"
+_FOLD_FRAME_SECONDS = 0.05
+
+
+def make_asr_analysis_copy(source: Path, destination: Path) -> Path:
+    """16 kHz mono copy for speech recognition that follows the louder ear.
+
+    Averaging the two channels of a binaural whisper halves the voice (-6 dB) and
+    mixes in whatever the other ear hears.  Each 50 ms is instead weighted by the
+    channels' own energy, so a whisper at one ear arrives at full level, while
+    a centred voice still averages to the usual mono.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file():
+        try:
+            cached = sf.info(destination)
+            if cached.samplerate == 16_000 and cached.channels == 1 and cached.subtype == "FLOAT":
+                return destination
+        except (OSError, RuntimeError):
+            pass
+    stereo = destination.with_name(f".{destination.name}.stereo.tmp.wav")
+    temporary = destination.with_name(f".{destination.name}.tmp.wav")
+    try:
+        _run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_f32le",
+                "-rf64",
+                "auto",
+                str(stereo),
+            ]
+        )
+        with (
+            sf.SoundFile(stereo) as audio,
+            sf.SoundFile(
+                temporary, "w", samplerate=16_000, channels=1, format="WAV", subtype="FLOAT"
+            ) as out,
+        ):
+            frame = round(16_000 * _FOLD_FRAME_SECONDS)
+            for block in audio.blocks(blocksize=frame * 200, dtype="float32", always_2d=True):
+                check_cancelled()
+                out.write(_fold_by_energy(block, frame))
+        converted = sf.info(temporary)
+        if converted.samplerate != 16_000 or converted.channels != 1 or converted.frames <= 0:
+            raise AsmrDubberError("ASR 分析副本参数无效。")
+        temporary.replace(destination)
+    finally:
+        stereo.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
+def _fold_by_energy(block: np.ndarray, frame: int) -> np.ndarray:
+    if block.shape[1] == 1:
+        return block[:, 0]
+    left, right = block[:, 0].astype(np.float64), block[:, 1].astype(np.float64)
+    count = max(1, int(np.ceil(len(block) / frame)))
+    padded = count * frame - len(block)
+    energy_left = np.pad(left**2, (0, padded)).reshape(count, frame).mean(axis=1)
+    energy_right = np.pad(right**2, (0, padded)).reshape(count, frame).mean(axis=1)
+    weight = (energy_left + 1e-12) / (energy_left + energy_right + 2e-12)
+    if count >= 3:
+        weight = np.convolve(np.pad(weight, 1, mode="edge"), np.ones(3) / 3, mode="valid")
+    positions = (np.arange(len(block)) + 0.5) / frame - 0.5
+    weight_left = np.interp(positions, np.arange(count), weight)
+    # Equal energy gives 0.5/0.5 (the usual average); one silent ear gives the other in full.
+    return (left * weight_left + right * (1.0 - weight_left)).astype(np.float32)
 
 
 def make_analysis_copy(source: Path, destination: Path) -> Path:
@@ -348,16 +498,46 @@ def make_analysis_copy(source: Path, destination: Path) -> Path:
     return destination
 
 
+def speech_bounds(path: Path) -> tuple[float, float]:
+    """Start and end (seconds) of the audible part of a synthesized line.
+
+    Zero-shot TTS often pads a line with up to a second of silence.  The bounds
+    keep everything within 40 dB of the line's loud frames, plus a short margin,
+    so soft whispered onsets and breaths survive.
+    """
+    data, rate = sf.read(path, dtype="float32", always_2d=True)
+    mono = data.mean(axis=1)
+    duration = len(mono) / rate
+    hop = max(1, round(rate * 0.010))
+    count = len(mono) // hop
+    if count < 4:
+        return 0.0, duration
+    blocks = mono[: count * hop].reshape(count, hop).astype(np.float64)
+    frames = np.sqrt(np.mean(blocks**2, axis=1))
+    reference = float(np.percentile(frames, 95))
+    if reference <= 1e-7:
+        return 0.0, duration
+    active = np.flatnonzero(frames >= reference * 0.01)
+    start = max(0.0, active[0] * hop / rate - 0.015)
+    end = min(duration, (active[-1] + 1) * hop / rate + 0.040)
+    if end - start < 0.05:
+        return 0.0, duration
+    return start, end
+
+
 def sentence_events(
     project_dir: Path,
     sentences: Iterable[Sentence],
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
     chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
+    *,
+    trim_silence: bool = False,
 ) -> list[StemEvent]:
     available: list[Sentence] = []
     audio_paths: dict[str, Path] = {}
     durations: dict[str, float] = {}
+    bounds: dict[str, tuple[float, float]] = {}
     sentence_by_id: dict[str, Sentence] = {}
     for sentence in sentences:
         if (
@@ -391,6 +571,9 @@ def sentence_events(
         sentence_by_id[sentence.id] = sentence
         audio_paths[sentence.id] = audio_path
         durations[sentence.id] = clip_info.frames / clip_info.samplerate
+        if trim_silence:
+            bounds[sentence.id] = speech_bounds(audio_path)
+            durations[sentence.id] = bounds[sentence.id][1] - bounds[sentence.id][0]
 
     timings = plan_dubbing_timing(
         available,
@@ -410,20 +593,35 @@ def sentence_events(
             effective_duration_seconds=timing.effective_duration_seconds,
             remaining_overlap_seconds=timing.remaining_overlap_seconds,
             gain_db=sentence_by_id[timing.sentence_id].chinese_audio_gain_db,
+            trim_start_seconds=bounds.get(timing.sentence_id, (0.0, None))[0],
+            trim_end_seconds=bounds.get(timing.sentence_id, (0.0, None))[1],
         )
         for timing in timings
         if sentence_by_id[timing.sentence_id].chinese_audio_enabled
     ]
 
 
-def _tempo_adjusted_audio(source: Path, destination: Path, speed_factor: float) -> Path:
+def _tempo_adjusted_audio(
+    source: Path,
+    destination: Path,
+    speed_factor: float,
+    trim_start_seconds: float = 0.0,
+    trim_end_seconds: float | None = None,
+) -> Path:
     if not math.isfinite(speed_factor) or not 1.0 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
         raise ProjectError(f"中文配音自动加速倍速必须在 1.0 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
-    if speed_factor <= 1.0 + 1e-9:
+    trimmed = trim_start_seconds > 0.0 or trim_end_seconds is not None
+    if speed_factor <= 1.0 + 1e-9 and not trimmed:
         return source
-    stages = max(1, math.ceil(math.log2(speed_factor)))
-    stage_factor = speed_factor ** (1.0 / stages)
-    tempo_filter = ",".join(f"atempo={stage_factor:.8f}" for _ in range(stages))
+    filters: list[str] = []
+    if trimmed:
+        end = "" if trim_end_seconds is None else f":end={trim_end_seconds:.6f}"
+        filters.append(f"atrim=start={trim_start_seconds:.6f}{end},asetpts=PTS-STARTPTS")
+    if speed_factor > 1.0 + 1e-9:
+        stages = max(1, math.ceil(math.log2(speed_factor)))
+        stage_factor = speed_factor ** (1.0 / stages)
+        filters.extend(f"atempo={stage_factor:.8f}" for _ in range(stages))
+    tempo_filter = ",".join(filters)
     _run_ffmpeg(
         [
             "-y",
@@ -548,6 +746,81 @@ def _route_mono_to_channels(
     return values
 
 
+class _VoiceMatcher:
+    """Per-line timbre matching against the separated original voice."""
+
+    def __init__(self, vocals: Path, events: list[StemEvent], rate: int) -> None:
+        from .voice_match import long_term_spectrum
+
+        self.rate = rate
+        self.handle = sf.SoundFile(vocals)
+        pieces = [self._window(e) for e in events]
+        pieces = [p for p in pieces if len(p) >= rate // 10]
+        # The whole performance gives a stable target; one short line alone would
+        # drag the dub towards that line's particular vowels and consonants.
+        self.project = long_term_spectrum(np.concatenate(pieces)) if pieces else None
+
+    def _window(self, event: StemEvent) -> np.ndarray:
+        source_rate = int(self.handle.samplerate)
+        start = max(0, min(self.handle.frames, round(event.source_start_seconds * source_rate)))
+        end = max(start, min(self.handle.frames, round(event.source_end_seconds * source_rate)))
+        self.handle.seek(start)
+        audio = self.handle.read(end - start, dtype="float32", always_2d=True)
+        if not len(audio):
+            return np.zeros(0, dtype=np.float32)
+        mono = dominant_channel_mono(audio[:, :2], source_rate)
+        if source_rate != self.rate:
+            mono = soxr.resample(mono, source_rate, self.rate, quality="HQ")
+        return np.asarray(mono, dtype=np.float32)
+
+    def apply(
+        self,
+        clip: np.ndarray,
+        event: StemEvent,
+        strength: float,
+        extend: bool,
+        whisper: float = 0.0,
+    ) -> np.ndarray:
+        from .voice_match import (
+            extend_bandwidth,
+            long_term_spectrum,
+            match_spectrum,
+            voiced_ratio,
+            whisperize,
+        )
+
+        if self.project is None or len(clip) < self.rate // 20:
+            return clip
+        level = float(np.sqrt(np.mean(clip.astype(np.float64) ** 2)))
+        if level <= 1e-8:
+            return clip
+        window = self._window(event)
+        target = self.project
+        if len(window) >= self.rate // 2:
+            own = long_term_spectrum(window)
+            weight = min(1.0, len(window) / (3.0 * self.rate)) * 0.5
+            scale = np.sum(self.project) / max(float(np.sum(own)), 1e-30)
+            target = self.project ** (1 - weight) * (own * scale) ** weight
+        result = clip
+        if whisper > 0 and len(window) >= self.rate // 4:
+            # Only as far as the dub is more voiced than the line it replaces.
+            original, dub = voiced_ratio(window, self.rate), voiced_ratio(clip, self.rate)
+            amount = whisper * float(np.clip((dub - original) / max(dub, 1e-3), 0.0, 1.0))
+            if amount > 0.05:
+                result = whisperize(result, self.rate, amount)
+        if strength > 0:
+            result = match_spectrum(result, self.rate, target, strength=strength)
+        if extend:
+            result = extend_bandwidth(result, self.rate, target)
+        after = float(np.sqrt(np.mean(result.astype(np.float64) ** 2)))
+        if after > 1e-8:
+            result = result * np.float32(level / after)
+        return np.asarray(result, dtype=np.float32)
+
+    def close(self) -> None:
+        self.handle.close()
+
+
 def build_chinese_stem(
     destination: Path,
     events: list[StemEvent],
@@ -567,9 +840,19 @@ def build_chinese_stem(
     progress: Progress | None = None,
     spatial_reference_path: Path | None = None,
     spatial_settings: ProjectSettings | None = None,
+    voice_match_path: str | None = None,
+    voice_match_strength: float = 0.0,
+    bandwidth_extension: bool = False,
+    whisper_match: float = 0.0,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     rate = source_info.sample_rate
+    voice_matcher = (
+        _VoiceMatcher(Path(voice_match_path), events, rate)
+        if voice_match_path
+        and (voice_match_strength > 0 or bandwidth_extension or whisper_match > 0)
+        else None
+    )
     channels = source_info.channels
     gain = 10.0 ** (chinese_gain_db / 20.0)
 
@@ -625,6 +908,8 @@ def build_chinese_stem(
                         event.audio_path,
                         tempo_file,
                         event.speed_factor,
+                        event.trim_start_seconds,
+                        event.trim_end_seconds,
                     )
                     clip = _read_resampled_mono(clip_path, rate)
                 finally:
@@ -675,6 +960,10 @@ def build_chinese_stem(
                         max_loudness_boost_db=max_loudness_boost_db,
                         peak_dbfs=line_peak_dbfs,
                         fade_ms=fade_ms,
+                    )
+                if voice_matcher is not None:
+                    clip = voice_matcher.apply(
+                        clip, event, voice_match_strength, bandwidth_extension, whisper_match
                     )
                 clip *= gain
                 clip_offset = 0
@@ -733,6 +1022,8 @@ def build_chinese_stem(
     finally:
         if source_reference is not None:
             source_reference.close()
+        if voice_matcher is not None:
+            voice_matcher.close()
         temporary.unlink(missing_ok=True)
     return destination
 

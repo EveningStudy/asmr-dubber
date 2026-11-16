@@ -8,7 +8,6 @@ import {
   options,
   field,
   dialog,
-  startTask,
   taskHTML,
   guard,
   notice,
@@ -17,6 +16,7 @@ import {
 } from './session.js';
 import { referenceDialog } from './project_dialogs.js';
 import { renderQueue, renderHistory } from './batch_view.js';
+import { startBatchChecked, exportDiagnostics } from './batch_preflight.js';
 
 let scan = null,
   editing = '',
@@ -235,10 +235,22 @@ export function initializeBatch() {
   window.addEventListener('batch-reference-changed', guard(refreshReference));
   window.addEventListener('settings-changed', guard(refreshReference));
   $('#addWork').onclick = guard(() => workDialog());
-  $('#runBatch').onclick = guard(() => startTask('batch', {}, false));
+  $('#runBatch').onclick = guard(async () => {
+    $('#runBatch').disabled = true;
+    try {
+      await startBatchChecked();
+    } finally {
+      renderBatch();
+    }
+  });
   document.addEventListener(
     'click',
     guard(async (event) => {
+      const diagnostics = event.target.closest('[data-batch-diagnostics]');
+      if (diagnostics) {
+        await exportDiagnostics(diagnostics.dataset.batchDiagnostics);
+        return;
+      }
       const hide = event.target.closest('[data-dismiss-batch]');
       if (hide) {
         await api('tasks/dismiss', {identifier: hide.dataset.dismissBatch});

@@ -32,6 +32,11 @@ class Settings(UserSettings):
     ui_language: str = Field(default="zh", pattern="^(zh|en)$")
     open_browser: bool = True
     download_source: str = Field(default="modelscope", pattern="^(modelscope|original)$")
+    # A work stays deliverable when it loses at most max(count, percent % of its
+    # sentences) to translation or dubbing failures.  Stored with the interface
+    # preferences (interface.json), next to the other batch-only choices.
+    batch_failure_budget_count: int = Field(default=3, ge=0, le=1000)
+    batch_failure_budget_percent: float = Field(default=2.0, ge=0.0, le=100.0)
 
 
 def current():
@@ -106,7 +111,13 @@ def update(changes, project=None, revision=None):
 
         preferences = {
             name: getattr(configured, name)
-            for name in ("ui_language", "open_browser", "download_source")
+            for name in (
+                "ui_language",
+                "open_browser",
+                "download_source",
+                "batch_failure_budget_count",
+                "batch_failure_budget_percent",
+            )
         }
         atomic_write_text(directory / "interface.json", json.dumps(preferences))
     return configured.model_dump()

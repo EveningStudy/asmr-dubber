@@ -603,6 +603,7 @@ def _mock_httpx_client(monkeypatch, handler):
 
 
 def test_edge_tts_contract_and_wav_conversion(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.edge_tts_client.version", lambda _name: "7.3.1")
     calls = []
 
     class FakeCommunicate:
@@ -634,6 +635,7 @@ def test_edge_tts_contract_and_wav_conversion(tmp_path: Path, monkeypatch) -> No
 
 
 def test_edge_tts_retries_temporary_network_errors(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.edge_tts_client.version", lambda _name: "7.3.1")
     calls = 0
     delays = []
 
@@ -676,6 +678,7 @@ def test_edge_tts_retries_temporary_network_errors(tmp_path: Path, monkeypatch) 
 
 
 def test_edge_tts_reports_dns_failure_after_retries(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("asmr_dubber.edge_tts_client.version", lambda _name: "7.3.1")
     calls = 0
 
     class FakeCommunicate:
