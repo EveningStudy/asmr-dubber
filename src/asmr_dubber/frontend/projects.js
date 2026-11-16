@@ -89,7 +89,7 @@ export function renderProject() {
   $('#outputs').innerHTML = Object.entries(project.outputs)
     .map(
       ([key, item]) =>
-        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${item.url}"></audio>` : ''}<a class="btn plain small" href="${item.url}" download="${esc(item.name)}">${t('下载')}</a></div>`,
+        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${esc(item.url)}"></audio>` : ''}<a class="btn plain small" href="${esc(item.url)}" download="${esc(item.name)}">${t('下载')}</a></div>`,
     )
     .join('');
   $$('#steps button').forEach((button, index) =>

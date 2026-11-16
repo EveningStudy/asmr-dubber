@@ -75,7 +75,7 @@ def check(force=False):
         release = response.json()
         latest = version_tuple(release["tag_name"])
         if latest is None:
-            raise ValueError("Unrecognised release tag")
+            raise ValueError("无法识别的版本号。")
     except Exception as exc:
         result["error"] = type(exc).__name__
         return result

@@ -1,0 +1,64 @@
+/* ---------- 首次启动向导 ---------- */
+.wz-steps { display: flex; gap: 18px; margin-top: 14px; font-size: 12.5px; color: var(--text-3); }
+.wz-step { display: inline-flex; align-items: center; gap: 6px; }
+.wz-step i { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 11px; background: var(--fill-2); color: var(--text-2); }
+.wz-step.on { color: var(--text); font-weight: 600; }
+.wz-step.on i { background: var(--accent); color: #fff; }
+.wz-step.done i { background: var(--green); color: #fff; }
+.wz-card { padding: 14px 18px; }
+.wz-card p { margin: 0 0 6px; }
+.wz-list { margin: 4px 0 0; padding-left: 20px; }
+.wz-device { margin-bottom: 4px; }
+.wz-source, .wz-test { border-top: 0; padding-left: 2px; }
+.wz-result { margin: 4px 2px; font-size: 13px; }
+.wz-result.ok { color: var(--green); }
+.wz-result.bad { color: var(--red); }
+#wizard { z-index: 30; }
+#wizard .sheet footer .grow { flex: 1; }
+
+/* ---------- 全局任务面板 ---------- */
+.taskpanel { position: fixed; right: 18px; bottom: 18px; width: 340px; max-width: calc(100vw - 36px); z-index: 20; background: var(--panel); border-radius: 12px; box-shadow: 0 0 0 1px var(--line-2), 0 10px 34px rgba(0,0,0,.22); overflow: hidden; }
+.taskpanel[hidden] { display: none; }
+.tp-head { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: var(--fill); padding: 9px 14px; text-align: left; }
+.tp-head b { font-weight: 600; font-size: 13px; }
+.tp-count { background: var(--accent); color: #fff; border-radius: 9px; min-width: 18px; padding: 0 6px; text-align: center; font-size: 11px; }
+.tp-chevron { margin-left: auto; color: var(--text-2); }
+.tp-body { max-height: 46vh; overflow-y: auto; }
+.tp-row { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+.tp-main { flex: 1; min-width: 0; }
+.tp-title { font-weight: 500; font-size: 13px; }
+.tp-title a { color: inherit; text-decoration: none; }
+.tp-title a:hover { color: var(--accent); }
+.tp-msg { color: var(--text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 1px 0 6px; }
+.tp-meta { color: var(--text-2); font-size: 11.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* ---------- 批量：作品阶段进度 ---------- */
+.stagebar { display: flex; gap: 3px; margin-top: 7px; max-width: 360px; }
+.stage { flex: 1; text-align: center; font-size: 11px; padding: 2px 0; border-radius: 4px; background: var(--fill); color: var(--text-3); }
+.stage.done { background: rgba(36, 138, 61, .16); color: var(--green); }
+.stage.running { background: var(--accent-soft); color: var(--accent); font-weight: 600; animation: stage-pulse 1.4s ease-in-out infinite; }
+.stage.paused { background: rgba(255, 159, 10, .16); color: var(--orange); }
+.stage.failed { background: rgba(215, 0, 21, .12); color: var(--red); font-weight: 600; }
+@keyframes stage-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .stage.running { animation: none; } }
+
+/* ---------- 预设与参数搜索 ---------- */
+.presetbox { background: var(--panel); border-radius: var(--r); box-shadow: 0 0 0 1px var(--line); padding: 10px 12px; margin-bottom: 14px; }
+#settings > .presetbox { margin: 0 0 18px; max-width: 1000px; }
+.pr-search { width: 100%; }
+.pr-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; }
+.pr-label { font-size: 12px; color: var(--text-2); min-width: 56px; }
+.pr-diff { flex-basis: 100%; font-size: 12px; color: var(--text-2); }
+.pr-diff ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
+.pr-diff li { display: flex; gap: 6px; padding: 2px 0; align-items: baseline; }
+.pr-diff li span { flex: 1; min-width: 0; }
+.pr-diff li b { font-weight: 500; color: var(--text); }
+/* While searching, matches from every step / settings page are listed together. */
+#settings.searching .setview { display: block; }
+#settings.searching .setview[data-setview="keys"],
+#settings.searching .setview[data-setview="storage"],
+#settings.searching .setview[data-setview="logs"],
+#settings.searching .cap,
+#settings.searching .setview[data-setview="general"] > .card:first-child { display: none; }
+#project.searching .insp .stepview { display: block; }
+#project.searching .insp .stepview > :not(.schema):not(h2) { display: none; }

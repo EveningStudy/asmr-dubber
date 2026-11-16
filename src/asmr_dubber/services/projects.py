@@ -114,7 +114,7 @@ class Projects:
             rows = project_records.project_rows(active)
             matched = next((index for index, item in enumerate(rows) if item[0] == row[0]), None)
             if matched is None:
-                raise ValueError("Sentence no longer exists")
+                raise ValueError("这个句子已不存在。")
             rows[matched] = row
             project_operations.save_table(project, rows)
         return self.get(project)
@@ -312,5 +312,5 @@ class Projects:
                     )
                 }
             else:
-                raise ValueError("Unknown project action")
+                raise ValueError("未知的项目操作。")
         return self.get(manifest)

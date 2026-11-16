@@ -37,6 +37,8 @@ class Settings(UserSettings):
     # preferences (interface.json), next to the other batch-only choices.
     batch_failure_budget_count: int = Field(default=3, ge=0, le=1000)
     batch_failure_budget_percent: float = Field(default=2.0, ge=0.0, le=100.0)
+    # False until the first-run guide was finished or skipped; settings can reopen it.
+    onboarding_completed: bool = False
 
 
 def current():
@@ -117,6 +119,7 @@ def update(changes, project=None, revision=None):
                 "download_source",
                 "batch_failure_budget_count",
                 "batch_failure_budget_percent",
+                "onboarding_completed",
             )
         }
         atomic_write_text(directory / "interface.json", json.dumps(preferences))
@@ -159,7 +162,7 @@ def key_statuses():
 def key(kind, name, value="", clear=False):
     if kind == "translation":
         if name not in PROVIDER_PRESETS:
-            raise ValueError("Unknown translation provider")
+            raise ValueError("未知的翻译服务。")
         if clear:
             clear_api_key(name)
         else:
@@ -167,7 +170,7 @@ def key(kind, name, value="", clear=False):
         return api_key_status(name)
     valid = key_statuses()["services"]
     if name not in valid:
-        raise ValueError("Unknown service")
+        raise ValueError("未知的服务。")
     if clear:
         clear_service_key(name)
     else:

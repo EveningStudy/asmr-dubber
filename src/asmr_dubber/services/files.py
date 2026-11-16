@@ -32,7 +32,7 @@ def folder():
 def open_output(path):
     directory = Path(path).resolve()
     if not directory.is_dir():
-        raise ValueError("Output directory does not exist")
+        raise ValueError("输出文件夹不存在。")
     return {"path": str(open_directory(directory))}
 
 

@@ -218,6 +218,12 @@
     ],
     "whisper-vad-asmr-onnx": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-whisper-vad-asmr-onnx-v1.0.0.zip"
+    ],
+    "anime-whisper": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-anime-whisper-v1.0.0.zip"
+    ],
+    "qwen3-asr-1.7b": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-qwen3-asr-1.7b-v1.0.0.zip"
     ]
   },
   "indextts2_source_archives": [

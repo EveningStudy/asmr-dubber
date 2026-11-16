@@ -127,6 +127,12 @@ Failed and partly done works have an **Export diagnostics** button. It builds a 
 
 To redo a completed work from scratch, edit it and tick **Reprocess**. This overwrites the earlier results, so copy anything you want to keep.
 
+### Per-work progress, single retry and finish notification
+
+- Each work in the queue shows a four-cell progress bar: Recognition, Translation, Dubbing, Export. Finished steps are green, the running step is blue, a failed step is red and a paused one is yellow.
+- A failed, partly done or paused work has a "Retry this work" button: only that work runs again, finished steps are reused, the rest of the queue is not rerun and other works keep their results.
+- Pressing "Start the queue" asks the browser for notification permission. If allowed, a system notification appears when the queue ends (how many finished, partly finished and failed); if refused, nothing more is asked.
+
 ## 5. Batch defaults
 
 **Settings → Batch** holds the initial options for adding a work. Changes apply only to works added afterwards.

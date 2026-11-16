@@ -51,7 +51,7 @@ def validate_changes(changes, *, project=False):
     allowed = ProjectSettings.model_fields if project else Settings.model_fields
     unknown = changes.keys() - allowed.keys()
     if unknown:
-        raise ValueError("Unknown parameters: " + ", ".join(sorted(unknown)))
+        raise ValueError("未知参数：" + ", ".join(sorted(unknown)))
     # Full model validation runs after merging with the correct persisted scope.
     for key, value in changes.items():
         if key.endswith(("extra_body", "params")):
@@ -76,7 +76,7 @@ def expand_changes(changes):
         mapping = by_key.get(key, {}).get("display_values", {})
         if isinstance(value, str) and mapping:
             if value not in mapping:
-                raise ValueError("Unknown display option")
+                raise ValueError("未知的显示选项。")
             expanded.update(mapping[value])
     return expanded
 

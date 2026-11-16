@@ -273,14 +273,14 @@ def remove(identifier):
         candidates.extend(model_directory() / file for file in files)
         candidates.append(model_directory() / f"{model}.integrity.json")
     else:
-        raise ValueError("Unknown model")
+        raise ValueError("未知的模型。")
     roots = [(portable_home() / name).resolve() for name in ("models", "cache", "runtimes")]
     for candidate in candidates:
         resolved = candidate.resolve()
         if candidate.is_symlink() or not any(
             resolved.is_relative_to(root) and resolved != root for root in roots
         ):
-            raise ValueError("Model path is outside a managed directory")
+            raise ValueError("模型路径不在受管理的文件夹内。")
     for candidate in candidates:
         if candidate.is_dir():
             shutil.rmtree(candidate)

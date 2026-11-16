@@ -70,14 +70,14 @@ class Tasks:
             if any(
                 t["resource"] == resource and t["status"] in ACTIVE for t in self.items.values()
             ):
-                raise ValueError("A task is already running for this resource")
+                raise ValueError("这个项目或资源已有任务在运行。")
 
     def start(self, request, resource, identifier=None):
         with self.lock:
             self.assert_idle(resource)
             # Secrets are resolved in services, never put into task snapshots.
             if any("key" in name.lower() or "secret" in name.lower() for name in request):
-                raise ValueError("Secrets must not be stored in tasks")
+                raise ValueError("任务里不能保存密钥。")
             identifier = identifier or uuid.uuid4().hex
             self.items[identifier] = {
                 "id": identifier,
@@ -133,7 +133,15 @@ class Tasks:
             with self.lock:
                 task = self.items[identifier]
                 kind = payload.get("kind")
-                if kind == "queue":
+                if kind == "plan_stage":
+                    # Which step of a work is running; keeps the reference prompt intact.
+                    entry = task.setdefault("plans", {}).setdefault(payload["plan_id"], {})
+                    seen = entry.setdefault("stages", [])
+                    if payload["stage"] not in seen:
+                        seen.append(payload["stage"])
+                    entry["stage"] = payload["stage"]
+                    entry["stage_at"] = time.time()
+                elif kind == "queue":
                     task["plans"] = {
                         p["plan_id"]: {**p, "status": "queued"} for p in payload["plans"]
                     }
@@ -202,7 +210,7 @@ class Tasks:
     def resume(self, identifier):
         task = self.get(identifier)
         if task["status"] not in {"cancelled", "interrupted", "failed"}:
-            raise ValueError("This task cannot be resumed")
+            raise ValueError("这个任务不能继续。")
         request = task["request"]
         if request.get("project"):
             from ..models import load_project

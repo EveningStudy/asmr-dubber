@@ -9,6 +9,7 @@ import {
   field,
   dialog,
   taskHTML,
+  startTask,
   guard,
   notice,
   chooseFile,
@@ -17,6 +18,7 @@ import {
 import { referenceDialog } from './project_dialogs.js';
 import { renderQueue, renderHistory } from './batch_view.js';
 import { startBatchChecked, exportDiagnostics } from './batch_preflight.js';
+import { requestNotifyPermission } from './notify.js';
 
 let scan = null,
   editing = '',
@@ -236,6 +238,7 @@ export function initializeBatch() {
   window.addEventListener('settings-changed', guard(refreshReference));
   $('#addWork').onclick = guard(() => workDialog());
   $('#runBatch').onclick = guard(async () => {
+    requestNotifyPermission();
     $('#runBatch').disabled = true;
     try {
       await startBatchChecked();
@@ -249,6 +252,13 @@ export function initializeBatch() {
       const diagnostics = event.target.closest('[data-batch-diagnostics]');
       if (diagnostics) {
         await exportDiagnostics(diagnostics.dataset.batchDiagnostics);
+        return;
+      }
+      const retry = event.target.closest('[data-retry-plan]');
+      if (retry) {
+        // Only this work runs again; its finished stages are kept by the engine.
+        requestNotifyPermission();
+        await startTask('batch', { plan: retry.dataset.retryPlan }, false);
         return;
       }
       const hide = event.target.closest('[data-dismiss-batch]');

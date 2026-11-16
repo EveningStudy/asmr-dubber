@@ -217,6 +217,13 @@ What needs redoing after a change:
 
 Closing the black window that appeared at startup stops the program. Closing the browser tab does not; open `http://127.0.0.1:7860` again to come back.
 
+## First-run guide, presets and the task panel
+
+- **First-run guide**: the first time the app opens, a three-step guide appears: detect the hardware and show a recommended setup, download the models (the same downloads as the Models page, pausable and resumable), and enter a translation key and press "Save and test". When it ends you land in "create a project". "Later" is remembered too, so it does not reappear; to run it again open Settings > General > First-run guide > Reopen.
+- **Presets**: the project page (right side) and the top of Settings offer two groups. Quality: Fast / Balanced / Best quality. Fast is quicker and lighter on video memory (shorter separation chunks, less translation context, no dubbing quality check, fewer finishing steps in the full-dub version); Best quality is the shipped defaults. Product: Bilingual / Fully dubbed. Fully dubbed turns on vocal separation and needs the separation model installed first. Presets only change the settings they list and never switch the recognition or dubbing model. When your values differ from a preset, the differing settings are listed.
+- **Settings search**: the box above the presets filters by Chinese name, English name or setting key; while searching, matches from every step and every settings page are listed together.
+- **Global task panel**: the bottom-right corner of every page shows running tasks, their progress and an estimated time left, with a Pause button. Download tasks report progress per file, so they show no estimate.
+
 ## 10. Where to go next
 
 - A whole work folder to process: [Batch processing](BATCH.md)

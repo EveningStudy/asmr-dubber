@@ -17,6 +17,24 @@ from .api import API
 from .app_logging import redact_sensitive
 from .services.application import Application
 
+# Scripts, media and connections stay same-origin; no inline script is allowed.
+# Styles keep 'unsafe-inline' because index.html and the renderers use style="..."
+# attributes for widths and spacing.
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "media-src 'self'",
+        "connect-src 'self'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+    )
+)
+
 
 def remote_auth(host):
     try:
@@ -118,6 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         if self.close_connection:
             self.send_header("Connection", "close")
 

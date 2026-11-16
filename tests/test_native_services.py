@@ -113,7 +113,7 @@ def test_sentence_patch_keeps_other_rows_and_rejects_unknown_sentence(applicatio
     saved = application.save_sentence(project["manifest"], changed, saved["revision"])
     assert saved["rows"] == [changed, rows[1]]
     changed[0] = "missing"
-    with pytest.raises(ValueError, match="no longer exists"):
+    with pytest.raises(ValueError, match="已不存在"):
         application.save_sentence(project["manifest"], changed, saved["revision"])
     assert load_project(project["manifest"])[0].sentences[0].original_audio_enabled is False
 

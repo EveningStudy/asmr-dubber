@@ -7,7 +7,7 @@ from ..localization import catalog
 from ..models import load_project
 from ..platforms import portable_home
 from ..user_settings import resolve_api_key, saved_service_key
-from . import models, parameters, settings, updates
+from . import models, parameters, presets, settings, updates
 from .batch import Batch
 from .media import MediaStore
 from .project_audio import preview_edge_tts_voice
@@ -29,6 +29,7 @@ class Application:
             "choices": parameters.choices(),
             "settings": settings.current().model_dump(mode="json"),
             "keys": settings.key_statuses(),
+            "presets": presets.catalog(),
             "tasks": self.tasks.list(),
             "queue": self.batch.list(),
             "locales": catalog(),
@@ -43,7 +44,7 @@ class Application:
         if request.get("project"):
             project, directory = load_project(request["project"])
             if request.get("revision") != project.revision:
-                raise ValueError("Project changed; reload before starting a task")
+                raise ValueError("项目已在别处改动，请先重新载入项目再开始任务。")
             resource = str((directory / "project.json").resolve())
         else:
             resource = (
@@ -61,15 +62,15 @@ class Application:
         active = [task for task in self.tasks.list() if task["status"] in ACTIVE]
         independent = {"preview_reference", "preview_edge", "health", "diagnostic"}
         if kind not in independent and any(task["kind"] not in independent for task in active):
-            raise ValueError("Wait for the active operation to finish")
+            raise ValueError("请等待当前操作结束。")
         if (kind == "batch" and active) or (
             any(task["kind"] == "batch" for task in active) and kind != "preview_reference"
         ):
-            raise ValueError("Wait for the active batch operation to finish")
+            raise ValueError("请等待当前批量操作结束。")
         if (resource == "models" and active) or any(
             task["resource"] == "models" for task in active
         ):
-            raise ValueError("Wait for the active runtime operation to finish")
+            raise ValueError("请等待当前运行环境操作结束。")
 
     def resume(self, identifier):
         with self.tasks.lock:
@@ -109,7 +110,7 @@ class Application:
 
     def remove_model(self, model):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
-            raise ValueError("Wait for active tasks before deleting a model")
+            raise ValueError("请等待当前任务结束后再删除模型。")
         return models.remove(model)
 
     def execute(self, request, report, token, reference):
@@ -185,7 +186,7 @@ class Application:
 
     def clean_storage(self, plan, selected, confirmed):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
-            raise ValueError("Wait for active tasks before clearing caches")
+            raise ValueError("请等待当前任务结束后再清理缓存。")
         removed, skipped = cache_cleanup.clean_caches(plan, selected, confirmed)
         return {"removed": removed, "skipped": skipped}
 

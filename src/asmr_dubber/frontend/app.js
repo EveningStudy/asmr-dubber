@@ -5,6 +5,10 @@ import { initializeBatch, refreshBatch, renderBatch } from './batch.js';
 import { initializeModels, refreshModels, renderModels } from './models.js';
 import { initializeSettings, renderKeys, refreshLogs, refreshStorage } from './settings.js';
 import { initializeUpdates, renderUpdate, updateFinished } from './updates.js';
+import { initializeWizard, wizardTick } from './wizard.js';
+import { initializePresets } from './presets.js';
+import { initializeTaskPanel, renderTaskPanel } from './task_panel.js';
+import { notifyBatchFinished } from './notify.js';
 
 async function navigate(page, setTab) {
   if (page === 'project' && !state.project) return;
@@ -34,7 +38,12 @@ function setStep(step) {
 }
 function refreshTaskViews() {
   const tasks = state.tasks.filter((task) => task.request.project === state.project?.manifest);
-  $('#projectTask').innerHTML = tasks.slice(-3).map(taskHTML).join('');
+  // Running tasks always stay visible; of the finished ones only the latest few.
+  const running = (task) => ['queued', 'running', 'cancelling'].includes(task.status);
+  const shownTasks = tasks.filter((task, index) => running(task) || index >= tasks.length - 3);
+  $('#projectTask').innerHTML = shownTasks.map(taskHTML).join('');
+  renderTaskPanel();
+  wizardTick();
   renderUpdate();
   renderBatch();
   renderModels();
@@ -72,9 +81,11 @@ async function pollTasks() {
         if (['download', 'import_models'].includes(task.kind)) await refreshModels();
         if (['health', 'repair', 'diagnostic'].includes(task.kind) && state.page === 'settings')
           await refreshLogs();
+        if (task.kind === 'batch') notifyBatchFinished(task);
         if (task.kind === 'update') updateFinished(task);
         else notice(task.result?.message || t('任务完成'));
       } else if (task.status === 'failed') {
+        if (task.kind === 'batch') notifyBatchFinished(task);
         if (state.project && task.request.project === state.project.manifest) {
           await flushSaves();
           state.project = await api('projects/get', {project: state.project.manifest});
@@ -168,12 +179,16 @@ async function boot() {
   initializeModels();
   initializeSettings();
   initializeUpdates();
+  initializePresets();
+  initializeTaskPanel();
   localize();
   renderForms();
   renderKeys();
   renderBatch();
+  renderTaskPanel();
   await refreshHome();
   await refreshModels();
+  initializeWizard();
   setInterval(pollTasks, 1200);
 }
 boot().catch((error) => notice(error.message, true));

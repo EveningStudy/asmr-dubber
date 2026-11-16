@@ -227,6 +227,7 @@
   "autoflow_reference_wait_seconds": {"label": "最多等", "unit": "秒", "panel": "batch", "group": "音色参考", "basic": false, "visible_when": {}},
   "batch_failure_budget_count": {"label": "单个作品最多允许失败句数（下限）", "unit": "句", "panel": "batch", "group": "批量", "basic": false, "visible_when": {}},
   "batch_failure_budget_percent": {"label": "单个作品允许失败的比例", "unit": "%", "panel": "batch", "group": "批量", "basic": false, "visible_when": {}},
+  "onboarding_completed": {"label": "onboarding_completed", "hidden": true, "panel": "general", "group": "通用", "basic": false, "visible_when": {}},
   "autoflow_preferred_audio_formats": {"label": "有多种音频格式时", "panel": "batch", "group": "批量", "basic": false, "visible_when": {}},
   "autoflow_harmonized_volume_reduction_db": {"label": "原声降低", "unit": "dB", "panel": "batch", "group": "和谐视频", "basic": false, "visible_when": {}},
   "autoflow_harmonized_delay_minutes": {"label": "原声、配音和字幕整体延后", "unit": "分钟", "panel": "batch", "group": "和谐视频", "basic": false, "visible_when": {}},

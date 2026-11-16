@@ -129,6 +129,18 @@ REMOTE_MODEL_PACKS: dict[str, RemoteModelPack] = {
         size=54_692_316,
         sha256="f7d4c6ec7c9576d325685ffeaf7a39e5160fa1d3e6fe94ae60ed7dc866e5eaa9",
     ),
+    "anime-whisper": RemoteModelPack(
+        pack_id="anime-whisper",
+        filename="ASMR-Dubber-ModelPack-anime-whisper-v1.0.0.zip",
+        size=3_026_403_601,
+        sha256="070c2eafe2baf086935d76fc2311597959d4e56cd6aad6bdbe9782102c9f455f",
+    ),
+    "qwen3-asr-1.7b": RemoteModelPack(
+        pack_id="qwen3-asr-1.7b",
+        filename="ASMR-Dubber-ModelPack-qwen3-asr-1.7b-v1.0.0.zip",
+        size=4_700_346_153,
+        sha256="9e29f248833e429b8702e297f2806b0e93ae0d83a3cb78a9763be9f55da081dd",
+    ),
 }
 
 LogCallback = Callable[[str], None]

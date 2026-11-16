@@ -26,6 +26,18 @@ from .errors import StageFailedError, VideoPreparerError
 from .fileio import atomic_copy
 from .processes import run_process_captured
 
+#: Optional callable given the CLI command name ("create", "analyze", "translate",
+#: "synthesize", "mix", ...) just before it runs; the browser batch uses it to
+#: show per-work stage progress.  Must never raise into the engine.
+STAGE_LISTENER: Any = None
+
+
+def announce_stage(arguments: Sequence[str]) -> None:
+    listener = STAGE_LISTENER
+    if listener is not None and arguments:
+        with suppress(Exception):
+            listener(arguments[0])
+
 
 def run_asmr_cli(paths: ToolPaths, *arguments: str) -> dict[str, Any] | None:
     """Run one ``asmr-dubber`` command.
@@ -34,6 +46,7 @@ def run_asmr_cli(paths: ToolPaths, *arguments: str) -> dict[str, Any] | None:
     reports the real reason and the failed sentences instead of an exit code.
     """
 
+    announce_stage(arguments)
     command = [*paths.cli_command, *arguments]
 
     if not arguments or arguments[0] not in stages.RESULT_STAGES:
@@ -64,6 +77,7 @@ def run_budgeted_stage(
 
 
 def run_asmr_cli_captured(paths: ToolPaths, *arguments: str) -> str:
+    announce_stage(arguments)
     command = [*paths.cli_command, *arguments]
     return run_process_captured(command, cwd=paths.asmr_root)
 

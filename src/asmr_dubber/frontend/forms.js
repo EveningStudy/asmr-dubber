@@ -14,6 +14,15 @@ import {
   startTask,
 } from './session.js';
 
+// Search matches the Chinese label, its English translation, the group and the key.
+export function matchesQuery(parameter, query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const locales = state.boot.locales || {};
+  return [parameter.label, locales[parameter.label], parameter.key, parameter.group, locales[parameter.group], parameter.hint]
+    .some((text) => String(text || '').toLowerCase().includes(needle));
+}
+
 export function renderForms() {
   if (!state.boot) return;
   $$('.schema').forEach((box) => {
@@ -38,7 +47,8 @@ export function renderForms() {
         (scope !== 'proj' || parameter.scope === 'project') &&
         (part === 'all' || parameter.basic === (part === 'basic')) &&
         matches(parameter.visible_when) &&
-        (!parameter.visible_any || parameter.visible_any.some(matches)),
+        (!parameter.visible_any || parameter.visible_any.some(matches)) &&
+        matchesQuery(parameter, state.paramQuery),
     );
     const groups = new Map();
     for (const parameter of fields) {
@@ -46,16 +56,18 @@ export function renderForms() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(parameter);
     }
+    const searching = !!state.paramQuery.trim();
     const open = new Set($$('details[open]', box).map((node) => node.dataset.group));
     box.innerHTML = [...groups]
       .map(([group, list]) => {
         const body = list.map((parameter) => control(parameter, values, scope, language)).join('');
         return group === 'basic' || panels === 'general'
           ? `<div class="card group">${body}</div>`
-          : `<details class="card group" data-group="${esc(group)}"${open.has(group) ? ' open' : ''}><summary>${esc(t(group))}</summary><div>${body}</div></details>`;
+          : `<details class="card group" data-group="${esc(group)}"${searching || open.has(group) ? ' open' : ''}><summary>${esc(t(group))}</summary><div>${body}</div></details>`;
       })
       .join('');
   });
+  window.dispatchEvent(new Event('forms-rendered'));
 }
 function control(parameter, values, scope, language) {
   const key = parameter.key,

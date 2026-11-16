@@ -699,6 +699,50 @@ def prepare_chinese_clip(
     return clip
 
 
+def _limiter_envelope(target: np.ndarray, release: float) -> np.ndarray:
+    """Vectorised limiter gain: g[i] = min(t[i], release*g[i-1] + (1-release)*t[i]).
+
+    Instant attack, exponential release, g[-1] = 1.  Frames needing no
+    reduction are closed-form (1 - (1 - g) * release**k); the frames that do
+    need reduction are composed with a parallel prefix scan over the affine-min
+    maps x -> min(A*x + B, C), so no Python per-sample loop remains.
+    """
+    envelope = np.ones(len(target), dtype=np.float64)
+    over = np.flatnonzero(target < 1.0)
+    if not over.size:
+        return envelope
+    a = float(release)
+    b = 1.0 - a
+    request = target[over].astype(np.float64)
+    gap = (np.diff(over, prepend=0) - 1).astype(np.float64)
+    gap[0] = over[0]
+    decay = np.power(a, gap)
+    scale = a * decay
+    offset = a * (1.0 - decay) + b * request
+    cap = request.copy()
+    shift = 1
+    while shift < len(over):
+        # Compose element i-shift (first) with element i (second).
+        new_scale = scale[:-shift] * scale[shift:]
+        new_offset = scale[shift:] * offset[:-shift] + offset[shift:]
+        new_cap = np.minimum(scale[shift:] * cap[:-shift] + offset[shift:], cap[shift:])
+        scale = np.concatenate([scale[:shift], new_scale])
+        offset = np.concatenate([offset[:shift], new_offset])
+        cap = np.concatenate([cap[:shift], new_cap])
+        shift *= 2
+    at_over = np.minimum(scale + offset, cap)
+    envelope[over] = at_over
+    rest = np.flatnonzero(target >= 1.0)
+    previous = np.searchsorted(over, rest, side="right") - 1
+    distance = rest - over[np.maximum(previous, 0)]
+    # Beyond ~30 time constants the release has recovered to within 1e-13.
+    reach = 30.0 / max(-math.log(a), 1e-12) if a < 1.0 else float("inf")
+    near = (previous >= 0) & (distance <= reach)
+    rest, previous, distance = rest[near], previous[near], distance[near]
+    envelope[rest] = 1.0 - (1.0 - at_over[previous]) * np.power(a, distance)
+    return envelope
+
+
 def _sum_with_peak_ceiling(
     current: np.ndarray,
     addition: np.ndarray,
@@ -716,14 +760,7 @@ def _sum_with_peak_ceiling(
     # A limiter needs an immediate attack to guarantee the ceiling, followed
     # by a smooth 50 ms release instead of independent per-sample gain jumps.
     release = math.exp(-1.0 / max(1.0, sample_rate * 0.050))
-    envelope = np.empty_like(target)
-    gain = np.float32(1.0)
-    for index, requested in enumerate(target):
-        if requested < gain:
-            gain = requested
-        else:
-            gain = np.float32(release * gain + (1.0 - release) * requested)
-        envelope[index] = gain
+    envelope = _limiter_envelope(target, release).astype(np.float32)
     return combined * envelope[:, None]
 
 

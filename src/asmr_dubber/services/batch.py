@@ -209,9 +209,18 @@ class Batch:
         )
         report("开始处理队列。", 0, len(queue))
 
+        current_plan = {"id": ""}
+
+        def stage_event(stage):
+            if current_plan["id"]:
+                reference({"kind": "plan_stage", "plan_id": current_plan["id"], "stage": stage})
+
         def reference_event(payload):
             kind = payload.get("kind")
+            if kind == "plan_started":
+                current_plan["id"] = payload["plan_id"]
             if kind == "plan_finished":
+                current_plan["id"] = ""
                 with self.lock:
                     self.finished.add(payload["plan_id"])
                     outcomes[payload["plan_id"]] = payload
@@ -232,12 +241,16 @@ class Batch:
                 return len(value)
 
         self_batch = self
+        from ..autoflow import project_cli
+
+        project_cli.STAGE_LISTENER = stage_event
         try:
             with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
                 result, outputs = batch_queue.run_queue(
                     queue, cancel_event=token, reference_event_callback=reference_event
                 )
         finally:
+            project_cli.STAGE_LISTENER = None
             with self.lock:
                 self.running = False
         report("队列处理完成。", len(queue), len(queue))
