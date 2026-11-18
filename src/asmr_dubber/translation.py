@@ -472,6 +472,8 @@ def _json_lines(
     items = []
     for sentence in sentences:
         item: dict[str, object] = {"id": sentence.id, "source": sentence.source_text}
+        if sentence.speaker_id:
+            item["speaker"] = sentence.speaker_id
         if budgets and sentence.id in budgets:
             item[budget_key] = budgets[sentence.id]
         if field == "both" and sentence.zh_text:
@@ -481,11 +483,18 @@ def _json_lines(
 
 
 def _translation_memory(sentences: Iterable[Sentence]) -> str:
-    items = [
-        {"id": sentence.id, "source": sentence.source_text, "zh": sentence.zh_text}
-        for sentence in sentences
-        if sentence.zh_text
-    ]
+    items = []
+    for sentence in sentences:
+        if not sentence.zh_text:
+            continue
+        entry: dict[str, object] = {
+            "id": sentence.id,
+            "source": sentence.source_text,
+            "zh": sentence.zh_text,
+        }
+        if sentence.speaker_id:
+            entry["speaker"] = sentence.speaker_id
+        items.append(entry)
     return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 

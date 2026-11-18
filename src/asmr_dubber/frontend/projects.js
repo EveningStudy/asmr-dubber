@@ -118,7 +118,7 @@ function renderRows() {
   $('#rows').innerHTML = page
     .map(
       (sentence) =>
-        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
+        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}${sentence.speaker_id ? ` <span class="badge">${esc(sentence.speaker_id)}</span>` : ''}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
     )
     .join('');
   renderControls(sentences.length);
@@ -129,23 +129,16 @@ function renderControls(count = filteredSentences().length) {
   $('#sentenceControls').innerHTML =
     `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${count > 50 ? `<button class="btn" id="prevRows"${rowPage <= 0 ? ' disabled' : ''}>‹</button> ${rowPage + 1} / ${pages} <button class="btn" id="nextRows"${rowPage >= pages - 1 ? ' disabled' : ''}>›</button>` : ''}</span></div>${
       sentence
-        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${sentence.speaker_id ? field('说话人（仅当前分块）', `<span>${esc(sentence.speaker_id)}</span>`) : ''}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
+        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${field('说话人', `<input type="text" data-detail="speaker_id" value="${esc(sentence.speaker_id || '')}" placeholder="S01">`)}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
         : ''
     }`;
   syncProjectControls();
 }
 function saveRows(only = null) {
   const rows = state.project.sentences.map((s) => [
-    s.id,
-    s.enabled,
-    s.start_seconds,
-    s.end_seconds,
-    s.source_text,
-    s.zh_text,
+    s.id, s.enabled, s.start_seconds, s.end_seconds, s.source_text, s.zh_text,
     s.original_audio_enabled === null ? 'default' : s.original_audio_enabled ? 'on' : 'off',
-    s.original_audio_gain_db,
-    s.chinese_audio_enabled,
-    s.chinese_audio_gain_db,
+    s.original_audio_gain_db, s.chinese_audio_enabled, s.chinese_audio_gain_db, s.speaker_id || '',
   ]);
   $('#saveState').textContent = t('正在保存…');
   return enqueueSave(async () => {
@@ -426,10 +419,12 @@ export function initializeProjects() {
           ? node.checked
           : key === 'original_audio_enabled'
             ? { default: null, on: true, off: false }[node.value]
-            : Number(node.value);
+            : key === 'speaker_id'
+              ? node.value.trim() || null
+              : Number(node.value);
       await saveRows(sentence.id);
-      if (key === 'enabled') {
-        state.project = await api('projects/get', {project: state.project.manifest});
+      if (key === 'enabled' || key === 'speaker_id') {
+        state.project = await api('projects/get', { project: state.project.manifest });
         renderProject();
       }
     }),

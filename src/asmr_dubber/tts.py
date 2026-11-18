@@ -20,7 +20,9 @@ from .voice_reference import (
     effective_index_emotion_weight,
     effective_project_reference_sentence,
     fallback_reference_sentence,
+    project_has_multiple_speakers,
     reference_plan_hash,
+    speaker_reference_sentence,
 )
 from .voice_reference import (
     shared_reference_sentence as _shared_reference_sentence,
@@ -250,7 +252,21 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         settings.tts_reference_source == "external"
         or settings.tts_clone_mode in _STABLE_CLONE_MODES
     ):
-        payload["reference_plan"] = shared_reference_plan_hash(project)
+        if (
+            settings.tts_reference_source != "external"
+            and sentence.speaker_id
+            and project_has_multiple_speakers(project)
+        ):
+            spk_ref, _ = speaker_reference_sentence(project, sentence)
+            payload["reference_plan"] = {
+                "speaker": sentence.speaker_id,
+                "sentence_id": spk_ref.id,
+                "start": spk_ref.start_seconds,
+                "end": spk_ref.end_seconds,
+                "padding": settings.reference_padding_seconds,
+            }
+        else:
+            payload["reference_plan"] = shared_reference_plan_hash(project)
         payload["seed"] = settings.random_seed
     else:
         payload["reference_plan"] = {

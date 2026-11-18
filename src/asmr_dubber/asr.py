@@ -1051,7 +1051,8 @@ def _transcribe_moss(
 
     if not moss.runtime_python().is_file():
         raise AsmrDubberError("请先在模型页安装 MOSS-Transcribe-Diarize。")
-    if settings.asr_model != moss.MODEL_ID:
+    valid_moss_models = {moss.MODEL_ID, str(moss.model_directory()), ""}
+    if settings.asr_model not in valid_moss_models:
         raise AsmrDubberError("MOSS 只支持经过校验的内置固定快照。")
     if not moss.complete_model(verify=True):
         raise AsmrDubberError("MOSS 模型缺失或校验失败；请在模型页重新下载。")

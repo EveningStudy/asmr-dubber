@@ -269,6 +269,8 @@ class ProjectSettings(BaseModel):
     asr_asmr_vad_speech_pad_ms: int = Field(default=200, ge=0, le=5_000)
     aligner_model: str = DEFAULT_ALIGNER_MODEL
     asr_forced_alignment_enabled: bool = False
+    asr_diarize_speakers: bool = False
+    asr_speaker_count: int = Field(default=0, ge=0, le=12)
     asr_condition_on_previous_text: bool = True
     asr_initial_prompt: str = ""
     asr_timeout_seconds: float = Field(default=600.0, ge=10.0, le=7200.0)
@@ -551,6 +553,23 @@ class ProjectSettings(BaseModel):
             if "asr_backend" in value and value.get("asr_backend") not in supported_asr:
                 value["asr_backend"] = FALLBACK_ASR_BACKEND
                 value["asr_model"] = FALLBACK_ASR_MODEL
+            if value.get("asr_backend") == "moss_transcribe_diarize":
+                from . import moss
+
+                cur_asr_model = str(value.get("asr_model") or "").strip()
+                other_defaults = {
+                    RECOMMENDED_ASR_MODEL,
+                    FALLBACK_ASR_MODEL,
+                    "Qwen/Qwen3-ASR-1.7B",
+                    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",
+                    "kotoba-tech/kotoba-whisper-v2.2",
+                    "large-v2",
+                    "large-v3",
+                    "large-v3-turbo",
+                    "",
+                }
+                if cur_asr_model in other_defaults:
+                    value["asr_model"] = moss.MODEL_ID
             if "tts_backend" in value and value.get("tts_backend") not in supported_tts:
                 value["tts_backend"] = RECOMMENDED_TTS_BACKEND
                 value["tts_model"] = RECOMMENDED_TTS_MODEL

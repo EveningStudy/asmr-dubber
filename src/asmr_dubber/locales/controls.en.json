@@ -524,5 +524,9 @@
   "耳语句自动切换气声参考锚点": "Switch to a whispered voice anchor on whispered lines",
   "项目耳语参考句 ID": "Project whisper reference line ID",
   "替换窗口内高人声频段残差抑制强度": "Vocal-band residual suppression strength inside replaced windows",
-  "混音后用识别模型检查残留原声": "Scan replaced windows for leftover source speech"
+  "混音后用识别模型检查残留原声": "Scan replaced windows for leftover source speech",
+  "自动区分说话人": "Automatically separate speakers",
+  "说话人数量（0 为自动）": "Speaker count (0 = auto)",
+  "说话人": "Speaker",
+  "{sentence_id} 说话人编号过长。": "Speaker ID for {sentence_id} is too long."
 }

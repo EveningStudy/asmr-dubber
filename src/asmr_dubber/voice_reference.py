@@ -264,11 +264,69 @@ def annotate_sentence_voice_modes(project: DubProject, source: Path) -> None:
         pass
 
 
+def project_has_multiple_speakers(project: DubProject) -> bool:
+    """Return True when enabled sentences span two or more distinct speaker IDs."""
+    speakers = {
+        s.speaker_id.strip()
+        for s in project.sentences
+        if s.enabled and s.speaker_id and s.speaker_id.strip()
+    }
+    return len(speakers) >= 2
+
+
+def speaker_reference_sentence(
+    project: DubProject,
+    sentence: Sentence,
+) -> tuple[Sentence, bool]:
+    """Select the clearest modal or whisper voice anchor for ``sentence.speaker_id``."""
+    target_spk = (sentence.speaker_id or "").strip()
+    same_speaker = [
+        s
+        for s in project.sentences
+        if s.enabled
+        and (s.speaker_id or "").strip() == target_spk
+        and (s.source_text.strip() or s.zh_text.strip())
+    ]
+    if not same_speaker:
+        return shared_reference_sentence(project), False
+
+    if project.settings.tts_dual_voice_anchor and sentence.voice_mode == "whisper":
+        whispers = [
+            s
+            for s in same_speaker
+            if s.voice_mode == "whisper" and 1.2 <= (s.end_seconds - s.start_seconds) <= 20.0
+        ]
+        if whispers:
+            best_w = max(
+                whispers,
+                key=lambda s: (
+                    _duration_score(s.end_seconds - s.start_seconds),
+                    len(_REFERENCE_TEXT.findall(s.source_text or s.zh_text)),
+                    -s.start_seconds,
+                ),
+            )
+            return best_w, True
+
+    modals = [s for s in same_speaker if s.voice_mode != "whisper"] or same_speaker
+    best_m = max(
+        modals,
+        key=lambda s: (
+            _duration_score(s.end_seconds - s.start_seconds),
+            s.end_seconds - s.start_seconds,
+            len(_REFERENCE_TEXT.findall(s.source_text or s.zh_text)),
+            -s.start_seconds,
+        ),
+    )
+    return best_m, False
+
+
 def effective_project_reference_sentence(
     project: DubProject,
     sentence: Sentence,
 ) -> tuple[Sentence, bool]:
     """Return ``(anchor_sentence, is_whisper_anchor)`` for IndexTTS speaker prompt."""
+    if sentence.speaker_id and project_has_multiple_speakers(project):
+        return speaker_reference_sentence(project, sentence)
     if (
         project.settings.tts_dual_voice_anchor
         and sentence.voice_mode == "whisper"
@@ -396,12 +454,23 @@ def prepare_voice_reference(
         )
 
     stable = project.settings.tts_clone_mode in STABLE_CLONE_MODES
-    reference_sentence = shared_reference_sentence(project) if stable else sentence
-    if stable:
+    if stable and sentence.speaker_id and project_has_multiple_speakers(project):
+        reference_sentence, _ = speaker_reference_sentence(project, sentence)
+        safe_spk = re.sub(r"[^A-Za-z0-9_-]+", "_", sentence.speaker_id.strip()) or "S01"
+        prefix = f"speaker_{safe_spk}"
+        payload = (
+            f"{project.source.sha256}|{reference_sentence.id}|{reference_sentence.start_seconds:.6f}|"
+            f"{reference_sentence.end_seconds:.6f}|{reference_sentence.source_text}|"
+            f"{project.settings.reference_padding_seconds:.6f}"
+        )
+        identity = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    elif stable:
+        reference_sentence = shared_reference_sentence(project)
         project.settings.tts_reference_sentence_id = reference_sentence.id
         prefix = "voice_anchor"
         identity = reference_plan_hash(project)
     else:
+        reference_sentence = sentence
         prefix = sentence.id
         payload = (
             f"{project.source.sha256}|{sentence.id}|{sentence.start_seconds:.6f}|"

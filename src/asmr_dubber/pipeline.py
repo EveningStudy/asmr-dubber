@@ -696,6 +696,7 @@ def _analyze_project_impl(
     bounded_sentences.sort(
         key=lambda sentence: (sentence.start_seconds, sentence.end_seconds, sentence.id)
     )
+    from .diarization import diarize_sentences
     from .dub_qc import detect_uncovered_vocal_sounds, snap_sentences_to_silence
     from .voice_reference import annotate_sentence_voice_modes
 
@@ -704,8 +705,17 @@ def _analyze_project_impl(
         bounded_sentences = detect_uncovered_vocal_sounds(bounded_sentences, vocals)
     for index, sentence in enumerate(bounded_sentences, start=1):
         sentence.id = f"s{index:06d}"
+    diarize_audio = vocals if vocals is not None else source
+    if project.settings.asr_diarize_speakers or any(
+        s.speaker_id and s.speaker_id.startswith("c") and ":S" in s.speaker_id
+        for s in bounded_sentences
+    ):
+        spk_count = project.settings.asr_speaker_count or None
+        bounded_sentences = diarize_sentences(
+            bounded_sentences, diarize_audio, num_speakers=spk_count
+        )
     project.sentences = bounded_sentences
-    annotate_sentence_voice_modes(project, vocals if vocals is not None else source)
+    annotate_sentence_voice_modes(project, diarize_audio)
     project.translation_language = project.settings.tts_target_language
     project.asr_language = language
     project.asr_settings_dirty = False

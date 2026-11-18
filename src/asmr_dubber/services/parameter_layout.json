@@ -47,6 +47,8 @@
   "asr_asmr_vad_speech_pad_ms": {"label": "ASMR VAD 边界保留", "unit": "毫秒", "panel": "asr", "group": "ASMR 语音检测", "basic": false, "visible_when": {"asr_vad_mode": ["asmr"]}},
   "aligner_model": {"label": "时间对齐模型", "panel": "asr", "group": "识别参数", "basic": false, "visible_when": {}},
   "asr_forced_alignment_enabled": {"label": "Qwen3 时间对齐", "panel": "asr", "group": "识别参数", "basic": false, "visible_when": {}},
+  "asr_diarize_speakers": {"label": "自动区分说话人", "panel": "asr", "group": "识别参数", "basic": true, "visible_when": {}},
+  "asr_speaker_count": {"label": "说话人数量（0 为自动）", "panel": "asr", "group": "识别参数", "basic": false, "visible_when": {"asr_diarize_speakers": [true]}},
   "asr_condition_on_previous_text": {"label": "参考前面的文字", "panel": "asr", "group": "Whisper 参数", "basic": false, "visible_when": {"asr_backend": ["faster_whisper"]}},
   "asr_initial_prompt": {"label": "提示词", "panel": "asr", "group": "Whisper 参数", "basic": false, "visible_when": {"asr_backend": ["faster_whisper"]}},
   "asr_timeout_seconds": {"label": "Parakeet 连续无响应超时", "unit": "秒", "panel": "asr", "group": "识别参数", "basic": false, "visible_when": {"asr_backend": ["parakeet_nemo"]}},

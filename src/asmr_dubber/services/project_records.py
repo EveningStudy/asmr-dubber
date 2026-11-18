@@ -118,7 +118,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
     parsed: list[Sentence] = []
     seen: set[str] = set()
     for index, row in enumerate(rows, start=1):
-        if len(row) not in {6, len(TABLE_HEADERS)}:
+        if len(row) not in {6, len(TABLE_HEADERS), len(TABLE_HEADERS) + 1}:
             raise ProjectError(f"第 {index} 行列数错误，应为 {len(TABLE_HEADERS)} 列。")
         sentence_id = _text(row[0], f"第 {index} 行句子 ID", required=True)
         source_text = _text(row[4], f"{sentence_id} 源文")
@@ -144,7 +144,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
             "source_text": source_text,
             "zh_text": zh_text,
         }
-        if len(row) == len(TABLE_HEADERS):
+        if len(row) >= len(TABLE_HEADERS):
             source_switch = str(row[6] or "default").strip().lower()
             if source_switch not in {"default", "on", "off"}:
                 raise ProjectError(f"{sentence_id} 原声开关必须为 default/on/off。")
@@ -158,6 +158,11 @@ def apply_table(project: DubProject, table: Any) -> bool:
                 chinese_audio_enabled=_boolean(row[8], f"{sentence_id} 中文播放"),
                 chinese_audio_gain_db=chinese_gain,
             )
+        if len(row) == len(TABLE_HEADERS) + 1:
+            spk = str(row[10] or "").strip()
+            if len(spk) > 32:
+                raise ProjectError(f"{sentence_id} 说话人编号过长。")
+            payload["speaker_id"] = spk or None
         if old is None:
             parsed.append(Sentence(**payload))
             continue
@@ -166,17 +171,19 @@ def apply_table(project: DubProject, table: Any) -> bool:
             for field, value in payload.items()
             if field in {"start_seconds", "end_seconds", "source_text", "zh_text"}
         )
+        speaker_changed = "speaker_id" in payload and old.speaker_id != payload["speaker_id"]
         updated = old.model_copy(update=payload)
         if not old.enabled and updated.enabled and not updated.zh_text:
             updated.status = "pending"
             updated.error = None
-        if material_changed:
-            updated.review_locked = True
+        if material_changed or speaker_changed:
+            if material_changed:
+                updated.review_locked = True
+                updated.translation_warning = None
             updated.tts_file = None
             updated.tts_cache_key = None
             updated.tts_warning = None
             updated.tts_candidates = []
-            updated.translation_warning = None
             updated.tts_duration_seconds = None
             updated.reference_file = None
             updated.status = "translated" if updated.zh_text else "pending"
