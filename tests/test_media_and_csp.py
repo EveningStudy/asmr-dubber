@@ -188,7 +188,7 @@ def test_frontend_save_recovery_compare_stale_and_busy_pagination_contracts():
     ):
         assert selector in projects_js, selector
     assert "filteredSentences()" in projects_js
-    assert "if (rowPage < 0 || rowPage > maxPage) rowPage = 0;" in projects_js
+    assert "renderVirtualRows(sentences, selected)" in projects_js
 
     node = shutil.which("node")
     if not node:

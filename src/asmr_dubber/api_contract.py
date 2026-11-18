@@ -28,7 +28,17 @@ class TableRequest(ProjectRequest):
 
 class SentenceRequest(ProjectRequest):
     revision: int = Field(ge=0)
-    row: list[Any] = Field(min_length=10, max_length=10)
+    row: list[Any] = Field(min_length=10, max_length=11)
+
+
+class WaveformRequest(ProjectRequest):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    bins: int = Field(default=160, ge=16, le=512)
+
+
+class TaskPollRequest(Request):
+    since: int = Field(default=0, ge=0)
 
 
 class SettingsRequest(Request):

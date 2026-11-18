@@ -56,15 +56,18 @@ function refreshTaskViews() {
   renderModels();
   syncProjectControls();
 }
-let polling = false, pollingError = '';
+let polling = false, pollingError = '', taskPollVersion = 0, appStopped = false;
 async function pollTasks() {
-  if (polling || !state.boot) return;
+  if (polling || !state.boot || appStopped) return;
   polling = true;
   let listed = false;
   try {
-    state.tasks = await api('tasks/list');
-    listed = true;
+    const polled = await api('tasks/poll', { since: taskPollVersion });
     pollingError = '';
+    if (!polled.changed) return;
+    taskPollVersion = polled.version;
+    state.tasks = polled.tasks;
+    listed = true;
     for (const task of state.tasks) {
       const key = task.id + task.updated_at;
       if (['queued', 'running', 'cancelling'].includes(task.status) || state.seenTasks.has(key))
@@ -143,13 +146,22 @@ document.addEventListener(
     const cancel = event.target.closest('[data-cancel]');
     if (cancel) {
       await api('tasks/cancel', { identifier: cancel.dataset.cancel });
+      taskPollVersion = 0;
       await pollTasks();
       return;
     }
     const resume = event.target.closest('[data-resume]');
     if (resume) {
       await api('tasks/resume', { identifier: resume.dataset.resume });
+      taskPollVersion = 0;
       await pollTasks();
+      return;
+    }
+    if (event.target.id === 'quitApp') {
+      await flushSaves({ ignoreError: true });
+      const res = await api('app/shutdown');
+      appStopped = true;
+      notice(res.message || t('程序已安全退出，可以关闭此标签页。'), false, { sticky: true });
       return;
     }
     if (event.target.closest('[data-close]') || event.target.classList.contains('mask'))

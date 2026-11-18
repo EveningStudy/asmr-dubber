@@ -170,3 +170,43 @@ export async function referenceDialog(manifest = state.project.manifest, batch =
     $('#referenceLanguage').value = project.settings.tts_external_reference_language;
   } else await preview();
 }
+export async function reviewDialog() {
+  const overview = await api('review/get', { project: state.project.manifest });
+  dialog(
+    '音频复核提案：试听、采纳与撤销',
+    `<p>${esc(overview.status)}</p><div class="card group">${field('复核音频片段', `<select id="reviewWindow">${options(overview.choices, overview.choices[0]?.[1])}</select>`)}${field('候选文字', '<select id="reviewCandidate"></select>')}</div><div id="reviewDiff"></div><audio controls id="reviewAudio" style="width:100%"></audio><div class="review-actions">${[
+      ['accept_review', '采纳所选候选'],
+      ['keep_review', '保留并确认主稿'],
+      ['undo_review', '撤销上一次采纳或确认'],
+      ['unlock_review', '解除人工确认锁定（允许重新识别）'],
+      ['retry_review', '只重试音频复核（不重跑完整主 ASR）'],
+      ['align_review', '文字确认后：仅重新对齐时间（Qwen3）'],
+    ]
+      .map(([kind, label]) => `<button class="btn" data-review-task="${kind}">${t(label)}</button>`)
+      .join('')}</div>`,
+    '',
+    null,
+  );
+  async function details() {
+    if (!$('#reviewWindow').value) return;
+    const result = await api('review/get', {
+      project: state.project.manifest,
+      window: $('#reviewWindow').value,
+      candidate: $('#reviewCandidate').value,
+    });
+    const choice = $('#reviewCandidate').value;
+    $('#reviewCandidate').innerHTML = options(result.candidates, choice);
+    $('#reviewDiff').innerHTML = result.diff;
+    $('#reviewAudio').src = result.audio;
+  }
+  $('#reviewWindow').onchange = guard(async () => {
+    $('#reviewCandidate').innerHTML = '';
+    await details();
+  });
+  $('#reviewCandidate').onchange = guard(details);
+  $('#reviewDiff').insertAdjacentHTML(
+    'beforebegin',
+    `<p class="stat">${t('实验性，效果可能不如单模型')} · ${t('普通单模型识别不需要使用')}</p>`,
+  );
+  await details();
+}

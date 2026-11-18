@@ -47,6 +47,9 @@ from .audio_dsp import (
     dominant_channel_mono as dominant_channel_mono,
 )
 from .audio_dsp import (
+    extract_waveform_peaks as extract_waveform_peaks,
+)
+from .audio_dsp import (
     prepare_chinese_clip as prepare_chinese_clip,
 )
 from .audio_dsp import (
@@ -229,24 +232,43 @@ def copy_source_verbatim(
         if sha256_file(destination) != source_hash:
             raise ProjectError(f"项目中已存在不同的源文件：{destination}")
     else:
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        require_disk_space(destination.parent, original.stat().st_size)
-        digest = hashlib.sha256()
-        copied = 0
         total = original.stat().st_size
+        linked = False
         try:
-            with original.open("rb") as source_handle, temporary.open("xb") as target_handle:
+            os.link(original, destination)
+            linked = True
+        except OSError:
+            linked = False
+        if linked:
+            digest = hashlib.sha256()
+            copied = 0
+            with destination.open("rb") as source_handle:
                 while block := source_handle.read(_COPY_BUFFER_SIZE):
-                    target_handle.write(block)
                     digest.update(block)
                     copied += len(block)
                     if progress:
                         progress("建立项目：保存源文件", copied, total)
-            shutil.copystat(original, temporary)
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-        source_hash = digest.hexdigest()
+            if total == 0 and progress:
+                progress("建立项目：保存源文件", 0, 0)
+            source_hash = digest.hexdigest()
+        else:
+            temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+            require_disk_space(destination.parent, total)
+            digest = hashlib.sha256()
+            copied = 0
+            try:
+                with original.open("rb") as source_handle, temporary.open("xb") as target_handle:
+                    while block := source_handle.read(_COPY_BUFFER_SIZE):
+                        target_handle.write(block)
+                        digest.update(block)
+                        copied += len(block)
+                        if progress:
+                            progress("建立项目：保存源文件", copied, total)
+                shutil.copystat(original, temporary)
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+            source_hash = digest.hexdigest()
     _cache_source_digest(destination.resolve(), source_hash)
     info = probe_audio(destination, sha256=source_hash)
     info.path = destination.name

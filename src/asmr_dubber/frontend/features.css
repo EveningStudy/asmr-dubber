@@ -71,3 +71,59 @@
 .dub-take.on .dub-take-meta { color: var(--text); font-weight: 600; }
 .dub-take-warn { color: var(--orange); font-size: 11px; }
 .dub-take-active { color: var(--green); font-size: 11px; font-weight: 500; }
+
+/* ---------- 3.0 句子编辑器：虚拟滚动、波形拖动、独立试听与桌面增强 ---------- */
+[lang="ja"] {
+  font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+.vs-spacer td { padding: 0 !important; border: 0 !important; pointer-events: none; }
+.sheetwrap, .transport { min-width: 0; }
+.transport { flex-wrap: wrap; }
+td.time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.src-play { margin-right: 5px; vertical-align: middle; }
+.waveform-wrap {
+  position: relative;
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+}
+#sentenceWaveform {
+  display: block;
+  width: 100%;
+  height: 56px;
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  touch-action: none;
+}
+.waveform-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.kbd-hint { font-size: 11.5px; color: var(--text-2); margin-left: auto; }
+.error-code-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(215, 0, 21, .12);
+  color: var(--red);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+.error-hint { font-size: 12px; color: var(--text-2); margin: 2px 0 4px; }
+.quit-btn { width: 100%; margin-top: 8px; text-align: center; color: var(--text-2); }
+@media (max-width: 760px) {
+  .sidebar .quit-btn { width: auto; margin-top: 4px; }
+  .kbd-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

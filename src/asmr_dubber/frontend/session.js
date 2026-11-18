@@ -68,6 +68,10 @@ export function localize(root = document) {
     node.textContent = t(node.dataset.i18nSource);
   });
   $$('[data-placeholder]', root).forEach((node) => (node.placeholder = t(node.dataset.placeholder)));
+  $$('[aria-label]', root).forEach((node) => {
+    node.dataset.ariaSource ||= node.getAttribute('aria-label');
+    node.setAttribute('aria-label', t(node.dataset.ariaSource));
+  });
   document.documentElement.lang = state.language === 'en' ? 'en' : 'zh-CN';
   $$('[data-language]').forEach((button) =>
     button.classList.toggle('on', button.dataset.language === state.language),
@@ -209,7 +213,13 @@ export async function chooseFile(accept = '') {
 export function taskHTML(task) {
   const active = ['queued', 'running', 'cancelling'].includes(task.status);
   const ratio = task.total > 0 ? Math.min(100, (task.current / task.total) * 100) : 0;
-  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}</div><div class="d">${esc(t(task.error || task.message))}</div><div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${esc(task.id)}">${t('暂停')}</button>` : ['cancelled', 'failed', 'interrupted'].includes(task.status) ? `<button class="btn" data-resume="${esc(task.id)}">${t('继续')}</button>` : ''}</div><details id="task-log-${esc(task.id)}"${document.getElementById(`task-log-${task.id}`)?.open ? ' open' : ''}><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
+  const codeBadge = task.error_code && task.status === 'failed'
+    ? ` <span class="error-code-badge">${esc(task.error_code)}</span>`
+    : '';
+  const hintLine = task.error_hint && task.status === 'failed'
+    ? `<div class="error-hint">${esc(t(task.error_hint))}</div>`
+    : '';
+  return `<div class="card taskbox"><div class="row"><div class="grow"><div class="t">${esc(t(task.kind))} · ${esc(t(task.status))}${codeBadge}</div><div class="d">${esc(t(task.error || task.message))}</div>${hintLine}<div class="bar"><i style="width:${ratio}%"></i></div></div>${active ? `<button class="btn" data-cancel="${esc(task.id)}">${t('暂停')}</button>` : ['cancelled', 'failed', 'interrupted'].includes(task.status) ? `<button class="btn" data-resume="${esc(task.id)}">${t('继续')}</button>` : ''}</div><details id="task-log-${esc(task.id)}"${document.getElementById(`task-log-${task.id}`)?.open ? ' open' : ''}><summary>${t('日志')}</summary><pre class="log">${esc(task.logs.join('\n'))}</pre></details></div>`;
 }
 export async function startTask(kind, extra = {}, project = true) {
   await flushSaves();

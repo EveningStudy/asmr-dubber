@@ -1,23 +1,39 @@
 import { renderTranslationPanels, initializeRecovery, initializeTranslateAll } from './project_translation.js';
 import {
-  $, $$, state, api, esc, t, time, options, field, dialog, chooseFile,
+  $, $$, state, api, esc, t, time, options, field, dialog,
   upload, enqueueSave, flushSaves, startTask, guard, notice, projectBusy,
 } from './session.js';
 import { renderForms } from './forms.js';
 import { matchesRowFilter } from './project_revise.js';
-import { transcriptDialog, referenceDialog } from './project_dialogs.js';
-import { dubCell, originalCell, flagsCell, initializeReview } from './project_review.js';
+import { transcriptDialog, referenceDialog, reviewDialog } from './project_dialogs.js';
+import { initializeReview } from './project_review.js';
 import { initializeCompare, renderCompare } from './compare_player.js';
+import {
+  resetEditorHistory,
+  recordFieldUndo,
+  recordListUndo,
+  syncUndoButtons,
+  undoEdit,
+  redoEdit,
+  playSourceSlice,
+  playDubClip,
+  checkSourceSliceStop,
+  clearSourceSliceStop,
+  renderVirtualRows,
+  scrollToSentenceIndex,
+  renderSentenceControls,
+  initializeSentenceEditor,
+} from './sentence_editor.js';
 
 const BUSY_CONTROLS = [
   '[data-task],#translateAll,#exportProject,#reviseTranslations,#restoreBackup,#restoreTranslations',
   '#compressTooLong,#disableFailed,#importTranscript,#changeReference,#addSentence,#deleteSentence',
-  '#sentenceReference,#sentenceControls [data-detail],#rows input[type="checkbox"],#rows select',
+  '#undoSentence,#redoSentence,#sentenceReference,#sentenceControls [data-detail],#rows input[type="checkbox"],#rows select',
   '#rows [data-candidates],#rows [data-take],#rows [data-regenerate],#rows [data-retranslate]',
   '#rows [data-compress],#rows [data-keep-original],#revisionProposals [data-proposal],#revisionProposals [data-proposal-all]',
 ].join(',');
 const filteredSentences = () => (state.project ? state.project.sentences.filter(matchesRowFilter) : []);
-let selected = '', rowPage = 0, importAfterCreate = null, pendingSource = null;
+let selected = '', importAfterCreate = null, pendingSource = null;
 
 export function syncProjectControls() {
   if (!state.project) return;
@@ -27,6 +43,7 @@ export function syncProjectControls() {
     cell.setAttribute('contenteditable', String(!busy));
     cell.contentEditable = String(!busy);
   });
+  syncUndoButtons();
 }
 export async function refreshHome() {
   const projects = await api('projects/list');
@@ -44,9 +61,11 @@ export async function refreshHome() {
 export async function openProject(manifest) {
   await flushSaves({ ignoreError: true });
   state.project = await api('projects/get', { project: manifest });
+  resetEditorHistory();
   $('#saveState').textContent = t('修改会自动保存');
   state.filter = 'all';
-  rowPage = 0;
+  const box = $('.tablebox');
+  if (box) box.scrollTop = 0;
   selected = state.project.sentences[0]?.id || '';
   $('#sourcePlayer').src = state.project.source_url;
   $('#seek').max = state.project.source.duration_seconds;
@@ -57,7 +76,8 @@ export function renderProject() {
   if (!state.project) return;
   const project = state.project,
     enabled = project.sentences.filter((sentence) => sentence.enabled);
-  const translated = enabled.filter((sentence) => sentence.zh_text).length,
+  const hasTr = (s) => Boolean(s.zh_text ?? s.target_text);
+  const translated = enabled.filter(hasTr).length,
     voiced = enabled.filter((sentence) => sentence.tts_file).length;
   $('#projectName').textContent = project.title;
   $('#projectMeta').textContent =
@@ -72,14 +92,14 @@ export function renderProject() {
     total: enabled.length,
   });
   $('#synthesizeRemaining').textContent = t('生成剩余 {count} 句', {
-    count: enabled.filter((s) => s.zh_text && !s.tts_file).length,
+    count: enabled.filter((s) => hasTr(s) && !s.tts_file).length,
   });
   $('#dubStat').textContent = t('已完成 {done} / {total} 句。只生成还没有配音、或译文改过的句子。', {
     done: voiced,
     total: enabled.length,
   });
   $('#dubBar').style.width = `${enabled.length ? (voiced / enabled.length) * 100 : 0}%`;
-  const undubbed = enabled.filter((s) => s.zh_text && !s.tts_file).length;
+  const undubbed = enabled.filter((s) => hasTr(s) && !s.tts_file).length;
   $('#exportStat').textContent = undubbed
     ? t('还有 {count} 句没有配音，成品里这些句子只有原声。', { count: undubbed })
     : t('所有句子都已配音。');
@@ -110,33 +130,13 @@ export function renderProject() {
 }
 function renderRows() {
   if (!state.project) return;
-  const sentences = filteredSentences(),
-    busy = projectBusy();
-  const maxPage = Math.max(0, Math.ceil(sentences.length / 50) - 1);
-  if (rowPage < 0 || rowPage > maxPage) rowPage = 0;
-  const page = sentences.slice(rowPage * 50, (rowPage + 1) * 50);
-  $('#rows').innerHTML = page
-    .map(
-      (sentence) =>
-        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}${sentence.speaker_id ? ` <span class="badge">${esc(sentence.speaker_id)}</span>` : ''}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
-    )
-    .join('');
-  renderControls(sentences.length);
-}
-function renderControls(count = filteredSentences().length) {
-  const sentence = state.project.sentences.find((s) => s.id === selected);
-  const pages = Math.max(1, Math.ceil(count / 50));
-  $('#sentenceControls').innerHTML =
-    `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${count > 50 ? `<button class="btn" id="prevRows"${rowPage <= 0 ? ' disabled' : ''}>‹</button> ${rowPage + 1} / ${pages} <button class="btn" id="nextRows"${rowPage >= pages - 1 ? ' disabled' : ''}>›</button>` : ''}</span></div>${
-      sentence
-        ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${field('说话人', `<input type="text" data-detail="speaker_id" value="${esc(sentence.speaker_id || '')}" placeholder="S01">`)}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
-        : ''
-    }`;
-  syncProjectControls();
+  const sentences = filteredSentences();
+  renderVirtualRows(sentences, selected);
+  renderSentenceControls(selected, sentences.length, syncProjectControls);
 }
 function saveRows(only = null) {
   const rows = state.project.sentences.map((s) => [
-    s.id, s.enabled, s.start_seconds, s.end_seconds, s.source_text, s.zh_text,
+    s.id, s.enabled, s.start_seconds, s.end_seconds, s.source_text, s.zh_text ?? s.target_text ?? '',
     s.original_audio_enabled === null ? 'default' : s.original_audio_enabled ? 'on' : 'off',
     s.original_audio_gain_db, s.chinese_audio_enabled, s.chinese_audio_gain_db, s.speaker_id || '',
   ]);
@@ -152,29 +152,21 @@ function saveRows(only = null) {
     state.project.outputs = result.outputs;
   });
 }
-async function newSource(file) {
-  notice(t('正在导入…'));
-  pendingSource = await upload(file);
+function openCreateDialog(sourcePath, displayName) {
+  pendingSource = { path: sourcePath, name: displayName };
   const defaults = state.boot.settings;
   dialog(
     '新建项目',
     `<div class="card group">${field(
       '音频里说的是',
       `<select id="newLanguage">${options(
-        [
-          ['日语', 'ja'],
-          ['英语', 'en'],
-          ['中文', 'zh'],
-        ],
+        [['日语', 'ja'], ['英语', 'en'], ['中文', 'zh']],
         defaults.default_source_language,
       )}</select>`,
     )}${field(
       '配音成',
       `<select id="newTarget">${options(
-        [
-          ['中文', 'zh'],
-          ['英文', 'en'],
-        ],
+        [['中文', 'zh'], ['英文', 'en']],
         defaults.tts_target_language,
       )}</select>`,
     )}</div><div class="more">${t('文字从哪来')}</div><div class="card group">${[
@@ -201,8 +193,13 @@ async function newSource(file) {
         false,
       );
     },
-    file.name,
+    displayName,
   );
+}
+async function newSource(file) {
+  notice(t('正在导入…'));
+  const uploaded = await upload(file);
+  openCreateDialog(uploaded.path, file.name);
 }
 export async function finishCreation(task) {
   await openProject(task.result.manifest);
@@ -212,47 +209,9 @@ export async function finishCreation(task) {
     await transcriptDialog(kind === 'zh' ? 'zh' : 'source', kind === 'script' ? 'script_review' : 'estimate');
   } else importAfterCreate = null;
 }
-export async function reviewDialog() {
-  const overview = await api('review/get', { project: state.project.manifest });
-  dialog(
-    '音频复核提案：试听、采纳与撤销',
-    `<p>${esc(overview.status)}</p><div class="card group">${field('复核音频片段', `<select id="reviewWindow">${options(overview.choices, overview.choices[0]?.[1])}</select>`)}${field('候选文字', '<select id="reviewCandidate"></select>')}</div><div id="reviewDiff"></div><audio controls id="reviewAudio" style="width:100%"></audio><div class="review-actions">${[
-      ['accept_review', '采纳所选候选'],
-      ['keep_review', '保留并确认主稿'],
-      ['undo_review', '撤销上一次采纳或确认'],
-      ['unlock_review', '解除人工确认锁定（允许重新识别）'],
-      ['retry_review', '只重试音频复核（不重跑完整主 ASR）'],
-      ['align_review', '文字确认后：仅重新对齐时间（Qwen3）'],
-    ]
-      .map(([kind, label]) => `<button class="btn" data-review-task="${kind}">${t(label)}</button>`)
-      .join('')}</div>`,
-    '',
-    null,
-  );
-  async function details() {
-    if (!$('#reviewWindow').value) return;
-    const result = await api('review/get', {
-      project: state.project.manifest,
-      window: $('#reviewWindow').value,
-      candidate: $('#reviewCandidate').value,
-    });
-    const choice = $('#reviewCandidate').value;
-    $('#reviewCandidate').innerHTML = options(result.candidates, choice);
-    $('#reviewDiff').innerHTML = result.diff;
-    $('#reviewAudio').src = result.audio;
-  }
-  $('#reviewWindow').onchange = guard(async () => {
-    $('#reviewCandidate').innerHTML = '';
-    await details();
-  });
-  $('#reviewCandidate').onchange = guard(details);
-  $('#reviewDiff').insertAdjacentHTML(
-    'beforebegin',
-    `<p class="stat">${t('实验性，效果可能不如单模型')} · ${t('普通单模型识别不需要使用')}</p>`,
-  );
-  await details();
-}
+export { reviewDialog };
 export function initializeProjects() {
+  let mode = 'both';
   window.addEventListener('project-changed', renderProject);
   $('#dropNew').onclick = () => $('#mediaFile').click();
   $('#dropNew').onkeydown = (event) => {
@@ -261,13 +220,22 @@ export function initializeProjects() {
       $('#mediaFile').click();
     }
   };
+  const pickBtn = $('#pickLocalMedia');
+  if (pickBtn) {
+    pickBtn.onclick = guard(async () => {
+      const picked = await api('files/media');
+      if (!picked.native) {
+        $('#mediaFile').click();
+        return;
+      }
+      if (picked.path) openCreateDialog(picked.path, picked.name || picked.path);
+    });
+  }
   $('#mediaFile').onchange = guard(async (event) => {
     if (event.target.files[0]) await newSource(event.target.files[0]);
     event.target.value = '';
   });
-  $('#dropNew').ondragover = (event) => {
-    event.preventDefault();
-  };
+  $('#dropNew').ondragover = (event) => { event.preventDefault(); };
   $('#dropNew').ondrop = guard(async (event) => {
     event.preventDefault();
     if (event.dataTransfer.files[0]) await newSource(event.dataTransfer.files[0]);
@@ -278,7 +246,8 @@ export function initializeProjects() {
     );
   });
   $('#search').oninput = () => {
-    rowPage = 0;
+    const box = $('.tablebox');
+    if (box) box.scrollTop = 0;
     renderRows();
   };
   $('#importTranscript').onclick = guard(() => transcriptDialog());
@@ -289,14 +258,23 @@ export function initializeProjects() {
   initializeRecovery(saveRows, renderProject, dialog);
   initializeReview({ save: saveRows, render: renderProject, getSelected: () => selected });
   initializeCompare();
+  initializeSentenceEditor({
+    filteredSentences,
+    getSelected: () => selected,
+    setSelected: (id) => { selected = id; },
+    saveRows,
+    renderProject,
+    syncBusy: syncProjectControls,
+    getListenMode: () => mode,
+  });
   window.addEventListener('locate-sentence', (event) => {
     const index = state.project?.sentences.findIndex((s) => s.id === event.detail);
     if (index === undefined || index < 0) return;
     state.filter = 'all';
     $('#search').value = '';
     $$('[data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === 'all'));
-    rowPage = Math.floor(index / 50);
     selected = event.detail;
+    scrollToSentenceIndex(index);
     renderRows();
     $(`#rows [data-sentence="${CSS.escape(event.detail)}"]`)?.scrollIntoView({ block: 'center' });
   });
@@ -307,15 +285,9 @@ export function initializeProjects() {
     'click',
     guard(async (event) => {
       const open = event.target.closest('[data-open]');
-      if (open) {
-        await openProject(open.dataset.open);
-        return;
-      }
+      if (open) { await openProject(open.dataset.open); return; }
       const task = event.target.closest('[data-task]');
-      if (task) {
-        await startTask(task.dataset.task);
-        return;
-      }
+      if (task) { await startTask(task.dataset.task); return; }
       const review = event.target.closest('[data-review-task]');
       if (review) {
         await startTask(review.dataset.reviewTask, {
@@ -328,24 +300,26 @@ export function initializeProjects() {
       const filter = event.target.closest('[data-filter]');
       if (filter) {
         state.filter = filter.dataset.filter;
-        rowPage = 0;
+        const box = $('.tablebox');
+        if (box) box.scrollTop = 0;
         $$('[data-filter]').forEach((b) => b.classList.toggle('on', b === filter));
         renderRows();
+        return;
+      }
+      const playSrc = event.target.closest('[data-play-source]');
+      if (playSrc) {
+        const sentence = state.project.sentences.find((s) => s.id === playSrc.dataset.playSource);
+        await playSourceSlice(sentence);
         return;
       }
       const play = event.target.closest('[data-play]');
       if (play) {
         const sentence = state.project.sentences.find((s) => s.id === play.dataset.play);
-        $('#dubPlayer').src = sentence.tts_url;
-        await $('#dubPlayer').play();
+        await playDubClip(sentence);
         return;
       }
-      if (event.target.id === 'prevRows' || event.target.id === 'nextRows') {
-        const maxPage = Math.max(0, Math.ceil(filteredSentences().length / 50) - 1);
-        rowPage = Math.min(maxPage, Math.max(0, rowPage + (event.target.id === 'nextRows' ? 1 : -1)));
-        renderRows();
-        return;
-      }
+      if (event.target.id === 'undoSentence') { await undoEdit(); return; }
+      if (event.target.id === 'redoSentence') { await redoEdit(); return; }
       if (event.target.id === 'sentenceReference') {
         await referenceDialog(state.project.manifest, false, selected);
         return;
@@ -353,25 +327,37 @@ export function initializeProjects() {
       if (event.target.id === 'addSentence') {
         if (projectBusy()) throw new Error(t('请等当前任务结束后再操作。'));
         await flushSaves();
+        const beforeList = state.project.sentences;
+        const beforeSel = selected;
         const last = state.project.sentences.at(-1);
         const start = last?.end_seconds || 0;
         const end = Math.min(state.project.source.duration_seconds, start + 1);
         if (end <= start)
           throw new Error(t('媒体末尾没有剩余空间；请先调整已有句子的结束时间，再添加句子。'));
         selected = `s${Date.now()}`;
-        state.project.sentences.push({
-          id: selected, start_seconds: start, end_seconds: end, source_text: '', zh_text: t('新句子'),
-          enabled: true, original_audio_enabled: null, original_audio_gain_db: 0,
-          chinese_audio_enabled: true, chinese_audio_gain_db: 0,
-        });
+        const nextList = [
+          ...beforeList,
+          {
+            id: selected, start_seconds: start, end_seconds: end, source_text: '',
+            target_text: t('新句子'), zh_text: t('新句子'),
+            enabled: true, original_audio_enabled: null, original_audio_gain_db: 0,
+            chinese_audio_enabled: true, chinese_audio_gain_db: 0,
+          },
+        ];
+        recordListUndo(beforeList, nextList, beforeSel, selected);
+        state.project.sentences = nextList;
         await saveRows();
         renderProject();
         return;
       }
       if (event.target.id === 'deleteSentence') {
         if (projectBusy()) throw new Error(t('请等当前任务结束后再操作。'));
-        state.project.sentences = state.project.sentences.filter((s) => s.id !== selected);
-        selected = state.project.sentences[0]?.id || '';
+        const beforeList = state.project.sentences;
+        const beforeSel = selected;
+        const nextList = beforeList.filter((s) => s.id !== selected);
+        selected = nextList[0]?.id || '';
+        recordListUndo(beforeList, nextList, beforeSel, selected);
+        state.project.sentences = nextList;
         await saveRows();
         renderProject();
         return;
@@ -380,9 +366,10 @@ export function initializeProjects() {
       if (row && selected !== row.dataset.sentence) {
         selected = row.dataset.sentence;
         const sentence = state.project.sentences.find((s) => s.id === selected);
+        clearSourceSliceStop();
         $('#sourcePlayer').currentTime = sentence.start_seconds;
         $$('#rows tr').forEach((r) => r.classList.toggle('sel', r === row));
-        renderControls();
+        renderSentenceControls(selected, filteredSentences().length, syncProjectControls);
       }
     }),
   );
@@ -392,11 +379,15 @@ export function initializeProjects() {
       if (projectBusy()) return;
       const key = event.target.dataset.rowField;
       if (!key || event.target.type === 'checkbox') return;
-      const sentence = state.project.sentences.find(
-        (s) => s.id === event.target.closest('tr').dataset.sentence,
-      );
-      if (sentence[key] !== event.target.textContent) {
-        sentence[key] = event.target.textContent;
+      const tr = event.target.closest('tr');
+      if (!tr) return;
+      const sentence = state.project.sentences.find((s) => s.id === tr.dataset.sentence);
+      if (!sentence) return;
+      const nextVal = event.target.textContent;
+      if (sentence[key] !== nextVal) {
+        recordFieldUndo(sentence.id, { [key]: sentence[key] }, { [key]: nextVal });
+        sentence[key] = nextVal;
+        if (key === 'zh_text') sentence.target_text = nextVal;
         sentence.tts_file = null;
         sentence.tts_url = null;
         sentence.tts_candidates = [];
@@ -414,7 +405,9 @@ export function initializeProjects() {
       const sentence = state.project.sentences.find(
         (s) => s.id === (node.dataset.detail ? selected : node.closest('tr').dataset.sentence),
       );
-      sentence[key] =
+      if (!sentence) return;
+      const prevVal = sentence[key];
+      const nextVal =
         node.type === 'checkbox'
           ? node.checked
           : key === 'original_audio_enabled'
@@ -422,8 +415,10 @@ export function initializeProjects() {
             : key === 'speaker_id'
               ? node.value.trim() || null
               : Number(node.value);
+      recordFieldUndo(sentence.id, { [key]: prevVal }, { [key]: nextVal });
+      sentence[key] = nextVal;
       await saveRows(sentence.id);
-      if (key === 'enabled' || key === 'speaker_id') {
+      if (key === 'enabled' || key === 'speaker_id' || key === 'start_seconds' || key === 'end_seconds') {
         state.project = await api('projects/get', { project: state.project.manifest });
         renderProject();
       }
@@ -431,14 +426,15 @@ export function initializeProjects() {
   );
   const source = $('#sourcePlayer'),
     dub = $('#dubPlayer');
-  let mode = 'both';
   $('#playSource').onclick = guard(async () => {
     if (!source.paused || !dub.paused) {
+      clearSourceSliceStop();
       source.pause();
       dub.pause();
       $('#playSource').textContent = '▶';
       return;
     }
+    clearSourceSliceStop();
     if (mode !== 'dub') await source.play();
     if (mode !== 'source') {
       const sentence = state.project.sentences.find((s) => s.id === selected);
@@ -454,13 +450,16 @@ export function initializeProjects() {
     $('#playSource').textContent = 'Ⅱ';
   });
   source.ontimeupdate = () => {
+    checkSourceSliceStop(source);
     $('#playerTime').textContent = `${time(source.currentTime)} / ${time(source.duration)}`;
     $('#seek').value = source.currentTime;
   };
   source.onended = () => {
+    clearSourceSliceStop();
     $('#playSource').textContent = '▶';
   };
   $('#seek').oninput = () => {
+    clearSourceSliceStop();
     source.currentTime = Number($('#seek').value);
     if (state.project.outputs.chinese_stem_file) dub.currentTime = source.currentTime;
   };
@@ -468,6 +467,7 @@ export function initializeProjects() {
     const button = event.target.closest('[data-listen]');
     if (button) {
       mode = button.dataset.listen;
+      clearSourceSliceStop();
       source.pause();
       dub.pause();
       $$('[data-listen]').forEach((b) => b.classList.toggle('on', b === button));

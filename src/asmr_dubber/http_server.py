@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import os
 import secrets
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from urllib.parse import unquote, urlsplit
@@ -183,7 +184,16 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("JSON object required")
-            self._json(self.server.api.call(path.removeprefix("/api/"), payload))
+            route = path.removeprefix("/api/")
+            if route in {"files/folder", "files/media", "app/shutdown"} and self.server.auth:
+                self._json({"error": "Local host operation forbidden"}, 403)
+                return
+            if route == "app/shutdown":
+                self.server.application.tasks.close()
+                self._json({"ok": True, "message": "程序已安全退出，可以关闭此标签页。"})
+                threading.Timer(0.15, self.server.shutdown).start()
+                return
+            self._json(self.server.api.call(route, payload))
         except ValidationError as exc:
             self._json({"error": "Invalid parameters", "detail": redact_sensitive(str(exc))}, 422)
         except (KeyError, FileNotFoundError):

@@ -20,9 +20,13 @@ class Projects:
 
     def get(self, project):
         active, directory = load_project(project)
+        return self._serialize(active, directory, project)
+
+    def _serialize(self, active, directory, project_ref=None):
         result = active.model_dump(mode="json")
+        manifest_str = str(directory / "project.json")
         result.update(
-            manifest=str(directory / "project.json"),
+            manifest=manifest_str,
             title=pipeline._PROJECT_STAMP.sub("", directory.name),
             rows=project_records.project_rows(active),
         )
@@ -75,7 +79,9 @@ class Projects:
             and not s.zh_text
             and not empty_translation_is_expected(s)
         ]
-        choices, selected, _ = project_audio.reference_picker(project, include_preview=False)
+        choices, selected, _ = project_audio.reference_picker(
+            project_ref or manifest_str, include_preview=False
+        )
         result["reference_choices"], result["reference_selected"] = choices, selected
         return result
 
@@ -110,15 +116,29 @@ class Projects:
         return self.get(project)
 
     def sentence(self, project, row, revision):
+        from ..models import save_project
+
         with browser_revision_scope(project, revision):
-            active, _ = load_project(project)
-            rows = project_records.project_rows(active)
-            matched = next((index for index, item in enumerate(rows) if item[0] == row[0]), None)
-            if matched is None:
-                raise ValueError("这个句子已不存在。")
-            rows[matched] = row
-            project_operations.save_table(project, rows)
-        return self.get(project)
+            active, directory = load_project(project)
+            changed = project_records.apply_single_row(active, row)
+            save_project(active, directory)
+            if changed:
+                pipeline.export_transcript(active, directory)
+        return self._serialize(active, directory, project)
+
+    def waveform(self, project, start, end, bins=160):
+        from ..audio import extract_waveform_peaks
+
+        active, directory = load_project(project)
+        source_file = verify_source(directory, active.source)
+        t0 = max(0.0, float(start))
+        t1 = min(active.source.duration_seconds, max(t0 + 0.05, float(end)))
+        return {
+            "start": t0,
+            "end": t1,
+            "duration": active.source.duration_seconds,
+            "peaks": extract_waveform_peaks(source_file, t0, t1, bins=bins),
+        }
 
     def proposals(self, project, accept, reject, revision):
         """Accept or reject pending translation proposals and save the result."""

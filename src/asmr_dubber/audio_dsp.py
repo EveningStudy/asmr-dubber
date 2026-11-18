@@ -374,3 +374,68 @@ class _VoiceMatcher:
 
     def close(self) -> None:
         self.handle.close()
+
+
+def extract_waveform_peaks(
+    audio_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    bins: int = 160,
+) -> list[float]:
+    """Read bounded waveform amplitude peaks for ``[start_seconds, end_seconds]``."""
+    import subprocess
+
+    from .environment import ffmpeg_executable
+
+    n_bins = max(16, min(512, int(bins)))
+    t0 = max(0.0, float(start_seconds))
+    t1 = max(t0 + 0.05, float(end_seconds))
+    samples: np.ndarray | None = None
+    try:
+        with sf.SoundFile(audio_path) as handle:
+            rate = handle.samplerate
+            first = min(handle.frames, round(t0 * rate))
+            count = max(1, min(handle.frames - first, round((t1 - t0) * rate)))
+            if count > 0:
+                handle.seek(first)
+                block = handle.read(count, dtype="float32", always_2d=True)
+                samples = np.max(np.abs(block), axis=1) if block.size else np.zeros(0, np.float32)
+    except (OSError, RuntimeError):
+        samples = None
+    if samples is None:
+        proc = subprocess.run(
+            [
+                ffmpeg_executable(),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                f"{t0:.3f}",
+                "-t",
+                f"{t1 - t0:.3f}",
+                "-i",
+                str(audio_path),
+                "-ac",
+                "1",
+                "-ar",
+                "8000",
+                "-f",
+                "f32le",
+                "-",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        raw = np.frombuffer(proc.stdout, dtype=np.float32) if proc.returncode == 0 else np.zeros(0)
+        samples = np.abs(raw.astype(np.float32, copy=False))
+    if samples.size == 0:
+        return [0.0] * n_bins
+    edges = np.linspace(0, samples.size, n_bins + 1, dtype=int)
+    peaks = [
+        float(np.max(samples[edges[i] : max(edges[i] + 1, edges[i + 1])]))
+        if edges[i] < samples.size
+        else 0.0
+        for i in range(n_bins)
+    ]
+    ceiling = max(max(peaks), 1e-4)
+    return [round(min(1.0, val / ceiling), 4) for val in peaks]

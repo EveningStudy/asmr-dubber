@@ -24,6 +24,7 @@ class Tasks:
         self.path = path or portable_home() / "runtime" / "tasks.json"
         self.lock = threading.RLock()
         self.tokens = {}
+        self.version = 1
         self.items = (
             json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
         )
@@ -46,11 +47,22 @@ class Tasks:
             del self.items[task["id"]]
 
     def _save(self):
+        self.version += 1
         atomic_write_text(self.path, json.dumps(self.items, ensure_ascii=False))
 
     def list(self):
         with self.lock:
             return copy.deepcopy(list(self.items.values()))
+
+    def poll(self, since=0):
+        with self.lock:
+            if since and int(since) == self.version:
+                return {"changed": False, "version": self.version, "tasks": []}
+            return {
+                "changed": True,
+                "version": self.version,
+                "tasks": copy.deepcopy(list(self.items.values())),
+            }
 
     def dismiss(self, identifier):
         with self.lock:
@@ -124,6 +136,7 @@ class Tasks:
                 task = self.items[identifier]
                 message = redact_sensitive(message)
                 task.update(message=message, current=current, total=total, updated_at=time.time())
+                self.version += 1
                 if message and (not task["logs"] or task["logs"][-1] != str(message)):
                     task["logs"] = [*task["logs"][-199:], str(message)]
                 if time.monotonic() - last_save > 0.3:

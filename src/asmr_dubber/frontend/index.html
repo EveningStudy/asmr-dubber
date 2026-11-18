@@ -20,7 +20,7 @@
       <button data-page="models"><svg viewBox="0 0 20 20"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6zM3 6l7 3.5L17 6M10 9.5v8"/></svg><span data-i18n>模型</span></button>
       <button data-page="settings"><svg viewBox="0 0 20 20"><path d="M3 6h7M14 6h3M3 14h3M10 14h7"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="14" r="2"/></svg><span data-i18n>设置</span></button>
     </nav>
-    <div class="side-foot"><div id="deviceFoot"></div><div id="updateFoot"></div><div class="seg language"><button data-language="zh">中文</button><button data-language="en">English</button></div></div>
+    <div class="side-foot"><div id="deviceFoot"></div><div id="updateFoot"></div><div class="seg language"><button data-language="zh">中文</button><button data-language="en">English</button></div><button class="btn plain small quit-btn" id="quitApp" data-i18n>退出程序</button></div>
   </aside>
   <main>
     <section class="page on" id="home">
@@ -33,7 +33,7 @@
           <div class="row"><div class="check" id="translationCheck">✓</div><div class="grow"><div class="t" data-i18n>翻译服务</div><div class="d" data-i18n>填一个翻译服务的 API Key，比如 DeepSeek。已有译文字幕的话可以不填。</div></div><button class="btn" data-go="settings" data-set="keys" data-i18n>去填写</button></div>
         </div>
       </div>
-      <div class="label"><b data-i18n>新建</b></div>
+      <div class="label"><b data-i18n>新建</b><button class="btn plain" id="pickLocalMedia" data-i18n>选择本机大文件</button></div>
       <div class="drop" id="dropNew" role="button" tabindex="0"><b data-i18n>把音频或视频拖到这里</b><p data-i18n>或点击选择文件。原文件不会被改动。</p></div>
       <div class="label"><b data-i18n>最近</b><span id="projectsRoot"></span><button class="btn plain" id="openExisting" data-i18n>打开项目</button></div>
       <div class="card plist" id="recentProjects"></div>

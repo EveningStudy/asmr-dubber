@@ -1,4 +1,4 @@
-"""Ask the operating system for a folder; filesystem work stays in services."""
+"""Ask the operating system for a folder or media file; filesystem work stays in services."""
 
 import base64
 import os
@@ -6,6 +6,19 @@ import subprocess
 from pathlib import Path
 
 from ..platforms import open_directory
+
+
+def _powershell_dialog(script: str) -> str:
+    command = base64.b64encode(script.encode("utf-16-le")).decode()
+    result = subprocess.run(
+        ["powershell.exe", "-Sta", "-NoProfile", "-EncodedCommand", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return result.stdout.strip()
 
 
 def folder():
@@ -17,16 +30,28 @@ def folder():
         "$folder=$shell.BrowseForFolder(0,'ASMR Dubber',0,0); "
         "if($folder){[Console]::Write($folder.Self.Path)}"
     )
-    command = base64.b64encode(script.encode("utf-16-le")).decode()
-    result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-EncodedCommand", command],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+    return {"path": _powershell_dialog(script)}
+
+
+def media_file():
+    if os.name != "nt":
+        return {"path": "", "name": "", "native": False}
+    script = (
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "$dlg=New-Object System.Windows.Forms.OpenFileDialog; "
+        "$dlg.Title='ASMR Dubber'; "
+        "$dlg.Filter='Audio & Video|*.wav;*.flac;*.mp3;*.m4a;*.aac;*.ogg;*.opus;"
+        "*.mp4;*.mkv;*.mov;*.webm;*.avi|All Files|*.*'; "
+        "if($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)"
+        "{[Console]::Write($dlg.FileName)}"
     )
-    return {"path": result.stdout.strip()}
+    chosen = _powershell_dialog(script)
+    return {
+        "path": chosen,
+        "name": Path(chosen).name if chosen else "",
+        "native": True,
+    }
 
 
 def open_output(path):

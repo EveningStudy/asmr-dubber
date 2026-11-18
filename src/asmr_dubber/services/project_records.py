@@ -212,6 +212,91 @@ def apply_table(project: DubProject, table: Any) -> bool:
     return changed
 
 
+def apply_single_row(project: DubProject, row: list[Any]) -> bool:
+    """Fast O(N)-free single-sentence update avoiding full-table re-parsing."""
+
+    row_index = 1
+    if len(row) not in {len(TABLE_HEADERS), len(TABLE_HEADERS) + 1}:
+        raise ProjectError(f"第 {row_index} 行列数错误，应为 {len(TABLE_HEADERS)} 列。")
+    target_id = _text(row[0], "第 1 行句子 ID", required=True)
+    matched = next(
+        (idx for idx, item in enumerate(project.sentences) if item.id == target_id), None
+    )
+    if matched is None:
+        raise ValueError("这个句子已不存在。")
+    source_text = _text(row[4], f"{target_id} 源文")
+    zh_text = _text(row[5], f"{target_id} 中文")
+    if not source_text and not zh_text:
+        del project.sentences[matched]
+        if project.settings.tts_reference_sentence_id == target_id:
+            project.settings.tts_reference_sentence_id = None
+        changed = True
+    else:
+        start = _number(row[2], f"{target_id} 开始时间")
+        end = _number(row[3], f"{target_id} 结束时间")
+        if start < 0 or end <= start or end > project.source.duration_seconds + 0.25:
+            raise ProjectError(f"{target_id} 的时间范围无效。")
+        source_switch = str(row[6] or "default").strip().lower()
+        if source_switch not in {"default", "on", "off"}:
+            raise ProjectError(f"{target_id} 原声开关必须为 default/on/off。")
+        source_gain = _number(row[7], f"{target_id} 原声音量")
+        chinese_gain = _number(row[9], f"{target_id} 中文音量")
+        if not -60 <= source_gain <= 12 or not -60 <= chinese_gain <= 12:
+            raise ProjectError("逐句音量微调必须在 -60 到 +12 dB 之间。")
+        old = project.sentences[matched]
+        payload: dict[str, Any] = {
+            "id": target_id,
+            "enabled": _boolean(row[1], f"{target_id} 启用状态"),
+            "start_seconds": start,
+            "end_seconds": end,
+            "source_text": source_text,
+            "target_text": zh_text,
+            "original_audio_enabled": {"default": None, "on": True, "off": False}[source_switch],
+            "original_audio_gain_db": source_gain,
+            "chinese_audio_enabled": _boolean(row[8], f"{target_id} 中文播放"),
+            "chinese_audio_gain_db": chinese_gain,
+        }
+        if len(row) == len(TABLE_HEADERS) + 1:
+            spk = str(row[10] or "").strip()
+            if len(spk) > 32:
+                raise ProjectError(f"{target_id} 说话人编号过长。")
+            payload["speaker_id"] = spk or None
+        material_changed = any(
+            getattr(old, field) != val
+            for field, val in payload.items()
+            if field in {"start_seconds", "end_seconds", "source_text", "target_text"}
+        )
+        speaker_changed = "speaker_id" in payload and old.speaker_id != payload["speaker_id"]
+        updated = old.model_copy(update=payload)
+        if not old.enabled and updated.enabled and not updated.target_text:
+            updated.status = "pending"
+            updated.clear_error()
+        if material_changed or speaker_changed:
+            if material_changed:
+                updated.review_locked = True
+                updated.translation_warning = None
+            updated.tts_file = None
+            updated.tts_cache_key = None
+            updated.tts_warning = None
+            updated.tts_candidates = []
+            updated.tts_duration_seconds = None
+            updated.reference_file = None
+            updated.status = "translated" if updated.target_text else "pending"
+            updated.clear_error()
+        changed = updated.model_dump() != old.model_dump()
+        project.sentences[matched] = updated
+        if (old.start_seconds, old.end_seconds) != (updated.start_seconds, updated.end_seconds):
+            project.sentences.sort(key=lambda item: (item.start_seconds, item.end_seconds, item.id))
+    if changed:
+        project.chinese_stem_file = None
+        project.output_file = None
+        project.output_video_file = None
+        project.subtitle_srt_file = None
+        project.subtitle_lrc_file = None
+        project.subtitle_video_file = None
+    return changed
+
+
 def _project_asset(project_dir: Path, stored: str | None) -> Path | None:
     if not stored:
         return None
