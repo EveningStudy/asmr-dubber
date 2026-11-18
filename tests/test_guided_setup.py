@@ -191,3 +191,116 @@ def test_onboarding_is_skipped_automatically_for_existing_users(tmp_path, monkey
 
     wizard = files("asmr_dubber").joinpath("frontend/wizard.js").read_text(encoding="utf-8")
     assert "onboarding_required" in wizard
+
+
+def test_translation_api_falls_back_to_preset_base_url_and_avoids_zh_shortcut(monkeypatch):
+    import asmr_dubber.backend_diagnostics as diagnostics
+    from asmr_dubber.errors import ProjectError
+    from asmr_dubber.user_settings import PROVIDER_PRESETS, UserSettings
+
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(sentences, **kwargs):
+        calls.append(kwargs)
+        assert kwargs["source_language"] != kwargs["target_language"]
+        sentences[0].zh_text = "Hello." if kwargs["target_language"] == "en" else "你好。"
+
+    monkeypatch.setattr(diagnostics, "translate_sentences", fake_translate)
+    monkeypatch.setattr(diagnostics, "resolve_api_key", lambda provider, key: "sk-test")
+
+    # Empty translation_base_url falls back to PROVIDER_PRESETS[provider]["base_url"].
+    fresh = UserSettings(translation_provider="deepseek", translation_base_url="")
+    out_ja = diagnostics.test_translation_api(fresh)
+    assert "こんにちは。 → 你好。" in out_ja
+    assert calls[-1]["base_url"] == PROVIDER_PRESETS["deepseek"]["base_url"]
+    assert calls[-1]["target_language"] == "zh"
+
+    # Chinese default_source_language translates zh -> en over the network, never short-circuiting.
+    zh_settings = UserSettings(
+        default_source_language="zh",
+        translation_provider="deepseek",
+        translation_base_url="",
+    )
+    out_zh = diagnostics.test_translation_api(zh_settings)
+    assert "你好。 → Hello." in out_zh
+    assert calls[-1]["source_language"] == "zh"
+    assert calls[-1]["target_language"] == "en"
+    assert calls[-1]["base_url"] == PROVIDER_PRESETS["deepseek"]["base_url"]
+
+    # Real translate_sentences must not hit source_language == target_language bypass for zh.
+    network_hits = []
+
+    class FakeDeepSeek:
+        max_retries = 1
+
+        def __init__(self, **kwargs):
+            network_hits.append(kwargs["base_url"])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def close(self):
+            return None
+
+        def translate_chunk(self, chunk, *_args, **_kwargs):
+            return {chunk.sentences[0].id: "   "}
+
+    monkeypatch.undo()
+    monkeypatch.setattr(diagnostics, "resolve_api_key", lambda provider, key: "sk-test")
+    monkeypatch.setattr("asmr_dubber.translation.DeepSeekTranslator", FakeDeepSeek)
+    with pytest.raises(ProjectError):
+        diagnostics.test_translation_api(
+            UserSettings(default_source_language="zh", translation_base_url="")
+        )
+    assert network_hits == [PROVIDER_PRESETS["deepseek"]["base_url"]]
+
+
+def test_models_catalog_and_recommended_bundle_align_with_onboarding(tmp_path, monkeypatch):
+    from asmr_dubber.services import models
+
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        models.runtime,
+        "backend_status",
+        lambda *a, **k: models.runtime.BackendStatus("missing", "未安装"),
+    )
+    installed: list[str] = []
+    monkeypatch.setattr(
+        models.runtime,
+        "install_backend",
+        lambda backend, **_kw: installed.append(backend) or f"ok:{backend}",
+    )
+
+    class Token:
+        def is_set(self):
+            return False
+
+    monkeypatch.setattr(runtime, "detect_hardware", lambda: GPU)
+    gpu_catalog = models.catalog()
+    assert gpu_catalog["recommended"] == ["anime_whisper", "indextts2"]
+    assert {item["id"] for item in gpu_catalog["items"] if item.get("recommended")} == {
+        "anime_whisper",
+        "indextts2",
+    }
+    models._download({"model": "recommended"}, lambda *a, **k: None, Token())
+    assert installed == ["anime_whisper", "indextts2"]
+
+    installed.clear()
+    cpu_profile = replace(GPU, gpu=None, vram_gb=None, cuda_available=False)
+    monkeypatch.setattr(runtime, "detect_hardware", lambda: cpu_profile)
+    cpu_catalog = models.catalog()
+    assert cpu_catalog["recommended"] == ["parakeet_nemo"]
+    models._download({"model": "recommended"}, lambda *a, **k: None, Token())
+    assert installed == ["parakeet_nemo"]
+
+    models_js = files("asmr_dubber").joinpath("frontend/models.js").read_text(encoding="utf-8")
+    assert "anime-whisper" in models_js and "catalog.recommended" in models_js
+    translations = locale_catalog()
+    for name in ("session.js", "app.js", "projects.js", "compare_player.js", "models.js"):
+        source = files("asmr_dubber").joinpath("frontend", name).read_text(encoding="utf-8")
+        assert len(source.splitlines()) < 500, name
+        for text in re.findall(r"\bt\('([^'$]*[一-鿿][^']*)'", source):
+            assert text in translations, f"{name}: {text}"

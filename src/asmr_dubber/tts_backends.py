@@ -84,6 +84,7 @@ def _selected_sentences(project: DubProject, sentence_ids: Iterable[str] | None)
         sentence
         for sentence in project.sentences
         if sentence.enabled
+        and sentence.chinese_audio_enabled
         and has_speakable_text(sentence.zh_text)
         and (requested is None or sentence.id in requested)
     ]
@@ -1173,10 +1174,18 @@ def synthesize_with_selected_backend(
             "请在设置 → TTS（语音合成）中选择该后端提供的模式。"
         )
     requested = set(sentence_ids) if sentence_ids is not None else None
+    muted = [
+        sentence
+        for sentence in project.sentences
+        if sentence.enabled
+        and not sentence.chinese_audio_enabled
+        and (requested is None or sentence.id in requested)
+    ]
     skipped = [
         sentence
         for sentence in project.sentences
         if sentence.enabled
+        and sentence.chinese_audio_enabled
         and sentence.zh_text
         and not has_speakable_text(sentence.zh_text)
         and (requested is None or sentence.id in requested)
@@ -1203,9 +1212,10 @@ def synthesize_with_selected_backend(
         on_sentence()
     selected = _selected_sentences(project, sentence_ids)
     if not selected:
-        if skipped:
+        if skipped or muted:
             if progress:
-                progress(f"已跳过 {len(skipped)} 句无可朗读内容", 1, 1)
+                label = "无需配音内容" if muted else "无可朗读内容"
+                progress(f"已跳过 {len(skipped) + len(muted)} 句{label}", 1, 1)
             return []
         raise SynthesisError("没有可生成的句子；请先完成翻译并确认句子已启用。")
     tts_dir = project_dir / "chinese"

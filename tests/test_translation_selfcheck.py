@@ -167,6 +167,30 @@ def test_repeated_source_with_repeated_translation_is_ordinary_speech() -> None:
     assert check_translations(sentences) == []
 
 
+def test_same_as_source_exempts_shared_hanzi_and_short_ascii_but_flags_kana() -> None:
+    sentences = [
+        _sentence(1, "先生", "先生"),
+        _sentence(2, "美咲", "美咲"),
+        _sentence(3, "安心", "安心"),
+        _sentence(4, "OK！", "OK！"),
+        _sentence(5, "ありがとう", "ありがとう"),
+        _sentence(6, "美咲ちゃん", "美咲ちゃん"),
+        _sentence(7, "Good night", "Good night"),
+    ]
+    assert _codes(check_translations(sentences, source_language="ja", target_language="zh")) == {
+        ("s000005", "kana_left"),
+        ("s000005", "same_as_source"),
+        ("s000006", "kana_left"),
+        ("s000006", "same_as_source"),
+        ("s000007", "same_as_source"),
+    }
+
+    en_target = [_sentence(1, "先生", "先生"), _sentence(2, "OK", "OK")]
+    assert _codes(check_translations(en_target, budget_key="max_words", source_language="ja")) == {
+        ("s000001", "same_as_source")
+    }
+
+
 def test_only_requested_translated_enabled_rows_are_checked() -> None:
     sentences = [
         _sentence(1, "a", "かな"),

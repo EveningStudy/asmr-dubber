@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import textwrap
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -51,18 +51,22 @@ def _subtitle_lines(
     sentence: Sentence,
     language: SubtitleLanguage,
     maximum_chars: int,
-) -> list[str]:
+    *,
+    allow_source_fallback: bool = False,
+) -> tuple[list[str], bool]:
     source = _wrap_line(sentence.source_text, maximum_chars)
     chinese = _wrap_line(sentence.zh_text, maximum_chars)
     if language in {"bilingual", "zh"} and not chinese:
+        if allow_source_fallback:
+            return source, True
         raise ProjectError(f"句子 {sentence.id} 没有中文，无法生成所选字幕。")
     if language == "source":
         if not source:
             raise ProjectError(f"句子 {sentence.id} 没有原文，请先识别或导入原文字幕。")
-        return source
+        return source, False
     if language == "zh":
-        return chinese
-    return [*source, *chinese]
+        return chinese, False
+    return [*source, *chinese], False
 
 
 def _subtitle_range(
@@ -100,6 +104,7 @@ def write_subtitle_files(
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
     chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
+    dubbing_durations: Mapping[str, float] | None = None,
     media_duration_seconds: float | None = None,
     warnings: list[str] | None = None,
 ) -> tuple[Path, Path]:
@@ -112,12 +117,14 @@ def write_subtitle_files(
     included = [sentence for sentence in sentences if sentence.enabled]
     if not included:
         raise ProjectError("没有可生成字幕的已启用句子。")
+    has_translation = any(bool(_clean_line(sentence.zh_text)) for sentence in included)
     timing_by_id = {
         timing.sentence_id: timing
         for timing in plan_dubbing_timing(
             included,
             offset_ms=chinese_dubbing_offset_ms,
             max_auto_speed=chinese_max_auto_speed,
+            durations=dubbing_durations,
             mode=chinese_dubbing_timing_mode,
         )
     }
@@ -136,12 +143,25 @@ def write_subtitle_files(
     )
     # Validate the complete export before replacing either existing subtitle file.
     entries = []
+    collected_warnings: list[str] = []
     for sentence in included:
-        lines = _subtitle_lines(sentence, language, maximum_chars)
+        lines, used_fallback = _subtitle_lines(
+            sentence,
+            language,
+            maximum_chars,
+            allow_source_fallback=has_translation,
+        )
+        if not lines:
+            collected_warnings.append(f"句子 {sentence.id} 缺少译文与原文，已跳过字幕。")
+            continue
+        if used_fallback:
+            collected_warnings.append(f"句子 {sentence.id} 缺少译文，字幕已回退为原文。")
         timing = timing_by_id.get(sentence.id) if timeline == "dubbing" else None
         start = timing.start_seconds if timing else sentence.start_seconds
         original_end = start + timing.effective_duration_seconds if timing else sentence.end_seconds
         entries.append((sentence, lines, start, original_end))
+    if not entries:
+        raise ProjectError("没有可生成字幕的已启用句子。")
     srt_blocks: list[str] = []
     lrc_lines: list[str] = []
     for index, (sentence, lines, _start, original_end) in enumerate(entries, start=1):
@@ -162,13 +182,16 @@ def write_subtitle_files(
             end = min(end, media_duration_seconds)
         if end <= start:
             raise ProjectError(f"句子 {sentence.id} 的字幕起点超出媒体范围。")
-        if warnings is not None and end < requested_end:
-            warnings.append(f"句子 {sentence.id} 的字幕可读时长受下一句或媒体末尾限制。")
+        if end < requested_end:
+            collected_warnings.append(f"句子 {sentence.id} 的字幕可读时长受下一句或媒体末尾限制。")
         srt_blocks.append(
             f"{index}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n" + "\n".join(lines)
         )
         timestamp = _lrc_timestamp(start)
         lrc_lines.extend(f"{timestamp}{line}" for line in lines)
+
+    if warnings is not None:
+        warnings.extend(collected_warnings)
 
     srt = output_dir / f"subtitles_{language}.srt"
     lrc = output_dir / f"subtitles_{language}.lrc"

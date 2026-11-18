@@ -907,9 +907,18 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
     # get the improved defaults.
     settings = payload.get("settings")
     if isinstance(settings, dict):
-        legacy = {key: value for key, value in _PRE_2_3_SETTINGS.items() if key not in settings}
-        if legacy:
-            payload["settings"] = {**settings, **legacy}
+        updated_settings = dict(settings)
+        prompt = str(updated_settings.get("translation_prompt", "") or "").strip()
+        if prompt:
+            from .user_settings import _is_legacy_builtin_translation_prompt
+
+            if _is_legacy_builtin_translation_prompt(prompt):
+                updated_settings["translation_prompt"] = ""
+        legacy = {
+            key: value for key, value in _PRE_2_3_SETTINGS.items() if key not in updated_settings
+        }
+        if legacy or updated_settings != settings:
+            payload["settings"] = {**updated_settings, **legacy}
     return payload
 
 

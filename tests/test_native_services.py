@@ -358,3 +358,230 @@ def test_model_storage_counts_checkpoints_and_cache_without_overlapping_totals(a
     assert result == {"total_bytes": 31, "cache_bytes": 13}
     assert application.storage()["sizes"]["模型"] == 31
     assert application.storage()["sizes"]["缓存"] == 17
+
+
+def _dummy_plan(
+    tmp_path: Path,
+    *,
+    plan_id: str = "p1",
+    subtitles_only: bool = False,
+    source_only: bool = False,
+    variants: tuple[str, ...] = ("bilingual",),
+    policy_settings: dict | None = None,
+    sources: tuple | None = None,
+    subtitle_language: str = "bilingual",
+):
+    from types import SimpleNamespace
+
+    default_source = SimpleNamespace(
+        path=tmp_path / "01.wav",
+        size=1000,
+        transcript_path=None,
+        transcript_language=None,
+        transcript_timed=False,
+        transcript_mode="direct",
+        source_language="ja",
+    )
+    return SimpleNamespace(
+        plan_id=plan_id,
+        folder=tmp_path / f"work-{plan_id}",
+        output_root=tmp_path / f"out-{plan_id}",
+        sources=sources if sources is not None else (default_source,),
+        subtitles_only=subtitles_only,
+        source_subtitles_only=source_only,
+        subtitle_language=subtitle_language,
+        edition={
+            "output_policy": {
+                "variants": list(variants),
+                "subtitle": subtitle_language,
+                "settings": dict(policy_settings or {}),
+            }
+        },
+    )
+
+
+def test_preflight_caches_translation_probe_across_preflight_and_run_queue(
+    application, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from asmr_dubber import backend_diagnostics, runtime_manager
+    from asmr_dubber.autoflow import app_settings, smart_queue
+    from asmr_dubber.services import batch_preflight, batch_queue
+
+    batch_preflight.clear_translation_probe_cache()
+    monkeypatch.setattr(batch_preflight, "plan_seconds", lambda plan: 60.0)
+    monkeypatch.setattr(batch_preflight, "_disk_free", lambda path: (200 * 1024**3, 1))
+    monkeypatch.setattr(
+        runtime_manager,
+        "detect_hardware",
+        lambda: runtime_manager.HardwareProfile(
+            platform_id="windows",
+            platform_label="Windows",
+            architecture="x64",
+            cpu="cpu",
+            memory_gb=32.0,
+            gpu="RTX",
+            vram_gb=16.0,
+            driver="1",
+            cuda_available=True,
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_manager,
+        "backend_status",
+        lambda *a, **k: runtime_manager.BackendStatus("ready", "可用"),
+    )
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-cache-test")
+
+    plan = _dummy_plan(tmp_path)
+    calls: list[str] = []
+
+    def flaky_then_ok(_settings, key):
+        calls.append(key)
+        if len(calls) == 1:
+            raise ProjectError("temporary network failure")
+        return "ok"
+
+    monkeypatch.setattr(backend_diagnostics, "test_translation_api", flaky_then_ok)
+    # Failure must NOT be cached.
+    first = batch_preflight.run_preflight([plan])
+    assert not first.ok and len(calls) == 1
+
+    # Next preflight succeeds and caches for 300s; immediate run_queue reuses cached probe.
+    second = batch_preflight.run_preflight([plan])
+    assert second.ok and len(calls) == 2
+
+    monkeypatch.setattr(batch_queue, "deserialize_plan", lambda payload: plan)
+    monkeypatch.setattr(batch_queue, "config_from_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(app_settings, "find_tool_paths", lambda config: None)
+    monkeypatch.setattr(app_settings, "validate_asmr_version", lambda: "ok")
+    monkeypatch.setattr(smart_queue, "execute_smart_queue", lambda *a, **k: 0)
+    exit_code, outputs = batch_queue.run_queue([{"plan_id": "p1"}], preflight=True)
+    assert exit_code == 0 and outputs == [str(plan.output_root)]
+    assert len(calls) == 2
+
+    batch_preflight.clear_translation_probe_cache()
+    assert batch_preflight.run_preflight([plan]).ok and len(calls) == 3
+
+
+def test_preflight_vram_accounts_for_separation_aligner_and_per_plan_peaks(
+    application, monkeypatch, tmp_path
+):
+    from asmr_dubber import runtime_manager
+    from asmr_dubber.services import batch_preflight
+    from asmr_dubber.user_settings import UserSettings
+
+    def hw(vram: float):
+        return runtime_manager.HardwareProfile(
+            platform_id="windows",
+            platform_label="Windows",
+            architecture="x64",
+            cpu="cpu",
+            memory_gb=32.0,
+            gpu="RTX",
+            vram_gb=vram,
+            driver="1",
+            cuda_available=True,
+        )
+
+    # Local RoFormer separation (~3.0 GB min) is counted even when ASR & TTS need no dedicated VRAM.
+    online_user = UserSettings(
+        asr_backend="generic_asr_api",
+        tts_backend="edge_tts",
+        separation_backend="local",
+        separation_model="vocals_mel_band_roformer.ckpt",
+    )
+    replace_plan = _dummy_plan(tmp_path, plan_id="rep", variants=("replace",))
+    monkeypatch.setattr(runtime_manager, "detect_hardware", lambda: hw(2.0))
+    sep_low = batch_preflight.check_vram([replace_plan], online_user)
+    assert sep_low.status == batch_preflight.FAIL and "Mel-Band RoFormer" in sep_low.message
+
+    # Forced alignment (Qwen3-ForcedAligner ~2.5 GB min) is counted when enabled on Parakeet.
+    align_user = UserSettings(
+        asr_backend="parakeet_nemo",
+        asr_forced_alignment_enabled=True,
+        tts_backend="edge_tts",
+    )
+    align_low = batch_preflight.check_vram([_dummy_plan(tmp_path)], align_user)
+    assert align_low.status == batch_preflight.FAIL and "Qwen3 时间对齐" in align_low.message
+
+    # Earlier heavy plan must NOT be masked by a later online plan in the queue.
+    heavy_plan = _dummy_plan(
+        tmp_path,
+        plan_id="heavy",
+        variants=("replace",),
+        policy_settings={"tts_backend": "indextts2_5", "separation_enabled": True},
+    )
+    light_plan = _dummy_plan(
+        tmp_path,
+        plan_id="light",
+        variants=("bilingual",),
+        policy_settings={"tts_backend": "edge_tts", "separation_enabled": False},
+    )
+    monkeypatch.setattr(runtime_manager, "detect_hardware", lambda: hw(4.0))
+    mixed = batch_preflight.check_vram([heavy_plan, light_plan], online_user)
+    assert mixed.status == batch_preflight.FAIL and "IndexTTS-2.5" in mixed.message
+
+
+def test_preflight_skips_translation_when_tracks_have_target_subtitles_or_same_language(
+    application, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from asmr_dubber.services import batch_preflight
+    from asmr_dubber.user_settings import PROVIDER_PRESETS, UserSettings
+
+    for preset in PROVIDER_PRESETS.values():
+        env_name = preset.get("env")
+        if env_name:
+            monkeypatch.delenv(env_name, raising=False)
+    user = UserSettings(translation_provider="deepseek", tts_target_language="zh")
+
+    srt = tmp_path / "01.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n你好\n", encoding="utf-8")
+    zh_sub_source = SimpleNamespace(
+        path=tmp_path / "01.wav",
+        size=1000,
+        transcript_path=srt,
+        transcript_language="zh",
+        transcript_timed=True,
+        transcript_mode="direct",
+        source_language="ja",
+    )
+    direct_sub_plan = _dummy_plan(tmp_path, sources=(zh_sub_source,))
+    assert (
+        batch_preflight.check_translation([direct_sub_plan], user, network=True).status
+        == batch_preflight.SKIP
+    )
+
+    same_lang_source = SimpleNamespace(
+        path=tmp_path / "02.wav",
+        size=1000,
+        transcript_path=None,
+        transcript_language=None,
+        transcript_timed=False,
+        transcript_mode="direct",
+        source_language="zh",
+    )
+    same_lang_plan = _dummy_plan(tmp_path, sources=(same_lang_source,))
+    assert (
+        batch_preflight.check_translation([same_lang_plan], user, network=True).status
+        == batch_preflight.SKIP
+    )
+
+    # Untimed script reconciled against ASR may leave unmatched lines to translate -> require key.
+    untimed_source = SimpleNamespace(
+        path=tmp_path / "03.wav",
+        size=1000,
+        transcript_path=tmp_path / "script.txt",
+        transcript_language="zh",
+        transcript_timed=False,
+        transcript_mode="asr_reconcile",
+        source_language="ja",
+    )
+    untimed_plan = _dummy_plan(tmp_path, sources=(untimed_source,))
+    assert (
+        batch_preflight.check_translation([untimed_plan], user, network=False).status
+        == batch_preflight.FAIL
+    )

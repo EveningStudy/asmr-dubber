@@ -24,6 +24,7 @@ _BACKUP_FIELDS = (
     "enabled",
     "chinese_audio_enabled",
     "review_locked",
+    "translation_warning",
 )
 _BACKUP_PATTERN = re.compile(r"^translations-backup-r(\d+)\.json$")
 
@@ -38,7 +39,7 @@ def write_translation_backup(project: DubProject, project_dir: Path) -> Path | N
     rows = [
         {"id": sentence.id, **{name: getattr(sentence, name) for name in _BACKUP_FIELDS}}
         for sentence in project.sentences
-        if sentence.zh_text
+        if sentence.zh_text or sentence.status == "skipped_sound"
     ]
     if not rows:
         return None
@@ -93,10 +94,18 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
         item = saved.get(sentence.id)
         if item is None:
             continue
-        if sentence.zh_text != item["zh_text"]:
+        if sentence.zh_text != item["zh_text"] or item.get("status") in {
+            "skipped_sound",
+            "skipped_filler",
+        }:
             sentence.tts_file = None
             sentence.tts_cache_key = None
             sentence.tts_duration_seconds = None
+            sentence.tts_candidates = []
+            sentence.tts_warning = None
+            sentence.tts_attempt = 0
+            if "translation_warning" not in item:
+                sentence.translation_warning = None
         for name in _BACKUP_FIELDS:
             if name in item:
                 setattr(sentence, name, item[name])
@@ -108,6 +117,8 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
         project.subtitle_srt_file = None
         project.subtitle_lrc_file = None
         project.subtitle_video_file = None
+        if hasattr(project, "translation_proposals"):
+            project.translation_proposals = []
     return restored
 
 
@@ -119,6 +130,7 @@ def restore_project_translations(project_path: str) -> int:
 
     project, directory = pipeline.reload_project(project_path)
     restored = restore_translation_backup(project, directory)
+    project.translation_proposals = []
     save_project(project, directory)
     pipeline.export_transcript(project, directory)
     return restored

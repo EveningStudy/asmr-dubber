@@ -333,3 +333,157 @@ def test_tiny_fragments_are_negligible_and_kana_converts_to_hepburn() -> None:
     assert kana_to_romaji("き") == "ki"
     assert kana_to_romaji("ちょっと") == "chotto"
     assert kana_to_romaji("ラーメン") == "raamen"
+
+
+def test_translation_change_clears_candidates_warning_and_attempt() -> None:
+    sentences = _sentences(4, {3: "ふふ"})
+    for index, sentence in enumerate(sentences, start=1):
+        sentence.zh_text = f"旧译文{index}"
+        sentence.status = "translated"
+        sentence.tts_file = f"tts/s{index}.wav"
+        sentence.tts_cache_key = f"key-{index}"
+        sentence.tts_duration_seconds = 1.1
+        sentence.tts_candidates = [
+            {"attempt": 2, "file": f"tts/s{index}_2.wav", "duration": 1.1, "warning": "旧告警"}
+        ]
+        sentence.tts_warning = "旧告警"
+        sentence.tts_attempt = 2
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _ok(
+            [
+                {"id": "s000001", "zh": "新译文1", "kind": "speech"},
+                {"id": "s000002", "zh": "", "kind": "sound"},
+                {"id": "s000003", "zh": "", "kind": "speech"},
+                {"id": "s000004", "zh": "旧译文4", "kind": "speech"},
+            ]
+        )
+
+    _run(sentences, handler, retranslate=True)
+
+    for changed in sentences[:3]:
+        assert changed.tts_file is None
+        assert changed.tts_cache_key is None
+        assert changed.tts_duration_seconds is None
+        assert changed.tts_candidates == []
+        assert changed.tts_warning is None
+        assert changed.tts_attempt == 0
+    unchanged = sentences[3]
+    assert unchanged.tts_file == "tts/s4.wav"
+    assert len(unchanged.tts_candidates) == 1
+    assert unchanged.tts_warning == "旧告警"
+    assert unchanged.tts_attempt == 2
+
+
+def test_backup_restores_warnings_skipped_sound_and_clears_candidates_and_proposals(
+    tmp_path,
+) -> None:
+    from asmr_dubber.models import AudioInfo, DubProject, load_project, save_project
+    from asmr_dubber.translation_backup import restore_project_translations
+
+    sound_only = SimpleNamespace(
+        sentences=[
+            Sentence(
+                id="s000001",
+                start_seconds=0.0,
+                end_seconds=0.5,
+                source_text="き",
+                zh_text="",
+                status="skipped_sound",
+                enabled=False,
+            )
+        ],
+        revision=1,
+        translation_language="zh",
+    )
+    only_dir = tmp_path / "sound_only"
+    only_dir.mkdir()
+    assert write_translation_backup(sound_only, only_dir) is not None
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    project = DubProject(
+        source=AudioInfo(
+            path=str(project_dir / "source.wav"),
+            sha256="0" * 64,
+            duration_seconds=10.0,
+            sample_rate=16_000,
+            channels=1,
+        ),
+        sentences=[
+            Sentence(
+                id="s000001",
+                start_seconds=0.0,
+                end_seconds=1.0,
+                source_text="台詞1です。",
+                zh_text="备份前译文",
+                status="translated",
+                review_locked=True,
+                translation_warning="译文超出时长预算",
+            ),
+            Sentence(
+                id="s000002",
+                start_seconds=1.5,
+                end_seconds=2.0,
+                source_text="ちゅっ",
+                zh_text="",
+                status="skipped_sound",
+                enabled=False,
+            ),
+        ],
+    )
+    manifest = save_project(project, project_dir)
+    assert write_translation_backup(project, project_dir) is not None
+
+    project.sentences[0].zh_text = "重译后的新台词"
+    project.sentences[0].translation_warning = None
+    project.sentences[0].tts_file = "tts/s1.wav"
+    project.sentences[0].tts_cache_key = "k1"
+    project.sentences[0].tts_duration_seconds = 1.2
+    project.sentences[0].tts_candidates = [
+        {"attempt": 3, "file": "tts/s1_3.wav", "duration": 1.2, "warning": "破音"}
+    ]
+    project.sentences[0].tts_warning = "破音"
+    project.sentences[0].tts_attempt = 3
+
+    project.sentences[1].zh_text = "误译拟声"
+    project.sentences[1].status = "translated"
+    project.sentences[1].enabled = True
+    project.sentences[1].tts_file = "tts/s2.wav"
+    project.sentences[1].tts_candidates = [
+        {"attempt": 1, "file": "tts/s2_1.wav", "duration": 0.6, "warning": None}
+    ]
+    project.sentences[1].tts_warning = "静音"
+    project.sentences[1].tts_attempt = 1
+
+    project.translation_proposals = [
+        {
+            "id": "s000001",
+            "old_zh": "重译后的新台词",
+            "new_zh": "待定提议",
+            "kind": "speech",
+            "instruction": "更温柔",
+            "created_at": "2026-11-18T00:00:00Z",
+        }
+    ]
+    save_project(project, project_dir)
+
+    assert restore_project_translations(str(manifest)) == 2
+    restored, _ = load_project(manifest)
+    first, second = restored.sentences
+    assert first.zh_text == "备份前译文"
+    assert first.translation_warning == "译文超出时长预算"
+    assert first.review_locked is True
+    assert first.tts_file is None
+    assert first.tts_candidates == []
+    assert first.tts_warning is None
+    assert first.tts_attempt == 0
+
+    assert second.zh_text == ""
+    assert second.status == "skipped_sound"
+    assert second.enabled is False
+    assert second.tts_file is None
+    assert second.tts_candidates == []
+    assert second.tts_warning is None
+    assert second.tts_attempt == 0
+    assert restored.translation_proposals == []

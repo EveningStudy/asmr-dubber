@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +33,12 @@ def failure_budget(
 ) -> int:
     """Largest number of lost sentences a work may have and still be delivered."""
 
-    return max(int(count), math.ceil(max(0, total) * max(0.0, float(percent)) / 100))
+    pct = max(0.0, float(percent))
+    raw = max(int(count), math.ceil(max(0, total) * pct / 100))
+    if total <= 0:
+        return max(0, raw)
+    cap = max((total - 1) // 2, math.floor(total * pct / 100))
+    return max(0, min(raw, cap))
 
 
 def collect_failures(stage: str, project: Any) -> tuple[int, list[dict[str, str]]]:
@@ -50,7 +55,12 @@ def collect_failures(stage: str, project: Any) -> tuple[int, list[dict[str, str]
             total += 1
             if sentence.status == "translation_failed":
                 failed.append({"id": sentence.id, "reason": str(sentence.error or "")[:300]})
-        elif stage == "synthesize" and sentence.zh_text and has_speakable_text(sentence.zh_text):
+        elif (
+            stage == "synthesize"
+            and sentence.chinese_audio_enabled
+            and sentence.zh_text
+            and has_speakable_text(sentence.zh_text)
+        ):
             total += 1
             if sentence.status == "error":
                 failed.append({"id": sentence.id, "reason": str(sentence.error or "")[:300]})
@@ -104,12 +114,32 @@ def read_result(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _prior_failures(
+    stage: str, prior: Sequence[Mapping[str, Any]] | None
+) -> tuple[set[str], int, list[int]]:
+    other = [
+        item for item in (prior or []) if isinstance(item, Mapping) and item.get("stage") != stage
+    ]
+    ids = {
+        str(entry.get("id") or "")
+        for item in other
+        for entry in (item.get("items") or [])
+        if isinstance(entry, Mapping) and entry.get("id")
+    }
+    unlisted = sum(
+        max(0, int(item.get("count") or 0) - len(item.get("items") or [])) for item in other
+    )
+    totals = [int(item.get("total") or 0) for item in other]
+    return ids, unlisted, totals
+
+
 def judge_partial(
     stage: str,
     result: Mapping[str, Any] | None,
     *,
     count: int = DEFAULT_BUDGET_COUNT,
     percent: float = DEFAULT_BUDGET_PERCENT,
+    prior: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Decide whether a failed stage still delivers the work.
 
@@ -129,6 +159,15 @@ def judge_partial(
         return None
     if len(failed) > failure_budget(total, count, percent):
         return None
+    prior_ids, unlisted, prior_totals = _prior_failures(stage, prior)
+    if prior_ids or unlisted:
+        current_ids = {str(item.get("id") or "") for item in failed if item.get("id")}
+        cumulative = len(prior_ids | current_ids) + unlisted
+        track_total = max([total, *prior_totals])
+        if cumulative >= max(track_total, 1) or cumulative > failure_budget(
+            track_total, count, percent
+        ):
+            return None
     return {
         "stage": stage,
         "count": len(failed),
@@ -146,6 +185,7 @@ def over_budget_message(
     *,
     count: int = DEFAULT_BUDGET_COUNT,
     percent: float = DEFAULT_BUDGET_PERCENT,
+    prior: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
     """Explain a stage failure; says so when sentences were lost beyond the budget."""
 
@@ -157,6 +197,17 @@ def over_budget_message(
         allowed = failure_budget(total, count, percent)
         listed = "；".join(f"{item.get('id')}：{item.get('reason')}" for item in failed[:5])
         more = f"（另有 {len(failed) - 5} 句）" if len(failed) > 5 else ""
+        prior_ids, unlisted, prior_totals = _prior_failures(stage, prior)
+        if (prior_ids or unlisted) and len(failed) <= allowed:
+            current_ids = {str(item.get("id") or "") for item in failed if item.get("id")}
+            cumulative = len(prior_ids | current_ids) + unlisted
+            track_total = max([total, *prior_totals])
+            track_allowed = failure_budget(track_total, count, percent)
+            return (
+                f"累计 {cumulative} 句失败（本阶段 {len(failed)} 句），"
+                f"超过批量允许的 {track_allowed} 句（共 {track_total} 句）。"
+                f"失败句：{listed}{more}"
+            )
         return (
             f"{len(failed)} 句失败，超过批量允许的 {allowed} 句（共 {total} 句）。"
             f"失败句：{listed}{more}"

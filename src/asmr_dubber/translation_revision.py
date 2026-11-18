@@ -19,20 +19,36 @@ import httpx
 
 from .errors import ProjectError, TranslationError
 from .lifecycle import invalidate_outputs, project_operation
-from .models import DubProject, save_project
+from .models import DubProject, Sentence, save_project
 from .task_control import CancellationSignal, check_cancelled
 from .translation import (
     LLM_REVISION_PROVIDERS,
     MACHINE_REVISION_ERROR,
     Progress,
     RevisionReport,
+    _clear_audio,
     _mark_sound,
     _mark_translated,
+    check_translations,
+    length_budgets,
     revise_translations,
 )
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
 
 MAX_INSTRUCTION_CHARS = 2_000
+
+
+def _budget_rate_and_key(project: DubProject) -> tuple[float | None, str]:
+    settings = project.settings
+    budget_key = "max_words" if settings.tts_target_language == "en" else "max_chars"
+    if not settings.translation_length_budget:
+        return None, budget_key
+    rate = (
+        settings.translation_chars_per_second * 0.6
+        if settings.tts_target_language == "en"
+        else settings.translation_chars_per_second
+    )
+    return rate, budget_key
 
 
 def _proposal_records(report: RevisionReport, instruction: str) -> list[dict[str, Any]]:
@@ -97,6 +113,7 @@ def revise_project_translations(
             merge_proposals(project, records)
             save_project(project, project_dir)
 
+    budget_rate, _ = _budget_rate_and_key(project)
     report = revise_translations(
         project.sentences,
         instruction,
@@ -121,6 +138,7 @@ def revise_project_translations(
         cancel_event=cancel_event,
         extra_body=settings.translation_extra_body,
         sound_policy=settings.translation_sound_policy,
+        length_budget_rate=budget_rate,
     )
     if report.candidates == 0:
         raise ProjectError(
@@ -147,7 +165,8 @@ def resolve_proposals(
     reject = set(reject_ids) - accept
     by_id = {sentence.id: sentence for sentence in project.sentences}
     policy = project.settings.translation_sound_policy
-    accepted = stale = rejected = 0
+    accepted_sentences: list[Sentence] = []
+    stale = rejected = 0
     remaining: list[dict[str, Any]] = []
     for record in project.translation_proposals:
         sentence_id = record.get("id")
@@ -162,14 +181,38 @@ def resolve_proposals(
             stale += 1
             continue
         text = str(record.get("new_zh", ""))
+        _clear_audio(sentence)
         if record.get("kind") == "sound":
             _mark_sound(sentence, text, policy)
+            if policy == "keep_source" and text:
+                sentence.zh_text = text
+                sentence.chinese_audio_enabled = False
         else:
             _mark_translated(sentence, text)
         sentence.review_locked = True
-        sentence.reference_file = None
-        accepted += 1
+        accepted_sentences.append(sentence)
     project.translation_proposals = remaining
+    accepted = len(accepted_sentences)
     if accepted:
+        budget_rate, budget_key = _budget_rate_and_key(project)
+        budgets = (
+            length_budgets(project.sentences, accepted_sentences, budget_rate)
+            if budget_rate is not None
+            else None
+        )
+        flags = check_translations(
+            project.sentences,
+            budgets,
+            budget_key,
+            only_ids=[sentence.id for sentence in accepted_sentences],
+            source_language=project.source_language,
+            target_language=project.settings.tts_target_language,
+        )
+        reasons: dict[str, list[str]] = {}
+        for flag in flags:
+            reasons.setdefault(flag.sentence_id, []).append(flag.reason)
+        for sentence in accepted_sentences:
+            found = reasons.get(sentence.id)
+            sentence.translation_warning = "；".join(found) if found else None
         invalidate_outputs(project)
     return {"accepted": accepted, "rejected": rejected, "stale": stale}

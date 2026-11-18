@@ -248,6 +248,14 @@ class TranslationChunk:
     budget_key: str = "max_chars"
     compress: bool = False
 
+    def subchunk(self, sentences: list[Sentence]) -> TranslationChunk:
+        return TranslationChunk(
+            sentences,
+            {s.id: self.budgets[s.id] for s in sentences if s.id in self.budgets},
+            self.budget_key,
+            self.compress,
+        )
+
 
 _BUDGET_RULE = (
     "每项的 {key} 是按原句说话时长估算的{unit}上限，用于让配音和原声对齐。"
@@ -388,6 +396,14 @@ def default_translation_prompt(
     if target_language == "en":
         prompt += "\n输出英语台词。JSON 键 zh 是兼容字段名，不表示输出中文；不得修改键名。"
     return prompt
+
+
+def _builtin_translation_prompts(source_language: SourceLanguage) -> set[str]:
+    return {
+        default_translation_prompt(source_language, target_lang, sound_policy=policy).strip()
+        for target_lang in ("zh", "en")
+        for policy in SOUND_POLICIES
+    }
 
 
 # Backward-compatible Japanese default for callers that imported this name.
@@ -822,8 +838,10 @@ class DeepSeekTranslator:
     ) -> None:
         if not api_key.strip():
             raise TranslationError("缺少 DeepSeek API Key。请在 UI 中填写或设置 DEEPSEEK_API_KEY。")
+        if not model.strip():
+            raise TranslationError("翻译模型 ID 不能为空。")
         self.api_key = api_key.strip()
-        self.model = model
+        self.model = model.strip()
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
         self.sound_policy = sound_policy
@@ -848,6 +866,70 @@ class DeepSeekTranslator:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    def _initial_max_tokens(
+        self, sentences: Iterable[Sentence], *, include_existing_zh: bool = False
+    ) -> int:
+        char_count = sum(
+            len(item.source_text) + (len(item.zh_text) if include_existing_zh else 0)
+            for item in sentences
+        )
+        return min(
+            65_536,
+            max(self.minimum_output_tokens, char_count * 4 + 4_096),
+        )
+
+    def _request(
+        self,
+        messages: list[dict[str, str]],
+        job_id: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> tuple[str, bool]:
+        tokens = self.minimum_output_tokens if max_tokens is None else max_tokens
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "max_tokens": tokens,
+            # Translation is a constrained text-to-text mapping.  Thinking
+            # consumes the same completion budget as the final JSON and can
+            # end the request before any usable content is returned.
+            "thinking": {"type": "disabled"},
+            "user_id": job_id,
+            "stream": False,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+        }
+        try:
+            payload = merge_extra_body(
+                payload,
+                self.extra_body,
+                label="翻译附加请求参数",
+                reserved={"model", "messages", "stream"},
+            )
+        except APIContractError as exc:
+            raise _NonRetryableTranslationError(str(exc)) from exc
+        response = self.client.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        if response.status_code in {401, 402, 403, 422}:
+            raise _NonRetryableTranslationError(
+                f"DeepSeek API 拒绝请求（HTTP {response.status_code}）：{response.text[:500]}",
+                response.status_code,
+            )
+        response.raise_for_status()
+        data = response.json()
+        choice = data["choices"][0]
+        if choice.get("finish_reason") == "length":
+            return "", True
+        content = choice.get("message", {}).get("content") or ""
+        return content, False
+
     def translate_chunk(
         self,
         chunk: TranslationChunk,
@@ -862,13 +944,7 @@ class DeepSeekTranslator:
             budgets=chunk.budgets,
             budget_key=chunk.budget_key,
         )
-        max_tokens = min(
-            65_536,
-            max(
-                self.minimum_output_tokens,
-                sum(len(item.source_text) for item in chunk.sentences) * 4 + 4_096,
-            ),
-        )
+        max_tokens = self._initial_max_tokens(chunk.sentences, include_existing_zh=chunk.compress)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             messages = [{"role": "system", "content": self.system_prompt}]
@@ -901,48 +977,9 @@ class DeepSeekTranslator:
                     + budget_rule(chunk),
                 }
             )
-            payload: dict[str, object] = {
-                "model": self.model,
-                "messages": messages,
-                "response_format": {"type": "json_object"},
-                "max_tokens": max_tokens,
-                # Translation is a constrained text-to-text mapping.  Thinking
-                # consumes the same completion budget as the final JSON and can
-                # end the request before any usable content is returned.
-                "thinking": {"type": "disabled"},
-                "user_id": job_id,
-                "stream": False,
-                "temperature": self.temperature,
-                "top_p": self.top_p,
-            }
             try:
-                payload = merge_extra_body(
-                    payload,
-                    self.extra_body,
-                    label="翻译附加请求参数",
-                    reserved={"model", "messages", "stream"},
-                )
-            except APIContractError as exc:
-                raise TranslationError(str(exc)) from exc
-            try:
-                response = self.client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                if response.status_code in {401, 402, 403, 422}:
-                    raise _NonRetryableTranslationError(
-                        f"DeepSeek API 拒绝请求（HTTP {response.status_code}）："
-                        f"{response.text[:500]}",
-                        response.status_code,
-                    )
-                response.raise_for_status()
-                data = response.json()
-                choice = data["choices"][0]
-                if choice.get("finish_reason") == "length":
+                content, output_limited = self._request(messages, job_id, max_tokens=max_tokens)
+                if output_limited:
                     length_error = _OutputLengthTranslationError(
                         f"DeepSeek 输出达到长度上限（max_tokens={max_tokens}）。"
                     )
@@ -954,7 +991,6 @@ class DeepSeekTranslator:
                     max_tokens = min(65_536, max_tokens * 2)
                     last_error = length_error
                     continue
-                content = choice.get("message", {}).get("content") or ""
                 if not content.strip():
                     raise TranslationError("DeepSeek 偶发返回了空内容。")
                 return validate_translation_entries(content, expected_ids)
@@ -1741,6 +1777,9 @@ def _clear_audio(sentence: Sentence) -> None:
     sentence.tts_file = None
     sentence.tts_cache_key = None
     sentence.tts_duration_seconds = None
+    sentence.tts_candidates = []
+    sentence.tts_warning = None
+    sentence.tts_attempt = 0
 
 
 def _mark_translated(sentence: Sentence, text: str) -> None:
@@ -1794,12 +1833,42 @@ def _mark_sound(sentence: Sentence, model_text: str, policy: str) -> None:
 
 
 _KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fd-\u30ff\uff66-\uff9d]")
+_ANY_KANA = re.compile(r"[\u3040-\u309f\u30a0-\u30fa\u30fc-\u30ff\uff66-\uff9f]")
+_SHARED_HANZI_ASCII_KEY = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff0-9a-z]+$")
+_HANZI_CHAR = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 # A line over its length budget by more than this share is flagged.
 LENGTH_OVERRUN_RATIO = 1.2
 
 
 def _same_text_key(text: str) -> str:
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text)).casefold()
+
+
+def _allow_same_as_source(
+    source_text: str,
+    target_text: str,
+    key: str,
+    *,
+    source_language: SourceLanguage,
+    target_language: str,
+) -> bool:
+    normalized_source = unicodedata.normalize("NFKC", source_text)
+    normalized_target = unicodedata.normalize("NFKC", target_text)
+    if _ANY_KANA.search(normalized_source) or _ANY_KANA.search(normalized_target):
+        return False
+    if not _SHARED_HANZI_ASCII_KEY.fullmatch(key):
+        return False
+    if _HANZI_CHAR.search(key) and (target_language != "zh" or source_language == "zh"):
+        return False
+    words = re.findall(r"[A-Za-z]+", normalized_target)
+    if not words:
+        return True
+    if len(words) > 1:
+        return False
+    word = words[0]
+    if word.casefold() == "ok" or (word.isupper() and len(word) <= 6):
+        return True
+    return source_language == "ja" and len(word) <= 4
 
 
 def _used_length(text: str, budget_key: str) -> int:
@@ -1811,6 +1880,9 @@ def check_translations(
     budgets: dict[str, int] | None = None,
     budget_key: str = "max_chars",
     only_ids: Iterable[str] | None = None,
+    *,
+    source_language: SourceLanguage = "ja",
+    target_language: str | None = None,
 ) -> list[TranslationFlag]:
     """Self-check finished translations; nothing is written to the sentences.
 
@@ -1821,6 +1893,11 @@ def check_translations(
     """
 
     wanted = None if only_ids is None else set(only_ids)
+    resolved_target = (
+        target_language
+        if target_language is not None
+        else ("en" if budget_key == "max_words" else "zh")
+    )
     ordered = sorted(
         (s for s in sentences if s.enabled and s.zh_text),
         key=lambda s: (s.start_seconds, s.end_seconds, s.id),
@@ -1848,7 +1925,18 @@ def check_translations(
                     )
                 )
         key = _same_text_key(text)
-        if key and key == _same_text_key(sentence.source_text) and has_speakable_text(text):
+        if (
+            key
+            and key == _same_text_key(sentence.source_text)
+            and has_speakable_text(text)
+            and not _allow_same_as_source(
+                sentence.source_text,
+                text,
+                key,
+                source_language=source_language,
+                target_language=resolved_target,
+            )
+        ):
             flags.append(TranslationFlag(sentence.id, "same_as_source", "译文与原文完全相同。"))
         if (
             before is not None
@@ -1938,7 +2026,12 @@ def translate_sentences(
             too_long = {
                 flag.sentence_id
                 for flag in check_translations(
-                    sentences, budgets, budget_key, only_ids=[sentence.id for sentence in pool]
+                    sentences,
+                    budgets,
+                    budget_key,
+                    only_ids=[sentence.id for sentence in pool],
+                    source_language=source_language,
+                    target_language=target_language,
                 )
                 if flag.code == "too_long"
             }
@@ -1972,10 +2065,7 @@ def translate_sentences(
         if on_batch:
             on_batch()
         return report
-    default_prompts = {
-        default_translation_prompt(source_language, sound_policy=policy).strip()
-        for policy in SOUND_POLICIES
-    }
+    default_prompts = _builtin_translation_prompts(source_language)
     if not system_prompt.strip() or system_prompt.strip() in default_prompts:
         system_prompt = default_translation_prompt(source_language, target_language, sound_policy)
     elif target_language == "en":
@@ -1995,27 +2085,21 @@ def translate_sentences(
         len(pending),
         source_language,
     )
+
+    def make_chunk(items: list[Sentence], *, compress_mode: bool = False) -> TranslationChunk:
+        return TranslationChunk(
+            items,
+            {item.id: budgets[item.id] for item in items if item.id in budgets},
+            budget_key,
+            compress=compress_mode,
+        )
+
     batches = _chunks(pending)
     if compress:
-        batches = [
-            TranslationChunk(
-                chunk.sentences,
-                {s.id: budgets[s.id] for s in chunk.sentences},
-                budget_key,
-                compress=True,
-            )
-            for chunk in batches
-        ]
+        batches = [make_chunk(chunk.sentences, compress_mode=True) for chunk in batches]
     elif length_budget_rate and provider not in mt_providers:
         budgets = length_budgets(list(sentences), pending, length_budget_rate)
-        batches = [
-            TranslationChunk(
-                chunk.sentences,
-                {s.id: budgets[s.id] for s in chunk.sentences},
-                budget_key,
-            )
-            for chunk in batches
-        ]
+        batches = [make_chunk(chunk.sentences) for chunk in batches]
     if provider == "deepseek":
         translator: DeepSeekTranslator | LLMTranslator | MachineTranslationAPI = DeepSeekTranslator(
             api_key=api_key,
@@ -2070,7 +2154,10 @@ def translate_sentences(
 
     # Sentences whose old text is about to be replaced must not leak into the
     # context or memory sent to the model; they are shown blank until redone.
-    stale_ids = {sentence.id for sentence in pending if sentence.zh_text}
+    # Compression refines existing translations rather than discarding them.
+    stale_ids: set[str] = (
+        set() if compress else {sentence.id for sentence in pending if sentence.zh_text}
+    )
 
     def prompt_sentences() -> list[Sentence]:
         if not stale_ids:
@@ -2134,7 +2221,7 @@ def translate_sentences(
             # A blank semantic line is retried alone, rather than silently
             # being classified as a sound effect.
             try:
-                retried = request(TranslationChunk([sentence]), None)
+                retried = request(make_chunk([sentence]), None)
             except TranslationError as exc:
                 check_cancelled(cancel_event)
                 if _is_fatal_translation_error(exc):
@@ -2189,16 +2276,11 @@ def translate_sentences(
             return
         middle = count // 2
         logger.warning("翻译批次 %d 句失败，拆成两半重试：%s", count, split_reason[:200])
-        run(TranslationChunk(chunk.sentences[:middle]), retry_attempts)
-        run(TranslationChunk(chunk.sentences[middle:]), retry_attempts)
+        run(chunk.subchunk(chunk.sentences[:middle]), retry_attempts)
+        run(chunk.subchunk(chunk.sentences[middle:]), retry_attempts)
 
     def make_compress_chunk(items: list[Sentence]) -> TranslationChunk:
-        return TranslationChunk(
-            items,
-            {item.id: budgets[item.id] for item in items if item.id in budgets},
-            budget_key,
-            compress=True,
-        )
+        return make_chunk(items, compress_mode=True)
 
     def tighten_chunk(
         chunk: TranslationChunk,
@@ -2245,6 +2327,7 @@ def translate_sentences(
         else:
             changed = False
             for sentence in chunk.sentences:
+                stale_ids.discard(sentence.id)
                 entry = _as_entry(results[sentence.id])
                 candidate = entry.zh.strip()
                 if entry.kind == "sound" or not candidate:
@@ -2343,7 +2426,12 @@ def translate_sentences(
                     over_ids = {
                         flag.sentence_id
                         for flag in check_translations(
-                            sentences, budgets, budget_key, only_ids=translated_ids
+                            sentences,
+                            budgets,
+                            budget_key,
+                            only_ids=translated_ids,
+                            source_language=source_language,
+                            target_language=target_language,
                         )
                         if flag.code == "too_long"
                     }
@@ -2352,7 +2440,14 @@ def translate_sentences(
                         tighten_all(over_sentences, count_translated=False, record_failure=False)
     finally:
         unregister_cancel_callback(cancel_translation, callback_signal)
-    report.flagged = check_translations(sentences, budgets, budget_key, only_ids=translated_ids)
+    report.flagged = check_translations(
+        sentences,
+        budgets,
+        budget_key,
+        only_ids=translated_ids,
+        source_language=source_language,
+        target_language=target_language,
+    )
     return report
 
 
@@ -2497,10 +2592,7 @@ def _revision_system_prompt(
 ) -> str:
     """The project's translation role and rules, plus the revision output contract."""
 
-    default_prompts = {
-        default_translation_prompt(source_language, sound_policy=policy).strip()
-        for policy in SOUND_POLICIES
-    }
+    default_prompts = _builtin_translation_prompts(source_language)
     if not system_prompt.strip() or system_prompt.strip() in default_prompts:
         base = default_translation_prompt(source_language, target_language, sound_policy)
     else:
@@ -2529,16 +2621,25 @@ def _revision_messages(
     sound_policy: str,
     attempt: int,
 ) -> list[dict[str, str]]:
+    target_items: list[dict[str, object]] = []
+    for item in chunk.sentences:
+        row: dict[str, object] = {
+            "id": item.id,
+            "source": item.source_text,
+            "current_zh": item.zh_text,
+        }
+        if chunk.budgets and item.id in chunk.budgets:
+            row[chunk.budget_key] = chunk.budgets[item.id]
+        target_items.append(row)
     target = json.dumps(
-        [
-            {"id": item.id, "source": item.source_text, "current_zh": item.zh_text}
-            for item in chunk.sentences
-        ],
+        target_items,
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    notes = '\n每项只输出 id、zh、kind 三个字段，kind 为 "speech" 或 "sound"。' + sound_policy_rule(
-        sound_policy
+    notes = (
+        '\n每项只输出 id、zh、kind 三个字段，kind 为 "speech" 或 "sound"。'
+        + sound_policy_rule(sound_policy)
+        + budget_rule(chunk)
     )
     if attempt > 1:
         notes += (
@@ -2591,6 +2692,7 @@ def revise_translations(
     cancel_event: CancellationSignal | None = None,
     extra_body: str = "{}",
     sound_policy: str = "skip",
+    length_budget_rate: float | None = None,
     max_retries: int = 5,
 ) -> RevisionReport:
     """Ask the translation model to revise existing translations as the user said.
@@ -2617,21 +2719,37 @@ def revise_translations(
     if not eligible:
         return report
     prompt = _revision_system_prompt(system_prompt, source_language, target_language, sound_policy)
-    translator = LLMTranslator(
-        provider=provider,
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
-        system_prompt=prompt,
-        temperature=temperature,
-        top_p=top_p,
-        max_output_tokens=max_output_tokens,
-        max_retries=max_retries,
-        client=client,
-        source_language=source_language,
-        extra_body=extra_body,
-        sound_policy=sound_policy,
-    )
+    if provider == "deepseek":
+        translator: DeepSeekTranslator | LLMTranslator = DeepSeekTranslator(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_retries=max_retries,
+            client=client,
+            system_prompt=prompt,
+            temperature=temperature,
+            top_p=top_p,
+            minimum_output_tokens=max_output_tokens,
+            source_language=source_language,
+            extra_body=extra_body,
+            sound_policy=sound_policy,
+        )
+    else:
+        translator = LLMTranslator(
+            provider=provider,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            system_prompt=prompt,
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=max_output_tokens,
+            max_retries=max_retries,
+            client=client,
+            source_language=source_language,
+            extra_body=extra_body,
+            sound_policy=sound_policy,
+        )
     logger.info(
         "改译开始：服务=%s 模型=%s 地址=%s 句数=%d",
         provider,
@@ -2639,19 +2757,51 @@ def revise_translations(
         safe_api_url(base_url),
         len(eligible),
     )
+    budget_key = "max_words" if target_language == "en" else "max_chars"
+    budgets = (
+        length_budgets(list(sentences), eligible, length_budget_rate) if length_budget_rate else {}
+    )
     batches = _chunks(eligible, max_lines=REVISION_BATCH_SIZE)
+    if budgets:
+        batches = [
+            TranslationChunk(
+                chunk.sentences,
+                {s.id: budgets[s.id] for s in chunk.sentences if s.id in budgets},
+                budget_key,
+            )
+            for chunk in batches
+        ]
 
     def request(chunk: TranslationChunk, attempts: int) -> dict[str, RevisionItem]:
         expected = [item.id for item in chunk.sentences]
         context = _context_for_chunk(sentences, chunk, context_sentences) if send_context else "[]"
+        deepseek_tokens = (
+            translator._initial_max_tokens(chunk.sentences, include_existing_zh=True)
+            if isinstance(translator, DeepSeekTranslator)
+            else max_output_tokens
+        )
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             messages = _revision_messages(
                 prompt, chunk, context, instruction, sound_policy, attempt
             )
             try:
-                content, output_limited = translator._request(messages, job_id)
+                if isinstance(translator, DeepSeekTranslator):
+                    content, output_limited = translator._request(
+                        messages, job_id, max_tokens=deepseek_tokens
+                    )
+                else:
+                    content, output_limited = translator._request(messages, job_id)
                 if output_limited:
+                    if isinstance(translator, DeepSeekTranslator):
+                        length_error = _OutputLengthTranslationError(
+                            f"DeepSeek 输出达到长度上限（max_tokens={deepseek_tokens}）。"
+                        )
+                        if len(chunk.sentences) > 1 or deepseek_tokens >= 65_536:
+                            raise length_error
+                        deepseek_tokens = min(65_536, deepseek_tokens * 2)
+                        last_error = length_error
+                        continue
                     raise _OutputLengthTranslationError(
                         f"{provider} 输出达到长度上限（{max_output_tokens} tokens）。"
                     )
@@ -2677,10 +2827,10 @@ def revise_translations(
                 report.unchanged += 1
                 continue
             if item.kind == "sound":
-                if sentence.status == "skipped_sound":
+                if sentence.status == "skipped_sound" and item.zh == sentence.zh_text.strip():
                     report.unchanged += 1
                     continue
-            elif item.zh == sentence.zh_text.strip():
+            elif sentence.status != "skipped_sound" and item.zh == sentence.zh_text.strip():
                 report.unchanged += 1
                 continue
             report.proposals.append(
@@ -2713,8 +2863,8 @@ def revise_translations(
             return
         middle = count // 2
         logger.warning("改译批次 %d 句失败，拆成两半重试：%s", count, reason[:200])
-        run(TranslationChunk(chunk.sentences[:middle]), attempts)
-        run(TranslationChunk(chunk.sentences[middle:]), attempts)
+        run(chunk.subchunk(chunk.sentences[:middle]), attempts)
+        run(chunk.subchunk(chunk.sentences[middle:]), attempts)
 
     cancel_revision = translator.close
     callback_signal = register_cancel_callback(cancel_revision, cancel_event)

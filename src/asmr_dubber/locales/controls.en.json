@@ -510,5 +510,13 @@
   "第 {index} 行列数错误，应为 {count} 列。": "Row {index} has the wrong number of columns (expected {count}).",
   "句子 ID 重复：{sentence_id}": "Duplicate sentence ID: {sentence_id}",
   "{sentence_id} 的时间范围无效。": "Invalid time range for {sentence_id}.",
-  "{sentence_id} 原声开关必须为 default/on/off。": "Original voice setting for {sentence_id} must be default/on/off."
+  "{sentence_id} 原声开关必须为 default/on/off。": "Original voice setting for {sentence_id} must be default/on/off.",
+  "（旧）": " (outdated)",
+  "句子或设置已改动，需重新导出更新此版本": "Lines or settings changed since this mix was exported; export again to update it.",
+  "请等当前任务结束后再操作。": "Wait for the current task to finish first.",
+  "翻译服务响应成功，但没有返回有效译文。": "The translation service responded, but returned no usable text.",
+  "翻译 API 测试通过：{source} → {target}": "Translation API test passed: {source} → {target}",
+  "anime-whisper 负责日语识别，IndexTTS2 负责模仿原声音色配音。显存较小可改用轻量的 Parakeet；英语或中文音频识别请改用 Faster-Whisper。": "anime-whisper recognises Japanese speech and IndexTTS2 dubs in the original voice. On lower-memory GPUs use the lighter Parakeet; for English or Chinese audio, use Faster-Whisper for recognition.",
+  "anime-whisper 负责日语识别；当前显存不足以在本地运行 IndexTTS2，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。": "anime-whisper recognises Japanese speech; this GPU does not have enough video memory to run IndexTTS2 locally, so use built-in Edge TTS or cloud dubbing. For English or Chinese audio, use Faster-Whisper.",
+  "当前设备改用轻量的 Parakeet 负责日语识别，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。": "This computer uses the lighter Parakeet for Japanese recognition; use built-in Edge TTS or cloud dubbing for speech. For English or Chinese audio, use Faster-Whisper."
 }

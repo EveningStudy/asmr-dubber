@@ -92,10 +92,11 @@ async function play() {
 }
 function renderButtons(tracks) {
   $('#compareTracks').innerHTML = tracks
-    .map(
-      (track) =>
-        `<button data-compare="${esc(track.key)}" class="${track.key === active ? 'on' : ''}">${t(LABELS[track.key])}</button>`,
-    )
+    .map((track) => {
+      const cls = [track.key === active && 'on', track.stale && 'stale'].filter(Boolean).join(' ');
+      const tip = track.stale ? ` title="${esc(t('句子或设置已改动，需重新导出更新此版本'))}"` : '';
+      return `<button data-compare="${esc(track.key)}" class="${cls}"${tip}>${esc(t(LABELS[track.key]))}${track.stale ? esc(t('（旧）')) : ''}</button>`;
+    })
     .join('');
 }
 
@@ -104,7 +105,7 @@ export function renderCompare(project) {
   const usable = tracks.length > 1;
   $('#comparePlayer').hidden = !usable;
   $('#compareEmpty').hidden = usable;
-  const next = usable ? tracks.map((track) => track.key + track.url).join('|') : '';
+  const next = usable ? tracks.map((track) => `${track.key}:${track.url}:${track.modified ?? ''}`).join('|') : '';
   if (next !== signature) {
     teardown();
     signature = next;

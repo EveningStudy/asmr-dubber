@@ -28,6 +28,7 @@ def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) 
     selected.pop("tts_reference_sentence_id", None)
     if "replace" in variants:
         selected["separation_enabled"] = True
+        selected["spatial_rtf_enabled"] = True
     return {"content": content, "variants": variants, "subtitle": subtitle, "settings": selected}
 
 

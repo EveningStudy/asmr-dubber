@@ -25,10 +25,11 @@ def build_cached_stem(builder, **kwargs):
             "spatial_settings",
             "source_reference_path",
             "spatial_reference_path",
+            "voice_match_path",
         }
     }
     parameters["source"] = kwargs["source_info"].model_dump(mode="json")
-    parameters["implementation"] = 1
+    parameters["implementation"] = 2
     parameters["events"] = []
     for event in kwargs["events"]:
         check_cancelled()
@@ -45,9 +46,9 @@ def build_cached_stem(builder, **kwargs):
     )
     # References are derived from the verified source; include their actual content
     # so edits/replacement at the same path cannot return an obsolete stem.
-    for key in ("source_reference_path", "spatial_reference_path"):
+    for key in ("source_reference_path", "spatial_reference_path", "voice_match_path"):
         path = kwargs.get(key)
-        parameters[key] = sha256_file(path) if path else None
+        parameters[key] = sha256_file(Path(path)) if path else None
     fingerprint = hashlib.sha256(json.dumps(parameters, sort_keys=True).encode()).hexdigest()
     try:
         saved = json.loads(receipt.read_text(encoding="utf-8"))
@@ -71,3 +72,39 @@ def variant_directory(project_dir: Path, variant: str | None) -> Path:
     if variant not in {None, "bilingual", "replace"}:
         raise ValueError("输出版本只能是 bilingual 或 replace。")
     return project_dir / "output" / variant if variant else project_dir / "output"
+
+
+def compare_sentence_signature(project) -> str:
+    rows = [
+        (
+            sentence.id,
+            sentence.enabled,
+            sentence.start_seconds,
+            sentence.end_seconds,
+            sentence.zh_text,
+            sentence.tts_file,
+            sentence.tts_cache_key,
+            sentence.original_audio_enabled,
+            sentence.original_audio_gain_db,
+            sentence.chinese_audio_enabled,
+            sentence.chinese_audio_gain_db,
+        )
+        for sentence in project.sentences
+    ]
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def write_compare_state(project, project_dir: Path, key: str, *paths: Path) -> None:
+    existing = [path for path in paths if path is not None and path.is_file()]
+    if not existing:
+        return
+    payload = {
+        "signature": compare_sentence_signature(project),
+        "mtimes_ns": sorted({path.stat().st_mtime_ns for path in existing}),
+        "size": existing[0].stat().st_size,
+    }
+    atomic_write_text(
+        project_dir / "mix" / f"compare-{key}.json",
+        json.dumps(payload, ensure_ascii=False),
+    )

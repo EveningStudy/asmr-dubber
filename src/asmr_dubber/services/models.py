@@ -21,7 +21,7 @@ from ..separation import (
     model_directory,
     prepare_local_model,
 )
-from . import model_status
+from . import model_status, onboarding
 from .settings import current
 
 SEPARATION_MODELS = {
@@ -73,9 +73,16 @@ def model_storage(settings):
     }
 
 
+def recommended_models():
+    choice = onboarding.recommendation()
+    return [entry["id"] for entry in (choice["asr"], choice["tts"]) if entry["id"]]
+
+
 def catalog():
     settings = current()
     hardware = asdict(runtime.detect_hardware())
+    recommended_ids = recommended_models()
+    recommended_set = set(recommended_ids)
     home = portable_home()
     home.mkdir(parents=True, exist_ok=True)
     disk = shutil.disk_usage(home)
@@ -104,7 +111,7 @@ def catalog():
                     else status.detail
                 ),
                 "models": list(spec.models),
-                "recommended": spec.id in {"parakeet_nemo", "anime_whisper", "indextts2"},
+                "recommended": spec.id in recommended_set,
             }
         )
     for identifier, name, status in (
@@ -149,6 +156,7 @@ def catalog():
         "free_bytes": disk.free,
         "used_bytes": model_storage(settings)["total_bytes"],
         "items": items,
+        "recommended": recommended_ids,
         "packs": model_status.offline_model_pack_markdown(),
     }
 
@@ -189,7 +197,7 @@ def _download(request, report, token):
             runtime.install_backend(
                 backend, progress=report, log_callback=report, cancel_event=token
             )
-            for backend in ("parakeet_nemo", "indextts2")
+            for backend in recommended_models()
         ]
         return {"message": "\n".join(results)}
     if identifier.startswith("separation_"):

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from ..experimental_mix import sentence_is_replaced
 from ..models import DubProject
+from ..stem_cache import compare_sentence_signature
 
 REPORT = Path("mix/replacement-report.json")
 _VARIANTS = {"bilingual": "bilingual", "replace": "replacement"}
@@ -54,6 +57,55 @@ def _audio_files(folder: Path) -> list[Path]:
     )
 
 
+def _same_file(first: Path, second: Path) -> bool:
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return first.resolve() == second.resolve()
+
+
+def _is_track_stale(
+    project: DubProject,
+    directory: Path,
+    key: str,
+    path: Path,
+    current_output: Path | None,
+) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return True
+    mtime = stat.st_mtime
+    root = directory.resolve()
+    for sentence in project.sentences:
+        if not sentence.tts_file:
+            continue
+        dub_path = (directory / sentence.tts_file).resolve()
+        if (
+            dub_path.is_relative_to(root)
+            and dub_path.is_file()
+            and dub_path.stat().st_mtime > mtime + 0.5
+        ):
+            return True
+    try:
+        updated_at_epoch = datetime.fromisoformat(project.updated_at).timestamp()
+    except ValueError:
+        updated_at_epoch = 0.0
+    if current_output is None and (
+        mtime + 2.0 < updated_at_epoch or (project.revision > 0 and mtime <= updated_at_epoch)
+    ):
+        return True
+    try:
+        saved = json.loads((directory / "mix" / f"compare-{key}.json").read_text(encoding="utf-8"))
+        if stat.st_mtime_ns in saved.get("mtimes_ns", []) and stat.st_size == saved.get("size"):
+            return saved.get("signature") != compare_sentence_signature(project)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    if current_output is not None and _same_file(path, current_output):
+        return False
+    return mtime + 2.0 < updated_at_epoch
+
+
 def compare_tracks(
     project: DubProject, directory: Path, source: str | None, register: Callable[[Path], str | None]
 ) -> list[dict]:
@@ -70,19 +122,27 @@ def compare_tracks(
         files = _audio_files(directory / "output" / variant)
         if files:
             found[key] = files[0]
+    root = directory.resolve()
     main = (directory / project.output_file).resolve() if project.output_file else None
-    if (
-        main is not None
-        and main.is_relative_to(directory.resolve())
-        and main.is_file()
-        and main.parent.name not in _VARIANTS
-    ):
+    current_output = (
+        main if main is not None and main.is_relative_to(root) and main.is_file() else None
+    )
+    if current_output is not None and current_output.parent.name not in _VARIANTS:
         # The project's own current output is the one that still matches its sentences.
         found[
             "replacement" if project.settings.separation_mix_mode == "replace" else "bilingual"
-        ] = main
+        ] = current_output
     for key in ("bilingual", "replacement"):
-        url = register(found[key]) if key in found else None
+        if key not in found:
+            continue
+        url = register(found[key])
         if url:
-            tracks.append({"key": key, "url": url, "modified": round(found[key].stat().st_mtime)})
+            tracks.append(
+                {
+                    "key": key,
+                    "url": url,
+                    "modified": round(found[key].stat().st_mtime),
+                    "stale": _is_track_stale(project, directory, key, found[key], current_output),
+                }
+            )
     return tracks

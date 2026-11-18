@@ -44,6 +44,7 @@ BILINGUAL = {
 REPLACEMENT = {
     "separation_enabled": True,
     "separation_mix_mode": "replace",
+    "spatial_rtf_enabled": True,
     "replacement_scope": "dubbed_speech",
     "replacement_timing_mode": "fit_then_shift",
     "replacement_max_auto_speed": 1.2,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import re
 import shutil
@@ -27,6 +28,7 @@ from .audio import (
     render_subtitled_video,
     resolve_project_path,
     sentence_events,
+    speech_bounds,
     verify_source,
 )
 from .constants import DEFAULT_PROJECTS_DIR
@@ -64,6 +66,7 @@ from .tts import synthesize_sentences, tts_cache_key, valid_tts_cache
 from .user_settings import PROVIDER_PRESETS, resolve_api_key
 
 Progress = Callable[[str, int, int], None]
+logger = logging.getLogger(__name__)
 _PROJECT_STAMP = re.compile(r"_\d{8}T\d{6}Z(?:_\d+)?$")
 _INVALID_FILENAME = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
 _RESERVED_WINDOWS_NAMES = {
@@ -941,6 +944,7 @@ def _synthesize_project_impl(
     requested = set(sentence_ids) if sentence_ids is not None else None
     needs_generation = any(
         sentence.enabled
+        and sentence.chinese_audio_enabled
         and sentence.zh_text
         and (requested is None or sentence.id in requested)
         and (
@@ -1023,7 +1027,9 @@ def _synthesize_project_unlocked(
             len(sentence_ids)
             if sentence_ids is not None
             else sum(
-                sentence.enabled and has_speakable_text(sentence.zh_text)
+                sentence.enabled
+                and sentence.chinese_audio_enabled
+                and has_speakable_text(sentence.zh_text)
                 for sentence in project.sentences
             )
         ),
@@ -1076,6 +1082,41 @@ def synthesize_project(
         )
 
 
+def _sentence_needs_dubbing(sentence: Sentence) -> bool:
+    if not sentence.enabled or not sentence.chinese_audio_enabled:
+        return False
+    if not sentence.zh_text:
+        return sentence.status not in {"skipped_sound", "skipped_filler", "skipped_tts"}
+    return has_speakable_text(sentence.zh_text)
+
+
+def _replacement_dubbing_durations(project: DubProject, project_dir: Path) -> dict[str, float]:
+    durations: dict[str, float] = {}
+    for sentence in project.sentences:
+        if (
+            not sentence.enabled
+            or not sentence.chinese_audio_enabled
+            or not has_speakable_text(sentence.zh_text)
+        ):
+            continue
+        if sentence.tts_file:
+            try:
+                audio_path = resolve_project_path(
+                    project_dir,
+                    sentence.tts_file,
+                    f"句子 {sentence.id} 的中文音频",
+                )
+                if audio_path.is_file():
+                    lo, hi = speech_bounds(audio_path)
+                    durations[sentence.id] = hi - lo
+                    continue
+            except Exception:
+                pass
+        if sentence.tts_duration_seconds is not None and sentence.tts_duration_seconds > 0:
+            durations[sentence.id] = float(sentence.tts_duration_seconds)
+    return durations
+
+
 def _mix_project_impl(
     project: DubProject,
     project_dir: Path,
@@ -1087,8 +1128,14 @@ def _mix_project_impl(
     check_cancelled(cancel_event)
     require_supported_platform()
     source = verify_source(project_dir, project.source)
-    if project.settings.spatial_rtf_enabled and project.source.channels != 2:
-        raise ProjectError("RTF 处理，仅支持双声道原音频；请关闭 RTF 后继续。")
+    replacing = project.settings.separation_mix_mode == "replace"
+    effective_rtf = project.settings.spatial_rtf_enabled
+    if effective_rtf and project.source.channels != 2:
+        logger.warning(
+            "原音频为 %d 声道，已自动跳过双声道空间跟随（RTF）处理。",
+            project.source.channels,
+        )
+        effective_rtf = False
     missing = [
         sentence.id
         for sentence in project.sentences
@@ -1096,24 +1143,44 @@ def _mix_project_impl(
         and sentence.chinese_audio_enabled
         and sentence.zh_text
         and has_speakable_text(sentence.zh_text)
-        and (not sentence.tts_file or sentence.tts_cache_key != tts_cache_key(project, sentence))
+        and (
+            not sentence.tts_file
+            or sentence.tts_cache_key != tts_cache_key(project, sentence)
+            or not project_file_exists(
+                project_dir,
+                sentence.tts_file,
+                f"句子 {sentence.id} 的中文音频",
+            )
+        )
     ]
+    effective_sentences = project.sentences
     if missing and allow_missing:
         # Sentences without a usable dub are treated as "not dubbed": the original
-        # voice stays in the bilingual and the fully dubbed version alike.  This runs
-        # before the replacement bed is composed so no original voice is removed for
-        # a sentence that will not be replaced.
+        # voice stays in the bilingual and the fully dubbed version alike.  Use an
+        # in-memory copy so the user's persisted tts_file references are preserved.
         lost = set(missing)
-        for sentence in project.sentences:
-            if sentence.id in lost:
-                sentence.tts_file = None
+        effective_sentences = [
+            sentence.model_copy(update={"tts_file": None}) if sentence.id in lost else sentence
+            for sentence in project.sentences
+        ]
         missing = []
     if missing:
         raise ProjectError(
             f"仍有 {len(missing)} 句的中文配音缺失或已过期：{', '.join(missing[:12])}"
         )
+    mixing_settings = (
+        project.settings
+        if effective_rtf == project.settings.spatial_rtf_enabled
+        else project.settings.model_copy(update={"spatial_rtf_enabled": effective_rtf})
+    )
+    mixing_project = (
+        project
+        if effective_sentences is project.sentences and mixing_settings is project.settings
+        else project.model_copy(
+            update={"sentences": effective_sentences, "settings": mixing_settings}
+        )
+    )
     mixing_source = source
-    replacing = project.settings.separation_mix_mode == "replace"
     reference_source = source
     separated_vocals: Path | None = None
     if project.settings.separation_enabled:
@@ -1127,17 +1194,17 @@ def _mix_project_impl(
         if replacing and project.settings.replacement_scope == "dubbed_speech":
             from .experimental_mix import compose_speech_replacement
 
-            mixing_source = compose_speech_replacement(project, project_dir, source, vocals)
+            mixing_source = compose_speech_replacement(mixing_project, project_dir, source, vocals)
         elif replacing or any(
             s.original_audio_enabled is not None or s.original_audio_gain_db != 0
-            for s in project.sentences
+            for s in effective_sentences
         ):
-            mixing_source = compose_replacement_bed(project, project_dir, vocals, background)
+            mixing_source = compose_replacement_bed(mixing_project, project_dir, vocals, background)
     elif project.settings.separation_mix_mode == "replace":
         raise ProjectError("中文替换模式必须开启人声分离；不会静默改成原声叠加。")
     events = sentence_events(
         project_dir,
-        project.sentences,
+        effective_sentences,
         (
             project.settings.replacement_dubbing_offset_ms
             if replacing
@@ -1155,11 +1222,14 @@ def _mix_project_impl(
         ),
         trim_silence=replacing,
     )
-    if not events and not any(not s.chinese_audio_enabled for s in project.sentences):
+    enabled_sentences = [s for s in project.sentences if s.enabled]
+    if not events and (
+        not enabled_sentences or any(_sentence_needs_dubbing(s) for s in enabled_sentences)
+    ):
         raise ProjectError("没有可混入的中文配音。")
     output_mode = project.settings.mix_output_mode
     keep_stem = output_mode in {"stem", "both"}
-    from .stem_cache import build_cached_stem, variant_directory
+    from .stem_cache import build_cached_stem, variant_directory, write_compare_state
 
     output_dir = variant_directory(project_dir, output_variant)
     stem = (
@@ -1177,7 +1247,7 @@ def _mix_project_impl(
         reference_key = sha256_file(reference_source)
         receipt = project_dir / "analysis" / "replacement_loudness_source.sha256"
         reference_audio = project_dir / "analysis" / "replacement_loudness_16k_mono.wav"
-        if not receipt.is_file() or receipt.read_text() != reference_key:
+        if not receipt.is_file() or receipt.read_text(encoding="utf-8") != reference_key:
             reference_audio.unlink(missing_ok=True)
         loudness_reference = make_analysis_copy(reference_source, reference_audio)
         atomic_write_text(receipt, reference_key)
@@ -1188,7 +1258,7 @@ def _mix_project_impl(
     if progress:
         progress("按对应源语言句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
     spatial_kwargs = {}
-    if project.settings.spatial_rtf_enabled:
+    if effective_rtf:
         from .experimental_mix import stereo_reference
 
         if separated_vocals is not None and project.settings.spatial_rtf_vocal_weighting:
@@ -1199,11 +1269,11 @@ def _mix_project_impl(
             spatial_reference = stereo_reference(source, project_dir)
         spatial_kwargs = {
             "spatial_reference_path": spatial_reference,
-            "spatial_settings": project.settings,
+            "spatial_settings": mixing_settings,
         }
     stem_builder = (
         (lambda **kwargs: build_cached_stem(build_chinese_stem, **kwargs))
-        if project.settings.spatial_rtf_enabled
+        if effective_rtf
         else build_chinese_stem
     )
     loudness_prefix = "replacement_" if replacing else ""
@@ -1221,7 +1291,7 @@ def _mix_project_impl(
         }
     spatial_kwargs = dict(spatial_kwargs)
     if "spatial_settings" in spatial_kwargs:
-        spatial_kwargs["spatial_settings"] = project.settings.model_copy(
+        spatial_kwargs["spatial_settings"] = mixing_settings.model_copy(
             update={"chinese_line_peak_dbfs": loudness("chinese_line_peak_dbfs")}
         )
     stem_builder(
@@ -1259,10 +1329,37 @@ def _mix_project_impl(
             peak_limit_dbfs=project.settings.mix_peak_limit_dbfs,
         )
         mixed_output = output
+        if output_variant is None:
+            variant_copy = (
+                project_dir
+                / "output"
+                / ("replace" if replacing else "bilingual")
+                / mixed_output.name
+            )
+            variant_copy.parent.mkdir(parents=True, exist_ok=True)
+            variant_copy.unlink(missing_ok=True)
+            try:
+                os.link(mixed_output, variant_copy)
+            except OSError:
+                shutil.copyfile(mixed_output, variant_copy)
+            write_compare_state(
+                project,
+                project_dir,
+                "replacement" if replacing else "bilingual",
+                mixed_output,
+                variant_copy,
+            )
+        else:
+            write_compare_state(
+                project,
+                project_dir,
+                "replacement" if output_variant == "replace" else "bilingual",
+                mixed_output,
+            )
         check_cancelled(cancel_event)
     if keep_stem:
         project.chinese_stem_file = str(stem.relative_to(project_dir))
-    elif project.settings.spatial_rtf_enabled:
+    elif effective_rtf:
         # Each mix keeps a separate validated intermediate for its own loudness settings.
         project.chinese_stem_file = None
     else:
@@ -1369,6 +1466,19 @@ def generate_subtitles(
         mixed = resolve_project_path(project_dir, project.output_file, "完成音频")
         if mixed.is_file():
             media_duration = probe_audio(mixed).duration_seconds
+    replacing = (
+        output_variant == "replace"
+        if output_variant in {"bilingual", "replace"}
+        else (
+            project.settings.separation_enabled
+            and project.settings.separation_mix_mode == "replace"
+        )
+    )
+    dubbing_durations = (
+        _replacement_dubbing_durations(project, project_dir)
+        if replacing and project.settings.subtitle_timeline == "dubbing"
+        else None
+    )
     subtitle_warnings: list[str] = []
     srt, lrc = write_subtitle_files(
         project.sentences,
@@ -1378,14 +1488,34 @@ def generate_subtitles(
         maximum_chars=project.settings.subtitle_max_chars_per_line,
         minimum_duration=project.settings.subtitle_min_duration_seconds,
         maximum_cps=project.settings.subtitle_max_cps,
-        chinese_dubbing_offset_ms=project.settings.chinese_dubbing_offset_ms,
-        chinese_max_auto_speed=project.settings.chinese_max_auto_speed,
-        chinese_dubbing_timing_mode=project.settings.chinese_dubbing_timing_mode,
+        chinese_dubbing_offset_ms=(
+            project.settings.replacement_dubbing_offset_ms
+            if replacing
+            else project.settings.chinese_dubbing_offset_ms
+        ),
+        chinese_max_auto_speed=(
+            project.settings.replacement_max_auto_speed
+            if replacing
+            else project.settings.chinese_max_auto_speed
+        ),
+        chinese_dubbing_timing_mode=(
+            project.settings.replacement_timing_mode
+            if replacing
+            else project.settings.chinese_dubbing_timing_mode
+        ),
+        dubbing_durations=dubbing_durations,
         media_duration_seconds=media_duration,
         warnings=subtitle_warnings,
     )
     if progress and subtitle_warnings:
-        progress(f"{len(subtitle_warnings)} 句字幕可读时长受下一句或媒体末尾限制", 1, 2)
+        fallback_count = sum("缺少译文" in item for item in subtitle_warnings)
+        duration_count = len(subtitle_warnings) - fallback_count
+        parts = []
+        if fallback_count:
+            parts.append(f"{fallback_count} 句缺少译文已回退原文")
+        if duration_count:
+            parts.append(f"{duration_count} 句字幕可读时长受下一句或媒体末尾限制")
+        progress("；".join(parts), 1, 2)
     check_cancelled(cancel_event)
 
     video_output: Path | None = None
@@ -1429,13 +1559,33 @@ def generate_subtitles(
 def export_transcript(project: DubProject, project_dir: Path) -> None:
     exports = project_dir / "exports"
     exports.mkdir(parents=True, exist_ok=True)
+    replacing = (
+        project.settings.separation_enabled and project.settings.separation_mix_mode == "replace"
+    )
+    offset_ms = (
+        project.settings.replacement_dubbing_offset_ms
+        if replacing
+        else project.settings.chinese_dubbing_offset_ms
+    )
+    max_auto_speed = (
+        project.settings.replacement_max_auto_speed
+        if replacing
+        else project.settings.chinese_max_auto_speed
+    )
+    timing_mode = (
+        project.settings.replacement_timing_mode
+        if replacing
+        else project.settings.chinese_dubbing_timing_mode
+    )
+    durations = _replacement_dubbing_durations(project, project_dir) if replacing else None
     timing_by_id = {
         timing.sentence_id: timing
         for timing in plan_dubbing_timing(
             project.sentences,
-            offset_ms=project.settings.chinese_dubbing_offset_ms,
-            max_auto_speed=project.settings.chinese_max_auto_speed,
-            mode=project.settings.chinese_dubbing_timing_mode,
+            offset_ms=offset_ms,
+            max_auto_speed=max_auto_speed,
+            durations=durations,
+            mode=timing_mode,
         )
     }
     rows = [
@@ -1450,7 +1600,7 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
                 if sentence.id in timing_by_id
                 else dubbing_start_seconds(
                     sentence,
-                    project.settings.chinese_dubbing_offset_ms,
+                    offset_ms,
                 )
             ),
             "tts_duration_seconds": sentence.tts_duration_seconds,

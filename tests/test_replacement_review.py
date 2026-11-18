@@ -143,15 +143,16 @@ def test_compare_tracks_list_only_files_that_exist(tmp_path):
     tracks = project_review.compare_tracks(project, tmp_path, "/media/src", register)
     assert [track["key"] for track in tracks] == ["source", "bilingual", "replacement"]
     assert all("stem" not in track["url"] for track in tracks)
+    assert all(isinstance(track["stale"], bool) for track in tracks if track["key"] != "source")
+    assert "stale" not in tracks[0]
     # The project's current output wins for the mode it was mixed in.
     project.settings.separation_mix_mode = "replace"
     sf.write(tmp_path / "output/current.wav", np.zeros((10, 2)), RATE)
     project.output_file = "output/current.wav"
-    tracks = {
-        t["key"]: t["url"] for t in project_review.compare_tracks(project, tmp_path, None, register)
-    }
-    assert tracks["replacement"].endswith("current.wav") and "source" not in tracks
-    assert tracks["bilingual"].endswith("mix.wav")
+    by_key = {t["key"]: t for t in project_review.compare_tracks(project, tmp_path, None, register)}
+    assert by_key["replacement"]["url"].endswith("current.wav") and "source" not in by_key
+    assert by_key["replacement"]["stale"] is False
+    assert by_key["bilingual"]["url"].endswith("mix.wav")
 
 
 def test_editing_the_translation_drops_the_dub_warning():
@@ -204,6 +205,14 @@ def test_regenerating_a_line_forces_a_new_take_for_only_that_line(tmp_path, monk
     assert "1" in message
     with pytest.raises(Exception, match="没有可生成配音"):
         project_operations.regenerate_dubs(str(tmp_path / "project.json"), rows, ["zzz"])
+    project.sentences[1].chinese_audio_enabled = False
+    muted_rows = project_records.project_rows(project)
+    with pytest.raises(Exception, match="没有可生成配音"):
+        project_operations.regenerate_dubs(str(tmp_path / "project.json"), muted_rows, ["b"])
+    with pytest.raises(Exception, match="没有可生成配音"):
+        project_operations.generate_dub_candidates(
+            str(tmp_path / "project.json"), muted_rows, ["b"], 2
+        )
 
 
 def test_frontend_wires_review_flags_filter_and_compare_player():

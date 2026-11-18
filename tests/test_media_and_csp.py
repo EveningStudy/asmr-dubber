@@ -149,3 +149,136 @@ def test_service_errors_are_chinese_with_english_catalog_entries():
                 assert skeleton in normalized_templates, (
                     f"{path.name}:{node.lineno}: missing English template for {skeleton}"
                 )
+
+
+def test_frontend_save_recovery_compare_stale_and_busy_pagination_contracts():
+    import base64
+    import json
+    import shutil
+    import subprocess
+    from importlib.resources import files
+
+    from asmr_dubber.localization import catalog
+
+    root = files("asmr_dubber").joinpath("frontend")
+    app_js = root.joinpath("app.js").read_text(encoding="utf-8")
+    projects_js = root.joinpath("projects.js").read_text(encoding="utf-8")
+
+    # pollTasks adds seenTasks only after project refresh succeeds, and syncs all busy controls.
+    seen_pos = app_js.index("state.seenTasks.add(key)")
+    refresh_pos = app_js.index("api('projects/get'")
+    assert seen_pos > refresh_pos
+    assert "syncProjectControls()" in app_js
+
+    for selector in (
+        "#reviseTranslations",
+        "#restoreBackup",
+        "#restoreTranslations",
+        "#compressTooLong",
+        "#disableFailed",
+        "#importTranscript",
+        "#changeReference",
+        "#addSentence",
+        "#deleteSentence",
+        '#rows input[type="checkbox"]',
+        "#rows select",
+        "#rows [data-candidates]",
+        "#rows [data-take]",
+        "contenteditable",
+    ):
+        assert selector in projects_js, selector
+    assert "filteredSentences()" in projects_js
+    assert "if (rowPage < 0 || rowPage > maxPage) rowPage = 0;" in projects_js
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required to run frontend ESM behavior checks")
+
+    session_uri = (
+        "data:text/javascript;base64,"
+        + base64.b64encode(root.joinpath("session.js").read_bytes()).decode()
+    )
+    compare_source = (
+        root.joinpath("compare_player.js")
+        .read_text(encoding="utf-8")
+        .replace("'./session.js'", json.dumps(session_uri))
+    )
+    compare_uri = (
+        "data:text/javascript;base64," + base64.b64encode(compare_source.encode("utf-8")).decode()
+    )
+    script = f"""
+const nodes = new Map();
+function makeNode(id) {{
+  return {{
+    id, hidden: false, textContent: '', innerHTML: '', value: 0, max: 0, checked: false,
+    classList: {{ toggle() {{}}, add() {{}}, remove() {{}} }},
+    querySelector: () => ({{ onclick: null }}),
+    querySelectorAll: () => [],
+  }};
+}}
+globalThis.document = {{
+  documentElement: {{ lang: 'zh-CN' }},
+  querySelector: (sel) => {{
+    if (!nodes.has(sel)) nodes.set(sel, makeNode(sel));
+    return nodes.get(sel);
+  }},
+  querySelectorAll: () => [],
+}};
+globalThis.Audio = class {{
+  constructor() {{ this.preload = ''; this.muted = false; this.src = ''; this.currentTime = 0; }}
+  pause() {{}}
+  removeAttribute() {{}}
+}};
+const s = await import({json.dumps(session_uri)});
+s.state.boot = {{ locales: {json.dumps(catalog(), ensure_ascii=False)}, labels: {{}} }};
+let directErr = '';
+try {{
+  await s.enqueueSave(async () => {{ throw new Error('conflict'); }});
+}} catch (err) {{
+  directErr = err.message;
+}}
+let firstFlush = '';
+try {{
+  await s.flushSaves();
+}} catch (err) {{
+  firstFlush = err.message;
+}}
+// Subsequent flushSaves and ignoreError navigations must never deadlock!
+await s.flushSaves();
+let ignored = false;
+s.enqueueSave(async () => {{ throw new Error('second'); }}).catch(() => {{}});
+await s.flushSaves({{ ignoreError: true }});
+ignored = s.state.saveError === null;
+
+const c = await import({json.dumps(compare_uri)});
+const project = {{
+  source: {{ duration_seconds: 12 }},
+  compare_tracks: [
+    {{ key: 'source', url: '/m/s', stale: false }},
+    {{ key: 'bilingual', url: '/m/b', stale: true, modified: 10 }},
+    {{ key: 'replacement', url: '/m/r', stale: false, modified: 20 }},
+  ],
+}};
+s.state.language = 'zh';
+c.renderCompare(project);
+const zhHtml = nodes.get('#compareTracks').innerHTML;
+s.state.language = 'en';
+c.renderCompare(project);
+const enHtml = nodes.get('#compareTracks').innerHTML;
+console.log(JSON.stringify({{ directErr, firstFlush, ignored, zhHtml, enHtml }}));
+"""
+    proc = subprocess.run(
+        [node, "--input-type=module"],
+        input=script,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    out = json.loads(proc.stdout)
+    assert out["directErr"] == "conflict"
+    assert out["firstFlush"] == "conflict"
+    assert out["ignored"] is True
+    assert "双语版（旧）" in out["zhHtml"] and 'class="stale"' in out["zhHtml"]
+    assert "完全配音版（旧）" not in out["zhHtml"]
+    assert "Bilingual mix (outdated)" in out["enHtml"]

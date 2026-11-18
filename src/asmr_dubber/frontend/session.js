@@ -104,6 +104,7 @@ export function notice(message, error = false, { dedupe = false, sticky = false 
   lastNoticeAt = Date.now();
   clearTimeout(noticeTimer);
   const box = $('#notice');
+  if (!box) return;
   box.innerHTML = `<span>${esc(t(String(message)))}</span><button type="button" aria-label="${esc(t('关闭'))}">×</button>`;
   box.querySelector('button').onclick = () => { box.hidden = true; clearTimeout(noticeTimer); };
   box.hidden = false;
@@ -120,24 +121,27 @@ export function guard(action) {
   };
 }
 export function enqueueSave(action) {
-  const operation = state.saveChain.catch(() => {}).then(action);
-  state.saveChain = operation;
-  operation.then(
+  const operation = state.saveChain.then(action);
+  state.saveChain = operation.then(
     () => {
       state.saveError = null;
-      $('#saveState').textContent = t('修改会自动保存');
+      const box = $('#saveState');
+      if (box) box.textContent = t('修改会自动保存');
     },
     (error) => {
       state.saveError = error;
-      $('#saveState').textContent = t('保存失败，草稿已保留');
+      const box = $('#saveState');
+      if (box) box.textContent = t('保存失败，草稿已保留');
       notice(error.message, true);
     },
   );
   return operation;
 }
-export async function flushSaves() {
+export async function flushSaves({ ignoreError = false } = {}) {
   await state.saveChain;
-  if (state.saveError) throw state.saveError;
+  const error = state.saveError;
+  state.saveError = null;
+  if (error && !ignoreError) throw error;
 }
 export const time = (value) => {
   const n = Number(value || 0);

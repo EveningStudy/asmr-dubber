@@ -1,6 +1,13 @@
 import { $, $$, state, api, t, localize, notice, guard, taskHTML, flushSaves } from './session.js';
 import { initializeForms, renderForms, saveParameters } from './forms.js';
-import { initializeProjects, refreshHome, openProject, renderProject, finishCreation } from './projects.js';
+import {
+  initializeProjects,
+  refreshHome,
+  openProject,
+  renderProject,
+  finishCreation,
+  syncProjectControls,
+} from './projects.js';
 import { initializeBatch, refreshBatch, renderBatch } from './batch.js';
 import { initializeModels, refreshModels, renderModels } from './models.js';
 import { initializeSettings, renderKeys, refreshLogs, refreshStorage } from './settings.js';
@@ -12,7 +19,7 @@ import { notifyBatchFinished } from './notify.js';
 
 async function navigate(page, setTab) {
   if (page === 'project' && !state.project) return;
-  await flushSaves();
+  await flushSaves({ ignoreError: true });
   state.page = page;
   $$('.page').forEach((section) => section.classList.toggle('on', section.id === page));
   $$('.nav button').forEach((button) =>
@@ -47,35 +54,31 @@ function refreshTaskViews() {
   renderUpdate();
   renderBatch();
   renderModels();
-  if (state.project)
-    $$('[data-task],#translateAll,#exportProject').forEach(
-      (button) =>
-        (button.disabled = tasks.some((task) => ['queued', 'running', 'cancelling'].includes(task.status))),
-    );
+  syncProjectControls();
 }
 let polling = false, pollingError = '';
 async function pollTasks() {
   if (polling || !state.boot) return;
   polling = true;
+  let listed = false;
   try {
     state.tasks = await api('tasks/list');
+    listed = true;
     pollingError = '';
     for (const task of state.tasks) {
-      if (
-        ['queued', 'running', 'cancelling'].includes(task.status) ||
-        state.seenTasks.has(task.id + task.updated_at)
-      )
+      const key = task.id + task.updated_at;
+      if (['queued', 'running', 'cancelling'].includes(task.status) || state.seenTasks.has(key))
         continue;
-      state.seenTasks.add(task.id + task.updated_at);
       if (task.status === 'completed') {
         if (task.kind === 'preview_edge' && task.result?.url) {
           $('#dubPlayer').src = task.result.url;
-          await $('#dubPlayer').play();
+          await $('#dubPlayer').play().catch(() => {});
         }
         if (task.kind === 'create') await finishCreation(task);
         else if (task.request.project === state.project?.manifest) {
-          await flushSaves();
+          await flushSaves({ ignoreError: true });
           state.project = await api('projects/get', { project: state.project.manifest });
+          $('#saveState').textContent = t('修改会自动保存');
           renderProject();
         }
         if (['download', 'import_models'].includes(task.kind)) await refreshModels();
@@ -87,15 +90,27 @@ async function pollTasks() {
       } else if (task.status === 'failed') {
         if (task.kind === 'batch') notifyBatchFinished(task);
         if (state.project && task.request.project === state.project.manifest) {
-          await flushSaves();
-          state.project = await api('projects/get', {project: state.project.manifest});
+          await flushSaves({ ignoreError: true });
+          state.project = await api('projects/get', { project: state.project.manifest });
+          $('#saveState').textContent = t('修改会自动保存');
           renderProject();
         }
         notice(task.error, true, { sticky: true });
+      } else if (
+        task.status === 'cancelled' &&
+        state.project &&
+        task.request.project === state.project.manifest
+      ) {
+        await flushSaves({ ignoreError: true });
+        state.project = await api('projects/get', { project: state.project.manifest });
+        $('#saveState').textContent = t('修改会自动保存');
+        renderProject();
       }
+      state.seenTasks.add(key);
     }
     refreshTaskViews();
   } catch (error) {
+    if (listed) refreshTaskViews();
     if (pollingError !== error.message) notice(error.message, true, { dedupe: true });
     pollingError = error.message;
   } finally {

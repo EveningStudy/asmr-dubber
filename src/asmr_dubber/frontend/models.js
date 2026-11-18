@@ -15,6 +15,7 @@ export function renderModels() {
   $('#modelDevice').innerHTML =
     `<div><span>${t('显卡')}</span><b>${esc(gpu)}${vram ? ` · ${vram.toFixed(1)} GB` : ''}</b></div><div><span>${t('磁盘')}</span><b>${size(catalog.free_bytes)}</b></div><div><span>${t('模型已占用')}</span><b>${size(catalog.used_bytes)}</b></div><div style="margin-left:auto"><button class="btn plain" id="importModels">${t('导入离线模型包')}</button></div>`;
   const openDetails = new Set($$('[data-model-detail][open]').map((node) => node.dataset.modelDetail));
+  const recommendedIds = catalog.recommended || ['anime_whisper', 'indextts2'];
   const groups = [...new Set(catalog.items.map((item) => item.group))];
   $('#modelGroups').innerHTML = groups
     .map(
@@ -27,7 +28,8 @@ export function renderModels() {
               .find(
                 (task) =>
                   task.kind === 'download' &&
-                  (task.request.model === item.id || task.request.model === 'recommended'),
+                  (task.request.model === item.id ||
+                    (task.request.model === 'recommended' && recommendedIds.includes(item.id))),
               );
             const running = task && ['queued', 'running', 'cancelling'].includes(task.status);
             return `<div class="row mrow"><div class="grow"><div class="t">${esc(t(item.name))}${item.recommended ? ` <span class="tag rec">${t('推荐')}</span>` : ''}</div><div class="d">${esc(t(item.description))}</div><details data-model-detail="${esc(item.id)}"${openDetails.has(item.id) ? ' open' : ''}><summary>${t('详情')}</summary><p class="d">${esc(t(item.installation || item.detail || item.state))}</p></details><div class="tags">${item.vram_gb ? `<span class="tag">${t('显存')} ${item.vram_gb} GB</span>` : ''}<span class="tag">${esc(t(item.state))}</span></div></div><div class="size num">${item.disk_gb ? `${item.disk_gb} GB` : t('未知')}</div><div class="act">${running ? `<button class="btn" data-cancel="${esc(task.id)}">${t('暂停')}</button>` : item.state === 'ready' ? `${t('已安装')}<button class="btn plain small" data-remove-model="${esc(item.id)}">${t('删除')}</button>` : `<button class="btn" data-download-model="${esc(item.id)}">${t(task && ['failed', 'cancelled', 'interrupted'].includes(task.status) ? '继续' : '下载')}</button>`}</div></div>`;
@@ -35,9 +37,20 @@ export function renderModels() {
           .join('')}</div>`,
     )
     .join('');
-  $('#starterDescription').textContent = t(
-    'Parakeet 1.1B 负责识别，IndexTTS2 负责模仿原声音色配音。英语或中文的音频，识别请改用 Faster-Whisper。',
+  const starterDesc =
+    recommendedIds.includes('anime_whisper') && recommendedIds.includes('indextts2')
+      ? 'anime-whisper 负责日语识别，IndexTTS2 负责模仿原声音色配音。显存较小可改用轻量的 Parakeet；英语或中文音频识别请改用 Faster-Whisper。'
+      : recommendedIds.includes('anime_whisper')
+        ? 'anime-whisper 负责日语识别；当前显存不足以在本地运行 IndexTTS2，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。'
+        : '当前设备改用轻量的 Parakeet 负责日语识别，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。';
+  $('#starterDescription').textContent = t(starterDesc);
+  const starterBusy = state.tasks.some(
+    (task) => task.kind === 'download' && ['queued', 'running', 'cancelling'].includes(task.status),
   );
+  const starterReady =
+    recommendedIds.length > 0 &&
+    recommendedIds.every((id) => catalog.items.find((item) => item.id === id)?.state === 'ready');
+  $('#starterBtn').disabled = starterBusy || starterReady;
   $('#asrCheck').classList.toggle(
     'ok',
     catalog.items.some((item) => item.group === '识别' && item.state === 'ready'),

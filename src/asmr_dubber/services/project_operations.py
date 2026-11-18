@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from .. import pipeline
 from ..errors import ProjectError
+from ..filtering import has_speakable_text
 from ..languages import SourceLanguage, SpeechSourceLanguage, source_language_label
 from ..lifecycle import invalidate_outputs
 from ..models import (
@@ -241,6 +242,12 @@ def synthesize(
     )
 
 
+def _can_dub(sentence: Any) -> bool:
+    return bool(
+        sentence.enabled and sentence.chinese_audio_enabled and has_speakable_text(sentence.zh_text)
+    )
+
+
 def regenerate_dubs(
     project_path: str,
     table: Any,
@@ -256,7 +263,7 @@ def regenerate_dubs(
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
     wanted = set(sentence_ids)
-    chosen = [s.id for s in project.sentences if s.id in wanted and s.enabled and s.zh_text]
+    chosen = [s.id for s in project.sentences if s.id in wanted and _can_dub(s)]
     if not chosen:
         raise ProjectError("所选句子没有可生成配音的译文。")
     for sentence in project.sentences:
@@ -293,9 +300,7 @@ def generate_dub_candidates(
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
     wanted = set(sentence_ids)
-    sentence = next(
-        (s for s in project.sentences if s.id in wanted and s.enabled and s.zh_text), None
-    )
+    sentence = next((s for s in project.sentences if s.id in wanted and _can_dub(s)), None)
     if sentence is None:
         raise ProjectError("所选句子没有可生成配音的译文。")
     candidates: list[dict[str, Any]] = []

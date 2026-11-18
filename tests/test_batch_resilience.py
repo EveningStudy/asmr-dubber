@@ -81,6 +81,16 @@ def test_budget_is_the_larger_of_the_count_and_the_percentage():
     assert stage_result.failure_budget(0) == 3
 
 
+def test_short_tracks_cap_failure_budget_below_half():
+    assert [stage_result.failure_budget(n) for n in range(1, 8)] == [0, 0, 1, 1, 2, 2, 3]
+    assert stage_result.judge_partial("translate", result("translate", ["s1"], 2)) is None
+    assert (
+        stage_result.judge_partial("translate", result("translate", ["s1", "s2", "s3"], 6)) is None
+    )
+    partial = stage_result.judge_partial("translate", result("translate", ["s1", "s2"], 6))
+    assert partial is not None and partial["count"] == 2
+
+
 def result(stage, failed, total, error=None):
     marker = stage_result.PARTIAL_MARKERS[stage]
     return {
@@ -243,6 +253,25 @@ def test_failures_over_budget_fail_and_list_the_sentences(monkeypatch):
     assert "partial" not in state
 
 
+def test_cumulative_failures_across_stages_respect_whole_track_budget(monkeypatch):
+    state = {"failure_budget": {"count": 3, "percent": 2.0}}
+    monkeypatch.setattr(project_cli, "run_asmr_cli", raising("translate", ["s1", "s2"], 40))
+    e.run_budgeted_stage(None, state, "translate", Path("project.json"))
+    # Duplicate ID s2 + one new ID s3 -> 3 unique failed sentences <= budget 3.
+    monkeypatch.setattr(project_cli, "run_asmr_cli", raising("synthesize", ["s2", "s3"], 38))
+    e.run_budgeted_stage(None, state, "synthesize", Path("project.json"))
+    assert len(state["partial"]) == 2
+
+    over_state = {"failure_budget": {"count": 3, "percent": 2.0}}
+    monkeypatch.setattr(project_cli, "run_asmr_cli", raising("translate", ["s1", "s2"], 40))
+    e.run_budgeted_stage(None, over_state, "translate", Path("project.json"))
+    monkeypatch.setattr(project_cli, "run_asmr_cli", raising("synthesize", ["s3", "s4"], 38))
+    with pytest.raises(e.StageFailedError) as caught:
+        e.run_budgeted_stage(None, over_state, "synthesize", Path("project.json"))
+    assert "累计 4 句失败" in str(caught.value)
+    assert "超过批量允许的 3 句（共 40 句）" in str(caught.value)
+
+
 def test_a_whole_stage_failure_is_never_partial(monkeypatch):
     state = {}
     monkeypatch.setattr(
@@ -381,13 +410,21 @@ def project_with_one_missing_dub(directory: Path, monkeypatch) -> DubProject:
 
 
 def test_mix_refuses_missing_dubs_unless_told_to_leave_them_out(tmp_path, monkeypatch):
+    from asmr_dubber.models import load_project
+
     project = project_with_one_missing_dub(tmp_path, monkeypatch)
+    project.sentences[1].tts_file = "chinese/stale.wav"
+    project.sentences[1].tts_cache_key = "outdated"
+    save_project(project, tmp_path)
     with pytest.raises(ProjectError, match="仍有 1 句的中文配音缺失"):
         mix_project(project, tmp_path)
     output = mix_project(project, tmp_path, allow_missing=True)
     assert output.is_file()
     missing = project.sentences[1]
-    assert not sentence_is_replaced(missing)  # the fully dubbed version keeps its original voice
+    assert missing.tts_file == "chinese/stale.wav"
+    persisted, _ = load_project(tmp_path)
+    assert persisted.sentences[1].tts_file == "chinese/stale.wav"
+    assert persisted.sentences[0].tts_file == "chinese/s000001.wav"
     assert sentence_is_replaced(project.sentences[0])
     assert missing.status == "error" and missing.error == "合成失败"  # still retryable
 

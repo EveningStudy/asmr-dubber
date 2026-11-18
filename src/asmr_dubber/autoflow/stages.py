@@ -73,7 +73,7 @@ def accept_partial(state: dict[str, Any], stage: str, result: dict[str, Any] | N
     """Record a within-budget failure in ``state["partial"]``; False when over budget."""
 
     count, percent = budget_of(state)
-    record = judge_partial(stage, result, count=count, percent=percent)
+    record = judge_partial(stage, result, count=count, percent=percent, prior=state.get("partial"))
     if record is None:
         return False
     state["partial"] = [
@@ -88,7 +88,9 @@ def failure_text(
     if not result:
         return message
     count, percent = budget_of(state)
-    detail = over_budget_message(stage, result, count=count, percent=percent)
+    detail = over_budget_message(
+        stage, result, count=count, percent=percent, prior=state.get("partial")
+    )
     return f"{STAGE_LABELS[stage]}失败：{detail}"[:MAX_MESSAGE] if detail else message
 
 

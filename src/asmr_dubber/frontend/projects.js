@@ -1,23 +1,7 @@
 import { renderTranslationPanels, initializeRecovery, initializeTranslateAll } from './project_translation.js';
 import {
-  $,
-  $$,
-  state,
-  api,
-  esc,
-  t,
-  time,
-  options,
-  field,
-  dialog,
-  chooseFile,
-  upload,
-  enqueueSave,
-  flushSaves,
-  startTask,
-  guard,
-  notice,
-  projectBusy,
+  $, $$, state, api, esc, t, time, options, field, dialog, chooseFile,
+  upload, enqueueSave, flushSaves, startTask, guard, notice, projectBusy,
 } from './session.js';
 import { renderForms } from './forms.js';
 import { matchesRowFilter } from './project_revise.js';
@@ -25,10 +9,25 @@ import { transcriptDialog, referenceDialog } from './project_dialogs.js';
 import { dubCell, originalCell, flagsCell, initializeReview } from './project_review.js';
 import { initializeCompare, renderCompare } from './compare_player.js';
 
-let selected = '',
-  rowPage = 0,
-  importAfterCreate = null,
-  pendingSource = null;
+const BUSY_CONTROLS = [
+  '[data-task],#translateAll,#exportProject,#reviseTranslations,#restoreBackup,#restoreTranslations',
+  '#compressTooLong,#disableFailed,#importTranscript,#changeReference,#addSentence,#deleteSentence',
+  '#sentenceReference,#sentenceControls [data-detail],#rows input[type="checkbox"],#rows select',
+  '#rows [data-candidates],#rows [data-take],#rows [data-regenerate],#rows [data-retranslate]',
+  '#rows [data-compress],#rows [data-keep-original],#revisionProposals [data-proposal],#revisionProposals [data-proposal-all]',
+].join(',');
+const filteredSentences = () => (state.project ? state.project.sentences.filter(matchesRowFilter) : []);
+let selected = '', rowPage = 0, importAfterCreate = null, pendingSource = null;
+
+export function syncProjectControls() {
+  if (!state.project) return;
+  const busy = projectBusy();
+  $$(BUSY_CONTROLS).forEach((node) => { node.disabled = busy; });
+  $$('#rows [data-row-field="source_text"],#rows [data-row-field="zh_text"]').forEach((cell) => {
+    cell.setAttribute('contenteditable', String(!busy));
+    cell.contentEditable = String(!busy);
+  });
+}
 export async function refreshHome() {
   const projects = await api('projects/list');
   $('#firstSteps').hidden = projects.length > 0;
@@ -43,8 +42,9 @@ export async function refreshHome() {
       .join('') || `<div class="row muted">${t('还没有项目')}</div>`;
 }
 export async function openProject(manifest) {
-  await flushSaves();
+  await flushSaves({ ignoreError: true });
   state.project = await api('projects/get', { project: manifest });
+  $('#saveState').textContent = t('修改会自动保存');
   state.filter = 'all';
   rowPage = 0;
   selected = state.project.sentences[0]?.id || '';
@@ -103,31 +103,36 @@ export function renderProject() {
       ][index],
     ),
   );
-  $$('[data-task],#translateAll,#exportProject').forEach((button) => (button.disabled = projectBusy()));
   renderRows();
   renderForms();
   renderCompare(project);
+  syncProjectControls();
 }
 function renderRows() {
   if (!state.project) return;
-  const sentences = state.project.sentences.filter(matchesRowFilter);
+  const sentences = filteredSentences(),
+    busy = projectBusy();
+  const maxPage = Math.max(0, Math.ceil(sentences.length / 50) - 1);
+  if (rowPage < 0 || rowPage > maxPage) rowPage = 0;
   const page = sentences.slice(rowPage * 50, (rowPage + 1) * 50);
   $('#rows').innerHTML = page
     .map(
       (sentence) =>
-        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!projectBusy()}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!projectBusy()}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
+        `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selected === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="time">${time(sentence.start_seconds)} – ${time(sentence.end_seconds)}</td><td contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(sentence.zh_text)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`,
     )
     .join('');
-  renderControls();
+  renderControls(sentences.length);
 }
-function renderControls() {
+function renderControls(count = filteredSentences().length) {
   const sentence = state.project.sentences.find((s) => s.id === selected);
+  const pages = Math.max(1, Math.ceil(count / 50));
   $('#sentenceControls').innerHTML =
-    `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${state.project.sentences.length > 50 ? `<button class="btn" id="prevRows">‹</button> ${rowPage + 1} / ${Math.ceil(state.project.sentences.length / 50)} <button class="btn" id="nextRows">›</button>` : ''}</span></div>${
+    `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<span class="saved">${count > 50 ? `<button class="btn" id="prevRows"${rowPage <= 0 ? ' disabled' : ''}>‹</button> ${rowPage + 1} / ${pages} <button class="btn" id="nextRows"${rowPage >= pages - 1 ? ' disabled' : ''}>›</button>` : ''}</span></div>${
       sentence
         ? `<details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${sentence.speaker_id ? field('说话人（仅当前分块）', `<span>${esc(sentence.speaker_id)}</span>`) : ''}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || sentence.error || '')}</p></details>`
         : ''
     }`;
+  syncProjectControls();
 }
 function saveRows(only = null) {
   const rows = state.project.sentences.map((s) => [
@@ -342,13 +347,9 @@ export function initializeProjects() {
         await $('#dubPlayer').play();
         return;
       }
-      if (event.target.id === 'prevRows') {
-        rowPage = Math.max(0, rowPage - 1);
-        renderRows();
-        return;
-      }
-      if (event.target.id === 'nextRows') {
-        rowPage++;
+      if (event.target.id === 'prevRows' || event.target.id === 'nextRows') {
+        const maxPage = Math.max(0, Math.ceil(filteredSentences().length / 50) - 1);
+        rowPage = Math.min(maxPage, Math.max(0, rowPage + (event.target.id === 'nextRows' ? 1 : -1)));
         renderRows();
         return;
       }
@@ -357,6 +358,7 @@ export function initializeProjects() {
         return;
       }
       if (event.target.id === 'addSentence') {
+        if (projectBusy()) throw new Error(t('请等当前任务结束后再操作。'));
         await flushSaves();
         const last = state.project.sentences.at(-1);
         const start = last?.end_seconds || 0;
@@ -365,22 +367,16 @@ export function initializeProjects() {
           throw new Error(t('媒体末尾没有剩余空间；请先调整已有句子的结束时间，再添加句子。'));
         selected = `s${Date.now()}`;
         state.project.sentences.push({
-          id: selected,
-          start_seconds: start,
-          end_seconds: end,
-          source_text: '',
-          zh_text: t('新句子'),
-          enabled: true,
-          original_audio_enabled: null,
-          original_audio_gain_db: 0,
-          chinese_audio_enabled: true,
-          chinese_audio_gain_db: 0,
+          id: selected, start_seconds: start, end_seconds: end, source_text: '', zh_text: t('新句子'),
+          enabled: true, original_audio_enabled: null, original_audio_gain_db: 0,
+          chinese_audio_enabled: true, chinese_audio_gain_db: 0,
         });
         await saveRows();
         renderProject();
         return;
       }
       if (event.target.id === 'deleteSentence') {
+        if (projectBusy()) throw new Error(t('请等当前任务结束后再操作。'));
         state.project.sentences = state.project.sentences.filter((s) => s.id !== selected);
         selected = state.project.sentences[0]?.id || '';
         await saveRows();
@@ -400,6 +396,7 @@ export function initializeProjects() {
   document.addEventListener(
     'focusout',
     guard(async (event) => {
+      if (projectBusy()) return;
       const key = event.target.dataset.rowField;
       if (!key || event.target.type === 'checkbox') return;
       const sentence = state.project.sentences.find(
@@ -417,6 +414,7 @@ export function initializeProjects() {
   document.addEventListener(
     'change',
     guard(async (event) => {
+      if (projectBusy()) return;
       const node = event.target,
         key = node.dataset.detail || node.dataset.rowField;
       if (!key) return;

@@ -11,8 +11,11 @@ receives; ``TEMPLATES`` lists them for the test that keeps both in step.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
+import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +24,17 @@ from ..app_logging import redact_sensitive
 from ..platforms import portable_home
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
+TRANSLATION_PROBE_TTL_SECONDS = 300.0
+_TRANSLATION_PROBE_CACHE: dict[tuple[Any, ...], float] = {}
+_TRANSLATION_PROBE_LOCK = threading.Lock()
+
+
+def clear_translation_probe_cache() -> None:
+    """Drop cached translation API probe successes (used by tests and settings resets)."""
+    with _TRANSLATION_PROBE_LOCK:
+        _TRANSLATION_PROBE_CACHE.clear()
+
+
 GIB = 1024**3
 # Working files of one dubbed version: float32 stems, separated vocals, caches and the
 # delivered audio.  A rough upper bound per second of source audio; plans differ.
@@ -70,32 +84,11 @@ SEPARATION_MISSING = (
 )
 CHECK_BROKEN = "这项检查没能完成：{reason}"
 TEMPLATES = (
-    DISK_SUBTITLES,
-    DISK_FAIL,
-    DISK_TIGHT,
-    DISK_OK,
-    VRAM_NONE,
-    VRAM_ONLINE,
-    VRAM_CPU,
-    VRAM_NO_GPU,
-    VRAM_LOW,
-    VRAM_TIGHT,
-    VRAM_OK,
-    TRANSLATION_NONE,
-    TRANSLATION_NO_KEY,
-    TRANSLATION_KEY_ONLY,
-    TRANSLATION_FAIL,
-    TRANSLATION_OK,
-    MODELS_NONE,
-    MODELS_UNKNOWN,
-    MODELS_MISSING,
-    MODELS_PARTIAL,
-    MODELS_OK,
-    SEPARATION_EXTERNAL,
-    SEPARATION_ERROR,
-    SEPARATION_OK,
-    SEPARATION_MISSING,
-    CHECK_BROKEN,
+    *(DISK_SUBTITLES, DISK_FAIL, DISK_TIGHT, DISK_OK),
+    *(VRAM_NONE, VRAM_ONLINE, VRAM_CPU, VRAM_NO_GPU, VRAM_LOW, VRAM_TIGHT, VRAM_OK),
+    *(TRANSLATION_NONE, TRANSLATION_NO_KEY, TRANSLATION_KEY_ONLY, TRANSLATION_FAIL, TRANSLATION_OK),
+    *(MODELS_NONE, MODELS_UNKNOWN, MODELS_MISSING, MODELS_PARTIAL, MODELS_OK),
+    *(SEPARATION_EXTERNAL, SEPARATION_ERROR, SEPARATION_OK, SEPARATION_MISSING, CHECK_BROKEN),
 )
 
 
@@ -180,33 +173,23 @@ def estimate_bytes(plan: Any, seconds: float) -> int:
 def check_disk(plans: list[Any]) -> list[Check]:
     title = "磁盘空间"
     needs: dict[int, list[Any]] = {}
-    total_seconds = 0.0
-    total_need = 0
-    work_home = portable_home()
+    total_seconds, total_need, work_home = 0.0, 0, portable_home()
     for plan in plans:
         seconds = plan_seconds(plan)
         need = estimate_bytes(plan, seconds)
         total_seconds += seconds
         total_need += need
-        if not need:
-            continue
-        # Working files live under the program folder; delivered files in the output.
-        for path, share in ((work_home, 0.6), (Path(plan.output_root), 0.4)):
+        for path, share in ((work_home, 0.6), (Path(plan.output_root), 0.4)) if need else ():
             free, drive = _disk_free(path)
-            entry = needs.setdefault(drive, [free, 0, path])
-            entry[1] += int(need * share)
+            needs.setdefault(drive, [free, 0, path])[1] += int(need * share)
     if not total_need:
         return [_check("disk", SKIP, title, DISK_SUBTITLES)]
     scale = {"count": len(plans), "hours": f"{total_seconds / 3600:.1f}"}
     checks = []
     for free, need, path in needs.values():
         required = need + SAFETY_MARGIN
-        values = {
-            "drive": Path(path).anchor or str(path),
-            "free": _gb(free),
-            "need": _gb(required),
-            **scale,
-        }
+        drive_name = Path(path).anchor or str(path)
+        values = {"drive": drive_name, "free": _gb(free), "need": _gb(required), **scale}
         if free < required:
             checks.append(_check("disk", FAIL, title, DISK_FAIL, **values))
         elif free < required * 1.3:
@@ -216,56 +199,92 @@ def check_disk(plans: list[Any]) -> list[Check]:
     ]
 
 
+def _plan_policy(plan: Any) -> dict[str, Any]:
+    edition = getattr(plan, "edition", None)
+    return (edition.get("output_policy") or {}) if isinstance(edition, dict) else {}
+
+
+def _plan_val(plan: Any, user: Any, key: str, default: Any = None) -> Any:
+    settings = _plan_policy(plan).get("settings") or {}
+    if key in settings and settings[key] not in (None, ""):
+        return settings[key]
+    val = getattr(user, key, default)
+    return default if val is None else val
+
+
+def _plan_uses_separation(plan: Any, user: Any) -> bool:
+    policy = _plan_policy(plan)
+    enabled = (policy.get("settings") or {}).get(
+        "separation_enabled", getattr(user, "separation_enabled", False)
+    )
+    return bool(enabled) or ("replace" in (policy.get("variants") or []))
+
+
 def _policy_settings(plans: list[Any]) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     for plan in plans:
-        merged.update((plan.edition.get("output_policy") or {}).get("settings") or {})
+        merged.update(_plan_policy(plan).get("settings") or {})
     return merged
 
 
 def _needs_asr(plans: list[Any]) -> bool:
-    for plan in plans:
-        if plan.source_subtitles_only:
-            continue
-        for source in plan.sources:
-            timed = source.transcript_path and source.transcript_timed
-            if not (timed and source.transcript_mode == "direct"):
-                return True
-    return False
+    return any(
+        not (
+            getattr(s, "transcript_path", None)
+            and getattr(s, "transcript_timed", False)
+            and getattr(s, "transcript_mode", "direct") == "direct"
+        )
+        for p in plans
+        if not getattr(p, "source_subtitles_only", False)
+        for s in getattr(p, "sources", ())
+    )
 
 
-def check_models(plans: list[Any], user: Any, policy: dict[str, Any]) -> list[Check]:
+def _is_tts_plan(plan: Any) -> bool:
+    return not (
+        getattr(plan, "source_subtitles_only", False) or getattr(plan, "subtitles_only", False)
+    )
+
+
+def check_models(plans: list[Any], user: Any, policy: dict[str, Any] | None = None) -> list[Check]:
     from .. import runtime_manager
     from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 
-    if all(plan.source_subtitles_only for plan in plans):
+    if all(getattr(plan, "source_subtitles_only", False) for plan in plans):
         return [_check("models", SKIP, "所需模型", MODELS_NONE)]
-    wanted = []
+    wanted: list[tuple[str, Any, str]] = []
     if _needs_asr(plans):
-        wanted.append(("识别模型", ASR_BACKENDS.get(user.asr_backend), user.asr_backend))
-    if any(not plan.subtitles_only for plan in plans):
-        backend = str(policy.get("tts_backend") or user.tts_backend)
-        wanted.append(("配音模型", TTS_BACKENDS.get(backend), backend))
+        asr_ids = list(
+            dict.fromkeys(str(_plan_val(p, user, "asr_backend")) for p in plans if _needs_asr([p]))
+        ) or [str(user.asr_backend)]
+        wanted.extend(("识别模型", ASR_BACKENDS.get(bid), bid) for bid in asr_ids)
+    tts_plans = [p for p in plans if _is_tts_plan(p)]
+    if tts_plans:
+        tts_ids = list(dict.fromkeys(str(_plan_val(p, user, "tts_backend")) for p in tts_plans))
+        wanted.extend(("配音模型", TTS_BACKENDS.get(bid), bid) for bid in tts_ids)
     checks: list[Check] = []
     for title, spec, backend_id in wanted:
         if spec is None:
             checks.append(_check("models", FAIL, title, MODELS_UNKNOWN, backend=backend_id))
             continue
         status = runtime_manager.backend_status(spec, settings=user)
-        values = {
-            "backend": spec.label,
-            "state": status.label,
-            "detail": f"（{status.detail}）" if status.detail else "",
-        }
-        if status.state in {"missing", "broken", "incompatible"}:
-            checks.append(_check("models", FAIL, title, MODELS_MISSING, **values))
-        elif status.state == "partial":
-            checks.append(_check("models", WARN, title, MODELS_PARTIAL, **values))
-        else:
-            checks.append(_check("models", OK, title, MODELS_OK, **values))
-    variants = ((p.edition.get("output_policy") or {}).get("variants") or [] for p in plans)
-    if any("replace" in item for item in variants):
-        checks.append(_check_separation(policy))
+        detail = f"（{status.detail}）" if status.detail else ""
+        values = {"backend": spec.label, "state": status.label, "detail": detail}
+        state_map = {"missing": FAIL, "broken": FAIL, "incompatible": FAIL, "partial": WARN}
+        level = state_map.get(status.state, OK)
+        tpl = {FAIL: MODELS_MISSING, WARN: MODELS_PARTIAL, OK: MODELS_OK}[level]
+        checks.append(_check("models", level, title, tpl, **values))
+    seen_sep: set[tuple[str, str]] = set()
+    for plan in tts_plans:
+        if not _plan_uses_separation(plan, user):
+            continue
+        backend = str(_plan_val(plan, user, "separation_backend", "local"))
+        model = str(_plan_val(plan, user, "separation_model", "vocals_mel_band_roformer.ckpt"))
+        if (backend, model) not in seen_sep:
+            seen_sep.add((backend, model))
+            checks.append(
+                _check_separation({"separation_backend": backend, "separation_model": model})
+            )
     return checks
 
 
@@ -283,61 +302,128 @@ def _check_separation(policy: dict[str, Any]) -> Check:
         )
     except Exception as exc:
         return _check("separation", FAIL, title, SEPARATION_ERROR, reason=redact_sensitive(exc))
-    if ready:
-        return _check("separation", OK, title, SEPARATION_OK, model=model)
-    return _check("separation", FAIL, title, SEPARATION_MISSING)
+    tpl = SEPARATION_OK if ready else SEPARATION_MISSING
+    return _check("separation", OK if ready else FAIL, title, tpl, model=model)
 
 
-def check_vram(plans: list[Any], user: Any, policy: dict[str, Any]) -> Check:
+@dataclass(frozen=True)
+class _StageVram:
+    label: str
+    min_gb: float
+    rec_gb: float
+    devices: tuple[str, ...] = ("cpu", "cuda")
+
+
+def _separation_stage_vram(model: str) -> _StageVram:
+    lowered = model.casefold()
+    if "roformer" in lowered:
+        return _StageVram("人声分离 · Mel-Band RoFormer", 3.0, 4.0)
+    if "demucs_ft" in lowered:
+        return _StageVram("人声分离 · Demucs FT", 2.5, 4.0)
+    return _StageVram("人声分离 · Demucs" if "demucs" in lowered else "人声分离模型", 2.5, 4.0)
+
+
+def _backend_stage(spec: Any) -> _StageVram | None:
+    if not spec or spec.runtime == "http" or not spec.minimum_vram_gb:
+        return None
+    min_gb = float(spec.minimum_vram_gb)
+    return _StageVram(
+        spec.label, min_gb, float(spec.recommended_vram_gb or min_gb), tuple(spec.devices)
+    )
+
+
+def check_vram(plans: list[Any], user: Any, policy: dict[str, Any] | None = None) -> Check:
     from .. import runtime_manager
     from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 
     title = "显存"
-    if all(plan.source_subtitles_only for plan in plans):
+    if all(getattr(plan, "source_subtitles_only", False) for plan in plans):
         return _check("vram", SKIP, title, VRAM_NONE)
-    needed: list[Any] = []
-    if _needs_asr(plans):
-        needed.append(ASR_BACKENDS.get(user.asr_backend))
-    if any(not plan.subtitles_only for plan in plans):
-        needed.append(TTS_BACKENDS.get(str(policy.get("tts_backend") or user.tts_backend)))
-    local = [spec for spec in needed if spec and spec.runtime != "http" and spec.minimum_vram_gb]
+    local: list[_StageVram] = []
+    for plan in plans:
+        if getattr(plan, "source_subtitles_only", False):
+            continue
+        if _needs_asr([plan]):
+            asr_id = str(_plan_val(plan, user, "asr_backend"))
+            if stage := _backend_stage(ASR_BACKENDS.get(asr_id)):
+                local.append(stage)
+            if asr_id in {"anime_whisper", "qwen3_asr"} or bool(
+                _plan_val(plan, user, "asr_forced_alignment_enabled", False)
+            ):
+                local.append(_StageVram("Qwen3 时间对齐", 2.5, 4.0))
+        if _is_tts_plan(plan):
+            if stage := _backend_stage(TTS_BACKENDS.get(str(_plan_val(plan, user, "tts_backend")))):
+                local.append(stage)
+            if (
+                _plan_uses_separation(plan, user)
+                and str(_plan_val(plan, user, "separation_backend", "local")) == "local"
+                and str(_plan_val(plan, user, "separation_device", "cuda")) != "cpu"
+            ):
+                sep = str(
+                    _plan_val(plan, user, "separation_model", "vocals_mel_band_roformer.ckpt")
+                )
+                local.append(_separation_stage_vram(sep))
     if not local:
         return _check("vram", SKIP, title, VRAM_ONLINE)
-    # Stages run one after another, so the largest single requirement counts.
-    hardest = max(local, key=lambda spec: spec.minimum_vram_gb or 0)
-    minimum = float(hardest.minimum_vram_gb or 0)
-    recommended = float(hardest.recommended_vram_gb or minimum)
+    hardest_min = max(local, key=lambda s: (s.min_gb, s.rec_gb))
+    hardest_rec = max(local, key=lambda s: (s.rec_gb, s.min_gb))
     hardware = runtime_manager.detect_hardware()
     if not hardware.cuda_available or hardware.vram_gb is None:
-        if "cpu" in hardest.devices:
-            return _check("vram", WARN, title, VRAM_CPU, backend=hardest.label)
-        return _check(
-            "vram", FAIL, title, VRAM_NO_GPU, backend=hardest.label, minimum=f"{minimum:g}"
-        )
-    have = float(hardware.vram_gb)
-    gpu = hardware.gpu or "显卡"
-    if have < minimum:
-        return _check(
-            "vram",
-            FAIL,
-            title,
-            VRAM_LOW,
-            backend=hardest.label,
-            minimum=f"{minimum:g}",
-            gpu=gpu,
-            have=f"{have:.1f}",
-        )
-    if have < recommended:
-        return _check(
-            "vram",
-            WARN,
-            title,
-            VRAM_TIGHT,
-            backend=hardest.label,
-            recommended=f"{recommended:g}",
-            have=f"{have:.1f}",
-        )
+        gpu_only = [s for s in local if "cpu" not in s.devices]
+        if gpu_only:
+            strict = max(gpu_only, key=lambda s: (s.min_gb, s.rec_gb))
+            kw = {"backend": strict.label, "minimum": f"{strict.min_gb:g}"}
+            return _check("vram", FAIL, title, VRAM_NO_GPU, **kw)
+        return _check("vram", WARN, title, VRAM_CPU, backend=hardest_min.label)
+    have, gpu = float(hardware.vram_gb), hardware.gpu or "显卡"
+    if have < hardest_min.min_gb:
+        kw = {
+            "backend": hardest_min.label,
+            "minimum": f"{hardest_min.min_gb:g}",
+            "gpu": gpu,
+            "have": f"{have:.1f}",
+        }
+        return _check("vram", FAIL, title, VRAM_LOW, **kw)
+    if have < hardest_rec.rec_gb:
+        kw = {
+            "backend": hardest_rec.label,
+            "recommended": f"{hardest_rec.rec_gb:g}",
+            "have": f"{have:.1f}",
+        }
+        return _check("vram", WARN, title, VRAM_TIGHT, **kw)
     return _check("vram", OK, title, VRAM_OK, gpu=gpu, have=f"{have:.1f}")
+
+
+def _source_skips_translation(source: Any, user: Any, target_language: str) -> bool:
+    path = getattr(source, "transcript_path", None)
+    lang = str(getattr(source, "transcript_language", "") or "").casefold()
+    mode = str(getattr(source, "transcript_mode", "direct") or "direct")
+    if (
+        path
+        and Path(str(path)).suffix.casefold() != ".pdf"
+        and bool(getattr(source, "transcript_timed", False))
+        and mode == "direct"
+        and lang == target_language
+    ):
+        return True
+    src_lang = str(
+        getattr(source, "source_language", None) or getattr(user, "default_source_language", "ja")
+    ).casefold()
+    return src_lang == target_language and (not path or lang == target_language)
+
+
+def _plan_needs_translation(plan: Any, user: Any) -> bool:
+    if getattr(plan, "source_subtitles_only", False):
+        return False
+    policy = _plan_policy(plan)
+    subtitle = str(policy.get("subtitle") or getattr(plan, "subtitle_language", ""))
+    if getattr(plan, "subtitles_only", False) and subtitle == "source":
+        return False
+    target = str(_plan_val(plan, user, "tts_target_language", "zh")).casefold()
+    sources = getattr(plan, "sources", None) or ()
+    return not bool(sources) or not all(
+        _source_skips_translation(source, user, target) for source in sources
+    )
 
 
 def check_translation(plans: list[Any], user: Any, network: bool) -> Check:
@@ -346,21 +432,38 @@ def check_translation(plans: list[Any], user: Any, network: bool) -> Check:
     from ..user_settings import PROVIDER_PRESETS, resolve_api_key
 
     title = "翻译服务"
-    if all(plan.source_subtitles_only for plan in plans):
+    if not any(_plan_needs_translation(plan, user) for plan in plans):
         return _check("translation", SKIP, title, TRANSLATION_NONE)
     provider = user.translation_provider
-    label = str(PROVIDER_PRESETS.get(provider, {}).get("label", provider))
+    preset = PROVIDER_PRESETS.get(provider, {})
+    label = str(preset.get("label", provider))
     try:
         key = resolve_api_key(provider)
     except AsmrDubberError:
         return _check("translation", FAIL, title, TRANSLATION_NO_KEY, provider=label)
     if not network:
         return _check("translation", OK, title, TRANSLATION_KEY_ONLY, provider=label)
+    probe = backend_diagnostics.test_translation_api
+    base_url = user.translation_base_url.strip() or str(preset.get("base_url", ""))
+    model = user.translation_model.strip() or str(preset.get("default_model", ""))
+    key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    cache_key = (provider, model, base_url, key_hash, str(portable_home()), probe)
+    now = time.monotonic()
+    with _TRANSLATION_PROBE_LOCK:
+        cached_at = _TRANSLATION_PROBE_CACHE.get(cache_key)
+        if cached_at is not None and now - cached_at < TRANSLATION_PROBE_TTL_SECONDS:
+            return _check("translation", OK, title, TRANSLATION_OK, provider=label)
     try:
-        backend_diagnostics.test_translation_api(user, key)
+        probe(user, key)
     except Exception as exc:
         reason = redact_sensitive(exc)[:300]
         return _check("translation", FAIL, title, TRANSLATION_FAIL, provider=label, reason=reason)
+    finished = time.monotonic()
+    with _TRANSLATION_PROBE_LOCK:
+        for k, ts in list(_TRANSLATION_PROBE_CACHE.items()):
+            if finished - ts >= TRANSLATION_PROBE_TTL_SECONDS:
+                _TRANSLATION_PROBE_CACHE.pop(k, None)
+        _TRANSLATION_PROBE_CACHE[cache_key] = finished
     return _check("translation", OK, title, TRANSLATION_OK, provider=label)
 
 

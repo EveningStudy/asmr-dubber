@@ -478,3 +478,263 @@ def test_deciding_with_an_outdated_revision_is_refused(
             {"project": manifest, "revision": revision - 1, "accept": ["s1"], "reject": []},
         )
     assert len(load_project(manifest)[0].translation_proposals) == 3
+
+
+def _revision_target_items(payload):
+    prompt = payload["messages"][-1]["content"]
+    target = prompt.split("目标项（`current_zh` 是现有译文）：\n")[1].split("\n\n")[0]
+    return json.loads(target), prompt
+
+
+@pytest.mark.parametrize(
+    ("provider", "target", "key", "rate"),
+    [("deepseek", "zh", "max_chars", 4.5), ("openai", "en", "max_words", 2.7)],
+)
+def test_revise_sends_length_budget_and_preserves_it_on_split(provider, target, key, rate):
+    rows = sentences(4)
+    expected = translation_module.length_budgets(rows, rows, rate)
+    sizes = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        items, prompt = _revision_target_items(payload)
+        sizes.append(len(items))
+        assert all(item.get(key) == expected[item["id"]] for item in items)
+        assert key in prompt and "上限，用于让配音和原声对齐" in prompt
+        if len(items) > 1:
+            return httpx.Response(500, text="split me")
+        return chat(answer({"id": items[0]["id"], "zh": f"改{items[0]['id']}", "kind": "speech"}))
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = revise_translations(
+            rows,
+            "精简并保持温柔",
+            "test-key",
+            "test-model",
+            provider=provider,
+            base_url=(
+                "https://api.openai.com/v1"
+                if provider == "openai"
+                else translation_module.DEFAULT_DEEPSEEK_BASE_URL
+            ),
+            target_language=target,
+            length_budget_rate=rate,
+            client=client,
+            max_retries=1,
+        )
+    assert 4 in sizes and 2 in sizes and 1 in sizes
+    assert len(report.proposals) == 4 and not report.failed
+
+
+def test_project_revision_respects_translation_length_budget_toggle(
+    template_project, application, tmp_path, monkeypatch
+):
+    manifest = project_with_translations(template_project, tmp_path, count=2)
+    task, server_on = start_revision(application, manifest, monkeypatch, lambda _p: answer())
+    assert task["status"] == "completed"
+    items_on, prompt_on = _revision_target_items(server_on.payloads[0])
+    assert all("max_chars" in item for item in items_on) and "max_chars" in prompt_on
+
+    project, directory = load_project(manifest)
+    project.settings.translation_length_budget = False
+    save_project(project, directory)
+    task, server_off = start_revision(application, manifest, monkeypatch, lambda _p: answer())
+    assert task["status"] == "completed"
+    items_off, prompt_off = _revision_target_items(server_off.payloads[0])
+    assert all("max_chars" not in item for item in items_off)
+    assert "上限，用于让配音和原声对齐" not in prompt_off
+
+
+def test_deepseek_revision_retries_http_400_and_expands_tokens_on_length():
+    attempts = 0
+    payloads = []
+
+    def transient_400(request):
+        nonlocal attempts
+        attempts += 1
+        payloads.append(json.loads(request.content))
+        if attempts == 1:
+            return httpx.Response(400, text="temporary upstream error")
+        return chat(answer({"id": "s1", "zh": "重试成功", "kind": "speech"}))
+
+    with httpx.Client(transport=httpx.MockTransport(transient_400)) as client:
+        report = revise_translations(
+            sentences(1),
+            "改",
+            "test-key",
+            "deepseek-chat",
+            provider="deepseek",
+            client=client,
+            max_retries=2,
+        )
+    assert attempts == 2
+    assert [(p.id, p.new_zh) for p in report.proposals] == [("s1", "重试成功")]
+    assert payloads[0]["thinking"] == {"type": "disabled"}
+    assert "user_id" in payloads[0]
+
+    token_budgets = []
+
+    def length_then_ok(request):
+        payload = json.loads(request.content)
+        token_budgets.append(payload["max_tokens"])
+        if len(token_budgets) == 1:
+            return httpx.Response(
+                200, json={"choices": [{"finish_reason": "length", "message": {"content": ""}}]}
+            )
+        return chat(answer({"id": "s1", "zh": "扩容成功", "kind": "speech"}))
+
+    with httpx.Client(transport=httpx.MockTransport(length_then_ok)) as client:
+        report = revise_translations(
+            sentences(1),
+            "改",
+            "test-key",
+            "deepseek-chat",
+            provider="deepseek",
+            client=client,
+            max_retries=2,
+        )
+    assert token_budgets == [16_384, 32_768]
+    assert [(p.id, p.new_zh) for p in report.proposals] == [("s1", "扩容成功")]
+
+
+def test_revision_system_prompt_covers_builtin_zh_and_en_prompts():
+    en_skip = translation_module.default_translation_prompt("ja", "en", sound_policy="skip")
+    en_romaji_prompt = translation_module._revision_system_prompt(en_skip, "ja", "en", "romaji")
+    assert "罗马字" in en_romaji_prompt
+    assert "目标语言必须是英语；JSON 的 zh 字段存放英文译文" not in en_romaji_prompt
+
+    switched_to_zh = translation_module._revision_system_prompt(en_skip, "ja", "zh", "skip")
+    assert "简体中文" in switched_to_zh
+    assert "输出英语台词" not in switched_to_zh
+
+
+def test_skipped_sound_revision_allows_rewriting_romaji_and_keep_source():
+    from asmr_dubber.translation_revision import resolve_proposals
+
+    row = Sentence(
+        id="s1",
+        start_seconds=0.0,
+        end_seconds=0.8,
+        source_text="ちゅっ",
+        zh_text="chu",
+        status="skipped_sound",
+        enabled=True,
+        chinese_audio_enabled=False,
+    )
+    same_server = Server(lambda _p: answer({"id": "s1", "zh": "chu", "kind": "sound"}))
+    same_report = revise([row], same_server, sound_policy="romaji")
+    assert same_report.proposals == [] and same_report.unchanged == 1
+
+    rewrite_server = Server(lambda _p: answer({"id": "s1", "zh": "chuu", "kind": "sound"}))
+    rewrite_report = revise([row], rewrite_server, sound_policy="romaji")
+    assert [(p.id, p.old_zh, p.new_zh, p.kind) for p in rewrite_report.proposals] == [
+        ("s1", "chu", "chuu", "sound")
+    ]
+
+    keep_row = Sentence(
+        id="s1",
+        start_seconds=0.0,
+        end_seconds=0.8,
+        source_text="ちゅっ",
+        zh_text="ちゅっ",
+        status="skipped_sound",
+        enabled=True,
+        chinese_audio_enabled=False,
+    )
+    keep_server = Server(lambda _p: answer({"id": "s1", "zh": "ちゅっ♪", "kind": "sound"}))
+    keep_report = revise([keep_row], keep_server, sound_policy="keep_source")
+    assert [(p.id, p.old_zh, p.new_zh, p.kind) for p in keep_report.proposals] == [
+        ("s1", "ちゅっ", "ちゅっ♪", "sound")
+    ]
+
+    from asmr_dubber.models import AudioInfo, DubProject
+
+    project = DubProject(
+        source=AudioInfo(
+            path="source.wav",
+            sha256="0" * 64,
+            duration_seconds=5.0,
+            sample_rate=16_000,
+            channels=1,
+        ),
+        sentences=[keep_row],
+        translation_proposals=[
+            {
+                "id": "s1",
+                "old_zh": "ちゅっ",
+                "new_zh": "ちゅっ♪",
+                "kind": "sound",
+                "instruction": "加音符",
+                "created_at": "2026-11-18T00:00:00Z",
+            }
+        ],
+    )
+    project.settings.translation_sound_policy = "keep_source"
+    assert resolve_proposals(project, accept_ids=["s1"])["accepted"] == 1
+    assert keep_row.zh_text == "ちゅっ♪"
+    assert keep_row.status == "skipped_sound" and keep_row.chinese_audio_enabled is False
+
+
+def test_accepting_proposal_keeps_reference_clears_candidates_and_refreshes_warnings(
+    template_project, application, tmp_path
+):
+    manifest = project_with_translations(template_project, tmp_path, count=2)
+    project, directory = load_project(manifest)
+    s1, s2 = project.sentences
+    s1.zh_text = "旧ありがとう"
+    s1.reference_file = "refs/s1.wav"
+    s1.tts_candidates = [
+        {"attempt": 2, "file": "tts/s1_2.wav", "duration": 1.0, "warning": "旧质检告警"}
+    ]
+    s1.tts_warning = "旧质检告警"
+    s1.tts_attempt = 2
+    s1.translation_warning = "译文里还有日文假名，可能漏译或没译完。"
+
+    s2.reference_file = "refs/s2.wav"
+    s2.translation_warning = None
+    project.settings.translation_length_budget = True
+    project.settings.translation_chars_per_second = 4.5
+    project.translation_proposals = [
+        {
+            "id": "s1",
+            "old_zh": "旧ありがとう",
+            "new_zh": "谢谢你",
+            "kind": "speech",
+            "instruction": "修正漏译",
+            "created_at": "2026-11-18T00:00:00Z",
+        },
+        {
+            "id": "s2",
+            "old_zh": "旧译文2",
+            "new_zh": "这是一段明显超出时长预算非常多的冗长改译台词内容",
+            "kind": "speech",
+            "instruction": "扩写",
+            "created_at": "2026-11-18T00:00:00Z",
+        },
+    ]
+    save_project(project, directory)
+
+    decide(application, manifest, accept=["s1", "s2"])
+    updated, directory = load_project(manifest)
+    u1, u2 = updated.sentences
+    assert u1.reference_file == "refs/s1.wav"
+    assert u2.reference_file == "refs/s2.wav"
+    assert u1.tts_candidates == [] and u1.tts_warning is None and u1.tts_attempt == 0
+    assert u1.translation_warning is None
+    assert u2.translation_warning is not None and "超出时长预算" in u2.translation_warning
+
+    updated.settings.translation_length_budget = False
+    updated.translation_proposals = [
+        {
+            "id": "s2",
+            "old_zh": u2.zh_text,
+            "new_zh": "关闭时长预算后这段很长的中文改译不应该再被标记为超长告警",
+            "kind": "speech",
+            "instruction": "再改",
+            "created_at": "2026-11-18T00:00:00Z",
+        }
+    ]
+    save_project(updated, directory)
+    decide(application, manifest, accept=["s2"])
+    rechecked, _ = load_project(manifest)
+    assert rechecked.sentences[1].translation_warning is None

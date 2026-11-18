@@ -189,5 +189,142 @@ def test_explicit_compress_targets_only_over_budget_and_wires_contract_ui(tmp_pa
     req = TaskRequest(kind="translate", project=str(tmp_path / "p.json"), revision=1, compress=True)
     assert req.compress is True
     frontend = files("asmr_dubber").joinpath("frontend")
-    assert "compressTooLong" in frontend.joinpath("project_translation.js").read_text("utf-8")
-    assert "data-compress" in frontend.joinpath("project_review.js").read_text("utf-8")
+    assert "compressTooLong" in frontend.joinpath("project_translation.js").read_text(
+        encoding="utf-8"
+    )
+    assert "data-compress" in frontend.joinpath("project_review.js").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("provider", "target", "key"), [("deepseek", "zh", "max_chars"), ("openai", "en", "max_words")]
+)
+def test_split_retry_preserves_length_budgets_and_rule(
+    provider: str, target: str, key: str
+) -> None:
+    lines = [_line(1, 0.0, 1.0), _line(2, 1.4, 2.2), _line(3, 3.0, 4.5), _line(4, 5.0, 6.0)]
+    expected = length_budgets(lines, lines, 4.5)
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        items, content = _request_items(request)
+        sizes.append(len(items))
+        assert all(item.get(key) == expected[item["id"]] for item in items)
+        assert key in content and "上限，用于让配音和原声对齐" in content
+        if len(items) > 1:
+            return httpx.Response(500, text="transient failure")
+        return _answer(items)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines,
+            api_key="test-key",
+            model="m",
+            provider=provider,
+            **({"base_url": "https://example.invalid/v1"} if provider != "deepseek" else {}),
+            target_language=target,
+            client=client,
+            length_budget_rate=4.5,
+        )
+    assert 4 in sizes and 2 in sizes and 1 in sizes
+    assert report.translated == 4 and report.failed == []
+
+
+@pytest.mark.parametrize(
+    ("provider", "target", "key"), [("deepseek", "zh", "max_chars"), ("openai", "en", "max_words")]
+)
+def test_blank_semantic_single_retry_preserves_length_budget_and_rule(
+    provider: str, target: str, key: str
+) -> None:
+    lines = [
+        Sentence(
+            id="s000001",
+            start_seconds=0.0,
+            end_seconds=1.5,
+            source_text="これは大切な長い文章なので最後まで翻訳してください。",
+        ),
+        Sentence(
+            id="s000002",
+            start_seconds=2.0,
+            end_seconds=3.5,
+            source_text="次の台詞もきちんと翻訳してください。",
+        ),
+    ]
+    expected = length_budgets(lines, lines, 4.5)
+    calls: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        items, content = _request_items(request)
+        ids = [item["id"] for item in items]
+        calls.append(ids)
+        assert all(item.get(key) == expected[item["id"]] for item in items)
+        assert key in content and "上限，用于让配音和原声对齐" in content
+        if len(calls) == 1:
+            rows = [
+                {"id": "s000001", "zh": "", "kind": "speech"},
+                {"id": "s000002", "zh": "ok", "kind": "speech"},
+            ]
+        else:
+            rows = [{"id": "s000001", "zh": "ok", "kind": "speech"}]
+        body = json.dumps({"translations": rows}, ensure_ascii=False)
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": body}}]}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines,
+            api_key="test-key",
+            model="m",
+            provider=provider,
+            **({"base_url": "https://example.invalid/v1"} if provider != "deepseek" else {}),
+            target_language=target,
+            client=client,
+            length_budget_rate=4.5,
+        )
+    assert calls == [["s000001", "s000002"], ["s000001"]]
+    assert report.translated == 2 and report.failed == []
+
+
+def test_multi_batch_compress_keeps_context_and_exposes_shortened_earlier_batches() -> None:
+    lines = [
+        Sentence(
+            id=f"s{index:06d}",
+            start_seconds=index * 2.0,
+            end_seconds=index * 2.0 + 1.0,
+            source_text=f"原文{index}です。",
+            zh_text=f"初版超长译文{index}需要精简字数才能配得上原声时长",
+            status="translated",
+        )
+        for index in range(1, 19)
+    ]
+    batch_messages: list[tuple[list[str], str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        joined = "\n".join(msg["content"] for msg in payload["messages"])
+        items, _ = _request_items(request)
+        ids = [item["id"] for item in items]
+        batch_messages.append((ids, joined))
+        rows = [{"id": item["id"], "zh": f"短译{item['id']}", "kind": "speech"} for item in items]
+        body = json.dumps({"translations": rows}, ensure_ascii=False)
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": body}}]}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines,
+            api_key="k",
+            model="m",
+            client=client,
+            length_budget_rate=4.5,
+            compress=True,
+            send_context=True,
+            context_sentences=24,
+            memory_sentences=50,
+        )
+    assert [len(ids) for ids, _ in batch_messages] == [16, 2]
+    assert "初版超长译文17需要精简字数才能配得上原声时长" in batch_messages[0][1]
+    assert "短译s000001" in batch_messages[1][1]
+    assert "短译s000016" in batch_messages[1][1]
+    assert report.translated == 18

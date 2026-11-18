@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import soundfile as sf
@@ -21,7 +22,7 @@ from .tts_backends import (
     _uses_reference_audio,
     _validate_output,
 )
-from .user_settings import UserSettings, resolve_api_key
+from .user_settings import PROVIDER_PRESETS, UserSettings, resolve_api_key
 from .voice_reference import prepare_voice_reference
 
 logger = logging.getLogger(__name__)
@@ -67,29 +68,36 @@ def test_translation_api(settings: UserSettings, api_key: str = "") -> str:
     """Translate one short sentence with the values currently shown in the form."""
 
     language: SpeechSourceLanguage = settings.default_source_language
-    source_text = "Hello." if language == "en" else "こんにちは。"
+    target_language: Literal["zh", "en"] = "en" if language == "zh" else "zh"
+    source_text = {"en": "Hello.", "zh": "你好。"}.get(language, "こんにちは。")
     sentence = Sentence(
         id="api-test",
         start_seconds=0.0,
         end_seconds=1.0,
         source_text=source_text,
     )
+    preset = PROVIDER_PRESETS.get(settings.translation_provider, {})
+    base_url = settings.translation_base_url.strip() or str(preset.get("base_url", ""))
+    model = settings.translation_model.strip() or str(preset.get("default_model", ""))
     key = resolve_api_key(settings.translation_provider, api_key)
     logger.info(
-        "开始测试翻译 API：服务=%s 模型=%s 源语言=%s",
+        "开始测试翻译 API：服务=%s 模型=%s 源语言=%s 目标语言=%s",
         settings.translation_provider,
-        settings.translation_model,
+        model,
         language,
+        target_language,
     )
     translate_sentences(
         [sentence],
         api_key=key,
-        model=settings.translation_model,
-        base_url=settings.translation_base_url,
+        model=model,
+        base_url=base_url,
         provider=settings.translation_provider,
         source_language=language,
+        target_language=target_language,
         system_prompt=(
-            settings.translation_prompt_for(language) or default_translation_prompt(language)
+            settings.translation_prompt_for(language)
+            or default_translation_prompt(language, target_language)
         ),
         temperature=settings.translation_temperature,
         top_p=settings.translation_top_p,
@@ -102,8 +110,10 @@ def test_translation_api(settings: UserSettings, api_key: str = "") -> str:
         job_id="api-connection-test",
         extra_body=settings.translation_extra_body,
     )
+    if sentence.error:
+        raise ProjectError(sentence.error)
     if not sentence.zh_text.strip():
-        raise ProjectError("翻译服务响应成功，但没有返回中文文本。")
+        raise ProjectError("翻译服务响应成功，但没有返回有效译文。")
     logger.info("翻译 API 测试通过：服务=%s", settings.translation_provider)
     return f"翻译 API 测试通过：{source_text} → {sentence.zh_text}"
 
