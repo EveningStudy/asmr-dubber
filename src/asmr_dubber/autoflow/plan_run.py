@@ -65,7 +65,7 @@ def _load_job_metadata(
         previous = previous_by_id.get(str(descriptor["job_id"]))
         if previous is None:
             continue
-        for key in ("status", "outputs", "project_json"):
+        for key in ("status", "outputs", "project_json", "partial"):
             if key in previous:
                 descriptor[key] = previous[key]
     metadata.update(
@@ -86,10 +86,15 @@ def _load_job_metadata(
 
 
 def _merged_outputs_reusable(
-    config: AppConfig, plan: SmartTaskPlan, previous_merged: dict[str, Any]
+    config: AppConfig,
+    plan: SmartTaskPlan,
+    previous_merged: dict[str, Any],
+    *,
+    previous_partial: bool = False,
 ) -> bool:
     return (
         not plan.rebuild
+        and not previous_partial
         and str(previous_merged.get("status") or "") == "completed"
         and output_mapping_complete(
             previous_merged.get("outputs"),
@@ -110,6 +115,8 @@ def _finish_merged_from_tracks(
     states: list[dict[str, Any]],
     folder_translation: str,
     title_translations: dict[str, str],
+    *,
+    previous_partial: bool = False,
 ) -> None:
     """For the "both" layout, build (or reuse) the merged outputs from the track results."""
     merged_descriptor = next(item for item in descriptors if item["kind"] == "merged")
@@ -117,7 +124,14 @@ def _finish_merged_from_tracks(
         (item for item in previous_jobs if item.get("kind") == "merged"),
         {},
     )
-    if _merged_outputs_reusable(config, plan, previous_merged):
+    if _merged_outputs_reusable(
+        config,
+        plan,
+        previous_merged,
+        previous_partial=previous_partial
+        or any(isinstance(item, dict) and item.get("partial") for item in previous_jobs)
+        or any(state.get("partial") for state in states),
+    ):
         print("\n合并成品已经完整，跳过重复生成。")
         merged_descriptor["outputs"] = dict(previous_merged["outputs"])
         merged_descriptor["status"] = "completed"
@@ -170,6 +184,7 @@ def _record_job_results(
             descriptor["status"] = str(state.get("status") or "")
             descriptor["outputs"] = dict(state.get("outputs") or {})
             descriptor["project_json"] = str(state.get("project_json") or "")
+            descriptor["partial"] = list(state.get("partial") or [])
 
 
 def _summary_states(
@@ -279,8 +294,17 @@ def execute_prepared_smart_plan(
         translate_track_titles=plan.translate_track_titles,
     )
     descriptors = smart_job_descriptors(output_root, layout, sources)
+    manifest_path = output_root / "处理清单.json"
+    previous_manifest_partial = False
+    if manifest_path.is_file():
+        try:
+            previous_manifest_partial = bool(
+                json.loads(manifest_path.read_text(encoding="utf-8-sig")).get("partial")
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            previous_manifest_partial = False
     manifest = write_plan_manifest(
-        output_root / "处理清单.json",
+        manifest_path,
         source_folder=folder,
         output_folder=output_root,
         mode=plan.mode,
@@ -327,6 +351,7 @@ def execute_prepared_smart_plan(
             states,
             folder_translation,
             title_translations,
+            previous_partial=previous_manifest_partial,
         )
 
     _record_job_results(descriptors, layout, states_by_index, states)

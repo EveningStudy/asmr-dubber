@@ -87,6 +87,7 @@ class TaskRequest(Request):
     target_language: Literal["zh", "en"] | None = None
     force: bool = False
     overwrite_edited: bool = False
+    compress: bool = False
     audio: bool = True
     language: Literal["bilingual", "source", "zh", "none"] = "bilingual"
     file: str | None = None

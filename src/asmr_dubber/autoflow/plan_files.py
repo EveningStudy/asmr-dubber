@@ -199,7 +199,7 @@ def cleanup_completed_workspace(state: dict[str, Any]) -> None:
         return
     root = constants.WORK_ROOT.resolve()
     target = workspace.resolve()
-    if target.parent == root and status_at_least(state, "completed"):
+    if target.parent == root and status_at_least(state, "completed") and not state.get("partial"):
         shutil.rmtree(target, ignore_errors=True)
 
 

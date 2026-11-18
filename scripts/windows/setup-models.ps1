@@ -37,9 +37,9 @@ if ($InstallAdvancedModels) {
 }
 
 if ($InstallAdvancedModels) {
-    # Recommended recognizer. It has no ModelScope copy yet, so a failure here
-    # must not abort Setup: Parakeet (the fallback) is already installed or
-    # being installed, and the Models page can retry the download.
+    # Recommended recognizer. Failure here must not abort Setup: Parakeet (the
+    # fallback) is already installed or being installed, and the Models page
+    # can retry the download.
     Write-SetupHost "正在准备 anime-whisper 日语识别模型（约 3 GB）..." -ForegroundColor Cyan
     try {
         Invoke-Checked -FilePath $Python `

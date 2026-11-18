@@ -259,3 +259,74 @@ def test_retranslate_only_the_flagged_sentences(tmp_path, monkeypatch):
         .read_text(encoding="utf-8")
     )
     assert "startTask('translate', { sentence_ids: [again.dataset.retranslate] })" in review
+
+
+def test_generate_and_choose_dub_candidates_and_clear_on_edit(tmp_path, monkeypatch):
+    from asmr_dubber.api_contract import TaskRequest
+    from asmr_dubber.tts import tts_cache_key
+
+    source = _silent(tmp_path)
+    (tmp_path / "dub").mkdir()
+    (tmp_path / "dub/a_1.wav").write_bytes(b"take1")
+    project = DubProject(
+        source=probe_audio(source),
+        sentences=[_sentence("a", 0, 1, tts_attempt=1, tts_file="dub/a_1.wav")],
+    )
+    project.sentences[0].tts_cache_key = tts_cache_key(project, project.sentences[0])
+
+    def fake_synthesize(active, directory, **kwargs):
+        s = active.sentences[0]
+        # Simulate QC retry bumping tts_attempt before saving the winning take.
+        s.tts_attempt += 1
+        rel = f"dub/{s.id}_{s.tts_attempt}.wav"
+        (directory / rel).write_bytes(b"take")
+        s.tts_file = rel
+        s.tts_duration_seconds = 0.8 + 0.1 * s.tts_attempt
+        s.tts_warning = "配音偏慢" if s.tts_attempt >= 5 else None
+        s.tts_cache_key = tts_cache_key(active, s)
+        s.status = "synthesized"
+
+    monkeypatch.setattr(
+        "asmr_dubber.services.project_operations.pipeline.reload_project",
+        lambda path: (project, tmp_path),
+    )
+    monkeypatch.setattr(
+        "asmr_dubber.services.project_operations.pipeline.synthesize_project", fake_synthesize
+    )
+    monkeypatch.setattr("asmr_dubber.services.project_operations.save_project", lambda *args: None)
+    monkeypatch.setattr("asmr_dubber.services.project_operations.view", lambda *args: args[-1])
+
+    rows = project_records.project_rows(project)
+    message = project_operations.generate_dub_candidates(
+        str(tmp_path / "project.json"), rows, ["a"], 3
+    )
+    assert "3" in message
+    candidates = project.sentences[0].tts_candidates
+    attempts = [c["attempt"] for c in candidates]
+    assert len(candidates) == 3 and len(set(attempts)) == 3 and attempts == sorted(attempts)
+    assert attempts[0] == 1 and project.sentences[0].tts_attempt == attempts[-1]
+
+    project_operations.choose_dub_candidate(project, tmp_path, "a", 1)
+    assert project.sentences[0].tts_attempt == 1
+    assert project.sentences[0].tts_file == "dub/a_1.wav"
+    assert project.sentences[0].tts_warning is None
+
+    rows[0][5] = "改过译文"
+    project_records.apply_table(project, rows)
+    assert project.sentences[0].tts_candidates == []
+
+    req = TaskRequest(
+        kind="synthesize", project="p.json", revision=2, sentence_ids=["a"], candidates=3
+    )
+    assert req.candidates == 3
+
+
+def test_frontend_wires_dub_candidates_and_take_selection():
+    from importlib.resources import files
+
+    root = files("asmr_dubber").joinpath("frontend")
+    review = root.joinpath("project_review.js").read_text(encoding="utf-8")
+    projects = root.joinpath("projects.js").read_text(encoding="utf-8")
+    assert "data-candidates" in review and "candidates: 3" in review
+    assert "data-take" in review and "projects/take" in review and "data-play-url" in review
+    assert "sentence.tts_candidates = []" in projects

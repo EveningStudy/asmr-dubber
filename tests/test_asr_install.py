@@ -285,7 +285,8 @@ def test_download_reuses_models_that_are_already_complete(monkeypatch, tmp_path:
 def test_missing_mirror_error_names_the_download_source_setting(
     monkeypatch, tmp_path: Path
 ) -> None:
-    _record_downloads(monkeypatch, tmp_path)
+    present = {"Qwen/Qwen3-ASR-1.7B", DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL}
+    _record_downloads(monkeypatch, tmp_path, present=present)
 
     def refuse(**_kwargs):
         raise RuntimeError("未启用海外模型源")
@@ -294,13 +295,13 @@ def test_missing_mirror_error_names_the_download_source_setting(
     monkeypatch.setattr("asmr_dubber.runtime_manager.external_downloads_allowed", lambda: False)
 
     with pytest.raises(AppEnvironmentError, match="海外源"):
-        download_backend_models("anime_whisper")
+        download_backend_models("qwen3_asr")
 
 
 def test_models_with_a_modelscope_pack_do_not_get_the_mirror_hint(
     monkeypatch, tmp_path: Path
 ) -> None:
-    present = {"litagin/anime-whisper", DEFAULT_ALIGNER_MODEL}
+    present = {DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL}
     _record_downloads(monkeypatch, tmp_path, present=present)
 
     def refuse(**_kwargs):
@@ -312,7 +313,7 @@ def test_models_with_a_modelscope_pack_do_not_get_the_mirror_hint(
     with pytest.raises(AppEnvironmentError) as caught:
         download_backend_models("anime_whisper")
 
-    assert ASMR_VAD_MODEL in str(caught.value)
+    assert "litagin/anime-whisper" in str(caught.value)
     assert "国内镜像" not in str(caught.value)
 
 

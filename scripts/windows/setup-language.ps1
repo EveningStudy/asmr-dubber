@@ -25,7 +25,7 @@
             'VAD（语音活动检测）日语 ASMR 专用' = 'Japanese ASMR VAD '
             '时间戳对齐：' = 'Timestamp alignment: '
             '正在准备 anime-whisper 日语识别模型（约 3 GB）...' = 'Preparing the anime-whisper Japanese recognition model (about 3 GB)...'
-            '（litagin/anime-whisper，仅海外源，失败不影响安装）' = '(litagin/anime-whisper, external source only; failure does not stop setup)'
+            '（litagin/anime-whisper，支持国内镜像，失败不影响安装）' = '(litagin/anime-whisper, China mirror available; failure does not stop setup)'
             '（阿里 Qwen）' = '(Alibaba Qwen)'
             'TTS（语音合成）' = 'TTS '
             '（仅 NVIDIA GPU）' = '(NVIDIA GPU only)'

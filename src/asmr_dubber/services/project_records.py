@@ -175,6 +175,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
             updated.tts_file = None
             updated.tts_cache_key = None
             updated.tts_warning = None
+            updated.tts_candidates = []
             updated.translation_warning = None
             updated.tts_duration_seconds = None
             updated.reference_file = None

@@ -80,3 +80,114 @@ def test_no_budget_by_default() -> None:
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         translate_sentences([_line(1, 0.0, 2.0)], api_key="k", model="m", client=client)
+
+
+def test_auto_tightening_runs_once_and_clears_too_long_flag() -> None:
+    lines = [_line(1, 0.0, 1.0)]
+    calls: list[tuple[list[dict], str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        items, content = _request_items(request)
+        calls.append((items, content))
+        zh = "这是一段明显超出预算的译文内容" if len(calls) == 1 else "简短译文"
+        body = json.dumps(
+            {"translations": [{"id": items[0]["id"], "zh": zh, "kind": "speech"}]},
+            ensure_ascii=False,
+        )
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": body}}]}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines, api_key="k", model="m", client=client, length_budget_rate=4.5
+        )
+    assert len(calls) == 2
+    assert "existing_zh" not in calls[0][0][0]
+    assert calls[1][0][0]["existing_zh"] == "这是一段明显超出预算的译文内容"
+    assert "existing_zh" in calls[1][1]
+    assert report.translated == 1
+    assert report.flagged == []
+    assert lines[0].zh_text == "简短译文"
+
+
+def test_auto_tightening_preserves_existing_text_on_error() -> None:
+    lines = [_line(1, 0.0, 1.0)]
+    step = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal step
+        step += 1
+        items, _ = _request_items(request)
+        if step == 1:
+            body = json.dumps(
+                {
+                    "translations": [
+                        {"id": items[0]["id"], "zh": "这句还是太长超过预算好多字", "kind": "speech"}
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            return httpx.Response(
+                200, json={"choices": [{"finish_reason": "stop", "message": {"content": body}}]}
+            )
+        return httpx.Response(500, text="upstream error")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines, api_key="k", model="m", client=client, length_budget_rate=4.5
+        )
+    assert lines[0].zh_text == "这句还是太长超过预算好多字"
+    assert lines[0].status == "translated"
+    assert report.failed == []
+    assert [(flag.sentence_id, flag.code) for flag in report.flagged] == [("s000001", "too_long")]
+
+
+def test_explicit_compress_targets_only_over_budget_and_wires_contract_ui(tmp_path) -> None:
+    from importlib.resources import files
+
+    from asmr_dubber.api_contract import TaskRequest
+
+    lines = [
+        Sentence(
+            id="s000001",
+            start_seconds=0.0,
+            end_seconds=2.0,
+            source_text="原文1",
+            zh_text="短句",
+            status="translated",
+        ),
+        Sentence(
+            id="s000002",
+            start_seconds=2.5,
+            end_seconds=3.5,
+            source_text="原文2",
+            zh_text="这句译文明显比预留时间允许的字数要多出不少",
+            status="translated",
+        ),
+    ]
+    seen_ids: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        items, _ = _request_items(request)
+        seen_ids.extend(item["id"] for item in items)
+        rows = [{"id": item["id"], "zh": "简短点", "kind": "speech"} for item in items]
+        body = json.dumps({"translations": rows}, ensure_ascii=False)
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "stop", "message": {"content": body}}]}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        report = translate_sentences(
+            lines, api_key="k", model="m", client=client, length_budget_rate=4.5, compress=True
+        )
+    assert seen_ids == ["s000002"]
+    assert lines[0].zh_text == "短句"
+    assert lines[1].zh_text == "简短点"
+    assert report.translated == 1 and report.flagged == []
+
+    req = TaskRequest(kind="translate", project=str(tmp_path / "p.json"), revision=1, compress=True)
+    assert req.compress is True
+    frontend = files("asmr_dubber").joinpath("frontend")
+    assert "compressTooLong" in frontend.joinpath("project_translation.js").read_text("utf-8")
+    assert "data-compress" in frontend.joinpath("project_review.js").read_text("utf-8")

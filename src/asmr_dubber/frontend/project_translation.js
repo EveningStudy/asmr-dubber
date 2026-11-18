@@ -31,7 +31,10 @@ export function renderTranslationResult(project) {
   const done = project.sentences.filter(
     (s) => s.enabled && s.zh_text && !['translation_failed', 'skipped_sound'].includes(s.status),
   ).length;
-  box.hidden = !(done || skipped.length || failed.length);
+  const tooLong = project.sentences.filter(
+    (s) => s.enabled && s.zh_text && (s.translation_warning || '').includes('超出时长预算'),
+  );
+  box.hidden = !(done || skipped.length || failed.length || tooLong.length);
   if (box.hidden) return;
   const failures = failed
     .slice(0, 30)
@@ -47,15 +50,21 @@ export function renderTranslationResult(project) {
   box.innerHTML =
     `<div class="t">${t('翻译结果')}</div>` +
     `<p class="stat">${t('成功 {done} 句，跳过 {skipped} 句，失败 {failed} 句。', { done, skipped: skipped.length, failed: failed.length })}</p>` +
+    (tooLong.length
+      ? `<div class="actions"><button class="btn" id="compressTooLong">${t('一键压缩过长译文（{count} 句）', { count: tooLong.length })}</button></div>`
+      : '') +
     (failed.length
       ? `<p class="stat">${t('失败的句子，点编号可在表格里定位。')}</p><ul>${failures}</ul><div class="actions"><button class="btn" data-task="translate">${t('只重试失败句')}</button><button class="btn plain" id="disableFailed">${t('把这些句子设为不配音')}</button></div>`
       : '') +
     (skipped.length
       ? `<details><summary>${t('跳过的句子（{count}）', { count: skipped.length })}</summary><ul>${skippedList}</ul></details>`
       : '');
-  box.querySelector('[data-task]')?.toggleAttribute('disabled', state.tasks.some(
+  const running = state.tasks.some(
     (task) => task.request.project === project.manifest && ['queued', 'running', 'cancelling'].includes(task.status),
-  ));
+  );
+  box.querySelectorAll('[data-task], #compressTooLong').forEach((button) => {
+    button.toggleAttribute('disabled', running);
+  });
 }
 
 export function renderBackup(project) {
@@ -83,6 +92,10 @@ export function initializeRecovery(saveRows, renderProject, dialog) {
   $('#translationResult').addEventListener(
     'click',
     guard(async (event) => {
+      if (event.target.closest('#compressTooLong')) {
+        await startTask('translate', { compress: true });
+        return;
+      }
       if (!event.target.closest('#disableFailed')) return;
       state.project.sentences.forEach((sentence) => {
         if (sentence.enabled && sentence.status === 'translation_failed') sentence.enabled = false;

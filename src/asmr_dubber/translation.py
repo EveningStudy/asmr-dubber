@@ -246,6 +246,7 @@ class TranslationChunk:
     # Per-sentence length budget sent to the model ("max_chars" or "max_words").
     budgets: dict[str, int] = field(default_factory=dict)
     budget_key: str = "max_chars"
+    compress: bool = False
 
 
 _BUDGET_RULE = (
@@ -259,7 +260,14 @@ def budget_rule(chunk: TranslationChunk) -> str:
     if not chunk.budgets:
         return ""
     unit = "英文单词数" if chunk.budget_key == "max_words" else "字数（不含标点）"
-    return "\n" + _BUDGET_RULE.format(key=chunk.budget_key, unit=unit)
+    rule = "\n" + _BUDGET_RULE.format(key=chunk.budget_key, unit=unit)
+    if chunk.compress:
+        rule += (
+            f"\n以上句子当前 existing_zh 超出了 {chunk.budget_key} 上限；"
+            "请在不丢失核心意思、人物称谓和语气的前提下精简译文，"
+            f"把 zh 压缩到 {chunk.budget_key} 以内。"
+        )
+    return rule
 
 
 def length_budgets(
@@ -848,7 +856,12 @@ class DeepSeekTranslator:
         job_id: str,
     ) -> dict[str, TranslationEntry]:
         expected_ids = [sentence.id for sentence in chunk.sentences]
-        target = _json_lines(chunk.sentences, budgets=chunk.budgets, budget_key=chunk.budget_key)
+        target = _json_lines(
+            chunk.sentences,
+            field="both" if chunk.compress else "source",
+            budgets=chunk.budgets,
+            budget_key=chunk.budget_key,
+        )
         max_tokens = min(
             65_536,
             max(
@@ -1021,7 +1034,12 @@ class LLMTranslator:
         translation_memory: str,
         attempt: int,
     ) -> list[dict[str, str]]:
-        target = _json_lines(chunk.sentences, budgets=chunk.budgets, budget_key=chunk.budget_key)
+        target = _json_lines(
+            chunk.sentences,
+            field="both" if chunk.compress else "source",
+            budgets=chunk.budgets,
+            budget_key=chunk.budget_key,
+        )
         # Every item carries ``kind``; the sound rule matches the configured policy.
         correction = (
             '\n每项只输出 id、zh、kind 三个字段，kind 为 "speech" 或 "sound"。'
@@ -1784,6 +1802,10 @@ def _same_text_key(text: str) -> str:
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text)).casefold()
 
 
+def _used_length(text: str, budget_key: str) -> int:
+    return len(text.split()) if budget_key == "max_words" else speakable_character_count(text)
+
+
 def check_translations(
     sentences: list[Sentence],
     budgets: dict[str, int] | None = None,
@@ -1816,9 +1838,7 @@ def check_translations(
             )
         budget = (budgets or {}).get(sentence.id)
         if budget:
-            used = (
-                len(text.split()) if budget_key == "max_words" else speakable_character_count(text)
-            )
+            used = _used_length(text, budget_key)
             if used > budget * LENGTH_OVERRUN_RATIO:
                 flags.append(
                     TranslationFlag(
@@ -1872,11 +1892,14 @@ def translate_sentences(
     overwrite_edited: bool = False,
     length_budget_rate: float | None = None,
     sentence_ids: Iterable[str] | None = None,
+    compress: bool = False,
 ) -> TranslationReport:
     """Translate every pending sentence; one bad sentence never stops the others.
 
     ``sentence_ids`` limits the call to those sentences and redoes them even when
     they have text (like ``retranslate``), e.g. the ids in ``report.flagged_ids``.
+    ``compress`` shortens existing over-budget translations using ``existing_zh``
+    and keeps existing text intact if compression fails.
 
     Failures are collected in the returned report.  Only credential, billing and
     permission errors (HTTP 401/402/403), cancellation and three consecutive failed
@@ -1890,23 +1913,57 @@ def translate_sentences(
     check_cancelled(cancel_event)
     if sound_policy not in SOUND_POLICIES:
         sound_policy = "skip"
+    mt_providers = {"deepl", "google_translate", "microsoft_translate"}
     report = TranslationReport()
     selected = None if sentence_ids is None else set(sentence_ids)
     redo = retranslate or selected is not None
-    pending = [
-        sentence
-        for sentence in sentences
-        if sentence.enabled
-        and (selected is None or sentence.id in selected)
-        and (
-            not sentence.zh_text
-            or sentence.status == "translation_failed"
-            or (redo and (overwrite_edited or not sentence.review_locked))
-        )
-    ]
+    budgets: dict[str, int] = {}
+    budget_key = "max_words" if target_language == "en" else "max_chars"
+    if compress:
+        if source_language == target_language or not length_budget_rate or provider in mt_providers:
+            if progress:
+                progress("所有句子已符合时长预算", 1, 1)
+            return report
+        pool = [
+            sentence
+            for sentence in sentences
+            if sentence.enabled
+            and sentence.zh_text.strip()
+            and sentence.status == "translated"
+            and (selected is None or sentence.id in selected)
+            and (overwrite_edited or not sentence.review_locked)
+        ]
+        budgets = length_budgets(list(sentences), pool, length_budget_rate) if pool else {}
+        if selected is None and pool:
+            too_long = {
+                flag.sentence_id
+                for flag in check_translations(
+                    sentences, budgets, budget_key, only_ids=[sentence.id for sentence in pool]
+                )
+                if flag.code == "too_long"
+            }
+            pending = [sentence for sentence in pool if sentence.id in too_long]
+        else:
+            pending = pool
+    else:
+        pending = [
+            sentence
+            for sentence in sentences
+            if sentence.enabled
+            and (selected is None or sentence.id in selected)
+            and (
+                not sentence.zh_text
+                or sentence.status == "translation_failed"
+                or (redo and (overwrite_edited or not sentence.review_locked))
+            )
+        ]
     if not pending:
         if progress:
-            progress("所有句子已有目标语言文本", 1, 1)
+            progress(
+                "所有句子已符合时长预算" if compress else "所有句子已有目标语言文本",
+                1,
+                1,
+            )
         return report
     if source_language == target_language:
         for sentence in pending:
@@ -1939,11 +1996,18 @@ def translate_sentences(
         source_language,
     )
     batches = _chunks(pending)
-    budgets: dict[str, int] = {}
-    budget_key = "max_chars"
-    if length_budget_rate and provider not in {"deepl", "google_translate", "microsoft_translate"}:
+    if compress:
+        batches = [
+            TranslationChunk(
+                chunk.sentences,
+                {s.id: budgets[s.id] for s in chunk.sentences},
+                budget_key,
+                compress=True,
+            )
+            for chunk in batches
+        ]
+    elif length_budget_rate and provider not in mt_providers:
         budgets = length_budgets(list(sentences), pending, length_budget_rate)
-        budget_key = "max_words" if target_language == "en" else "max_chars"
         batches = [
             TranslationChunk(
                 chunk.sentences,
@@ -2128,40 +2192,164 @@ def translate_sentences(
         run(TranslationChunk(chunk.sentences[:middle]), retry_attempts)
         run(TranslationChunk(chunk.sentences[middle:]), retry_attempts)
 
+    def make_compress_chunk(items: list[Sentence]) -> TranslationChunk:
+        return TranslationChunk(
+            items,
+            {item.id: budgets[item.id] for item in items if item.id in budgets},
+            budget_key,
+            compress=True,
+        )
+
+    def tighten_chunk(
+        chunk: TranslationChunk,
+        attempts: int | None,
+        *,
+        count_translated: bool,
+        record_failure: bool,
+    ) -> None:
+        """Shorten existing over-budget lines without overwriting text on error."""
+        check_cancelled(cancel_event)
+        count = len(chunk.sentences)
+        try:
+            results = request(chunk, attempts)
+        except _OutputLengthTranslationError as exc:
+            if count == 1:
+                if record_failure:
+                    report.failed.append(
+                        TranslationFailure(
+                            chunk.sentences[0].id, f"压缩译文超出输出上限：{exc}"[:400]
+                        )
+                    )
+                else:
+                    logger.warning(
+                        "压缩过长译文超出上限（%s），保留原译文。", chunk.sentences[0].id
+                    )
+                return
+            next_attempts = attempts
+        except TranslationError as exc:
+            check_cancelled(cancel_event)
+            if _is_fatal_translation_error(exc):
+                if record_failure:
+                    raise
+                logger.warning("自动压缩译文遇到致命错误，保留已有译文：%s", exc)
+                return
+            if count == 1:
+                if record_failure:
+                    report.failed.append(TranslationFailure(chunk.sentences[0].id, str(exc)[:400]))
+                else:
+                    logger.warning(
+                        "压缩过长译文失败（%s），保留原译文：%s", chunk.sentences[0].id, exc
+                    )
+                return
+            next_attempts = _SPLIT_RETRY_ATTEMPTS
+        else:
+            changed = False
+            for sentence in chunk.sentences:
+                entry = _as_entry(results[sentence.id])
+                candidate = entry.zh.strip()
+                if entry.kind == "sound" or not candidate:
+                    continue
+                if _used_length(candidate, budget_key) > _used_length(sentence.zh_text, budget_key):
+                    continue
+                if candidate != sentence.zh_text:
+                    _mark_translated(sentence, candidate)
+                    changed = True
+                if sentence.id not in translated_ids:
+                    translated_ids.append(sentence.id)
+                if count_translated:
+                    report.translated += 1
+            if changed:
+                checkpoint()
+            return
+        middle = count // 2
+        tighten_chunk(
+            make_compress_chunk(chunk.sentences[:middle]),
+            next_attempts,
+            count_translated=count_translated,
+            record_failure=record_failure,
+        )
+        tighten_chunk(
+            make_compress_chunk(chunk.sentences[middle:]),
+            next_attempts,
+            count_translated=count_translated,
+            record_failure=record_failure,
+        )
+
+    def tighten_all(
+        targets: list[Sentence], *, count_translated: bool, record_failure: bool
+    ) -> None:
+        tighten_batches = [make_compress_chunk(c.sentences) for c in _chunks(targets)]
+        for index, chunk in enumerate(tighten_batches):
+            check_cancelled(cancel_event)
+            label = "压缩过长译文" if compress else "精简过长译文"
+            if progress:
+                progress(
+                    f"{provider} · {model} {label}第 {index + 1}/{len(tighten_batches)} 批",
+                    index,
+                    len(tighten_batches),
+                )
+            tighten_chunk(
+                chunk,
+                None,
+                count_translated=count_translated,
+                record_failure=record_failure,
+            )
+            check_cancelled(cancel_event)
+            if progress:
+                progress(
+                    f"已压缩 {index + 1}/{len(tighten_batches)} 批",
+                    index + 1,
+                    len(tighten_batches),
+                )
+
     cancel_translation = translator.close
     callback_signal = register_cancel_callback(cancel_translation, cancel_event)
     try:
         with translator:
-            consecutive_failures = 0
-            for index, chunk in enumerate(batches):
-                check_cancelled(cancel_event)
-                if progress:
-                    progress(
-                        f"{provider} · {model} 翻译第 {index + 1}/{len(batches)} 批",
-                        index,
-                        len(batches),
-                    )
-                done_before = report.translated + report.skipped
-                failed_before = len(report.failed)
-                run(chunk, None)
-                if len(report.failed) != failed_before:
-                    checkpoint()
-                if report.translated + report.skipped > done_before:
-                    consecutive_failures = 0
-                else:
-                    consecutive_failures += 1
-                    if consecutive_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
-                        report.stopped_reason = (
-                            f"连续 {consecutive_failures} 批翻译失败，翻译服务可能不可用。"
+            if compress:
+                tighten_all(pending, count_translated=True, record_failure=True)
+            else:
+                consecutive_failures = 0
+                for index, chunk in enumerate(batches):
+                    check_cancelled(cancel_event)
+                    if progress:
+                        progress(
+                            f"{provider} · {model} 翻译第 {index + 1}/{len(batches)} 批",
+                            index,
+                            len(batches),
                         )
-                        raise TranslationError(
-                            f"{report.stopped_reason}最后一次错误：{last_failure}。"
-                            f"已完成的 {report.translated} 句译文已保存，"
-                            "未处理的句子保持待翻译。"
+                    done_before = report.translated + report.skipped
+                    failed_before = len(report.failed)
+                    run(chunk, None)
+                    if len(report.failed) != failed_before:
+                        checkpoint()
+                    if report.translated + report.skipped > done_before:
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                        if consecutive_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                            report.stopped_reason = (
+                                f"连续 {consecutive_failures} 批翻译失败，翻译服务可能不可用。"
+                            )
+                            raise TranslationError(
+                                f"{report.stopped_reason}最后一次错误：{last_failure}。"
+                                f"已完成的 {report.translated} 句译文已保存，"
+                                "未处理的句子保持待翻译。"
+                            )
+                    check_cancelled(cancel_event)
+                    if progress:
+                        progress(f"已翻译 {index + 1}/{len(batches)} 批", index + 1, len(batches))
+                if budgets and translated_ids:
+                    over_ids = {
+                        flag.sentence_id
+                        for flag in check_translations(
+                            sentences, budgets, budget_key, only_ids=translated_ids
                         )
-                check_cancelled(cancel_event)
-                if progress:
-                    progress(f"已翻译 {index + 1}/{len(batches)} 批", index + 1, len(batches))
+                        if flag.code == "too_long"
+                    }
+                    over_sentences = [s for s in sentences if s.id in over_ids]
+                    if over_sentences:
+                        tighten_all(over_sentences, count_translated=False, record_failure=False)
     finally:
         unregister_cancel_callback(cancel_translation, callback_signal)
     report.flagged = check_translations(sentences, budgets, budget_key, only_ids=translated_ids)

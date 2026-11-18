@@ -16,12 +16,16 @@ BACKENDS = {
     "parakeet_nemo": "Parakeet / CrispASR",
     "faster_whisper": "Faster-Whisper",
     "kotoba_whisper": "Kotoba-Whisper",
+    "anime_whisper": "anime-whisper",
+    "qwen3_asr": "Qwen3-ASR",
     "indextts2": "IndexTTS2",
     "indextts2_5": "IndexTTS-2.5",
 }
 _IMPORTS = {
     "faster_whisper": "import faster_whisper, ctranslate2",
     "kotoba_whisper": "import torch, torchaudio, transformers, accelerate",
+    "anime_whisper": "import torch, torchaudio, transformers, accelerate, onnxruntime, qwen_asr",
+    "qwen3_asr": "import torch, torchaudio, transformers, onnxruntime, qwen_asr",
     "indextts2": "import torch, torchaudio; import indextts.infer_v2",
     "indextts2_5": "import torch, torchaudio; import indextts.infer_v2_5",
 }

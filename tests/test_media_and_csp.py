@@ -119,32 +119,33 @@ def test_register_is_stable_for_the_same_file(home):
 
 
 def test_service_errors_are_chinese_with_english_catalog_entries():
+    import ast
     import re
     from pathlib import Path
 
     from asmr_dubber.localization import catalog
 
     english = catalog("en")
+    normalized_templates = {re.sub(r"\{\w+\}", "{*}", key) for key in english if "{" in key}
     services = Path(media_module.__file__).parent
-    names = (
-        "application",
-        "files",
-        "media",
-        "models",
-        "parameters",
-        "projects",
-        "settings",
-        "tasks",
-        "updates",
-        "batch_queue",
-    )
-    for path in (services / f"{name}.py" for name in names):
-        for match in re.finditer(
-            r'raise (?:ValueError|FileNotFoundError)\(\s*"([^"]+)"',
-            path.read_text(encoding="utf-8"),
-        ):
-            text = match.group(1)
-            if text.endswith((": ", "：")) or "{" in text:
+    for path in sorted(services.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and node.exc.args
+            ):
                 continue
-            assert re.search(r"[一-鿿]", text), f"{path.name}: {text}"
-            assert text in english, f"{path.name}: missing English for {text}"
+            arg = node.exc.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                text = arg.value
+                assert re.search(r"[一-鿿]", text), f"{path.name}:{node.lineno}: {text}"
+                if not text.endswith((": ", "：")):
+                    assert text in english, f"{path.name}:{node.lineno}: missing English for {text}"
+            elif isinstance(arg, ast.JoinedStr):
+                skeleton = "".join(
+                    part.value if isinstance(part, ast.Constant) else "{*}" for part in arg.values
+                )
+                assert re.search(r"[一-鿿]", skeleton), f"{path.name}:{node.lineno}: {skeleton}"
+                assert skeleton in normalized_templates, (
+                    f"{path.name}:{node.lineno}: missing English template for {skeleton}"
+                )

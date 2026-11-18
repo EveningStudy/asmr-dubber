@@ -229,6 +229,10 @@ class Projects:
                 project_operations.regenerate_dubs(
                     manifest, rows, request["sentence_ids"], report, token
                 )
+            elif kind == "translate" and request.get("compress"):
+                project_operations.compress_translations(
+                    manifest, rows, request.get("sentence_ids") or None, report, token
+                )
             elif kind == "translate" and request.get("sentence_ids"):
                 project_operations.retranslate(
                     manifest, rows, request["sentence_ids"], report, token

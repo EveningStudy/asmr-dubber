@@ -156,7 +156,7 @@ def test_restart_marks_unfinished_tasks_interrupted(tmp_path):
     path.write_text(json.dumps({"t": {"id": "t", "status": "running"}}))
     tasks = Tasks(lambda *args: None, path)
     assert tasks.get("t")["status"] == "interrupted"
-    assert json.loads(path.read_text())["t"]["status"] == "interrupted"
+    assert json.loads(path.read_text(encoding="utf-8"))["t"]["status"] == "interrupted"
 
 
 def test_task_failure_is_saved_and_secrets_are_rejected(tmp_path):

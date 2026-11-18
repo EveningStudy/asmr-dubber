@@ -255,6 +255,8 @@ _MODELSCOPE_PACK_FOR_MODEL = {
     DEFAULT_ALIGNER_MODEL: "qwen3-forced-aligner",
     "kotoba-tech/kotoba-whisper-v2.2": "kotoba-whisper-v2.2",
     "Systran/faster-whisper-large-v2": "faster-whisper-large-v2",
+    "litagin/anime-whisper": "anime-whisper",
+    "Qwen/Qwen3-ASR-1.7B": "qwen3-asr-1.7b",
 }
 
 _PARAKEET_MODEL_FILES = {
@@ -951,8 +953,9 @@ def backend_model_pack_ids(backend_id: str) -> set[str]:
         "indextts2": {"indextts2-checkpoints"},
         "kotoba_whisper": {"kotoba-whisper-v2.2"},
         "faster_whisper": {"faster-whisper-large-v2"},
-        # Only the VAD and aligner packs are published; the recognizer packs
-        # are picked up when a user drops them into model-packs/.
+        # anime-whisper and the base Qwen3-ASR 1.7B packs are published on
+        # ModelScope alongside the VAD and aligner packs; the community Qwen3
+        # fine-tune pack is picked up only when dropped into model-packs/.
         "anime_whisper": {"anime-whisper", "whisper-vad-asmr-onnx", "qwen3-forced-aligner"},
         "qwen3_asr": {
             "qwen3-asr-1.7b",

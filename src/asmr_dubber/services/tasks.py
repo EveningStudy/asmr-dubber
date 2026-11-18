@@ -29,7 +29,7 @@ class Tasks:
         )
         for task in self.items.values():
             if task["status"] in ACTIVE:
-                task.update(status="interrupted", message="Interrupted; saved results are retained")
+                task.update(status="interrupted", message="任务已中断；已完成的结果已保留。")
                 for plan in task.get("plans", {}).values():
                     if plan.get("status") == "running":
                         plan["status"] = "interrupted"

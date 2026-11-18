@@ -166,8 +166,10 @@ def retranslate(
     sentence_ids: list[str],
     progress: Any | None = None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    compress: bool = False,
 ) -> ProjectView:
-    """Translate only the listed sentences again, e.g. the ones the self-check flagged."""
+    """Translate or shorten only the listed sentences, e.g. the ones flagged by self-check."""
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
     wanted = set(sentence_ids)
@@ -182,8 +184,40 @@ def retranslate(
         cancel_event=cancel_event,
         overwrite_edited=True,
         sentence_ids=chosen,
+        compress=compress,
     )
-    return view(project, directory, f"已重译 {len(chosen)} 句。")
+    verb = "已压缩" if compress else "已重译"
+    return view(project, directory, f"{verb} {len(chosen)} 句。")
+
+
+def compress_translations(
+    project_path: str,
+    table: Any,
+    sentence_ids: list[str] | None = None,
+    progress: Any | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> ProjectView:
+    """Shorten over-budget translations across the project or for selected lines."""
+    if sentence_ids:
+        return retranslate(
+            project_path,
+            table,
+            sentence_ids,
+            progress=progress,
+            cancel_event=cancel_event,
+            compress=True,
+        )
+    project, directory = pipeline.reload_project(project_path)
+    apply_table(project, table)
+    pipeline.translate_project(
+        project,
+        directory,
+        api_key=resolve_api_key(project.settings.translation_provider),
+        progress=progress,
+        cancel_event=cancel_event,
+        compress=True,
+    )
+    return view(project, directory, "已压缩过长译文。")
 
 
 def synthesize(
@@ -278,9 +312,17 @@ def generate_dub_candidates(
 
     if sentence.tts_file and sentence.tts_cache_key == tts_cache_key(project, sentence):
         remember()
-    start = max([sentence.tts_attempt, *(c["attempt"] for c in sentence.tts_candidates)])
-    for offset in range(1, max(1, count - len(candidates)) + 1):
-        sentence.tts_attempt = start + offset
+    for _ in range(max(1, count - len(candidates))):
+        sentence.tts_attempt = (
+            max(
+                [
+                    sentence.tts_attempt,
+                    *(c["attempt"] for c in candidates),
+                    *(c["attempt"] for c in sentence.tts_candidates),
+                ]
+            )
+            + 1
+        )
         sentence.tts_warning = None
         pipeline.synthesize_project(
             project,

@@ -69,7 +69,7 @@ case "$PROFILE" in
     setup_echo "固定 ASR 模型：Parakeet CTC 1.1B JA GAL、Parakeet TDT/CTC 0.6B JA"
     setup_echo "固定 ASR 模型：kotoba-tech/kotoba-whisper-v2.2"
     setup_echo "固定 ASR 模型：Systran/faster-whisper-large-v2"
-    setup_echo "固定 ASR 模型：litagin/anime-whisper（仅海外源，失败不影响安装）"
+    setup_echo "固定 ASR 模型：litagin/anime-whisper（支持国内镜像，失败不影响安装）"
     setup_echo "固定 VAD 模型：TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
     setup_echo "固定时间戳模型：Qwen/Qwen3-ForcedAligner-0.6B（阿里 Qwen）"
     setup_echo "固定 TTS 模型：IndexTTS2 checkpoints（仅 NVIDIA GPU）"
@@ -253,8 +253,8 @@ link_av_library libswscale.so.9 'libswscale-*.so.9.*'
 if [[ "$INSTALL_ADVANCED_MODELS" == 1 ]]; then
   setup_echo "正在准备 ASR（语音识别）：Kotoba-Whisper v2.2、Faster-Whisper large-v2..."
   bash "$ROOT/scripts/linux/run-cli.sh" download-models --backend 进阶语音识别
-  # Recommended recognizer; no ModelScope copy yet, so a failure must not abort
-  # Setup. Parakeet stays the fallback and the Models page can retry.
+  # Recommended recognizer; failure here must not abort Setup. Parakeet stays
+  # the fallback and the Models page can retry.
   setup_echo "正在准备 anime-whisper 日语识别模型（约 3 GB）..."
   if ! bash "$ROOT/scripts/linux/run-cli.sh" download-backend-models anime_whisper; then
     setup_echo "提示：anime-whisper 未能下载，识别将先使用 Parakeet；可在“设备与模型”页重试。" >&2

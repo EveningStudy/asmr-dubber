@@ -16,7 +16,7 @@ setup_echo() {
       '预计安装后占用：约 2 GB'*) message='Installed: about 2 GB; reserve at least 5 GB.' ;;
       '预计安装后占用：约 24'*) message='Installed: about 24-28 GB; reserve at least 35 GB.' ;;
       '预计安装后占用：约 33'*) message='Installed: about 33-39 GB; reserve at least 50 GB.' ;;
-      '固定 ASR 模型：litagin/anime-whisper'*) message='Pinned ASR: litagin/anime-whisper (external source only; failure does not stop setup)' ;;
+      '固定 ASR 模型：litagin/anime-whisper'*) message='Pinned ASR: litagin/anime-whisper (China mirror available; failure does not stop setup)' ;;
       '固定 ASR 模型：'*) message="Pinned ASR: ${message#*：}" ;;
       '正在准备 anime-whisper'*) message='Preparing anime-whisper (about 3 GB)...' ;;
       '提示：anime-whisper'*) message='anime-whisper was not downloaded; Parakeet is used for now. Retry from Devices & models.' ;;

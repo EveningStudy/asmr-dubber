@@ -52,7 +52,7 @@
       <div class="work">
         <div class="sheetwrap">
           <div class="tools"><input id="search" type="search" placeholder="搜索" data-placeholder="搜索"><div class="seg" id="filters"><button data-filter="all" class="on" data-i18n>全部</button><button data-filter="translation" data-i18n>未翻译</button><button data-filter="tts" data-i18n>未配音</button><button data-filter="review" data-i18n>待复核</button><button data-filter="check" data-i18n>需要检查</button></div><span class="saved" id="saveState" data-i18n>修改会自动保存</span></div>
-          <div class="tablebox"><table><thead><tr><th style="width:32px"></th><th style="width:36px">#</th><th style="width:124px" data-i18n>时间</th><th data-i18n>原文</th><th data-i18n>译文</th><th style="width:104px" data-i18n>配音</th><th style="width:150px" data-i18n>原声与检查</th></tr></thead><tbody id="rows"></tbody></table></div>
+          <div class="tablebox"><table><thead><tr><th style="width:32px"></th><th style="width:36px">#</th><th style="width:124px" data-i18n>时间</th><th data-i18n>原文</th><th data-i18n>译文</th><th style="width:168px" data-i18n>配音</th><th style="width:150px" data-i18n>原声与检查</th></tr></thead><tbody id="rows"></tbody></table></div>
           <div id="sentenceControls" class="sentence-controls"></div>
           <div class="transport"><button class="pp" id="playSource" aria-label="播放">▶</button><span class="tc" id="playerTime">00:00</span><input id="seek" type="range" min="0" max="1" step="0.01" value="0"><div class="seg" id="listenMode"><button data-listen="source" data-i18n>原声</button><button data-listen="dub" data-i18n>配音</button><button data-listen="both" class="on" data-i18n>一起</button></div></div>
           <audio id="sourcePlayer" preload="metadata"></audio><audio id="dubPlayer" preload="none"></audio>

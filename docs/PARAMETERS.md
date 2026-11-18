@@ -4,7 +4,7 @@
 
 # 完整参数参考
 
-按当前 `services/parameters.py` 清单生成，**236 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
+按当前 `services/parameters.py` 清单生成，**237 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
 
 项目字段出现在项目/新默认中；全局字段作用于全局/新项目/新队列。Always 表示无静态显示条件，高级分组仍需展开。选项可能随后端变化；校验还包括跨字段依赖、语言能力与 JSON 合同。
 
@@ -258,6 +258,7 @@
 | `ui_language`<br>界面语言 | string<br>global | `zh` | ^(zh&#124;en)$; zh, en | Always |
 | `open_browser`<br>启动时自动打开浏览器 | boolean<br>global | `true` | — | Always |
 | `download_source`<br>下载来源 | string<br>global | `modelscope` | ^(modelscope&#124;original)$; modelscope, original | Always |
+| `onboarding_completed`<br>onboarding_completed | boolean<br>global | `false` | — | Always |
 
 ## 批量
 

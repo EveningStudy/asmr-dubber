@@ -4,7 +4,7 @@ English | [中文](../PARAMETERS.md)
 
 # Complete parameter reference
 
-Generated from `services/parameters.py`: **236 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
+Generated from `services/parameters.py`: **237 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
 
 Project fields appear in project panels/new defaults; global fields affect future projects/queue entries. Always means no static visibility condition; expand advanced groups. Options can depend on backend. Validation also checks cross-field dependencies, language and JSON contracts.
 
@@ -258,6 +258,7 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `ui_language`<br>Interface language | string<br>global | `zh` | ^(zh&#124;en)$; zh, en | Always |
 | `open_browser`<br>Open browser on startup | boolean<br>global | `true` | — | Always |
 | `download_source`<br>Download source | string<br>global | `modelscope` | ^(modelscope&#124;original)$; modelscope, original | Always |
+| `onboarding_completed`<br>onboarding_completed | boolean<br>global | `false` | — | Always |
 
 ## Batch
 

@@ -7,7 +7,7 @@ from ..localization import catalog
 from ..models import load_project
 from ..platforms import portable_home
 from ..user_settings import resolve_api_key, saved_service_key
-from . import models, parameters, presets, settings, updates
+from . import models, onboarding, parameters, presets, settings, updates
 from .batch import Batch
 from .media import MediaStore
 from .project_audio import preview_edge_tts_voice
@@ -23,12 +23,15 @@ class Application:
         self.tasks = Tasks(self.execute, task_path)
 
     def bootstrap(self):
+        saved = settings.current()
+        keys = settings.key_statuses()
         return {
             "version": __version__,
             "parameters": parameters.catalog(),
             "choices": parameters.choices(),
-            "settings": settings.current().model_dump(mode="json"),
-            "keys": settings.key_statuses(),
+            "settings": saved.model_dump(mode="json"),
+            "keys": keys,
+            "onboarding_required": onboarding.required(saved, keys),
             "presets": presets.catalog(),
             "tasks": self.tasks.list(),
             "queue": self.batch.list(),

@@ -1,4 +1,4 @@
-import { state, api, esc, t, options, flushSaves, startTask, guard, projectBusy, notice } from './session.js';
+import { $, state, api, esc, t, options, flushSaves, startTask, guard, projectBusy, notice } from './session.js';
 
 // Original-voice handling per sentence: Sentence.original_audio_enabled is null (auto),
 // true (keep the original) or false (replace / mute it).
@@ -26,8 +26,13 @@ function flagsHTML(sentence) {
     flag = residualFlag(sentence),
     busy = projectBusy() ? ' disabled' : '';
   let html = '';
-  if (sentence.enabled && sentence.translation_warning)
-    html += `<div class="flag warn" title="${esc(t(sentence.translation_warning))}"><b>⚠ ${t('译文可能有问题')}</b><small>${esc(t(sentence.translation_warning))}</small><button class="btn plain small" data-retranslate="${esc(sentence.id)}"${busy}>${t('重译这一句')}</button></div>`;
+  if (sentence.enabled && sentence.translation_warning) {
+    const overBudget = (sentence.translation_warning || '').includes('超出时长预算');
+    const compressBtn = overBudget
+      ? ` <button class="btn plain small" data-compress="${esc(sentence.id)}"${busy}>${t('压缩这一句')}</button>`
+      : '';
+    html += `<div class="flag warn" title="${esc(t(sentence.translation_warning))}"><b>⚠ ${t('译文可能有问题')}</b><small>${esc(t(sentence.translation_warning))}</small><button class="btn plain small" data-retranslate="${esc(sentence.id)}"${busy}>${t('重译这一句')}</button>${compressBtn}</div>`;
+  }
   if (warning)
     html += `<div class="flag bad" title="${esc(t(warning))}"><b>⚠ ${t('配音质检未通过')}</b><small>${esc(t(warning))}</small></div>`;
   if (flag) {
@@ -47,13 +52,42 @@ function flagsHTML(sentence) {
 
 // Cells of one sentence row that belong to the review features: original-voice choice,
 // dub redo button and the warning column.
+function candidatesHTML(sentence, disabled) {
+  const candidates = Array.isArray(sentence.tts_candidates) ? sentence.tts_candidates : [];
+  if (!candidates.length) return '';
+  const items = candidates
+    .map((take, index) => {
+      const active = Number(take.attempt) === Number(sentence.tts_attempt);
+      const duration = take.duration != null ? ` ${Number(take.duration).toFixed(1)} ${t('秒')}` : '';
+      const play = take.url
+        ? `<button class="play" data-play-url="${esc(take.url)}" aria-label="${t('试听候选 #{n}', { n: index + 1 })}">▶</button>`
+        : '';
+      const warn = take.warning
+        ? `<span class="dub-take-warn" title="${esc(t(take.warning))}">⚠</span>`
+        : '';
+      const action = active
+        ? `<span class="dub-take-active">${t('当前')}</span>`
+        : `<button class="btn plain small" data-take="${esc(sentence.id)}" data-attempt="${esc(String(take.attempt))}"${disabled}>${t('选用')}</button>`;
+      return `<div class="dub-take${active ? ' on' : ''}">${play}<span class="dub-take-meta">#${index + 1}${esc(duration)}</span>${warn}${action}</div>`;
+    })
+    .join('');
+  return `<div class="dub-candidates">${items}</div>`;
+}
+
 export function dubCell(sentence) {
-  if (!sentence.tts_url)
-    return sentence.error
+  const redo = projectBusy() ? ' disabled' : '';
+  const canCandidates = Boolean(sentence.enabled && sentence.zh_text && sentence.zh_text.trim());
+  const candBtn = canCandidates
+    ? ` <button class="btn plain small dub-cand-btn" data-candidates="${esc(sentence.id)}" title="${t('生成多个候选配音')}"${redo}>+3</button>`
+    : '';
+  const candList = candidatesHTML(sentence, redo);
+  if (!sentence.tts_url) {
+    const label = sentence.error
       ? `<span class="batch-error" title="${esc(sentence.error)}">${t('翻译或配音待重试')}</span>`
       : t(sentence.enabled ? '未生成' : '不配音');
-  const redo = projectBusy() ? ' disabled' : '';
-  return `<button class="play" data-play="${esc(sentence.id)}" aria-label="${t('试听')}">▶</button>${Number(sentence.tts_duration_seconds || 0).toFixed(1)} ${t('秒')} <button class="play redo" data-regenerate="${esc(sentence.id)}" title="${t('重新生成这一句配音')}" aria-label="${t('重新生成这一句配音')}"${redo}>↻</button>`;
+    return `${label}${candBtn}${candList}`;
+  }
+  return `<button class="play" data-play="${esc(sentence.id)}" aria-label="${t('试听')}">▶</button>${Number(sentence.tts_duration_seconds || 0).toFixed(1)} ${t('秒')} <button class="play redo" data-regenerate="${esc(sentence.id)}" title="${t('重新生成这一句配音')}" aria-label="${t('重新生成这一句配音')}"${redo}>↻</button>${candBtn}${candList}`;
 }
 export function originalCell(sentence) {
   const disabled = projectBusy() ? ' disabled' : '';
@@ -104,6 +138,14 @@ export function initializeReview({ save, render, getSelected }) {
         notice(t('正在重译 {id}。', { id: again.dataset.retranslate }));
         return;
       }
+      const compress = event.target.closest('[data-compress]');
+      if (compress) {
+        busy();
+        await startTask('translate', { sentence_ids: [compress.dataset.compress], compress: true });
+        render();
+        notice(t('正在压缩 {id} 的译文。', { id: compress.dataset.compress }));
+        return;
+      }
       const redo = event.target.closest('[data-regenerate]');
       if (redo) {
         busy();
@@ -112,6 +154,36 @@ export function initializeReview({ save, render, getSelected }) {
         await startTask('synthesize', { sentence_ids: [sentence.id], force: true });
         render();
         notice(t('正在重新生成 {id} 的配音。', { id: sentence.id }));
+        return;
+      }
+      const playUrl = event.target.closest('[data-play-url]');
+      if (playUrl) {
+        $('#dubPlayer').src = playUrl.dataset.playUrl;
+        await $('#dubPlayer').play();
+        return;
+      }
+      const candBtn = event.target.closest('[data-candidates]');
+      if (candBtn) {
+        busy();
+        const sentence = find(candBtn.dataset.candidates);
+        await startTask('synthesize', { sentence_ids: [sentence.id], candidates: 3 });
+        render();
+        notice(t('正在为 {id} 生成候选配音。', { id: sentence.id }));
+        return;
+      }
+      const takeBtn = event.target.closest('[data-take]');
+      if (takeBtn) {
+        busy();
+        await flushSaves();
+        const { take, attempt } = takeBtn.dataset;
+        state.project = await api('projects/take', {
+          project: state.project.manifest,
+          revision: state.project.revision,
+          sentence: take,
+          attempt: Number(attempt),
+        });
+        render();
+        notice(t('已切换 {id} 的配音版本。', { id: take }));
       }
     }),
   );

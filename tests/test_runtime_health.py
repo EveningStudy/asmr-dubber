@@ -111,3 +111,21 @@ def test_vc_installer_result_and_recheck(tmp_path, monkeypatch, exit_code):
     assert len(calls) == 1
     assert ("checked backend" in result) == (exit_code == 0)
     assert ("修复未完成" in result) == (exit_code != 0)
+
+
+@pytest.mark.parametrize("backend", ["anime_whisper", "qwen3_asr"])
+def test_new_asr_backends_registered_in_runtime_health(tmp_path, monkeypatch, backend):
+    assert backend in health.BACKENDS
+    assert "qwen_asr" in health._IMPORTS[backend]
+    seen = []
+    monkeypatch.setattr(health, "portable_home", lambda: tmp_path)
+    monkeypatch.setattr(health, "isolated_runtime_environment", lambda _: {})
+
+    def fake_run(command, **kwargs):
+        seen.append(command)
+        return SimpleNamespace(returncode=0, stdout="OK", stderr="")
+
+    monkeypatch.setattr(health.subprocess, "run", fake_run)
+    result = health.check_runtime_health(backend)
+    assert "通过：启动/依赖导入成功" in result
+    assert seen and "qwen_asr" in seen[0][-1]

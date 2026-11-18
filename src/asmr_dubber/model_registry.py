@@ -157,7 +157,7 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
         help="阿里通义的识别模型，配合 Qwen3 ForcedAligner 输出逐字时间戳；"
         "另有社区的日语动画/Galgame 微调版。实验性。",
         setup="点击安装会下载两款 Qwen3-ASR 模型、时间戳对齐和 ASMR VAD；"
-        "没有国内镜像，需把“下载来源”改为“海外源”。",
+        "基础模型与对齐组件已有国内镜像，但社区微调版暂无国内镜像，完整安装仍需把“下载来源”改为“海外源”。",
         tested_default=False,
         support_level="experimental",
         devices=("cpu", "cuda"),
@@ -182,8 +182,8 @@ ASR_BACKENDS: dict[str, ModelBackend] = {
         help="在动画和游戏语音上微调的 Kotoba-Whisper，擅长耳语和成人向台词，"
         "文字准确度高于 Parakeet；先用 ASMR 专用 VAD 切段，再用 Qwen3 ForcedAligner 补"
         "逐字时间戳。需要“进阶”档位的组件，未安装时会自动改用 Parakeet。",
-        setup="“进阶”档位会安装运行依赖；点击安装会下载 anime-whisper、时间戳对齐和 ASMR VAD 模型。"
-        "anime-whisper 没有国内镜像，需把“下载来源”改为“海外源”。",
+        setup="“进阶”档位会安装运行依赖；点击安装会下载 anime-whisper、"
+        "时间戳对齐和 ASMR VAD 模型（均已有国内镜像）。",
         tested_default=True,
         support_level="supported",
         devices=("cpu", "cuda"),

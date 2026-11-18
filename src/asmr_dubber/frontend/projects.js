@@ -409,6 +409,7 @@ export function initializeProjects() {
         sentence[key] = event.target.textContent;
         sentence.tts_file = null;
         sentence.tts_url = null;
+        sentence.tts_candidates = [];
         await saveRows(sentence.id);
       }
     }),

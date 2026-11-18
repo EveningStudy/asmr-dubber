@@ -57,7 +57,7 @@ def validate_changes(changes, *, project=False):
         if key.endswith(("extra_body", "params")):
             parsed = json.loads(value or "{}")
             if not isinstance(parsed, dict):
-                raise ValueError(f"{key} must contain a JSON object")
+                raise ValueError(f"{key} 必须是 JSON 对象。")
 
 
 def visible(parameter, values):

@@ -785,6 +785,7 @@ def _translate_project_impl(
     cancel_event: CancellationSignal | None = None,
     overwrite_edited: bool = False,
     sentence_ids: list[str] | None = None,
+    compress: bool = False,
 ) -> None:
     check_cancelled(cancel_event)
     require_supported_platform()
@@ -801,23 +802,22 @@ def _translate_project_impl(
             sentence.tts_cache_key = None
         project.translation_language = project.settings.tts_target_language
         save_project(project, project_dir)
-    will_translate = force or any(
-        sentence.enabled and (not sentence.zh_text or sentence.status == "translation_failed")
-        for sentence in project.sentences
+    will_translate = (
+        force
+        or compress
+        or any(
+            sentence.enabled and (not sentence.zh_text or sentence.status == "translation_failed")
+            for sentence in project.sentences
+        )
     )
-    if force:
+    if force or compress:
         # Keep the old text until its replacement has arrived, and leave a copy so
         # an interrupted or disappointing run can be undone.
         from .translation_backup import write_translation_backup
 
         write_translation_backup(project, project_dir)
-    if will_translate:
-        project.chinese_stem_file = None
-        project.output_file = None
-        project.output_video_file = None
-        project.subtitle_srt_file = None
-        project.subtitle_lrc_file = None
-        project.subtitle_video_file = None
+    if will_translate and not compress:
+        invalidate_outputs(project)
     provider = project.settings.translation_provider
     preset = PROVIDER_PRESETS.get(provider)
     if preset is None:
@@ -860,13 +860,14 @@ def _translate_project_impl(
         retranslate=force,
         overwrite_edited=overwrite_edited,
         sentence_ids=sentence_ids,
+        compress=compress,
         length_budget_rate=(
             (
                 project.settings.translation_chars_per_second
                 if project.settings.tts_target_language != "en"
                 else project.settings.translation_chars_per_second * 0.6
             )
-            if project.settings.translation_length_budget
+            if (project.settings.translation_length_budget or compress)
             else None
         ),
     )
@@ -876,10 +877,14 @@ def _translate_project_impl(
         reasons: dict[str, list[str]] = {}
         for flag in report.flagged:
             reasons.setdefault(flag.sentence_id, []).append(flag.reason)
+        changed = False
         for sentence in project.sentences:
             if sentence.zh_text != before_translation.get(sentence.id):
+                changed = True
                 found = reasons.get(sentence.id)
                 sentence.translation_warning = "；".join(found) if found else None
+        if compress and changed:
+            invalidate_outputs(project)
     checkpoint()
     if report is not None and report.failed:
         # Every other sentence is already saved; say which ones are missing.
@@ -896,6 +901,7 @@ def translate_project(
     cancel_event: CancellationSignal | None = None,
     overwrite_edited: bool = False,
     sentence_ids: list[str] | None = None,
+    compress: bool = False,
 ) -> None:
     with measure_stage(
         project_dir,
@@ -914,6 +920,7 @@ def translate_project(
             cancel_event=cancel_event,
             overwrite_edited=overwrite_edited,
             sentence_ids=sentence_ids,
+            compress=compress,
         )
         metrics["translated_before"] = before
         metrics["translated_after"] = sum(bool(sentence.zh_text) for sentence in project.sentences)

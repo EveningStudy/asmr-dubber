@@ -153,3 +153,41 @@ def test_single_work_retry_is_a_plan_scoped_batch_request():
     from asmr_dubber.api_contract import TaskRequest
 
     assert TaskRequest.model_validate({"kind": "batch", "plan": "abc"}).plan == "abc"
+
+
+def test_onboarding_is_skipped_automatically_for_existing_users(tmp_path, monkeypatch):
+    from asmr_dubber.services.application import Application
+    from asmr_dubber.user_settings import PROVIDER_PRESETS
+
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
+    for preset in PROVIDER_PRESETS.values():
+        env_var = preset.get("env_var")
+        if isinstance(env_var, str) and env_var:
+            monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr(
+        "asmr_dubber.services.models.catalog",
+        lambda: {"items": [{"id": "parakeet_nemo", "state": "missing"}]},
+    )
+
+    assert onboarding.required(settings.current(), settings.key_statuses()) is True
+    assert Application(tmp_path / "tasks.json").bootstrap()["onboarding_required"] is True
+    # The user's explicit wizard completion flag remains False until they act on it.
+    assert settings.current().onboarding_completed is False
+
+    # Configured model -> skip wizard automatically.
+    assert (
+        onboarding.required(
+            settings.current(),
+            settings.key_statuses(),
+            model_items=[{"id": "parakeet_nemo", "state": "ready"}],
+        )
+        is False
+    )
+
+    # Configured API key -> skip wizard automatically even with no models downloaded.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-existing")
+    assert onboarding.required(settings.current(), settings.key_statuses()) is False
+    assert Application(tmp_path / "tasks.json").bootstrap()["onboarding_required"] is False
+
+    wizard = files("asmr_dubber").joinpath("frontend/wizard.js").read_text(encoding="utf-8")
+    assert "onboarding_required" in wizard

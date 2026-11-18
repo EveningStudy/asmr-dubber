@@ -88,28 +88,46 @@ def execute_planned_job(
             raise VideoPreparerError(
                 f"{output_folder.name} 的处理内容发生变化；请使用 --rebuild 重做。"
             )
-        missing = missing_resume_artifacts(state, output_folder)
-        if missing:
-            timestamp_file = output_folder / "时间戳.txt"
-            if missing == [timestamp_file] and status_at_least(state, "outputs_ready"):
-                print(f"\n{output_folder.name} 只缺时间戳文档，正在直接补写。")
-                state["status"] = "outputs_ready"
+        if status_at_least(state, "completed") and state.get("partial"):
+            project_json = Path(str(state.get("project_json") or ""))
+            if project_json.is_file():
+                partial_stages = {
+                    str(item.get("stage") or "") for item in state.get("partial") or []
+                }
+                if "translate" in partial_stages:
+                    state["status"] = "analyzed"
+                elif "synthesize" in partial_stages:
+                    state["status"] = "awaiting_reference"
+                else:
+                    state["status"] = "synthesized"
+                state.pop("partial", None)
                 save_state(state_file, state)
             else:
-                print(f"\n{output_folder.name} 的旧任务缺少文件，将从头重做。")
+                print(f"\n{output_folder.name} 之前有部分失败句子且工作区已清理，将从头重做。")
                 rebuild = True
-        elif legacy_chinese_timeline_needs_reimport(state):
-            print(f"\n{output_folder.name} 将按已有中文字幕重建时间轴，不会重跑 ASR 或翻译。")
-            reset_legacy_chinese_timeline_state(state)
-            save_state(state_file, state)
-        elif status_at_least(state, "completed"):
-            print(f"\n跳过已经完成的任务：{output_folder.name}")
-            return state
-        else:
-            print(
-                f"\n继续未完成任务：{output_folder.name} "
-                f"（阶段：{state.get('status') or '尚未开始'}）"
-            )
+        if not rebuild:
+            missing = missing_resume_artifacts(state, output_folder)
+            if missing:
+                timestamp_file = output_folder / "时间戳.txt"
+                if missing == [timestamp_file] and status_at_least(state, "outputs_ready"):
+                    print(f"\n{output_folder.name} 只缺时间戳文档，正在直接补写。")
+                    state["status"] = "outputs_ready"
+                    save_state(state_file, state)
+                else:
+                    print(f"\n{output_folder.name} 的旧任务缺少文件，将从头重做。")
+                    rebuild = True
+            elif legacy_chinese_timeline_needs_reimport(state):
+                print(f"\n{output_folder.name} 将按已有中文字幕重建时间轴，不会重跑 ASR 或翻译。")
+                reset_legacy_chinese_timeline_state(state)
+                save_state(state_file, state)
+            elif status_at_least(state, "completed"):
+                print(f"\n跳过已经完成的任务：{output_folder.name}")
+                return state
+            else:
+                print(
+                    f"\n继续未完成任务：{output_folder.name} "
+                    f"（阶段：{state.get('status') or '尚未开始'}）"
+                )
 
     if state is None or rebuild:
         workspace = planned_workspace_path(source_folder, plan_id, job_id)

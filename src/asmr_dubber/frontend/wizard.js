@@ -192,5 +192,5 @@ export function initializeWizard() {
     $('#wizardBody').dataset.step = '';
     renderWizard();
   });
-  if (!state.boot.settings.onboarding_completed) guard(openWizard)();
+  if (state.boot.onboarding_required ?? !state.boot.settings.onboarding_completed) guard(openWizard)();
 }

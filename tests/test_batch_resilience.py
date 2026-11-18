@@ -638,3 +638,108 @@ def test_diagnostics_route_is_registered_and_returns_a_download_link(home, monke
     assert Path(result["path"]).is_file() and result["url"] and "doctor.txt" in result["files"]
     with pytest.raises(ValueError):
         api.call("batch/preflight", {})
+
+
+@pytest.mark.parametrize(
+    ("partial_stage", "expected_rewind"),
+    [("translate", "analyzed"), ("synthesize", "awaiting_reference")],
+)
+def test_partial_work_keeps_workspace_and_rewinds_on_retry(
+    home, monkeypatch, partial_stage, expected_rewind
+):
+    from asmr_dubber.autoflow import plan_run, planned_run, work_state
+    from asmr_dubber.autoflow.domain import AudioSource
+
+    monkeypatch.setattr(constants, "WORK_ROOT", home / "work-root")
+    workspace = constants.WORK_ROOT / "partial-keep"
+    workspace.mkdir(parents=True)
+    project_json = workspace / "project.json"
+    project_json.write_text("{}", encoding="utf-8")
+
+    # Partial completion keeps its workspace so sentence retries reuse ASR/TTS caches.
+    plan_files.cleanup_completed_workspace(
+        {"workspace": str(workspace), "status": "completed", "partial": [{"stage": partial_stage}]}
+    )
+    assert workspace.is_dir()
+
+    source_folder = home / "work"
+    output_folder = home / "out"
+    source_folder.mkdir()
+    output_folder.mkdir()
+    track = source_folder / "t1.wav"
+    sf.write(track, np.zeros((16000, 1)), 16000)
+    (output_folder / "原声.flac").write_bytes(b"orig")
+    stat = track.stat()
+    sources = [
+        AudioSource(
+            order=1,
+            path=track,
+            relative_path="t1.wav",
+            title_ja="T1",
+            size=stat.st_size,
+            mtime_ns=stat.st_mtime_ns,
+        )
+    ]
+    config = app_settings.load_app_config(home / "autoflow-settings.json")
+
+    state_file = work_state.planned_state_path(source_folder, "plan1", "merged")
+    initial_state = {
+        "schema": 1,
+        "mode": "audio",
+        "status": "completed",
+        "fingerprint": work_state.fingerprint(sources, None),
+        "embed_subtitles": True,
+        "subtitles_only": False,
+        "original_hard_subtitles": False,
+        "timestamp_footer_position": config.timestamp_footer_position,
+        "workspace": str(workspace),
+        "project_json": str(project_json),
+        "original_media": str(output_folder / "原声.flac"),
+        "partial": [{"stage": partial_stage, "items": [{"id": "s000001"}]}],
+        "outputs": {},
+    }
+    work_state.save_state(state_file, initial_state)
+
+    seen_statuses = []
+
+    def fake_execute(paths, folder, sf_path, state, srcs, **kwargs):
+        seen_statuses.append(state["status"])
+        assert "partial" not in state
+        state["status"] = "completed"
+        work_state.save_state(sf_path, state)
+
+    monkeypatch.setattr(planned_run, "execute_task", fake_execute)
+    result = planned_run.execute_planned_job(
+        None,
+        config,
+        source_folder=source_folder,
+        output_folder=output_folder,
+        mode="audio",
+        sources=sources,
+        background=None,
+        plan_id="plan1",
+        job_id="merged",
+        folder_translation="W",
+        title_translations={},
+        embed_subtitles=True,
+        subtitles_only=False,
+        rebuild=False,
+    )
+    assert seen_statuses == [expected_rewind]
+    assert result["status"] == "completed" and not result.get("partial")
+
+    # Once clean completion happens (no partial failures), cleanup deletes the workspace.
+    plan_files.cleanup_completed_workspace(result)
+    assert not workspace.exists()
+
+    # In "both" layout, previous partial runs prevent stale merged outputs from being reused.
+    plan_stub = SimpleNamespace(
+        rebuild=False, mode="audio", subtitles_only=False, embed_subtitles=True
+    )
+    monkeypatch.setattr(plan_run, "output_mapping_complete", lambda *a, **kw: True)
+    assert (
+        plan_run._merged_outputs_reusable(
+            config, plan_stub, {"status": "completed", "outputs": {}}, previous_partial=True
+        )
+        is False
+    )
