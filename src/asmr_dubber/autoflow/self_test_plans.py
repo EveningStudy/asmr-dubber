@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import tempfile
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 
+from . import runlog
 from .app_settings import load_app_config, load_smart_plan_defaults, save_smart_plan_defaults
 from .catalog import (
     scan_work,
@@ -160,21 +158,15 @@ def _check_draft_inheritance(
         or inherited_draft.embed_subtitles
     ):
         raise VideoPreparerError("自检失败：作品选项没有从上一个项目继承。")
-    with (
-        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as sink,
-        redirect_stdout(sink),
-        redirect_stderr(sink),
-        patch(
-            "builtins.input",
-            side_effect=("3", "2", "4", "1", "5", "1", "0"),
-        ),
-    ):
+    answers = iter(("3", "2", "4", "1", "5", "1", "0"))
+    with runlog.bind_autoflow_callbacks(on_message=None, on_error=None):
         inherited_plan, next_defaults, start_now = configure_smart_plan_draft(
             inherited_draft,
             parsed_config,
             index=1,
             rebuild=False,
             force=False,
+            input_reader=lambda _prompt: next(answers),
         )
     if (
         not start_now

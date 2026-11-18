@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from . import processes
+from . import processes, runlog
 from .constants import SAMPLE_RATE
 from .domain import (
     AudioSource,
@@ -26,10 +26,10 @@ def normalize_and_concat(
     timeline: list[dict[str, Any]] = []
     cumulative_samples = 0
 
-    print("\n[1/5] 统一音频规格并计算实际时间轴")
+    runlog.emit("\n[1/5] 统一音频规格并计算实际时间轴")
     for index, source in enumerate(sources, start=1):
         output = segments_dir / f"seg_{index:06d}.flac"
-        print(f"  [{index}/{len(sources)}] {source.path.name}")
+        runlog.emit(f"  [{index}/{len(sources)}] {source.path.name}")
         processes.run_ffmpeg(
             paths,
             [
@@ -90,7 +90,7 @@ def normalize_and_concat(
     concat_file.write_text("\n".join(concat_lines) + "\n", encoding="ascii")
 
     master = workspace / "master.flac"
-    print("  正在拼接无损母带……")
+    runlog.emit("  正在拼接无损母带……")
     processes.run_ffmpeg(
         paths,
         [

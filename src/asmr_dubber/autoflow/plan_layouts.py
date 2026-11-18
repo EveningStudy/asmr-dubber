@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import plan_files, work_state
+from . import plan_files, runlog, work_state
 from .constants import ReferenceEventCallback
 from .domain import AppConfig, SmartTaskPlan, ToolPaths
 from .plan_files import _single_track_source
@@ -71,7 +71,7 @@ def _processing_order(paths: ToolPaths, plan: SmartTaskPlan) -> list[int]:
         anchor_index,
         *[index for index in range(len(sources)) if index != anchor_index],
     ]
-    print(f"\n分轨模式先处理最长音轨（第 {anchor_index + 1} 条）以建立共用参考。")
+    runlog.emit(f"\n分轨模式先处理最长音轨（第 {anchor_index + 1} 条）以建立共用参考。")
     return order
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -23,7 +22,6 @@ from .domain import (
     ToolPaths,
 )
 from .errors import VideoPreparerError
-from .runlog import append_log
 
 
 def terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -63,8 +61,7 @@ def run_process(
     assert process.stdout is not None
     try:
         for line in process.stdout:
-            print(line, end="")
-            append_log(line)
+            runlog.emit(line.rstrip("\r\n"))
             if line.strip():
                 tail.append(line.rstrip())
                 del tail[:-12]
@@ -112,15 +109,9 @@ def run_process_captured(arguments: list[str], *, cwd: Path | None = None) -> st
     finally:
         unregister_process(process, signal)
     if stdout:
-        print(stdout, end="" if stdout.endswith("\n") else "\n")
-        append_log(stdout)
+        runlog.emit(stdout.rstrip("\r\n"))
     if stderr:
-        print(
-            stderr,
-            end="" if stderr.endswith("\n") else "\n",
-            file=sys.stderr,
-        )
-        append_log(stderr)
+        runlog.emit(stderr.rstrip("\r\n"), error=True)
     if process.returncode != 0:
         raise VideoPreparerError(
             f"命令执行失败（退出码 {process.returncode}）：{Path(arguments[0]).name}"

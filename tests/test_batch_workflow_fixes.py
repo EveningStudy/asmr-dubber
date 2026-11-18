@@ -129,8 +129,17 @@ def test_live_queue_reference_applies_at_synthesis_after_snapshot_and_survives_r
         seen.append(manifest)
         raise Synthesized()
 
-    def run(queue_snapshot, *, cancel_event, reference_event_callback):
+    def run(
+        queue_snapshot,
+        *,
+        cancel_event,
+        reference_event_callback,
+        progress_callback=None,
+        stage_callback=None,
+    ):
         assert queue_snapshot == plans
+        assert callable(progress_callback)
+        assert callable(stage_callback)
         reference_event_callback({"kind": "plan_finished", "plan_id": "done"})
         # The user chooses an external reference while this queue is already running.
         chosen = app.batch.reference(str(audio), "chosen words", "ja")
@@ -145,7 +154,7 @@ def test_live_queue_reference_applies_at_synthesis_after_snapshot_and_survives_r
             }
             with pytest.raises(Synthesized):
                 engine.execute_task(
-                    None,
+                    None,  # type: ignore[arg-type]
                     manifest.parent,
                     manifest.parent / "state.json",
                     state,

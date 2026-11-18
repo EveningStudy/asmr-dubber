@@ -8,6 +8,7 @@ from typing import Any
 from . import (
     media_audio,
     media_video,
+    runlog,
 )
 from .constants import (
     MODE_AUDIO,
@@ -36,24 +37,24 @@ def prepare_media_phase(
 
     mode = normalize_mode(state["mode"])
     if mode == MODE_AUDIO:
-        print("\n[2/5] 输出拼接后的无损原声")
+        runlog.emit("\n[2/5] 输出拼接后的无损原声")
         original = folder / "原声.flac"
         atomic_copy(master, original)
         dubbing_input = original
     elif mode == MODE_VIDEO_NORMAL:
-        print("\n[2/5] 生成普通静态视频")
+        runlog.emit("\n[2/5] 生成普通静态视频")
         original = folder / "原声.mp4"
         media_video.render_static_video(paths, master, background, original)
         dubbing_input = original
     else:
-        print("\n[2/5] 生成和谐静态视频")
+        runlog.emit("\n[2/5] 生成和谐静态视频")
         original = folder / "原声.mp4"
         dubbing_input = workspace / "dubbing_input.mp4"
-        print("  生成供 ASMR Dubber 使用的无前导正常音量版本……")
+        runlog.emit("  生成供 ASMR Dubber 使用的无前导正常音量版本……")
         media_video.render_static_video(paths, master, background, dubbing_input)
         harmonized_volume_db = float(state["harmonized_volume_db"])
         harmonized_delay_seconds = int(state["harmonized_delay_seconds"])
-        print(
+        runlog.emit(
             f"  生成 {harmonized_volume_db:g} dB 且前置 "
             f"{harmonized_delay_seconds / 60:g} 分钟的原声版本……"
         )

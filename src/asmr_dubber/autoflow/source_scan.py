@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import runlog
 from .catalog import (
     Edition,
     ScanResult,
@@ -27,6 +28,7 @@ from .domain import (
     SmartPlanDraft,
 )
 from .errors import VideoPreparerError
+from .runlog import InputReader
 
 
 def discover_audio(folder: Path) -> list[AudioSource]:
@@ -60,9 +62,9 @@ def discover_audio(folder: Path) -> list[AudioSource]:
         duplicates.setdefault(item.order, []).append(item.path.name)
     repeated = {number: names for number, names in duplicates.items() if len(names) > 1}
     if repeated:
-        print("\n警告：以下编号重复；同编号将按文件名排序：")
+        runlog.emit("\n警告：以下编号重复；同编号将按文件名排序：")
         for number, names in repeated.items():
-            print(f"  {number}: {', '.join(names)}")
+            runlog.emit(f"  {number}: {', '.join(names)}")
     return matches
 
 
@@ -79,7 +81,7 @@ def discover_background(folder: Path) -> Path | None:
     preference = {extension: index for index, extension in enumerate(IMAGE_EXTENSIONS)}
     candidates.sort(key=lambda path: (preference[path.suffix.casefold()], path.name.casefold()))
     if len(candidates) > 1:
-        print(f"警告：发现多张 null 图片，将使用：{candidates[0].name}")
+        runlog.emit(f"警告：发现多张 null 图片，将使用：{candidates[0].name}")
     return candidates[0].resolve()
 
 
@@ -230,30 +232,35 @@ def smart_background(
     scan: ScanResult,
     config: AppConfig,
     argument: str | None = None,
+    *,
+    input_reader: InputReader | None = None,
 ) -> Path | None:
     if argument is not None:
         return _background_from_argument(scan, argument)
     if config.background_policy == "black" or not scan.images:
         if not scan.images:
-            print("\n作品文件夹中没有找到图片，将使用黑色背景。")
+            runlog.emit("\n作品文件夹中没有找到图片，将使用黑色背景。")
         return None
     if config.background_policy == "auto":
         return scan.images[0].resolve()
+    reader = runlog.resolve_input_reader(input_reader)
+    if reader is None:
+        return scan.images[0].resolve()
 
-    print("\n请选择视频背景图片：")
+    runlog.emit("\n请选择视频背景图片：")
     for index, image in enumerate(scan.images, start=1):
         relative = image.relative_to(scan.root).as_posix()
         marker = "（推荐）" if index == 1 else ""
-        print(f"  {index}. {relative}{marker}")
-    print("  0. 使用黑色背景")
+        runlog.emit(f"  {index}. {relative}{marker}")
+    runlog.emit("  0. 使用黑色背景")
     while True:
-        answer = input("输入图片编号；直接按 Enter 使用推荐图片 1：").strip()
+        answer = reader("输入图片编号；直接按 Enter 使用推荐图片 1：").strip()
         if not answer:
             return scan.images[0].resolve()
         try:
             return _background_from_argument(scan, answer)
         except VideoPreparerError as exc:
-            print(f"输入无效：{exc}")
+            runlog.emit(f"输入无效：{exc}")
 
 
 def resolve_inherited_background(

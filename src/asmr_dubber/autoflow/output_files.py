@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import media_video
+from . import media_video, runlog
 from .constants import DEFAULT_TIMESTAMP_FOOTER, MODE_AUDIO, MODE_VIDEO_HARMONIZED, SAMPLE_RATE
 from .domain import (
     ToolPaths,
@@ -70,7 +70,7 @@ def copy_final_outputs(
         )
         audio_suffix = audio_source.suffix if audio_source.suffix else ".wav"
         audio_destination = folder / f"{output_stem}{audio_suffix}"
-        print("  正在把双语音频送回原文件夹……")
+        runlog.emit("  正在把双语音频送回原文件夹……")
         atomic_copy(audio_source, audio_destination)
         return {
             "audio": str(audio_destination),
@@ -106,7 +106,7 @@ def copy_final_outputs(
         harmonized_delay_seconds=harmonized_delay_seconds,
     )
     video_destination = folder / f"{output_stem}.mp4"
-    print("  正在把双语视频送回原文件夹……")
+    runlog.emit("  正在把双语视频送回原文件夹……")
     if mode == MODE_VIDEO_HARMONIZED:
         render_delayed_existing_video(
             paths,
@@ -164,7 +164,7 @@ def copy_subtitle_only_outputs(
         destination = folder / "原声字幕版.mp4"
         lead = harmonized_delay_seconds if normalized_mode == MODE_VIDEO_HARMONIZED else 0
         volume = harmonized_volume_db if normalized_mode == MODE_VIDEO_HARMONIZED else 0.0
-        print("  正在生成带字幕的原声视频……")
+        runlog.emit("  正在生成带字幕的原声视频……")
         media_video.render_static_bilingual_video(
             paths,
             master_audio,

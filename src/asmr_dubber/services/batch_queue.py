@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ..autoflow import engine
+from ..autoflow import engine, runlog
 from ..errors import ProjectError
 from ..platforms import open_directory
 from ..task_control import CancellationSignal, check_cancelled
@@ -186,32 +187,38 @@ def run_queue(
     *,
     cancel_event: CancellationSignal | None = None,
     reference_event_callback: engine.ReferenceEventCallback | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    stage_callback: Callable[[str], None] | None = None,
     preflight: bool = True,
 ) -> tuple[int, list[str]]:
     plans = [deserialize_plan(payload) for payload in (queue_payload or [])]
     if not plans:
         raise ProjectError("队列还是空的，请先扫描作品并加入队列。")
     check_cancelled(cancel_event)
-    config = config_from_settings()
-    paths = engine.find_tool_paths(config)
-    engine.validate_asmr_version()
-    if preflight:
-        from .batch_preflight import WARN, run_preflight
+    with runlog.bind_autoflow_callbacks(
+        on_message=progress_callback,
+        on_stage=stage_callback,
+    ):
+        config = config_from_settings()
+        paths = engine.find_tool_paths(config)
+        engine.validate_asmr_version()
+        if preflight:
+            from .batch_preflight import WARN, run_preflight
 
-        print("开始前检查：磁盘空间、显存、翻译服务、所需模型……")
-        checked = run_preflight(plans)
-        for check in checked.checks:
-            if check.status == WARN:
-                print(f"提示：{check.title}：{check.message}")
-        if not checked.ok:
-            raise ProjectError(checked.summary())
-        check_cancelled(cancel_event)
-    result = engine.execute_smart_queue(
-        paths,
-        config,
-        plans,
-        reference_event_callback=reference_event_callback,
-    )
+            runlog.emit("开始前检查：磁盘空间、显存、翻译服务、所需模型……")
+            checked = run_preflight(plans)
+            for check in checked.checks:
+                if check.status == WARN:
+                    runlog.emit(f"提示：{check.title}：{check.message}")
+            if not checked.ok:
+                raise ProjectError(checked.summary())
+            check_cancelled(cancel_event)
+        result = engine.execute_smart_queue(
+            paths,
+            config,
+            plans,
+            reference_event_callback=reference_event_callback,
+        )
     check_cancelled(cancel_event)
     return result, [str(plan.output_root) for plan in plans]
 

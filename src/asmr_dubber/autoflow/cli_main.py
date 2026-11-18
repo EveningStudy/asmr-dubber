@@ -15,7 +15,7 @@ from .interactive_queue import collect_interactive_smart_plans
 from .plan_run import execute_smart_plan
 from .planned_run import prepare_or_resume
 from .prompts import print_header
-from .runlog import append_log
+from .runlog import InputReader, append_log
 from .self_test import self_test
 
 
@@ -51,10 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--background",
-        help=(
-            "视频背景：图片编号、作品目录内的相对/绝对路径、auto，"
-            "或 black；交互运行默认显示全部图片供选择"
-        ),
+        help=("视频背景：图片编号、作品目录内的相对/绝对路径、auto，或 black；未指定时按默认策略"),
     )
     parser.add_argument(
         "--embed-subtitles",
@@ -82,74 +79,97 @@ def validate_interactive_queue_arguments(args: argparse.Namespace) -> None:
         )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _write_stdout(message: str) -> None:
+    sys.stdout.write(f"{message}\n")
+    sys.stdout.flush()
+
+
+def _write_stderr(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+
+
+def main(argv: Sequence[str] | None = None, *, input_reader: InputReader | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    print_header()
-    try:
-        config = load_app_config()
-        paths = app_settings.find_tool_paths(config)
-        app_settings.validate_asmr_version()
-        if args.self_test:
-            self_test(paths)
-            return 0
-        if args.scan == "legacy":
-            folder = (
-                clean_user_path(args.folder)
-                if args.folder
-                else clean_user_path(input("请粘贴解压后的作品文件夹路径："))
-            )
-            if (
-                args.layout
-                or args.edition
-                or args.include_bonus
-                or args.output_root
-                or args.background
-            ):
-                raise VideoPreparerError(
-                    "legacy 扫描不支持 --layout、--edition、--include-bonus、"
-                    "--output-root 或 --background。"
+    reader = runlog.resolve_input_reader(input_reader)
+    with runlog.bind_autoflow_callbacks(
+        on_message=_write_stdout,
+        on_error=_write_stderr,
+        input_reader=reader,
+    ):
+        print_header()
+        try:
+            config = load_app_config()
+            paths = app_settings.find_tool_paths(config)
+            app_settings.validate_asmr_version()
+            if args.self_test:
+                self_test(paths)
+                return 0
+            if args.scan == "legacy":
+                if args.folder:
+                    folder = clean_user_path(args.folder)
+                elif reader is not None:
+                    folder = clean_user_path(reader("请粘贴解压后的作品文件夹路径："))
+                else:
+                    raise VideoPreparerError(
+                        "未指定作品文件夹路径；请传入 folder 参数"
+                        "（例如 asmr-dubber autoflow <文件夹路径>），"
+                        "或使用桌面界面的批量处理。"
+                    )
+                if (
+                    args.layout
+                    or args.edition
+                    or args.include_bonus
+                    or args.output_root
+                    or args.background
+                ):
+                    raise VideoPreparerError(
+                        "legacy 扫描不支持 --layout、--edition、--include-bonus、"
+                        "--output-root 或 --background。"
+                    )
+                prepare_or_resume(
+                    paths,
+                    config,
+                    folder,
+                    args.mode,
+                    args.embed_subtitles,
+                    rebuild=args.rebuild,
+                    force=args.force,
+                    input_reader=reader,
                 )
-            prepare_or_resume(
-                paths,
-                config,
-                folder,
-                args.mode,
-                args.embed_subtitles,
-                rebuild=args.rebuild,
-                force=args.force,
-            )
-        elif args.folder:
-            folder = clean_user_path(args.folder)
-            execute_smart_plan(
-                paths,
-                config,
-                folder,
-                mode_argument=args.mode,
-                layout_argument=args.layout,
-                edition_argument=args.edition,
-                include_bonus=args.include_bonus,
-                output_root_argument=args.output_root,
-                background_argument=args.background,
-                embed_subtitles_argument=args.embed_subtitles,
-                rebuild=args.rebuild,
-                force=args.force,
-            )
-        else:
-            validate_interactive_queue_arguments(args)
-            plans = collect_interactive_smart_plans(config, args)
-            return smart_queue.execute_smart_queue(paths, config, plans)
-        return 0
-    except KeyboardInterrupt:
-        runlog.log_event("用户取消任务")
-        print("\n已取消。完整成品不会被半成品覆盖，已有任务状态会保留。")
-        return 130
-    except VideoPreparerError as exc:
-        runlog.log_event(f"操作失败：{exc}")
-        print(f"\n操作失败：{exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        runlog.log_event(f"未预期错误：{type(exc).__name__}: {exc}")
-        append_log(traceback.format_exc())
-        print(f"\n未预期错误：{type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
+            elif args.folder:
+                folder = clean_user_path(args.folder)
+                execute_smart_plan(
+                    paths,
+                    config,
+                    folder,
+                    mode_argument=args.mode,
+                    layout_argument=args.layout,
+                    edition_argument=args.edition,
+                    include_bonus=args.include_bonus,
+                    output_root_argument=args.output_root,
+                    background_argument=args.background,
+                    embed_subtitles_argument=args.embed_subtitles,
+                    rebuild=args.rebuild,
+                    force=args.force,
+                    input_reader=reader,
+                )
+            else:
+                validate_interactive_queue_arguments(args)
+                plans = collect_interactive_smart_plans(config, args, input_reader=reader)
+                return smart_queue.execute_smart_queue(paths, config, plans)
+            return 0
+        except KeyboardInterrupt:
+            runlog.log_event("用户取消任务")
+            runlog.emit("\n已取消。完整成品不会被半成品覆盖，已有任务状态会保留。")
+            return 130
+        except VideoPreparerError as exc:
+            runlog.log_event(f"操作失败：{exc}")
+            runlog.emit(f"\n操作失败：{exc}", error=True)
+            return 1
+        except Exception as exc:
+            runlog.log_event(f"未预期错误：{type(exc).__name__}: {exc}")
+            append_log(traceback.format_exc())
+            runlog.emit(f"\n未预期错误：{type(exc).__name__}: {exc}", error=True)
+            return 1

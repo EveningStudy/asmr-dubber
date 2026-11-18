@@ -1,9 +1,8 @@
 """Persistent batch queue editing and the core reference selection handshake."""
 
-import io
+import inspect
 import json
 import threading
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
 from pathlib import Path
 
@@ -211,6 +210,10 @@ class Batch:
 
         current_plan = {"id": ""}
 
+        def progress_event(message):
+            if message.strip():
+                report(message.strip(), len(self.finished), len(queue))
+
         def stage_event(stage):
             if current_plan["id"]:
                 reference({"kind": "plan_stage", "plan_id": current_plan["id"], "stage": stage})
@@ -234,23 +237,18 @@ class Batch:
             else:
                 reference(payload)
 
-        class LogStream(io.TextIOBase):
-            def write(self, value):
-                if value.strip():
-                    report(value.strip(), len(self_batch.finished), len(queue))
-                return len(value)
-
-        self_batch = self
-        from ..autoflow import project_cli
-
-        project_cli.STAGE_LISTENER = stage_event
+        run_kwargs = {
+            "cancel_event": token,
+            "reference_event_callback": reference_event,
+            "progress_callback": progress_event,
+            "stage_callback": stage_event,
+        }
+        parameters = inspect.signature(batch_queue.run_queue).parameters
+        if not any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
+            run_kwargs = {key: value for key, value in run_kwargs.items() if key in parameters}
         try:
-            with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
-                result, outputs = batch_queue.run_queue(
-                    queue, cancel_event=token, reference_event_callback=reference_event
-                )
+            result, outputs = batch_queue.run_queue(queue, **run_kwargs)
         finally:
-            project_cli.STAGE_LISTENER = None
             with self.lock:
                 self.running = False
         report("队列处理完成。", len(queue), len(queue))

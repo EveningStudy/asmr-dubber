@@ -148,7 +148,7 @@ def load_app_config(path: Path = SETTINGS_FILE) -> AppConfig:
                 "original_hard_subtitles",
                 "timestamp_footer_position",
             } and not re.fullmatch(r"timestamp_footer_line_[1-5]", key):
-                print(f"警告：忽略 settings.txt 中的未知设置：{key}")
+                runlog.emit(f"警告：忽略 settings.txt 中的未知设置：{key}")
                 continue
             values[key] = value.strip().strip('"').strip("'")
 

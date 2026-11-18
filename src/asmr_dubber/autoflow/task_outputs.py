@@ -9,6 +9,7 @@ from . import (
     media_audio,
     media_video,
     output_files,
+    runlog,
     title_translation,
 )
 from .constants import (
@@ -146,7 +147,7 @@ def _finish_stage(paths: ToolPaths, folder: Path, state_file: Path, state: dict[
         if not str(translations.get(str(item.get("relative_path") or item["filename"]), "")).strip()
     ]
     if missing_titles or not str(state.get("folder_name_translation") or "").strip():
-        print("\n  使用 ASMR Dubber 当前翻译服务处理作品名和曲目标题……")
+        runlog.emit("\n  使用 ASMR Dubber 当前翻译服务处理作品名和曲目标题……")
         try:
             state["title_translations"] = title_translation.translate_titles(state, paths)
         except VideoPreparerError:
@@ -163,19 +164,19 @@ def _finish_stage(paths: ToolPaths, folder: Path, state_file: Path, state: dict[
 def _report_completion(
     folder: Path, state: dict[str, Any], project_json: Path, subtitles_only: bool
 ) -> None:
-    print("\n全部完成。文件已放回：")
-    print(f"  {folder}")
+    runlog.emit("\n全部完成。文件已放回：")
+    runlog.emit(f"  {folder}")
     if subtitles_only:
         if normalize_mode(state["mode"]) != MODE_AUDIO and state["outputs"].get("video"):
-            print("  - 原声字幕版.mp4")
+            runlog.emit("  - 原声字幕版.mp4")
     elif normalize_mode(state["mode"]) == MODE_AUDIO:
-        print("  - 原声.flac")
-        print(f"  - {Path(state['outputs']['audio']).name}")
+        runlog.emit("  - 原声.flac")
+        runlog.emit(f"  - {Path(state['outputs']['audio']).name}")
     else:
-        print("  - 原声.mp4")
-        print("  - 双语版.mp4")
-    print("  - 双语版.srt")
-    print("  - 双语版.lrc")
-    print("  - 时间戳.txt")
+        runlog.emit("  - 原声.mp4")
+        runlog.emit("  - 双语版.mp4")
+    runlog.emit("  - 双语版.srt")
+    runlog.emit("  - 双语版.lrc")
+    runlog.emit("  - 时间戳.txt")
     if project_json.is_file():
-        print(f"\nASMR Dubber 工作项目保留在：\n  {project_json.parent}")
+        runlog.emit(f"\nASMR Dubber 工作项目保留在：\n  {project_json.parent}")

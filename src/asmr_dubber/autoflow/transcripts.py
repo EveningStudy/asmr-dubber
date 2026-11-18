@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from . import runlog
 from .constants import SAMPLE_RATE, TRANSCRIPT_MODE_ASR_RECONCILE
 from .domain import (
     TRANSCRIPT_MODE_DIRECT,
@@ -139,7 +140,7 @@ def import_available_source_transcript(
                 plain_timing=plain_timing,
                 script_language=language,
                 use_embedded_timing=not use_asr_timing,
-                progress=lambda message, current, total: print(f"  {message}"),
+                progress=lambda message, current, total: runlog.emit(f"  {message}"),
             )
         except Exception as exc:
             raise VideoPreparerError(f"自动导入台本/字幕失败：{exc}") from exc
@@ -216,7 +217,7 @@ def reconcile_timeline_scripts(
                 script_language=cast(Literal["ja", "en", "zh"], language),
                 start_seconds=start,
                 end_seconds=end,
-                progress=lambda message, current, total: print(f"  {message}"),
+                progress=lambda message, current, total: runlog.emit(f"  {message}"),
             )
             results.append(result)
         return results

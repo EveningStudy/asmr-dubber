@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import plan_files
+from . import plan_files, runlog
 from .domain import (
     AudioSource,
     ToolPaths,
@@ -117,7 +117,7 @@ def translate_titles(
             context_sentences=100,
             memory_sentences=50,
             job_id=f"video_preparer_{task_key(Path(state['source_folder']))}",
-            progress=lambda message, current, total: print(f"  {message}"),
+            progress=lambda message, current, total: runlog.emit(f"  {message}"),
         )
     except Exception as exc:
         if folder_sentence.zh_text.strip():
@@ -143,7 +143,7 @@ def translate_titles(
             and not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", sentence.source_text)
         ):
             title = sentence.source_text.strip()
-            print(f"标题翻译为空，保留原名称：{key} → {title}")
+            runlog.emit(f"标题翻译为空，保留原名称：{key} → {title}")
         if not title:
             missing.append(key)
             continue

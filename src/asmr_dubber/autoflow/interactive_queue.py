@@ -1,4 +1,4 @@
-"""Interactive queue collection in the terminal."""
+"""Queue collection via injectable input reader (non-blocking by default)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from . import failed_tasks
+from . import failed_tasks, runlog
 from .app_settings import load_smart_plan_defaults, save_smart_plan_defaults
 from .configure import configure_smart_plan_draft
 from .constants import LAST_OPTIONS_FILE, MODE_AUDIO
@@ -23,15 +23,16 @@ from .failed_tasks import load_failed_task_plans, read_failed_task_records, work
 from .fileio import clean_user_path
 from .modes import layout_label, mode_label, video_branch_label
 from .prompts import ask_yes_no
+from .runlog import InputReader
 
 
 def print_smart_work_queue(
     queue: Sequence[QueuedSmartWork],
     config: AppConfig,
 ) -> None:
-    print("\n" + "=" * 68)
-    print(f"作品串（已加入 {len(queue)} 个作品）")
-    print("=" * 68)
+    runlog.emit("\n" + "=" * 68)
+    runlog.emit(f"作品串（已加入 {len(queue)} 个作品）")
+    runlog.emit("=" * 68)
     for index, work in enumerate(queue, start=1):
         plan = work.plan
         transcript_count = len(work.draft.scan.transcripts)
@@ -51,14 +52,14 @@ def print_smart_work_queue(
             f"{content} · {layout_label(plan.layout)} · 背景：{background} · "
             f"{subtitle} · {transcript_label}"
         )
-        print(
+        runlog.emit(
             f"  {index}. {plan.folder.name}\n"
             f"     {plan.edition_label} · {mode_label(plan.mode)} · "
             f"{video_branch_label(plan.mode, config) if plan.mode != MODE_AUDIO else '音频'}\n"
             f"     {detail}"
         )
-    print("\n直接粘贴下一个作品路径：添加")
-    print("输入作品编号：返回修改；输入 D+编号：删除；直接按 Enter：开始处理")
+    runlog.emit("\n直接粘贴下一个作品路径：添加")
+    runlog.emit("输入作品编号：返回修改；输入 D+编号：删除；直接按 Enter：开始处理")
 
 
 def _queue_index(value: str, maximum: int) -> int | None:
@@ -82,26 +83,36 @@ def _prefixed_queue_index(value: str, prefix: str, maximum: int) -> int | None:
 def collect_interactive_smart_plans(
     config: AppConfig,
     args: argparse.Namespace,
+    *,
+    input_reader: InputReader | None = None,
 ) -> list[SmartTaskPlan]:
-    """Configure a visible, editable queue before the first task starts."""
+    """Configure an editable queue using ``input_reader``; fail fast if non-interactive."""
+
+    reader = runlog.resolve_input_reader(input_reader)
+    if reader is None:
+        raise VideoPreparerError(
+            "交互式终端问答已移除：请传入作品文件夹路径参数"
+            "（例如 asmr-dubber autoflow <文件夹路径>），"
+            "或打开桌面界面使用批量处理。"
+        )
 
     queue: list[QueuedSmartWork] = []
     configured_folders: set[Path] = set()
     defaults = load_smart_plan_defaults(config)
     failed_available = load_failed_task_plans()
     if LAST_OPTIONS_FILE.is_file():
-        print("已载入上次使用的默认选项；每个作品都可以单独修改。")
+        runlog.emit("已载入上次使用的默认选项；每个作品都可以单独修改。")
 
     while True:
         if queue:
             print_smart_work_queue(queue, config)
         if failed_available:
-            print("\n上次失败、可重新开始的任务：")
+            runlog.emit("\n上次失败、可重新开始的任务：")
             failed_records = {str(item.get("plan_id")): item for item in read_failed_task_records()}
             for index, plan in enumerate(failed_available, start=1):
                 reason = str(failed_records.get(plan.plan_id, {}).get("error") or "").strip()
                 suffix = f" · {reason}" if reason else ""
-                print(f"  F{index}. {plan.folder} · {mode_label(plan.mode)}{suffix}")
+                runlog.emit(f"  F{index}. {plan.folder} · {mode_label(plan.mode)}{suffix}")
         if queue:
             prompt = (
                 "请粘贴下一个作品路径；输入编号修改、D+编号删除、"
@@ -111,19 +122,19 @@ def collect_interactive_smart_plans(
             prompt = "请粘贴新作品路径；输入 F+编号加入重试、X+编号丢弃失败记录："
         else:
             prompt = "请粘贴第一个作品文件夹路径："
-        raw = input(prompt).strip()
+        raw = reader(prompt).strip()
 
         if not raw:
             if queue:
                 break
-            print("还没有添加作品，请先输入一个文件夹路径。")
+            runlog.emit("还没有添加作品，请先输入一个文件夹路径。")
             continue
 
         failed_index = _prefixed_queue_index(raw, "f", len(failed_available))
         if failed_index is not None:
             failed_plan = failed_available.pop(failed_index - 1)
             if failed_plan.folder.resolve() in configured_folders:
-                print("这个作品已经在作品串中。")
+                runlog.emit("这个作品已经在作品串中。")
                 failed_available.insert(failed_index - 1, failed_plan)
                 continue
             work = work_from_failed_plan(failed_plan)
@@ -137,10 +148,12 @@ def collect_interactive_smart_plans(
         if discard_index is not None:
             failed_plan = failed_available.pop(discard_index - 1)
             if ask_yes_no(
-                f"确定丢弃失败记录“{failed_plan.folder.name}”？输入 Y 丢弃，输入 N 保留："
+                f"确定丢弃失败记录“{failed_plan.folder.name}”？输入 Y 丢弃，输入 N 保留：",
+                default=False,
+                input_reader=reader,
             ):
                 failed_tasks.remove_failed_task(failed_plan.plan_id)
-                print("已丢弃失败记录。")
+                runlog.emit("已丢弃失败记录。")
             else:
                 failed_available.insert(discard_index - 1, failed_plan)
             continue
@@ -150,13 +163,15 @@ def collect_interactive_smart_plans(
             command = raw.casefold()
             if command.startswith(("d", "e")) or raw.isdigit():
                 if edit_index is None:
-                    print("作品编号无效，请重新输入。")
+                    runlog.emit("作品编号无效，请重新输入。")
                     continue
                 if command.startswith("d"):
                     work_name = queue[edit_index - 1].plan.folder.name
                     if not ask_yes_no(
                         f"确定从作品串删除第 {edit_index} 项“{work_name}”？"
-                        "输入 Y 删除，输入 N 保留："
+                        "输入 Y 删除，输入 N 保留：",
+                        default=False,
+                        input_reader=reader,
                     ):
                         continue
                     queue.pop(edit_index - 1)
@@ -164,7 +179,7 @@ def collect_interactive_smart_plans(
                     if queue:
                         defaults = queue[-1].defaults
                         save_smart_plan_defaults(defaults)
-                    print("已从作品串删除。")
+                    runlog.emit("已从作品串删除。")
                     continue
 
                 work = queue[edit_index - 1]
@@ -175,6 +190,7 @@ def collect_interactive_smart_plans(
                     index=edit_index,
                     rebuild=args.rebuild,
                     force=args.force,
+                    input_reader=reader,
                 )
                 failed_ids = {item.plan_id for item in load_failed_task_plans()}
                 if old_plan_id in failed_ids:
@@ -193,16 +209,16 @@ def collect_interactive_smart_plans(
         try:
             folder = clean_user_path(raw)
         except VideoPreparerError as exc:
-            print(f"路径无效：{exc}")
+            runlog.emit(f"路径无效：{exc}")
             continue
         resolved = folder.resolve()
         if resolved in configured_folders:
-            print("这个作品已经在作品串中，请换一个文件夹。")
+            runlog.emit("这个作品已经在作品串中，请换一个文件夹。")
             continue
         try:
             draft = prepare_smart_plan_draft(config, folder, defaults, args)
         except VideoPreparerError as exc:
-            print(f"无法配置这个作品：{exc}")
+            runlog.emit(f"无法配置这个作品：{exc}")
             continue
         plan, work_defaults, start_now = configure_smart_plan_draft(
             draft,
@@ -210,15 +226,16 @@ def collect_interactive_smart_plans(
             index=len(queue) + 1,
             rebuild=args.rebuild,
             force=args.force,
+            input_reader=reader,
         )
         if any(existing.plan.output_root == plan.output_root for existing in queue):
-            print(f"这个输出目录已经被队列中的其他作品使用：{plan.output_root}")
+            runlog.emit(f"这个输出目录已经被队列中的其他作品使用：{plan.output_root}")
             continue
         queue.append(QueuedSmartWork(draft=draft, plan=plan, defaults=work_defaults))
         configured_folders.add(resolved)
         defaults = work_defaults
         save_smart_plan_defaults(defaults)
-        print(f"\n已加入作品串：{plan.folder.name}")
+        runlog.emit(f"\n已加入作品串：{plan.folder.name}")
         if start_now:
             break
     return [work.plan for work in queue]

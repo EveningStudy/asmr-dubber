@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from . import (
     project_cli,
+    runlog,
     stages,
 )
 from .constants import (
@@ -52,7 +53,7 @@ def _create_project_stage(
     state: dict[str, Any],
     sources: list[AudioSource],
 ) -> None:
-    print("\n[3/5] 创建 ASMR Dubber 项目")
+    runlog.emit("\n[3/5] 创建 ASMR Dubber 项目")
     from ..project_origin import batch_project_name
 
     project_json = project_cli.create_asmr_project(
@@ -121,19 +122,19 @@ def _announce_transcript_import(transcript_result: dict[str, Any]) -> None:
     kind = str(transcript_result.get("kind") or "")
     if kind == "direct":
         language = str(transcript_result.get("language") or "ja")
-        print(f"\n  已处理{language.upper()}台本/字幕。")
+        runlog.emit(f"\n  已处理{language.upper()}台本/字幕。")
         reconciled = bool(transcript_result.get("script_reconciled"))
         if reconciled:
-            print("  已使用 ASR 时间轴校对台本文字；只会翻译没有匹配到中文的句子。")
+            runlog.emit("  已使用 ASR 时间轴校对台本文字；只会翻译没有匹配到中文的句子。")
         else:
-            print("  已沿用文件时间轴，不再运行不必要的 ASR（语音识别）。")
+            runlog.emit("  已沿用文件时间轴，不再运行不必要的 ASR（语音识别）。")
     elif kind in {"partial", "zh_overlay_partial"}:
-        print(
+        runlog.emit(
             f"\n  找到 {transcript_result.get('count', 0)} 份台本/字幕，"
             "但不足以覆盖全部合并音轨；本次仍运行 ASR。"
         )
     elif kind == "reconcile_after_asr":
-        print(
+        runlog.emit(
             f"\n  找到 {transcript_result.get('count', 0)} 份需要重新定时的台本；"
             "本次先运行 ASR，再按音轨校对文字。"
         )
@@ -155,7 +156,7 @@ def _analyze_stage(
             save_state(state_file, state)
 
     if not status_at_least(state, "analyzed"):
-        print("\n  运行 ASR（语音识别）……")
+        runlog.emit("\n  运行 ASR（语音识别）……")
         project_cli.run_asmr_cli(paths, "analyze", str(project_json))
         state["status"] = "analyzed"
         save_state(state_file, state)
@@ -172,7 +173,7 @@ def _transcript_followups(state_file: Path, state: dict[str, Any], project_json:
         )
         state["script_reconciliation_done"] = True
         state["script_reconciliation"] = results
-        print(f"  已使用 ASR 时间轴校对 {len(results)} 份台本。")
+        runlog.emit(f"  已使用 ASR 时间轴校对 {len(results)} 份台本。")
         warning_ids = [
             str(sentence_id)
             for result in results
@@ -181,7 +182,7 @@ def _transcript_followups(state_file: Path, state: dict[str, Any], project_json:
         if warning_ids:
             preview = "、".join(warning_ids[:12])
             suffix = f"，另有 {len(warning_ids) - 12} 句" if len(warning_ids) > 12 else ""
-            print(
+            runlog.emit(
                 f"  注意：{preview}{suffix} 的中文台本相对 ASR 时间窗过长；"
                 "配音达到最大自动加速后仍可能重叠。"
             )
@@ -195,7 +196,7 @@ def _transcript_followups(state_file: Path, state: dict[str, Any], project_json:
         )
         state["chinese_transcript_overlay_done"] = True
         state["chinese_transcript_overlay_sentences"] = applied
-        print(f"  已把已有中文字幕匹配到 {applied} 条日文识别结果。")
+        runlog.emit(f"  已把已有中文字幕匹配到 {applied} 条日文识别结果。")
         save_state(state_file, state)
 
 
@@ -206,7 +207,7 @@ def _translate_stage(
         state.get("output_policy", {}).get("subtitle") != "source"
         or not state.get("subtitles_only")
     ):
-        print("\n  准备目标语言文本……")
+        runlog.emit("\n  准备目标语言文本……")
         run_budgeted_stage(paths, state, "translate", project_json)
     state["status"] = "awaiting_reference"
     save_state(state_file, state)
@@ -230,16 +231,16 @@ def _resolve_reference(
             }
         )
     if project_cli.project_has_external_reference(project_json):
-        print("\n  使用当前项目已配置的外部音色参考。")
+        runlog.emit("\n  使用当前项目已配置的外部音色参考。")
     elif shared_reference is not None:
         apply_shared_reference(project_json, shared_reference)
-        print("\n  已复用本作品的统一音色参考，不需要再次选择。")
+        runlog.emit("\n  已复用本作品的统一音色参考，不需要再次选择。")
     else:
         reference_id = project_cli.project_reference_id(project_json)
         if reference_id:
-            print(f"\n复用已保存的统一音色参考：{reference_id}")
+            runlog.emit(f"\n复用已保存的统一音色参考：{reference_id}")
         elif project_cli.project_has_external_reference(project_json):
-            print("\n复用当前项目已经保存的外部参考音频。")
+            runlog.emit("\n复用当前项目已经保存的外部参考音频。")
         elif not project_cli.wait_for_reference(
             paths,
             project_json,
@@ -280,7 +281,7 @@ def _synthesize_stage(
             capture_reference_path,
         )
         save_state(state_file, state)
-    print("\n[5/5] TTS（语音合成）、混音与字幕")
+    runlog.emit("\n[5/5] TTS（语音合成）、混音与字幕")
     run_budgeted_stage(paths, state, "synthesize", project_json)
     state["status"] = "synthesized"
     save_state(state_file, state)

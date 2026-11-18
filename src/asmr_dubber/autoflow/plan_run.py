@@ -30,22 +30,22 @@ from .plan_files import (
     write_plan_manifest,
 )
 from .plan_layouts import run_merged_job, run_track_jobs
-from .runlog import append_log
+from .runlog import InputReader, append_log
 
 
 def _announce_plan(plan: SmartTaskPlan) -> None:
     sources = plan.sources
-    print(f"\n已选择：{plan.edition_label}")
-    print(f"扫描到 {len(sources)} 条音轨；输出目录：{plan.output_root}")
+    runlog.emit(f"\n已选择：{plan.edition_label}")
+    runlog.emit(f"扫描到 {len(sources)} 条音轨；输出目录：{plan.output_root}")
     if plan.mode != MODE_AUDIO:
         if plan.background is not None:
-            print(f"背景图片：{plan.background.name}")
+            runlog.emit(f"背景图片：{plan.background.name}")
         else:
-            print("背景图片：黑色背景")
+            runlog.emit("背景图片：黑色背景")
         if plan.subtitles_only:
-            print(f"原声视频字幕：{'生成' if plan.embed_subtitles else '不生成'}")
+            runlog.emit(f"原声视频字幕：{'生成' if plan.embed_subtitles else '不生成'}")
         else:
-            print(
+            runlog.emit(
                 f"视频字幕：{'内嵌' if plan.embed_subtitles else '不内嵌（外部 SRT/LRC 仍保留）'}"
             )
 
@@ -132,7 +132,7 @@ def _finish_merged_from_tracks(
         or any(isinstance(item, dict) and item.get("partial") for item in previous_jobs)
         or any(state.get("partial") for state in states),
     ):
-        print("\n合并成品已经完整，跳过重复生成。")
+        runlog.emit("\n合并成品已经完整，跳过重复生成。")
         merged_descriptor["outputs"] = dict(previous_merged["outputs"])
         merged_descriptor["status"] = "completed"
         output_files.write_timestamp_document(
@@ -149,7 +149,7 @@ def _finish_merged_from_tracks(
             Path(str(merged_descriptor["output"])),
         )
     else:
-        print("\n分轨项目已完成，正在从分轨结果生成合并成品（不会再次 ASR/TTS）……")
+        runlog.emit("\n分轨项目已完成，正在从分轨结果生成合并成品（不会再次 ASR/TTS）……")
         merged_outputs = build_merged_outputs(
             paths,
             config,
@@ -368,10 +368,12 @@ def execute_prepared_smart_plan(
     for state in {str(item.get("job_id")): item for item in states}.values():
         cleanup_completed_workspace(state)
     runlog.log_event(f"智能任务完成 plan={plan.plan_id} output={output_root}")
-    print("\n智能任务完成。源作品文件没有被修改。")
-    print(f"所有成品位于：{output_root}")
+    runlog.emit("\n智能任务完成。源作品文件没有被修改。")
+    runlog.emit(f"所有成品位于：{output_root}")
     if partial:
-        print(f"注意：{stages.summarize(partial)}。成品已生成，这些句子保留原声/只有原文字幕。")
+        runlog.emit(
+            f"注意：{stages.summarize(partial)}。成品已生成，这些句子保留原声/只有原文字幕。"
+        )
     return partial
 
 
@@ -389,6 +391,7 @@ def execute_smart_plan(
     embed_subtitles_argument: str | None,
     rebuild: bool,
     force: bool,
+    input_reader: InputReader | None = None,
 ) -> None:
     """Compatibility wrapper for a single recursive DLsite task."""
 
@@ -404,6 +407,7 @@ def execute_smart_plan(
         embed_subtitles_argument=embed_subtitles_argument,
         rebuild=rebuild,
         force=force,
+        input_reader=input_reader,
     )
     print_smart_plan_summary(plan)
     try:

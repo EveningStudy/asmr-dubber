@@ -7,6 +7,7 @@ from typing import Any
 
 from . import (
     output_files,
+    runlog,
     work_state,
 )
 from .constants import (
@@ -22,6 +23,7 @@ from .domain import (
 from .errors import VideoPreparerError
 from .modes import mode_label, normalize_mode, parse_embed_subtitles_argument
 from .prompts import ask_embed_subtitles, ask_mode, confirm_overwrite
+from .runlog import InputReader
 from .source_scan import discover_audio, discover_background
 from .task_run import execute_task
 from .work_state import (
@@ -103,28 +105,32 @@ def execute_planned_job(
                 state.pop("partial", None)
                 save_state(state_file, state)
             else:
-                print(f"\n{output_folder.name} 之前有部分失败句子且工作区已清理，将从头重做。")
+                runlog.emit(
+                    f"\n{output_folder.name} 之前有部分失败句子且工作区已清理，将从头重做。"
+                )
                 rebuild = True
         if not rebuild:
             missing = missing_resume_artifacts(state, output_folder)
             if missing:
                 timestamp_file = output_folder / "时间戳.txt"
                 if missing == [timestamp_file] and status_at_least(state, "outputs_ready"):
-                    print(f"\n{output_folder.name} 只缺时间戳文档，正在直接补写。")
+                    runlog.emit(f"\n{output_folder.name} 只缺时间戳文档，正在直接补写。")
                     state["status"] = "outputs_ready"
                     save_state(state_file, state)
                 else:
-                    print(f"\n{output_folder.name} 的旧任务缺少文件，将从头重做。")
+                    runlog.emit(f"\n{output_folder.name} 的旧任务缺少文件，将从头重做。")
                     rebuild = True
             elif legacy_chinese_timeline_needs_reimport(state):
-                print(f"\n{output_folder.name} 将按已有中文字幕重建时间轴，不会重跑 ASR 或翻译。")
+                runlog.emit(
+                    f"\n{output_folder.name} 将按已有中文字幕重建时间轴，不会重跑 ASR 或翻译。"
+                )
                 reset_legacy_chinese_timeline_state(state)
                 save_state(state_file, state)
             elif status_at_least(state, "completed"):
-                print(f"\n跳过已经完成的任务：{output_folder.name}")
+                runlog.emit(f"\n跳过已经完成的任务：{output_folder.name}")
                 return state
             else:
-                print(
+                runlog.emit(
                     f"\n继续未完成任务：{output_folder.name} "
                     f"（阶段：{state.get('status') or '尚未开始'}）"
                 )
@@ -179,9 +185,11 @@ def prepare_or_resume(
     *,
     rebuild: bool,
     force: bool,
+    input_reader: InputReader | None = None,
 ) -> None:
     if not folder.is_dir():
         raise VideoPreparerError(f"文件夹不存在：{folder}")
+    reader = runlog.resolve_input_reader(input_reader)
     sources = discover_audio(folder)
     state_file = state_path(folder)
     state = None if rebuild else load_state(state_file)
@@ -207,49 +215,61 @@ def prepare_or_resume(
 
     if state is not None and not rebuild:
         if state.get("fingerprint") != current_fingerprint:
-            print("\n检测到小音频或视频背景在上次任务后发生变化。")
-            answer = input("输入 R 按当前文件从头重做；直接按 Enter 退出：").strip().casefold()
+            if reader is None:
+                raise VideoPreparerError(
+                    "检测到小音频或视频背景在上次任务后发生变化；请使用 --rebuild 从头重做。"
+                )
+            runlog.emit("\n检测到小音频或视频背景在上次任务后发生变化。")
+            answer = reader("输入 R 按当前文件从头重做；直接按 Enter 退出：").strip().casefold()
             if answer != "r":
                 return
             rebuild = True
         if not rebuild and legacy_chinese_timeline_needs_reimport(state):
-            print("\n已有中文字幕将直接重建时间轴，不会重跑 ASR 或翻译。")
+            runlog.emit("\n已有中文字幕将直接重建时间轴，不会重跑 ASR 或翻译。")
             reset_legacy_chinese_timeline_state(state)
             save_state(state_file, state)
         missing = missing_resume_artifacts(state, folder) if not rebuild else []
         if not rebuild and missing:
-            print("\n旧任务记录依赖的文件已经不存在：")
+            runlog.emit("\n旧任务记录依赖的文件已经不存在：")
             for path in missing:
-                print(f"  {path}")
-            answer = input("输入 R 从头重做；直接按 Enter 退出：").strip().casefold()
+                runlog.emit(f"  {path}")
+            if reader is None:
+                raise VideoPreparerError(
+                    "旧任务记录依赖的文件已经不存在；请使用 --rebuild 从头重做。"
+                )
+            answer = reader("输入 R 从头重做；直接按 Enter 退出：").strip().casefold()
             if answer != "r":
                 return
             rebuild = True
         if not rebuild and status_at_least(state, "completed"):
             if int(state.get("timestamp_schema") or 0) < TIMESTAMP_SCHEMA:
-                print("\n正在补充文件夹名称的中英文信息；不会重跑识别、配音或混音。")
+                runlog.emit("\n正在补充文件夹名称的中英文信息；不会重跑识别、配音或混音。")
                 state["status"] = "outputs_ready"
                 save_state(state_file, state)
+            elif reader is None:
+                runlog.emit("\n这个文件夹的任务已经完成；如需从头重做请传入 --rebuild。")
+                return
             else:
-                print("\n这个文件夹的任务已经完成。")
-                answer = input("输入 R 从头重做；直接按 Enter 退出：").strip().casefold()
+                runlog.emit("\n这个文件夹的任务已经完成。")
+                answer = reader("输入 R 从头重做；直接按 Enter 退出：").strip().casefold()
                 if answer != "r":
                     return
                 rebuild = True
         elif not rebuild:
-            print(f"\n发现未完成任务，当前阶段：{state.get('status') or '尚未开始'}")
-            answer = input("输入 1 继续；输入 2 从头开始：").strip()
-            if answer == "2":
-                rebuild = True
-            elif answer != "1":
-                return
+            runlog.emit(f"\n发现未完成任务，当前阶段：{state.get('status') or '尚未开始'}")
+            if reader is not None:
+                answer = reader("输入 1 继续；输入 2 从头开始：").strip()
+                if answer == "2":
+                    rebuild = True
+                elif answer != "1":
+                    return
 
     if state is None or rebuild:
-        mode = requested_mode or ask_mode(config)
-        embed_subtitles = ask_embed_subtitles(mode, embed_subtitles_argument)
+        mode = requested_mode or ask_mode(config, input_reader=reader)
+        embed_subtitles = ask_embed_subtitles(mode, embed_subtitles_argument, input_reader=reader)
         background = discover_background(folder) if mode != MODE_AUDIO else None
         current_fingerprint = fingerprint(sources, background)
-        confirm_overwrite(folder, mode, force=force)
+        confirm_overwrite(folder, mode, force=force, input_reader=reader)
         workspace = workspace_path(folder)
         safe_reset_workspace(workspace)
         state = create_initial_state(
@@ -262,14 +282,14 @@ def prepare_or_resume(
         )
         save_state(state_file, state)
 
-    print("\n将按以下顺序处理：")
+    runlog.emit("\n将按以下顺序处理：")
     for item in sources:
-        print(f"  {item.order:>4}  {item.path.name}")
+        runlog.emit(f"  {item.order:>4}  {item.path.name}")
     if normalize_mode(state["mode"]) != MODE_AUDIO:
-        print(f"背景：{background.name if background else '未找到 null 图片，使用黑色背景'}")
-    print(f"模式：{mode_label(state['mode'])}")
+        runlog.emit(f"背景：{background.name if background else '未找到 null 图片，使用黑色背景'}")
+    runlog.emit(f"模式：{mode_label(state['mode'])}")
     if normalize_mode(state["mode"]) != MODE_AUDIO:
-        print(
+        runlog.emit(
             "视频字幕："
             + (
                 "内嵌，同时保留 SRT/LRC"

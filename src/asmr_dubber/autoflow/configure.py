@@ -1,10 +1,11 @@
-"""Interactive plan configuration."""
+"""Plan configuration with non-interactive defaults and injectable input reader."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
 
+from . import runlog
 from .catalog import (
     scan_work,
 )
@@ -29,6 +30,7 @@ from .prompts import (
     configure_draft_transcripts,
     print_smart_plan_defaults_panel,
 )
+from .runlog import InputReader
 from .source_scan import background_selection_details, smart_background
 from .track_prompts import choose_tracks, update_draft_bonus, update_draft_edition
 from .transcript_choices import effective_sources_for_draft
@@ -41,41 +43,53 @@ def configure_smart_plan_draft(
     index: int,
     rebuild: bool,
     force: bool,
+    input_reader: InputReader | None = None,
 ) -> tuple[SmartTaskPlan, SmartPlanDefaults, bool]:
     """Return the plan, inherited defaults, and whether execution should start."""
 
-    while True:
-        print_smart_plan_defaults_panel(draft, config, index=index)
-        answer = input("输入 1-8 修改；直接按 Enter 返回作品串；输入 0 开始：").strip()
-        if answer in {"", "0"}:
-            break
-        if answer == "1":
-            update_draft_edition(draft, config)
-        elif answer == "2":
-            update_draft_bonus(draft, config)
-        elif answer == "3":
-            ask_media_type_for_draft(draft)
-        elif answer == "4":
-            ask_video_branch_for_draft(draft, config)
-        elif answer == "5":
-            draft.layout = ask_output_layout(replace(config, default_output_layout="ask"))
-        elif answer == "6":
-            selected = smart_background(
-                draft.scan,
-                replace(config, background_policy="ask"),
-            )
-            (
-                draft.background,
-                draft.background_choice,
-                draft.background_relative,
-            ) = background_selection_details(draft.scan, selected)
-        elif answer == "7":
-            print("\n无论如何都会另外保留双语版.srt 和双语版.lrc。")
-            draft.embed_subtitles = ask_yes_no("输入 Y 内嵌字幕，输入 N 仅保留外部字幕：")
-        elif answer == "8":
-            configure_draft_transcripts(draft)
-        else:
-            print("输入无效，请输入 1-8、0，或直接按 Enter。")
+    reader = runlog.resolve_input_reader(input_reader)
+    answer = ""
+    if reader is not None:
+        while True:
+            print_smart_plan_defaults_panel(draft, config, index=index)
+            answer = reader("输入 1-8 修改；直接按 Enter 返回作品串；输入 0 开始：").strip()
+            if answer in {"", "0"}:
+                break
+            if answer == "1":
+                update_draft_edition(draft, config, input_reader=reader)
+            elif answer == "2":
+                update_draft_bonus(draft, config, input_reader=reader)
+            elif answer == "3":
+                ask_media_type_for_draft(draft, input_reader=reader)
+            elif answer == "4":
+                ask_video_branch_for_draft(draft, config, input_reader=reader)
+            elif answer == "5":
+                draft.layout = ask_output_layout(
+                    replace(config, default_output_layout="ask"),
+                    input_reader=reader,
+                )
+            elif answer == "6":
+                selected = smart_background(
+                    draft.scan,
+                    replace(config, background_policy="ask"),
+                    input_reader=reader,
+                )
+                (
+                    draft.background,
+                    draft.background_choice,
+                    draft.background_relative,
+                ) = background_selection_details(draft.scan, selected)
+            elif answer == "7":
+                runlog.emit("\n无论如何都会另外保留双语版.srt 和双语版.lrc。")
+                draft.embed_subtitles = ask_yes_no(
+                    "输入 Y 内嵌字幕，输入 N 仅保留外部字幕：",
+                    default=draft.embed_subtitles,
+                    input_reader=reader,
+                )
+            elif answer == "8":
+                configure_draft_transcripts(draft, input_reader=reader)
+            else:
+                runlog.emit("输入无效，请输入 1-8、0，或直接按 Enter。")
 
     mode = normalize_mode(draft.mode)
     plan_background = draft.background if mode != MODE_AUDIO else None
@@ -137,6 +151,7 @@ def prepare_smart_plan(
     embed_subtitles_argument: str | None,
     rebuild: bool,
     force: bool,
+    input_reader: InputReader | None = None,
 ) -> SmartTaskPlan:
     """Scan and configure a DLsite task without running models or translating."""
 
@@ -150,6 +165,7 @@ def prepare_smart_plan(
     if output_root == folder.resolve():
         raise VideoPreparerError("输出目录不能就是源作品文件夹；请使用 AutoFlow输出 子目录。")
 
+    reader = runlog.resolve_input_reader(input_reader)
     scan = scan_work(
         folder,
         excluded_directories=(config.output_folder_name, output_root.name),
@@ -159,13 +175,18 @@ def prepare_smart_plan(
         config,
         edition_argument=edition_argument,
         include_bonus=include_bonus,
+        input_reader=reader,
     )
     if not sources:
         raise VideoPreparerError("选中的版本没有可处理的音轨。")
-    mode = normalize_mode(mode_argument) if mode_argument else ask_mode(config)
-    layout = ask_output_layout(config, layout_argument)
-    background = smart_background(scan, config, background_argument) if mode != MODE_AUDIO else None
-    embed_subtitles = ask_embed_subtitles(mode, embed_subtitles_argument)
+    mode = normalize_mode(mode_argument) if mode_argument else ask_mode(config, input_reader=reader)
+    layout = ask_output_layout(config, layout_argument, input_reader=reader)
+    background = (
+        smart_background(scan, config, background_argument, input_reader=reader)
+        if mode != MODE_AUDIO
+        else None
+    )
+    embed_subtitles = ask_embed_subtitles(mode, embed_subtitles_argument, input_reader=reader)
     plan_id = plan_identity(
         folder,
         mode=mode,
@@ -194,13 +215,13 @@ def prepare_smart_plan(
 
 def print_smart_plan_summary(plan: SmartTaskPlan, *, index: int | None = None) -> None:
     heading = f"作品 {index}" if index is not None else "本作品"
-    print(f"\n{heading}已配置：{plan.folder.name}")
-    print(f"  音频版本：{plan.edition_label}（{len(plan.sources)} 轨）")
-    print(f"  处理类型：{mode_label(plan.mode)}")
-    print(f"  处理内容：{'仅生成字幕' if plan.subtitles_only else '中文配音和字幕'}")
-    print(f"  成品组织：{layout_label(plan.layout)}")
+    runlog.emit(f"\n{heading}已配置：{plan.folder.name}")
+    runlog.emit(f"  音频版本：{plan.edition_label}（{len(plan.sources)} 轨）")
+    runlog.emit(f"  处理类型：{mode_label(plan.mode)}")
+    runlog.emit(f"  处理内容：{'仅生成字幕' if plan.subtitles_only else '中文配音和字幕'}")
+    runlog.emit(f"  成品组织：{layout_label(plan.layout)}")
     if plan.mode != MODE_AUDIO:
-        print(f"  背景图片：{plan.background.name if plan.background else '黑色背景'}")
+        runlog.emit(f"  背景图片：{plan.background.name if plan.background else '黑色背景'}")
         subtitle_mode = (
             "原声视频带字幕，同时保留 SRT/LRC"
             if plan.subtitles_only and plan.embed_subtitles
@@ -210,5 +231,5 @@ def print_smart_plan_summary(plan: SmartTaskPlan, *, index: int | None = None) -
             if plan.embed_subtitles
             else "不内嵌，仅保留 SRT/LRC"
         )
-        print(f"  视频字幕：{subtitle_mode}")
-    print(f"  输出目录：{plan.output_root}")
+        runlog.emit(f"  视频字幕：{subtitle_mode}")
+    runlog.emit(f"  输出目录：{plan.output_root}")

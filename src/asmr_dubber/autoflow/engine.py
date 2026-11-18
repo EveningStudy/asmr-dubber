@@ -196,6 +196,9 @@ from .prompts import (
 )
 from .runlog import (
     append_log,
+    bind_autoflow_callbacks,
+    emit,
+    emit_stage,
 )
 from .self_test import (
     self_test,

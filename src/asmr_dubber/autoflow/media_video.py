@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from . import constants, processes
+from . import constants, processes, runlog
 from .constants import SAMPLE_RATE, VIDEO_FPS, VIDEO_SIZE
 from .domain import (
     ToolPaths,
@@ -384,7 +384,7 @@ def render_static_bilingual_video(
             partial.unlink(missing_ok=True)
             if require_hard_subtitles:
                 raise
-            print("  当前 FFmpeg 无法烧录字幕，改为写入可选择的内嵌字幕轨。")
+            runlog.emit("  当前 FFmpeg 无法烧录字幕，改为写入可选择的内嵌字幕轨。")
             remux_video_with_subtitle(paths, clean_video, subtitle_file, destination)
         finally:
             partial.unlink(missing_ok=True)

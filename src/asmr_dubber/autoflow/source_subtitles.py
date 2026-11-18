@@ -9,6 +9,7 @@ from ..pipeline import import_project_transcript
 from ..project_origin import batch_project_name, record_batch_origin
 from ..task_control import check_cancelled
 from . import engine as e
+from . import runlog
 from .domain import AppConfig, SmartTaskPlan, ToolPaths
 
 
@@ -111,7 +112,9 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
                 )
             else:
                 if source.transcript_path:
-                    print("仅字幕文件：所选台本不能直接提供本次所需的文字与时间轴，先运行 ASR。")
+                    runlog.emit(
+                        "仅字幕文件：所选台本不能直接提供本次所需的文字与时间轴，先运行 ASR。"
+                    )
                 e.run_asmr_cli(paths, "analyze", str(project_json))
             state["analyzed"] = True
             e.save_state(state_path, state)
@@ -181,7 +184,7 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
                 ),
             }
         )
-        print(f"{labels[language]} {index}/{len(plan.sources)} 完成：{source.path.name}")
+        runlog.emit(f"{labels[language]} {index}/{len(plan.sources)} 完成：{source.path.name}")
     if plan.layout in {e.LAYOUT_MERGED, e.LAYOUT_BOTH}:
         merged = root / "合并版"
         merged.mkdir(parents=True, exist_ok=True)
@@ -223,4 +226,4 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
     manifest["subtitle_naming"] = plan.subtitle_naming
     manifest["subtitle_custom_name"] = plan.subtitle_custom_name
     e.save_state(root / "处理清单.json", manifest)
-    print(f"仅字幕文件完成：{root}（{labels[language]}，未配音、未制作视频）")
+    runlog.emit(f"仅字幕文件完成：{root}（{labels[language]}，未配音、未制作视频）")

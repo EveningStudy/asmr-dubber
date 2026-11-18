@@ -33,10 +33,14 @@ STAGE_LISTENER: Any = None
 
 
 def announce_stage(arguments: Sequence[str]) -> None:
+    if not arguments:
+        return
+    stage = arguments[0]
+    runlog.emit_stage(stage)
     listener = STAGE_LISTENER
-    if listener is not None and arguments:
+    if listener is not None:
         with suppress(Exception):
-            listener(arguments[0])
+            listener(stage)
 
 
 def run_asmr_cli(paths: ToolPaths, *arguments: str) -> dict[str, Any] | None:
@@ -242,7 +246,7 @@ def wait_for_reference(
     launch_ui: bool = True,
 ) -> bool:
     if timeout_seconds <= 0:
-        print("\n  未指定统一参考音频，将使用主程序自动推荐的清晰片段。")
+        runlog.emit("\n  未指定统一参考音频，将使用主程序自动推荐的清晰片段。")
         return True
 
     request_id = uuid.uuid4().hex
@@ -269,37 +273,37 @@ def wait_for_reference(
                 runlog.log_event(f"参考音频页面通知失败，任务继续：{type(exc).__name__}: {exc}")
 
     emit("ready")
-    print("\n[4/5] 等你在网页中选择统一音色参考")
-    print(f"  项目：{project_json}")
+    runlog.emit("\n[4/5] 等你在网页中选择统一音色参考")
+    runlog.emit(f"  项目：{project_json}")
     if launch_ui:
-        print("  项目路径已复制到剪贴板。网页会预选最近项目；请点击“打开项目”。")
-        print("  选择清晰片段后，必须点击“设为项目音色参考”。")
-        print("  如果还修改了表格，请同时点击“保存校对表格”。")
+        runlog.emit("  项目路径已复制到剪贴板。网页会预选最近项目；请点击“打开项目”。")
+        runlog.emit("  选择清晰片段后，必须点击“设为项目音色参考”。")
+        runlog.emit("  如果还修改了表格，请同时点击“保存校对表格”。")
         launch_asmr_ui(paths, project_json)
     else:
-        print("  可在批量处理页展开当前任务下方的参考音频选择器。")
-    print(f"  {timeout_seconds} 秒内未选择则使用自动推荐的参考音频。")
+        runlog.emit("  可在批量处理页展开当前任务下方的参考音频选择器。")
+    runlog.emit(f"  {timeout_seconds} 秒内未选择则使用自动推荐的参考音频。")
 
     deadline = time.monotonic() + timeout_seconds
     next_notice = time.monotonic() + 60
     while True:
         reference_id = project_reference_id(project_json)
         if reference_id:
-            print(f"已检测到统一参考：{reference_id}")
+            runlog.emit(f"已检测到统一参考：{reference_id}")
             emit("selected", source="project_sentence", sentence_id=reference_id)
             return True
         if project_has_external_reference(project_json):
-            print("已检测到 ASMR Dubber 设置中的外部参考音频。")
+            runlog.emit("已检测到 ASMR Dubber 设置中的外部参考音频。")
             emit("selected", source="external")
             return True
         now = time.monotonic()
         remaining = deadline - now
         if remaining <= 0:
-            print("等待时间结束，将使用 ASMR Dubber 自动推荐的参考音频。")
+            runlog.emit("等待时间结束，将使用 ASMR Dubber 自动推荐的参考音频。")
             emit("timeout", source="automatic")
             return True
         if now >= next_notice:
-            print(f"  仍在等待参考音频，剩余约 {max(1, int(remaining // 60) + 1)} 分钟……")
+            runlog.emit(f"  仍在等待参考音频，剩余约 {max(1, int(remaining // 60) + 1)} 分钟……")
             next_notice = now + 60
         check_cancelled()
         time.sleep(min(2.0, remaining))

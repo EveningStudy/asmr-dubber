@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import tempfile
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
-from . import media_audio, processes, smart_queue
+from . import media_audio, processes, runlog, smart_queue
 from .catalog import (
     scan_work,
 )
@@ -174,11 +173,7 @@ def _check_queue_continues(paths: ToolPaths, root: Path, smart_sources: list[Aud
 
     existing_failed_records = read_failed_task_records()
     try:
-        with (
-            tempfile.TemporaryFile(mode="w+", encoding="utf-8") as sink,
-            redirect_stdout(sink),
-            redirect_stderr(sink),
-        ):
+        with runlog.bind_autoflow_callbacks(on_message=None, on_error=None):
             queue_result = smart_queue.execute_smart_queue(
                 paths,
                 AppConfig(
@@ -222,7 +217,7 @@ def _check_master_audio(
 
 
 def self_test(paths: ToolPaths) -> None:
-    print("运行轻量自检；不会调用 ASR、TTS 或网络……")
+    runlog.emit("运行轻量自检；不会调用 ASR、TTS 或网络……")
     with tempfile.TemporaryDirectory(prefix="video-preparer-test-") as temporary:
         root = Path(temporary)
         _generate_media(paths, root)
@@ -236,4 +231,4 @@ def self_test(paths: ToolPaths) -> None:
         normal, normal_duration = _check_video_renders(paths, root, master, background)
         _check_subtitle_files_and_video(paths, root, master, normal, normal_duration)
         _check_timestamp_document(root, timeline)
-    print("自检通过。")
+    runlog.emit("自检通过。")

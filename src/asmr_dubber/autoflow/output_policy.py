@@ -26,9 +26,13 @@ def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) 
     }
     # A sentence ID belongs to a single project, never to newly created tracks.
     selected.pop("tts_reference_sentence_id", None)
+    selected.pop("tts_whisper_reference_sentence_id", None)
     if "replace" in variants:
         selected["separation_enabled"] = True
         selected["spatial_rtf_enabled"] = True
+        if content == "replacement":
+            selected["tts_fit_source_duration"] = True
+            selected["tts_dual_voice_anchor"] = True
     return {"content": content, "variants": variants, "subtitle": subtitle, "settings": selected}
 
 
