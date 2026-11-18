@@ -67,16 +67,11 @@ def collect_failures(stage: str, project: Any) -> tuple[int, list[dict[str, str]
     return total, failed
 
 
-def write_result(
-    path: Path | None,
+def build_result(
     stage: str,
     project_path: Path | str,
     error: BaseException | None = None,
-) -> None:
-    """Write the stage result; never raises, because reporting must not hide the real error."""
-
-    if path is None:
-        return
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema": RESULT_SCHEMA,
         "stage": stage,
@@ -99,6 +94,23 @@ def write_result(
             total, failed = collect_failures(stage, project)
             payload["total"] = total
             payload["failed"] = failed
+    except Exception:
+        pass
+    return payload
+
+
+def write_result(
+    path: Path | None,
+    stage: str,
+    project_path: Path | str,
+    error: BaseException | None = None,
+) -> None:
+    """Write the stage result; never raises, because reporting must not hide the real error."""
+
+    if path is None:
+        return
+    try:
+        payload = build_result(stage, project_path, error)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except Exception:

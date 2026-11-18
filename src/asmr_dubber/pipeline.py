@@ -986,13 +986,16 @@ def _synthesize_project_impl(
             invalidate_outputs(project, audio=False)
 
     last_checkpoint = 0.0
+    checkpoint_dirty = False
 
     def checkpoint() -> None:
-        nonlocal last_checkpoint
+        nonlocal last_checkpoint, checkpoint_dirty
+        checkpoint_dirty = True
         now = time.monotonic()
         if now - last_checkpoint >= 2.0:
             save_project(project, project_dir)
             last_checkpoint = now
+            checkpoint_dirty = False
 
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     reference_source = source
@@ -1006,16 +1009,21 @@ def _synthesize_project_impl(
         from .separation import _ensure_separation_impl
 
         reference_source, _ = _ensure_separation_impl(project, project_dir, source, progress)
-    failures = synthesize_sentences(
-        project,
-        project_dir,
-        reference_source,
-        force=force,
-        sentence_ids=sentence_ids,
-        progress=progress,
-        on_sentence=checkpoint,
-        **cancel_kwargs,
-    )
+    try:
+        failures = synthesize_sentences(
+            project,
+            project_dir,
+            reference_source,
+            force=force,
+            sentence_ids=sentence_ids,
+            progress=progress,
+            on_sentence=checkpoint,
+            **cancel_kwargs,
+        )
+    finally:
+        if checkpoint_dirty:
+            save_project(project, project_dir)
+            checkpoint_dirty = False
     save_project(project, project_dir)
     export_transcript(project, project_dir)
     if failures:

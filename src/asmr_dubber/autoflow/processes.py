@@ -119,6 +119,17 @@ def run_process_captured(arguments: list[str], *, cwd: Path | None = None) -> st
     return "\n".join(part for part in (stdout, stderr) if part)
 
 
+_DEFAULT_RUN_PROCESS = run_process
+_DEFAULT_RUN_PROCESS_CAPTURED = run_process_captured
+
+
+def uses_default_process_runners() -> bool:
+    return (
+        run_process is _DEFAULT_RUN_PROCESS
+        and run_process_captured is _DEFAULT_RUN_PROCESS_CAPTURED
+    )
+
+
 def run_ffmpeg(paths: ToolPaths, arguments: list[str], *, cwd: Path | None = None) -> None:
     command = [
         str(paths.ffmpeg),

@@ -44,13 +44,14 @@ def announce_stage(arguments: Sequence[str]) -> None:
 
 
 def run_asmr_cli(paths: ToolPaths, *arguments: str) -> dict[str, Any] | None:
-    """Run one ``asmr-dubber`` command.
-
-    Translate, synthesize and mix are asked to write a result file, so a failure
-    reports the real reason and the failed sentences instead of an exit code.
-    """
+    """Run one ``asmr-dubber`` command in-process when safe, else via CLI subprocess."""
 
     announce_stage(arguments)
+    from .inprocess_pipeline import can_run_in_process, run_stage_in_process
+
+    if can_run_in_process(paths):
+        return run_stage_in_process(arguments)
+
     command = [*paths.cli_command, *arguments]
 
     if not arguments or arguments[0] not in stages.RESULT_STAGES:
@@ -110,6 +111,16 @@ def create_asmr_project(
     project_name: str | None = None,
 ) -> Path:
     projects_root = configured_projects_root(paths)
+    from .inprocess_pipeline import can_run_in_process, create_project_in_process
+
+    if can_run_in_process(paths):
+        announce_stage(("create", str(video)))
+        return create_project_in_process(
+            video,
+            projects_root=projects_root,
+            source_language=source_language,
+            project_name=project_name,
+        )
     before = known_project_manifests(projects_root)
     started_ns = time.time_ns()
     output = run_asmr_cli_captured(

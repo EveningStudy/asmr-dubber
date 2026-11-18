@@ -63,7 +63,11 @@ _REVIEW_MODELS: ContextVar[dict[str, Any] | None] = ContextVar("review_asr_model
 
 @contextmanager
 def recognition_session():
-    """Keep one selected Python ASR model resident across equal-audio windows."""
+    """Keep selected Python ASR models resident across windows and batch tracks."""
+    existing = _REVIEW_MODELS.get()
+    if existing is not None:
+        yield
+        return
     models: dict[str, Any] = {}
     marker = _REVIEW_MODELS.set(models)
     try:
@@ -72,6 +76,24 @@ def recognition_session():
         models.clear()
         _REVIEW_MODELS.reset(marker)
         _cleanup_cuda()
+
+
+def evict_recognition_session_if_low_vram(min_free_gb: float = 5.0) -> None:
+    """Release cached in-process ASR models only when CUDA VRAM is tight."""
+    models = _REVIEW_MODELS.get()
+    if not models:
+        return
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free_bytes, _total_bytes = torch.cuda.mem_get_info()
+            if free_bytes >= min_free_gb * (1024**3):
+                return
+    except Exception:
+        return
+    models.clear()
+    _cleanup_cuda()
 
 
 def _session_model(key: str, factory: Callable[[], Any]) -> Any:

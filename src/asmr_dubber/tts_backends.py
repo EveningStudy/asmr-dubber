@@ -50,6 +50,7 @@ from .tts import (
     tts_cache_key,
     valid_tts_cache,
 )
+from .tts_daemon import daemon_pool_active, run_resident_indextts_batch
 from .user_settings import saved_service_key
 from .voice_reference import (
     VoiceReference,
@@ -61,6 +62,7 @@ from .voice_reference import (
 
 Progress = Callable[[str, int, int], None]
 logger = logging.getLogger(__name__)
+_DEFAULT_SUBPROCESS_POPEN = subprocess.Popen
 
 
 def _cache_output(project: DubProject, sentence: Sentence, directory: Path) -> Path:
@@ -376,92 +378,128 @@ def _synthesize_indextts_cli_batch(
             env["PYTHONPATH"] = os.pathsep.join(
                 part for part in (runtime_source, existing_pythonpath) if part
             )
-        process = subprocess.Popen(
-            command,
-            start_new_session=os.name != "nt",
-            cwd=model_dir.parent if use_custom_worker else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=env,
-        )
-        register_process(process, cancel_event)
-        messages: queue.Queue[str | None] = queue.Queue()
+        if (
+            use_custom_worker
+            and daemon_pool_active()
+            and subprocess.Popen is _DEFAULT_SUBPROCESS_POPEN
+        ):
+            daemon_cmd = [
+                command[0],
+                command[1],
+                "--daemon",
+                *command[4:],
+            ]
 
-        def read_output() -> None:
-            assert process.stdout is not None
-            try:
-                for line in process.stdout:
-                    messages.put(line)
-            finally:
-                messages.put(None)
-
-        reader = threading.Thread(target=read_output, name="indextts-output", daemon=True)
-        reader.start()
-        deadline = time.monotonic() + project.settings.tts_timeout_seconds
-        generated_count = 0
-        stream_closed = False
-        started_at = time.monotonic()
-        last_heartbeat = started_at
-        while not stream_closed:
-            check_cancelled(cancel_event)
-            if time.monotonic() >= deadline:
-                terminate_process_tree(process)
-                raise SynthesisError(
-                    f"IndexTTS2 批量生成超过 {project.settings.tts_timeout_seconds:g} 秒/句，"
-                    "已停止独立进程。"
-                )
-            try:
-                line = messages.get(timeout=0.25)
-            except queue.Empty:
-                if process.poll() is not None and not reader.is_alive():
-                    break
-                now = time.monotonic()
-                if progress and now - last_heartbeat >= 2.0:
-                    elapsed = int(now - started_at)
-                    progress(
-                        f"IndexTTS2 正在加载模型/生成，已等待 {elapsed} 秒"
-                        f"（完成 {generated_count}/{len(tasks)} 句）",
-                        generated_count,
-                        len(tasks),
-                    )
-                    last_heartbeat = now
-                continue
-            if line is None:
-                stream_closed = True
-                continue
-            output_tail.append(line)
-            if "Generated:" in line:
-                generated_count = min(len(tasks), generated_count + 1)
-                deadline = time.monotonic() + project.settings.tts_timeout_seconds
+            def _on_v2_line(line: str) -> bool:
+                if "Generated:" not in line:
+                    return False
                 for sentence, reference, temporary in tasks:
                     if str(temporary) in line and sentence.id not in committed:
                         _commit_clip(project, project_dir, sentence, reference, temporary)
                         committed.add(sentence.id)
                         if on_sentence:
                             on_sentence()
-                if progress:
-                    progress(
-                        f"IndexTTS2 已生成 {generated_count}/{len(tasks)} 句",
-                        generated_count,
-                        len(tasks),
-                    )
-        while process.poll() is None:
+                return True
+
+            return_code = run_resident_indextts_batch(
+                worker_id="indextts2",
+                label="IndexTTS2",
+                daemon_command=daemon_cmd,
+                cwd=model_dir.parent,
+                env=env,
+                manifest=manifest,
+                total_items=len(tasks),
+                timeout_seconds=project.settings.tts_timeout_seconds,
+                progress=progress,
+                cancel_event=cancel_event,
+                on_line=_on_v2_line,
+                output_tail=output_tail,
+            )
             check_cancelled(cancel_event)
-            if time.monotonic() >= deadline:
-                terminate_process_tree(process)
-                raise SynthesisError("IndexTTS2 退出超时；已保留完成的逐句缓存。")
-            with suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=0.2)
-        return_code = process.wait()
-        reader.join(timeout=1)
-        # Cancellation can terminate the child between the queue check and
-        # process.wait(). Re-check here so a killed process is reported as a
-        # user cancellation rather than a misleading synthesis failure.
-        check_cancelled(cancel_event)
+        else:
+            process = subprocess.Popen(
+                command,
+                start_new_session=os.name != "nt",
+                cwd=model_dir.parent if use_custom_worker else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=env,
+            )
+            register_process(process, cancel_event)
+            messages: queue.Queue[str | None] = queue.Queue()
+
+            def read_output() -> None:
+                assert process is not None and process.stdout is not None
+                try:
+                    for line in process.stdout:
+                        messages.put(line)
+                finally:
+                    messages.put(None)
+
+            reader = threading.Thread(target=read_output, name="indextts-output", daemon=True)
+            reader.start()
+            deadline = time.monotonic() + project.settings.tts_timeout_seconds
+            generated_count = 0
+            stream_closed = False
+            started_at = time.monotonic()
+            last_heartbeat = started_at
+            while not stream_closed:
+                check_cancelled(cancel_event)
+                if time.monotonic() >= deadline:
+                    terminate_process_tree(process)
+                    raise SynthesisError(
+                        f"IndexTTS2 批量生成超过 {project.settings.tts_timeout_seconds:g} 秒/句，"
+                        "已停止独立进程。"
+                    )
+                try:
+                    line = messages.get(timeout=0.25)
+                except queue.Empty:
+                    if process.poll() is not None and not reader.is_alive():
+                        break
+                    now = time.monotonic()
+                    if progress and now - last_heartbeat >= 2.0:
+                        elapsed = int(now - started_at)
+                        progress(
+                            f"IndexTTS2 正在加载模型/生成，已等待 {elapsed} 秒"
+                            f"（完成 {generated_count}/{len(tasks)} 句）",
+                            generated_count,
+                            len(tasks),
+                        )
+                        last_heartbeat = now
+                    continue
+                if line is None:
+                    stream_closed = True
+                    continue
+                output_tail.append(line)
+                if "Generated:" in line:
+                    generated_count = min(len(tasks), generated_count + 1)
+                    deadline = time.monotonic() + project.settings.tts_timeout_seconds
+                    for sentence, reference, temporary in tasks:
+                        if str(temporary) in line and sentence.id not in committed:
+                            _commit_clip(project, project_dir, sentence, reference, temporary)
+                            committed.add(sentence.id)
+                            if on_sentence:
+                                on_sentence()
+                    if progress:
+                        progress(
+                            f"IndexTTS2 已生成 {generated_count}/{len(tasks)} 句",
+                            generated_count,
+                            len(tasks),
+                        )
+            while process.poll() is None:
+                check_cancelled(cancel_event)
+                if time.monotonic() >= deadline:
+                    terminate_process_tree(process)
+                    raise SynthesisError("IndexTTS2 退出超时；已保留完成的逐句缓存。")
+                with suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.2)
+            return_code = process.wait()
+            reader.join(timeout=1)
+            check_cancelled(cancel_event)
     except OperationCancelledError as exc:
         cancelled = exc
     except SynthesisError as exc:
@@ -635,67 +673,16 @@ def _synthesize_indextts25_batch(
         env["PYTHONPATH"] = os.pathsep.join(
             part for part in (runtime_source, existing_pythonpath) if part
         )
-        process = subprocess.Popen(
-            command,
-            start_new_session=os.name != "nt",
-            cwd=model_dir.parent,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=env,
-        )
-        register_process(process, cancel_event)
-        messages: queue.Queue[str | None] = queue.Queue()
+        if daemon_pool_active() and subprocess.Popen is _DEFAULT_SUBPROCESS_POPEN:
+            daemon_cmd = [
+                *command_prefix,
+                "--daemon",
+                *command[len(command_prefix) + 2 :],
+            ]
 
-        def read_output() -> None:
-            assert process is not None and process.stdout is not None
-            try:
-                for line in process.stdout:
-                    messages.put(line)
-            finally:
-                messages.put(None)
-
-        reader = threading.Thread(target=read_output, name="indextts25-output", daemon=True)
-        reader.start()
-        deadline = time.monotonic() + settings.tts_timeout_seconds
-        generated_count = 0
-        stream_closed = False
-        started_at = time.monotonic()
-        last_heartbeat = started_at
-        while not stream_closed:
-            check_cancelled(cancel_event)
-            if time.monotonic() >= deadline:
-                terminate_process_tree(process)
-                raise SynthesisError(
-                    f"IndexTTS-2.5 批量生成超过 {settings.tts_timeout_seconds:g} 秒/句，"
-                    "已停止独立进程。"
-                )
-            try:
-                line = messages.get(timeout=0.25)
-            except queue.Empty:
-                if process.poll() is not None and not reader.is_alive():
-                    break
-                now = time.monotonic()
-                if progress and now - last_heartbeat >= 2.0:
-                    elapsed = int(now - started_at)
-                    progress(
-                        f"IndexTTS-2.5 正在加载模型/生成，已等待 {elapsed} 秒"
-                        f"（完成 {generated_count}/{len(tasks)} 句）",
-                        generated_count,
-                        len(tasks),
-                    )
-                    last_heartbeat = now
-                continue
-            if line is None:
-                stream_closed = True
-                continue
-            output_tail.append(line)
-            if line.startswith("Generated:"):
-                generated_count = min(len(tasks), generated_count + 1)
-                deadline = time.monotonic() + settings.tts_timeout_seconds
+            def _on_v25_line(line: str) -> bool:
+                if not line.startswith("Generated:"):
+                    return False
                 generated_id = line.partition(":")[2].strip()
                 for sentence, reference, temporary in tasks:
                     if generated_id == sentence.id and sentence.id not in committed:
@@ -703,21 +690,107 @@ def _synthesize_indextts25_batch(
                         committed.add(sentence.id)
                         if on_sentence:
                             on_sentence()
-                if progress:
-                    progress(
-                        f"IndexTTS-2.5 已生成 {generated_count}/{len(tasks)} 句",
-                        generated_count,
-                        len(tasks),
-                    )
-        while process.poll() is None:
+                return True
+
+            return_code = run_resident_indextts_batch(
+                worker_id="indextts25",
+                label="IndexTTS-2.5",
+                daemon_command=daemon_cmd,
+                cwd=model_dir.parent,
+                env=env,
+                manifest=manifest,
+                total_items=len(tasks),
+                timeout_seconds=settings.tts_timeout_seconds,
+                progress=progress,
+                cancel_event=cancel_event,
+                on_line=_on_v25_line,
+                output_tail=output_tail,
+            )
             check_cancelled(cancel_event)
-            if time.monotonic() >= deadline:
-                terminate_process_tree(process)
-                raise SynthesisError("IndexTTS-2.5 退出超时；已保留完成的逐句缓存。")
-            with suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=0.2)
-        return_code = process.wait()
-        reader.join(timeout=1)
+        else:
+            process = subprocess.Popen(
+                command,
+                start_new_session=os.name != "nt",
+                cwd=model_dir.parent,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=env,
+            )
+            register_process(process, cancel_event)
+            messages: queue.Queue[str | None] = queue.Queue()
+
+            def read_output() -> None:
+                assert process is not None and process.stdout is not None
+                try:
+                    for line in process.stdout:
+                        messages.put(line)
+                finally:
+                    messages.put(None)
+
+            reader = threading.Thread(target=read_output, name="indextts25-output", daemon=True)
+            reader.start()
+            deadline = time.monotonic() + settings.tts_timeout_seconds
+            generated_count = 0
+            stream_closed = False
+            started_at = time.monotonic()
+            last_heartbeat = started_at
+            while not stream_closed:
+                check_cancelled(cancel_event)
+                if time.monotonic() >= deadline:
+                    terminate_process_tree(process)
+                    raise SynthesisError(
+                        f"IndexTTS-2.5 批量生成超过 {settings.tts_timeout_seconds:g} 秒/句，"
+                        "已停止独立进程。"
+                    )
+                try:
+                    line = messages.get(timeout=0.25)
+                except queue.Empty:
+                    if process.poll() is not None and not reader.is_alive():
+                        break
+                    now = time.monotonic()
+                    if progress and now - last_heartbeat >= 2.0:
+                        elapsed = int(now - started_at)
+                        progress(
+                            f"IndexTTS-2.5 正在加载模型/生成，已等待 {elapsed} 秒"
+                            f"（完成 {generated_count}/{len(tasks)} 句）",
+                            generated_count,
+                            len(tasks),
+                        )
+                        last_heartbeat = now
+                    continue
+                if line is None:
+                    stream_closed = True
+                    continue
+                output_tail.append(line)
+                if line.startswith("Generated:"):
+                    generated_count = min(len(tasks), generated_count + 1)
+                    deadline = time.monotonic() + settings.tts_timeout_seconds
+                    generated_id = line.partition(":")[2].strip()
+                    for sentence, reference, temporary in tasks:
+                        if generated_id == sentence.id and sentence.id not in committed:
+                            _commit_clip(project, project_dir, sentence, reference, temporary)
+                            committed.add(sentence.id)
+                            if on_sentence:
+                                on_sentence()
+                    if progress:
+                        progress(
+                            f"IndexTTS-2.5 已生成 {generated_count}/{len(tasks)} 句",
+                            generated_count,
+                            len(tasks),
+                        )
+            while process.poll() is None:
+                check_cancelled(cancel_event)
+                if time.monotonic() >= deadline:
+                    terminate_process_tree(process)
+                    raise SynthesisError("IndexTTS-2.5 退出超时；已保留完成的逐句缓存。")
+                with suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.2)
+            return_code = process.wait()
+            reader.join(timeout=1)
         check_cancelled(cancel_event)
     except OperationCancelledError as exc:
         cancelled = exc
