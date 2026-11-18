@@ -79,7 +79,7 @@ def translate_titles(
         start_seconds=0.0,
         end_seconds=1.0,
         source_text=folder_name_original,
-        zh_text=existing_folder_translation,
+        target_text=existing_folder_translation,
     )
     sentences = [folder_sentence]
     for index, item in enumerate(state["timeline"], start=1):
@@ -90,7 +90,7 @@ def translate_titles(
                 start_seconds=float(index),
                 end_seconds=float(index + 1),
                 source_text=str(item["title_ja"]),
-                zh_text=cached.get(filename, ""),
+                target_text=cached.get(filename, ""),
             )
         )
     source_languages = {

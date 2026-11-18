@@ -190,7 +190,7 @@ def _sentence(
             start_seconds=start_seconds,
             end_seconds=end_seconds,
             source_text="",
-            zh_text=text,
+            target_text=text,
             status="translated",
         )
     return Sentence(

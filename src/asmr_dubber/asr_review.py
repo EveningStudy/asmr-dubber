@@ -64,7 +64,7 @@ def rows_fingerprint(rows: list[Sentence]) -> str:
     return _digest(
         [
             {
-                k: row.model_dump()[k]
+                k: getattr(row, k)
                 for k in (
                     "id",
                     "start_seconds",

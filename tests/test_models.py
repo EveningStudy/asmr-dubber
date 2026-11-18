@@ -117,7 +117,7 @@ def test_schema_one_project_migrates_removed_backends_and_creates_backup(
     manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     project, directory = load_project(manifest)
-    assert project.schema_version == 3
+    assert project.schema_version == 4
     assert project.settings.asr_backend == "parakeet_nemo"
     assert project.settings.tts_backend == "indextts2"
     assert project.settings.asr_review_enabled is False
@@ -170,9 +170,11 @@ def test_schema_two_project_migrates_source_language_text_and_output_mode(tmp_pa
 
     project, directory = load_project(manifest)
 
-    assert project.schema_version == 3
+    assert project.schema_version == 4
     assert project.source_language == "ja"
     assert project.sentences[0].source_text == "Hello."
+    assert project.sentences[0].target_text == "你好。"
+    assert project.sentences[0].zh_text == "你好。"
     assert project.settings.mix_output_mode == "mixed"
     assert project.subtitle_language == "source"
 
@@ -181,7 +183,9 @@ def test_schema_two_project_migrates_source_language_text_and_output_mode(tmp_pa
     assert len(backups) == 1
     saved = json.loads(manifest.read_text(encoding="utf-8"))
     assert saved["sentences"][0]["source_text"] == "Hello."
+    assert saved["sentences"][0]["target_text"] == "你好。"
     assert "ja_text" not in saved["sentences"][0]
+    assert "zh_text" not in saved["sentences"][0]
 
 
 def test_schema_two_migration_keeps_source_text_if_both_names_are_present(tmp_path: Path) -> None:
@@ -371,3 +375,110 @@ def test_legacy_timing_fields_are_ignored_when_loading_current_models() -> None:
     assert settings.chinese_dubbing_offset_ms == 500
     assert settings.chinese_max_auto_speed == 1.4
     assert "overlap_seconds" not in sentence.model_dump()
+
+
+def test_schema_v3_migrates_to_v4_preserving_tts_cache_key_and_error_codes(
+    tmp_path: Path,
+) -> None:
+    from asmr_dubber.models import DubProject, SentenceStatus
+    from asmr_dubber.tts import tts_cache_key
+
+    ref_project = DubProject(
+        source=audio_info(),
+        settings=ProjectSettings(
+            reference_audio_mode="legacy",
+            tts_normalize_pauses=False,
+            tts_fit_source_duration=False,
+            tts_dual_voice_anchor=False,
+        ),
+        sentences=[
+            Sentence(
+                id="s000001",
+                start_seconds=0.2,
+                end_seconds=1.4,
+                source_text="おはよう",
+                target_text="早上好",
+                status=SentenceStatus.SYNTHESIZED,
+            ),
+            Sentence(
+                id="s000002",
+                start_seconds=1.6,
+                end_seconds=2.8,
+                source_text="テスト",
+                target_text="",
+                status=SentenceStatus.TRANSLATION_FAILED,
+                error="API timeout",
+            ),
+        ],
+    )
+    expected_key = tts_cache_key(ref_project, ref_project.sentences[0])
+
+    v3_payload = {
+        "schema_version": 3,
+        "app_version": "2.3.0",
+        "revision": 2,
+        "source": audio_info().model_dump(),
+        "settings": {"tts_backend": "indextts2"},
+        "sentences": [
+            {
+                "id": "s000001",
+                "start_seconds": 0.2,
+                "end_seconds": 1.4,
+                "source_text": "おはよう",
+                "zh_text": "早上好",
+                "status": "synthesized",
+                "tts_cache_key": expected_key,
+            },
+            {
+                "id": "s000002",
+                "start_seconds": 1.6,
+                "end_seconds": 2.8,
+                "source_text": "テスト",
+                "zh_text": "",
+                "status": "translation_failed",
+                "error": "API timeout",
+            },
+        ],
+    }
+    manifest = tmp_path / "project.json"
+    manifest.write_text(json.dumps(v3_payload, ensure_ascii=False), encoding="utf-8")
+
+    migrated, directory = load_project(manifest)
+    assert migrated.schema_version == 4
+    assert migrated.sentences[0].target_text == "早上好"
+    assert migrated.sentences[0].zh_text == "早上好"
+    assert migrated.sentences[0].status == SentenceStatus.SYNTHESIZED
+    assert tts_cache_key(migrated, migrated.sentences[0]) == expected_key
+    assert migrated.sentences[1].status == SentenceStatus.TRANSLATION_FAILED
+    assert migrated.sentences[1].error_code == "TRANSLATION_FAILED"
+    assert migrated.sentences[1].error == "API timeout"
+
+    save_project(migrated, directory)
+    backups = list((tmp_path / "backups").glob("project-schema-v3-*.json"))
+    assert len(backups) == 1
+
+
+def test_project_settings_domain_groups_and_mix_variants_roundtrip() -> None:
+    settings = ProjectSettings.model_validate(
+        {
+            "asr": {"diarize_speakers": True, "speaker_count": 2},
+            "translation": {"chars_per_second": 5.0, "target_language": "zh"},
+            "tts": {"backend": "indextts2_5", "model": "IndexTTS-2.5"},
+            "separation": {"enabled": True, "mix_mode": "replace"},
+            "mix": {
+                "bilingual": {"relative_loudness_db": -6.0},
+                "replacement": {"whisper_match": 0.75, "timing_mode": "fit_then_shift"},
+            },
+            "subtitles": {"timeline": "dubbing"},
+        }
+    )
+    assert settings.asr.diarize_speakers is True
+    assert settings.asr.speaker_count == 2
+    assert settings.translation.chars_per_second == 5.0
+    assert settings.tts.backend == "indextts2_5"
+    assert settings.separation.mix_mode == "replace"
+    assert settings.mix_variant(False).relative_loudness_db == -6.0
+    assert settings.mix_variant(True).whisper_match == 0.75
+    assert settings.subtitles.timeline == "dubbing"
+    grouped = settings.grouped_dump()
+    assert set(grouped) == {"asr", "translation", "tts", "mix", "separation", "subtitles"}

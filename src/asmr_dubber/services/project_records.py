@@ -142,7 +142,7 @@ def apply_table(project: DubProject, table: Any) -> bool:
             "start_seconds": start,
             "end_seconds": end,
             "source_text": source_text,
-            "zh_text": zh_text,
+            "target_text": zh_text,
         }
         if len(row) >= len(TABLE_HEADERS):
             source_switch = str(row[6] or "default").strip().lower()
@@ -169,13 +169,13 @@ def apply_table(project: DubProject, table: Any) -> bool:
         material_changed = any(
             getattr(old, field) != value
             for field, value in payload.items()
-            if field in {"start_seconds", "end_seconds", "source_text", "zh_text"}
+            if field in {"start_seconds", "end_seconds", "source_text", "target_text"}
         )
         speaker_changed = "speaker_id" in payload and old.speaker_id != payload["speaker_id"]
         updated = old.model_copy(update=payload)
-        if not old.enabled and updated.enabled and not updated.zh_text:
+        if not old.enabled and updated.enabled and not updated.target_text:
             updated.status = "pending"
-            updated.error = None
+            updated.clear_error()
         if material_changed or speaker_changed:
             if material_changed:
                 updated.review_locked = True
@@ -186,8 +186,8 @@ def apply_table(project: DubProject, table: Any) -> bool:
             updated.tts_candidates = []
             updated.tts_duration_seconds = None
             updated.reference_file = None
-            updated.status = "translated" if updated.zh_text else "pending"
-            updated.error = None
+            updated.status = "translated" if updated.target_text else "pending"
+            updated.clear_error()
         parsed.append(updated)
     parsed.sort(key=lambda item: (item.start_seconds, item.end_seconds, item.id))
     sentence_changed = [item.model_dump() for item in parsed] != [
@@ -232,7 +232,13 @@ def diagnostics(project: DubProject) -> str:
     ]
     if counts:
         lines.append("状态：" + "；".join(f"{key} {value}" for key, value in counts.items()))
-    errors = [f"{item.id}：{item.error}" for item in project.sentences if item.error]
+    errors = [
+        f"{item.id} [{item.error_code}]：{item.error}"
+        if item.error_code
+        else f"{item.id}：{item.error}"
+        for item in project.sentences
+        if item.error
+    ]
     if errors:
         lines.append("最近错误：\n" + "\n".join(errors[:8]))
     review = [

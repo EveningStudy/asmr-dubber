@@ -18,8 +18,9 @@ from .models import DubProject
 from .storage import atomic_write_text
 
 _BACKUP_FIELDS = (
-    "zh_text",
+    "target_text",
     "status",
+    "error_code",
     "error",
     "enabled",
     "chinese_audio_enabled",
@@ -94,7 +95,8 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
         item = saved.get(sentence.id)
         if item is None:
             continue
-        if sentence.zh_text != item["zh_text"] or item.get("status") in {
+        saved_text = str(item.get("target_text", item.get("zh_text", "")))
+        if sentence.target_text != saved_text or item.get("status") in {
             "skipped_sound",
             "skipped_filler",
         }:
@@ -106,9 +108,12 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
             sentence.tts_attempt = 0
             if "translation_warning" not in item:
                 sentence.translation_warning = None
+        sentence.target_text = saved_text
         for name in _BACKUP_FIELDS:
-            if name in item:
+            if name != "target_text" and name in item:
                 setattr(sentence, name, item[name])
+        if not sentence.error:
+            sentence.error_code = None
         restored += 1
     if restored:
         project.chinese_stem_file = None

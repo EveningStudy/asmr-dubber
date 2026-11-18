@@ -8,7 +8,7 @@ import time
 import uuid
 
 from ..app_logging import redact_sensitive
-from ..errors import InstallPausedError, OperationCancelledError
+from ..errors import InstallPausedError, OperationCancelledError, classify_error
 from ..platforms import portable_home
 from ..storage import atomic_write_text
 from ..task_control import CancellationToken, cancellation_scope, check_cancelled
@@ -90,6 +90,8 @@ class Tasks:
                 "logs": [],
                 "result": None,
                 "error": None,
+                "error_code": None,
+                "error_hint": None,
                 "request": copy.deepcopy(request),
                 "started_at": time.time(),
                 "updated_at": time.time(),
@@ -173,9 +175,16 @@ class Tasks:
                 check_cancelled(token)
             with self.lock:
                 failure = result.get("error") if isinstance(result, dict) else None
+                code, hint = classify_error(RuntimeError(str(failure))) if failure else (None, None)
                 self.items[identifier].update(
                     status="failed" if failure else "completed",
                     error=redact_sensitive(failure) if failure else None,
+                    error_code=result.get("error_code")
+                    if isinstance(result, dict) and result.get("error_code")
+                    else code,
+                    error_hint=result.get("error_hint")
+                    if isinstance(result, dict) and result.get("error_hint")
+                    else hint,
                     result=result,
                     reference=None,
                 )
@@ -183,13 +192,25 @@ class Tasks:
                     task = self.items[identifier]
                     task["current"] = task["total"] = task["total"] or 1
         except (OperationCancelledError, InstallPausedError) as exc:
-            with self.lock:
-                self.items[identifier].update(status="cancelled", message=str(exc), reference=None)
-        except Exception as exc:
-            logger.exception("Task %s failed", identifier)
+            code, hint = classify_error(exc)
             with self.lock:
                 self.items[identifier].update(
-                    status="failed", error=redact_sensitive(exc), reference=None
+                    status="cancelled",
+                    message=str(exc),
+                    error_code=code,
+                    error_hint=hint,
+                    reference=None,
+                )
+        except Exception as exc:
+            logger.exception("Task %s failed", identifier)
+            code, hint = classify_error(exc)
+            with self.lock:
+                self.items[identifier].update(
+                    status="failed",
+                    error=redact_sensitive(exc),
+                    error_code=code,
+                    error_hint=hint,
+                    reference=None,
                 )
         finally:
             with self.lock:

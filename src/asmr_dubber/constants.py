@@ -4,7 +4,7 @@ from .platforms import user_data_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-PROJECT_SCHEMA_VERSION = 3
+PROJECT_SCHEMA_VERSION = 4
 DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 ASMR_VAD_MODEL = "TransWithAI/Whisper-Vad-EncDec-ASMR-onnx"
 RECOMMENDED_ASR_BACKEND = "anime_whisper"

@@ -2,18 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
-import queue
 import shutil
-import signal
-import subprocess
-import sys
-import threading
-import time
-from collections.abc import Callable
-from contextlib import suppress
-from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,456 +16,161 @@ from .constants import (
     INDEXTTS_REQUIRED_DIRS,
     INDEXTTS_REQUIRED_FILES,
     OPTIONAL_ASR_MODEL_REVISIONS,
-    PROJECT_ROOT,
     RECOMMENDED_ASR_BACKEND,
     RECOMMENDED_ASR_MODEL,
     RECOMMENDED_TTS_BACKEND,
 )
-from .environment import cached_model_path, cuda_summary
-from .errors import AsmrDubberError, EnvironmentError, InstallPausedError
+from .constants import (
+    PROJECT_ROOT as PROJECT_ROOT,
+)
+from .environment import cached_model_path as cached_model_path
+from .environment import cuda_summary as cuda_summary
+from .errors import (
+    AsmrDubberError as AsmrDubberError,
+)
+from .errors import (
+    EnvironmentError as EnvironmentError,
+)
+from .errors import (
+    InstallPausedError as InstallPausedError,
+)
 from .mirrors import (
-    download_candidates,
-    external_downloads_allowed,
-    snapshot_download_with_fallback,
+    download_candidates as download_candidates,
+)
+from .mirrors import (
+    external_downloads_allowed as external_downloads_allowed,
+)
+from .mirrors import (
+    snapshot_download_with_fallback as snapshot_download_with_fallback,
 )
 from .model_pack_download import (
-    ModelPackDownloadError,
-    ModelPackDownloadPaused,
-    prepare_remote_model_pack,
+    ModelPackDownloadError as ModelPackDownloadError,
 )
-from .model_packs import ModelPackError, import_discovered_model_packs
+from .model_pack_download import (
+    ModelPackDownloadPaused as ModelPackDownloadPaused,
+)
+from .model_pack_download import (
+    prepare_remote_model_pack as prepare_remote_model_pack,
+)
+from .model_packs import (
+    ModelPackError as ModelPackError,
+)
+from .model_packs import (
+    import_discovered_model_packs as import_discovered_model_packs,
+)
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS, ModelBackend
-from .platforms import current_platform, portable_home, runtime_executable_candidates
-from .storage import exclusive_file_lock
-
-
-@dataclass(frozen=True)
-class HardwareProfile:
-    platform_id: str
-    platform_label: str
-    architecture: str
-    cpu: str
-    memory_gb: float | None
-    gpu: str | None
-    vram_gb: float | None
-    driver: str | None
-    cuda_available: bool
-    compute_capability: str | None = None
-
-    @property
-    def recommended_device(self) -> str:
-        return "cuda" if self.cuda_available else "cpu"
-
-    @property
-    def full_cuda_stack_supported(self) -> bool:
-        if not self.cuda_available:
-            return False
-        if self.compute_capability is None:
-            return True
-        try:
-            return float(self.compute_capability) >= 7.5
-        except ValueError:
-            return True
-
-
-@dataclass(frozen=True)
-class BackendStatus:
-    state: str
-    label: str
-    detail: str = ""
-
-
-InstallLogCallback = Callable[[str], None]
-
-
-def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        taskkill = shutil.which("taskkill.exe") or shutil.which("taskkill")
-        if not taskkill:
-            candidate = (
-                Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "taskkill.exe"
-            )
-            taskkill = str(candidate) if candidate.is_file() else None
-        if taskkill:
-            with suppress(OSError, subprocess.TimeoutExpired):
-                subprocess.run(
-                    [taskkill, "/PID", str(process.pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=15,
-                    check=False,
-                )
-    else:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=5)
-        except (OSError, ProcessLookupError, subprocess.TimeoutExpired):
-            with suppress(OSError, ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-    if process.poll() is None:
-        process.kill()
-
-
-def _run_streaming_process(
-    command: list[str],
-    *,
-    cwd: Path,
-    env: dict[str, str],
-    timeout_seconds: float,
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run an installer while forwarding merged stdout/stderr line by line."""
-    process = subprocess.Popen(
-        command,
-        cwd=cwd,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
-        start_new_session=os.name != "nt",
-    )
-    output: list[str] = []
-    messages: queue.Queue[str | None] = queue.Queue()
-
-    def read_output() -> None:
-        assert process.stdout is not None
-        try:
-            for line in iter(process.stdout.readline, ""):
-                messages.put(line)
-        finally:
-            process.stdout.close()
-            messages.put(None)
-
-    reader = threading.Thread(
-        target=read_output,
-        name="asmr-dubber-installer-output",
-        daemon=True,
-    )
-    reader.start()
-    deadline = time.monotonic() + max(0.1, timeout_seconds)
-    reader_finished = False
-    try:
-        while not reader_finished:
-            if cancel_event is not None and cancel_event.is_set():
-                _terminate_process_tree(process)
-                raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, timeout_seconds, output="".join(output))
-            try:
-                line = messages.get(timeout=min(0.25, remaining))
-            except queue.Empty:
-                continue
-            if line is None:
-                reader_finished = True
-                continue
-            output.append(line)
-            rendered = line.rstrip("\r\n")
-            if rendered and log_callback is not None:
-                log_callback(rendered)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise subprocess.TimeoutExpired(command, timeout_seconds, output="".join(output))
-        return_code = process.wait(timeout=remaining)
-    except BaseException:
-        _terminate_process_tree(process)
-        try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        raise
-    finally:
-        reader.join(timeout=1)
-    return subprocess.CompletedProcess(
-        command,
-        return_code,
-        stdout="".join(output),
-        stderr="",
-    )
-
-
-_IMPORTS: dict[str, tuple[str, ...]] = {
-    "edge_tts": ("edge_tts",),
-    "faster_whisper": ("faster_whisper",),
-    "kotoba_whisper": ("transformers",),
-    "qwen3_asr": ("transformers", "qwen_asr", "onnxruntime"),
-    "anime_whisper": ("transformers", "qwen_asr", "onnxruntime"),
-}
-
-_BACKEND_MODEL_REPOS: dict[str, tuple[str, ...]] = {
-    "kotoba_whisper": ("kotoba-tech/kotoba-whisper-v2.2",),
-    "faster_whisper": ("Systran/faster-whisper-large-v2",),
-    # Both new recognizers cut Japanese audio with the ASMR VAD and timestamp
-    # it with the Qwen3 aligner, so the install is only complete with them.
-    "anime_whisper": ("litagin/anime-whisper", DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL),
-    "qwen3_asr": (
-        "Qwen/Qwen3-ASR-1.7B",
-        "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",
-        DEFAULT_ALIGNER_MODEL,
-        ASMR_VAD_MODEL,
-    ),
-}
-
-# Backends whose Windows install goes through scripts/windows/install-backend.ps1
-# (CUDA PyTorch + the advanced dependency pack) instead of a plain uv install.
-_WINDOWS_SCRIPT_BACKENDS = frozenset(
-    {"faster_whisper", "kotoba_whisper", "anime_whisper", "qwen3_asr"}
+from .platforms import (
+    current_platform as current_platform,
 )
-_TORCH_BACKENDS = frozenset({"kotoba_whisper", "anime_whisper", "qwen3_asr"})
-
-# Repository files that inference never reads. The community Qwen3 fine-tune
-# ships ~8 GB of optimizer state next to the 4 GB checkpoint.
-_MODEL_DOWNLOAD_IGNORE: dict[str, tuple[str, ...]] = {
-    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame": (
-        "optimizer.pt",
-        "scheduler.pt",
-        "rng_state*",
-        "trainer_state.json",
-        "training_args.bin",
-        "checkpoint-*",
-        "*.pt",
-        "*.pth",
-        "*.bin",
-    ),
-    "litagin/anime-whisper": ("figs/*",),
-}
-
-# Models that have a ModelScope offline pack; everything else is Hugging Face only.
-_MODELSCOPE_PACK_FOR_MODEL = {
-    ASMR_VAD_MODEL: "whisper-vad-asmr-onnx",
-    DEFAULT_ALIGNER_MODEL: "qwen3-forced-aligner",
-    "kotoba-tech/kotoba-whisper-v2.2": "kotoba-whisper-v2.2",
-    "Systran/faster-whisper-large-v2": "faster-whisper-large-v2",
-    "litagin/anime-whisper": "anime-whisper",
-    "Qwen/Qwen3-ASR-1.7B": "qwen3-asr-1.7b",
-}
-
-_PARAKEET_MODEL_FILES = {
-    "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo": (
-        "parakeet-ctc-1.1b-ja-f16.gguf"
-    ),
-    "nvidia/parakeet-tdt_ctc-0.6b-ja": "parakeet-tdt-0.6b-ja.gguf",
-}
-
-_FASTER_WHISPER_REPOS = {
-    "small": "Systran/faster-whisper-small",
-    "medium": "Systran/faster-whisper-medium",
-    "large-v2": "Systran/faster-whisper-large-v2",
-    "large-v3": "Systran/faster-whisper-large-v3",
-    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
-    "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
-    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
-}
-
-ASR_REVIEW_MODEL_OPTIONS = (
-    (
-        "Parakeet CTC 1.1B 日语 GAL（推荐）",
-        "parakeet_nemo",
-        "grider-transwithai/parakeet-ctc-1.1b-ja::parakeet-ja-gal.nemo",
-    ),
-    (
-        "Parakeet TDT/CTC 0.6B 日语（官方）",
-        "parakeet_nemo",
-        "nvidia/parakeet-tdt_ctc-0.6b-ja",
-    ),
-    (
-        "Kotoba-Whisper v2.2（最新推荐）",
-        "kotoba_whisper",
-        "kotoba-tech/kotoba-whisper-v2.2",
-    ),
-    (
-        "Kotoba-Whisper v2.1（旧版标点模型）",
-        "kotoba_whisper",
-        "kotoba-tech/kotoba-whisper-v2.1",
-    ),
-    (
-        "Kotoba-Whisper v2.0 Faster",
-        "faster_whisper",
-        "kotoba-tech/kotoba-whisper-v2.0-faster",
-    ),
-    ("Faster-Whisper large-v2", "faster_whisper", "large-v2"),
-    ("Faster-Whisper large-v3", "faster_whisper", "large-v3"),
+from .platforms import (
+    portable_home as portable_home,
 )
-
-
-def _windows_memory_gb() -> float | None:
-    if os.name != "nt":
-        return None
-    try:
-        import ctypes
-
-        class MemoryStatus(ctypes.Structure):
-            _fields_ = [
-                ("length", ctypes.c_ulong),
-                ("memory_load", ctypes.c_ulong),
-                ("total_physical", ctypes.c_ulonglong),
-                ("available_physical", ctypes.c_ulonglong),
-                ("total_page_file", ctypes.c_ulonglong),
-                ("available_page_file", ctypes.c_ulonglong),
-                ("total_virtual", ctypes.c_ulonglong),
-                ("available_virtual", ctypes.c_ulonglong),
-                ("available_extended_virtual", ctypes.c_ulonglong),
-            ]
-
-        status = MemoryStatus()
-        status.length = ctypes.sizeof(status)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return status.total_physical / 1024**3
-    except (AttributeError, OSError, ValueError):
-        pass
-    return None
-
-
-def _linux_memory_gb() -> float | None:
-    try:
-        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-            if line.startswith("MemTotal:"):
-                return float(line.split()[1]) / 1024**2
-    except (OSError, ValueError, IndexError):
-        pass
-    return None
-
-
-def _nvidia_gpu() -> tuple[str | None, float | None, str | None, str | None]:
-    executable = shutil.which("nvidia-smi")
-    if not executable and os.name == "nt":
-        candidate = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32/nvidia-smi.exe"
-        executable = str(candidate) if candidate.is_file() else None
-    if not executable:
-        return None, None, None, None
-
-    def query(fields: str) -> list[str]:
-        completed = subprocess.run(
-            [
-                executable,
-                f"--query-gpu={fields}",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise ValueError(completed.stderr.strip() or "nvidia-smi 查询失败")
-        return [part.strip() for part in completed.stdout.strip().splitlines()[0].split(",")]
-
-    try:
-        name, memory_mib, driver, capability = query("name,memory.total,driver_version,compute_cap")
-        return name, float(memory_mib) / 1024, driver, capability
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-        # Older nvidia-smi versions may not expose compute_cap. Keep hardware
-        # detection useful and simply omit the architecture warning.
-        try:
-            name, memory_mib, driver = query("name,memory.total,driver_version")
-            return name, float(memory_mib) / 1024, driver, None
-        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-            return None, None, None, None
-
-
-@lru_cache(maxsize=1)
-def detect_hardware() -> HardwareProfile:
-    """Detect hardware once per process.
-
-    The settings page asks for the same profile several times while it is being
-    built.  Caching avoids repeatedly launching nvidia-smi.  Explicit refreshes
-    use ``refresh_hardware`` below.
-    """
-    info = current_platform()
-    gpu, vram, driver, capability = _nvidia_gpu()
-    memory = _windows_memory_gb() if info.is_windows else _linux_memory_gb()
-    cpu = os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
-    if not cpu:
-        import platform
-
-        cpu = platform.processor() or "未知 CPU"
-    return HardwareProfile(
-        platform_id=info.id,
-        platform_label=info.label,
-        architecture=info.architecture,
-        cpu=cpu,
-        memory_gb=memory,
-        gpu=gpu,
-        vram_gb=vram,
-        driver=driver,
-        cuda_available=gpu is not None,
-        compute_capability=capability,
-    )
-
-
-def refresh_hardware() -> HardwareProfile:
-    detect_hardware.cache_clear()
-    return detect_hardware()
-
-
-def hardware_markdown(profile: HardwareProfile | None = None) -> str:
-    profile = profile or detect_hardware()
-    memory = f"{profile.memory_gb:.1f} GB" if profile.memory_gb is not None else "未检测"
-    if profile.gpu:
-        vram = f"{profile.vram_gb:.1f} GB" if profile.vram_gb is not None else "未知显存"
-        capability = (
-            f" · 计算能力 {profile.compute_capability}" if profile.compute_capability else ""
-        )
-        gpu = f"{profile.gpu} · {vram} · 驱动 {profile.driver or '未知'}{capability}"
-    else:
-        gpu = "未检测到 NVIDIA GPU；可选择 CPU、云端或 HTTP 后端"
-    warning = (
-        "  \n**兼容提醒：** 当前 Windows 完整 GPU 环境需要 Turing（计算能力 7.5）或更新架构。"
-        if profile.cuda_available and not profile.full_cuda_stack_supported
-        else ""
-    )
-    return (
-        f"**系统：** {profile.platform_label} {profile.architecture}  \n"
-        f"**内存：** {memory}  \n"
-        f"**GPU：** {gpu}  \n"
-        f"**推荐设备：** `{profile.recommended_device}`{warning}"
-    )
-
-
-def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
-    profile = profile or detect_hardware()
-    vram = profile.vram_gb or 0.0
-    if profile.cuda_available and not profile.full_cuda_stack_supported:
-        title = "旧架构 NVIDIA（部分组件改用 CPU）"
-        detail = (
-            "当前完整 GPU 依赖要求 Turing 或更新架构。Parakeet/Faster-Whisper 可按实际状态选择，"
-            "Kotoba 和 Qwen 对齐建议改用 CPU，TTS 可使用外部 API。"
-        )
-    elif profile.cuda_available and vram >= 11.5:
-        title = "质量优先（推荐）"
-        detail = (
-            "日语识别首选 Parakeet CTC 1.1B GAL；疑难音频可启用"
-            " Parakeet + Kotoba + Faster-Whisper 多模型校对。翻译用 DeepSeek，"
-            "配音首选 IndexTTS2。"
-        )
-    elif profile.cuda_available and vram >= 8:
-        title = "显存均衡"
-        detail = (
-            "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.2 或 Faster-Whisper large-v2；"
-            "生成 TTS 前关闭其他显存占用程序。IndexTTS2 建议启用 FP16。"
-        )
-    elif profile.cuda_available and vram >= 6:
-        title = "低显存 NVIDIA"
-        detail = (
-            "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.0-faster 或 Faster-Whisper large-v2"
-            "（float16 或 int8_float16）/ DeepSeek / IndexTTS2 FP16。"
-        )
-    else:
-        title = "CPU / 无 NVIDIA"
-        detail = (
-            "Parakeet CTC 1.1B GAL（CPU F16）或 Faster-Whisper（cpu + int8）/ "
-            "DeepSeek / 外部 TTS（语音合成）API。"
-            "质量优先的本地克隆模型通常需要 NVIDIA GPU。"
-        )
-    return f"### 本机建议：{title}\n{detail}"
+from .platforms import (
+    runtime_executable_candidates as runtime_executable_candidates,
+)
+from .runtime_installers import (
+    _install_backend_unlocked as _install_backend_unlocked,
+)
+from .runtime_installers import (
+    _install_indextts_runtime as _install_indextts_runtime,
+)
+from .runtime_installers import (
+    _install_parakeet_runtime as _install_parakeet_runtime,
+)
+from .runtime_installers import (
+    _install_windows_backend as _install_windows_backend,
+)
+from .runtime_installers import (
+    _powershell_executable as _powershell_executable,
+)
+from .runtime_installers import (
+    _uv_executable as _uv_executable,
+)
+from .runtime_installers import (
+    install_backend as install_backend,
+)
+from .runtime_models import (
+    _download_backend_models_subprocess as _download_backend_models_subprocess,
+)
+from .runtime_models import (
+    _run_streaming_process as _run_streaming_process,
+)
+from .runtime_models import (
+    _terminate_process_tree as _terminate_process_tree,
+)
+from .runtime_models import (
+    download_backend_models as download_backend_models,
+)
+from .runtime_models import (
+    import_backend_model_packs as import_backend_model_packs,
+)
+from .runtime_specs import (
+    _BACKEND_MODEL_REPOS as _BACKEND_MODEL_REPOS,
+)
+from .runtime_specs import (
+    _FASTER_WHISPER_REPOS as _FASTER_WHISPER_REPOS,
+)
+from .runtime_specs import (
+    _IMPORTS as _IMPORTS,
+)
+from .runtime_specs import (
+    _MODEL_DOWNLOAD_IGNORE as _MODEL_DOWNLOAD_IGNORE,
+)
+from .runtime_specs import (
+    _MODELSCOPE_PACK_FOR_MODEL as _MODELSCOPE_PACK_FOR_MODEL,
+)
+from .runtime_specs import (
+    _PARAKEET_MODEL_FILES as _PARAKEET_MODEL_FILES,
+)
+from .runtime_specs import (
+    _TORCH_BACKENDS as _TORCH_BACKENDS,
+)
+from .runtime_specs import (
+    _WINDOWS_SCRIPT_BACKENDS as _WINDOWS_SCRIPT_BACKENDS,
+)
+from .runtime_specs import (
+    ASR_REVIEW_MODEL_OPTIONS as ASR_REVIEW_MODEL_OPTIONS,
+)
+from .runtime_specs import (
+    BackendStatus as BackendStatus,
+)
+from .runtime_specs import (
+    HardwareProfile as HardwareProfile,
+)
+from .runtime_specs import (
+    InstallLogCallback as InstallLogCallback,
+)
+from .runtime_specs import (
+    _linux_memory_gb as _linux_memory_gb,
+)
+from .runtime_specs import (
+    _nvidia_gpu as _nvidia_gpu,
+)
+from .runtime_specs import (
+    _windows_memory_gb as _windows_memory_gb,
+)
+from .runtime_specs import (
+    backend_model_pack_ids as backend_model_pack_ids,
+)
+from .runtime_specs import (
+    compatibility_note as compatibility_note,
+)
+from .runtime_specs import (
+    detect_hardware as detect_hardware,
+)
+from .runtime_specs import (
+    hardware_markdown as hardware_markdown,
+)
+from .runtime_specs import (
+    installable_backend_ids as installable_backend_ids,
+)
+from .runtime_specs import (
+    recommended_stack_markdown as recommended_stack_markdown,
+)
+from .runtime_specs import (
+    refresh_hardware as refresh_hardware,
+)
+from .storage import exclusive_file_lock as exclusive_file_lock
 
 
 def _imports_available(backend_id: str) -> bool:
@@ -811,26 +505,6 @@ def available_timestamp_review_choices(settings: Any | None = None) -> list[tupl
     return choices
 
 
-def compatibility_note(backend: ModelBackend, profile: HardwareProfile) -> str:
-    if profile.platform_id not in backend.platforms:
-        return "不兼容"
-    if backend.devices == ("cuda",) and not profile.cuda_available:
-        return "需要 NVIDIA GPU"
-    if (
-        profile.vram_gb is not None
-        and backend.minimum_vram_gb is not None
-        and profile.vram_gb < backend.minimum_vram_gb
-    ):
-        return f"显存不足（最低 {backend.minimum_vram_gb:g} GB）"
-    if "cuda" in backend.devices and profile.cuda_available:
-        if backend.recommended_vram_gb:
-            return f"适合 CUDA（建议 {backend.recommended_vram_gb:g} GB）"
-        return "适合 CUDA"
-    if "cpu" in backend.devices:
-        return "可使用 CPU"
-    return "需检查设备"
-
-
 def backend_catalog_rows(
     settings: Any | None = None,
     kind: Literal["asr", "tts"] | None = None,
@@ -870,580 +544,3 @@ def support_report_json(settings: Any | None = None) -> str:
         },
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def _uv_executable() -> Path | None:
-    home = portable_home()
-    candidates = [
-        home / "bootstrap" / "windows" / "uv" / "uv.exe",
-        home / "bootstrap" / "linux" / "uv" / "uv",
-        Path.home() / ".local" / "bin" / ("uv.exe" if os.name == "nt" else "uv"),
-    ]
-    discovered = shutil.which("uv")
-    if discovered:
-        candidates.insert(0, Path(discovered))
-    return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
-
-
-def _powershell_executable() -> Path | None:
-    candidates: list[Path] = []
-    for name in ("pwsh.exe", "pwsh", "powershell.exe", "powershell"):
-        discovered = shutil.which(name)
-        if discovered:
-            candidates.append(Path(discovered))
-    program_files = os.getenv("PROGRAMFILES", "").strip()
-    system_root = os.getenv("SYSTEMROOT", "").strip()
-    if program_files:
-        candidates.append(Path(program_files) / "PowerShell" / "7" / "pwsh.exe")
-    if system_root:
-        candidates.append(
-            Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-        )
-    return next((candidate for candidate in candidates if candidate.is_file()), None)
-
-
-def _install_windows_backend(
-    backend_id: str,
-    *,
-    timeout_seconds: float,
-    env: dict[str, str],
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> subprocess.CompletedProcess[str]:
-    powershell = _powershell_executable()
-    script = PROJECT_ROOT / "scripts" / "windows" / "install-backend.ps1"
-    if powershell is None:
-        raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
-    if not script.is_file():
-        raise EnvironmentError("Windows 后端安装脚本缺失；请重新下载完整项目。")
-    return _run_streaming_process(
-        [
-            str(powershell),
-            "-NoLogo",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-Backend",
-            backend_id,
-        ],
-        cwd=PROJECT_ROOT,
-        env=env,
-        timeout_seconds=timeout_seconds,
-        log_callback=log_callback,
-        cancel_event=cancel_event,
-    )
-
-
-def installable_backend_ids() -> tuple[str, ...]:
-    return tuple(
-        backend.id
-        for backend in (*ASR_BACKENDS.values(), *TTS_BACKENDS.values())
-        if backend.installer is not None
-    )
-
-
-def backend_model_pack_ids(backend_id: str) -> set[str]:
-    if backend_id == "parakeet_nemo":
-        pack = "parakeet-ja-windows" if current_platform().is_windows else "parakeet-ja-linux"
-        return {pack}
-    return {
-        "indextts2_5": {"indextts2_5-checkpoints"},
-        "indextts2": {"indextts2-checkpoints"},
-        "kotoba_whisper": {"kotoba-whisper-v2.2"},
-        "faster_whisper": {"faster-whisper-large-v2"},
-        # anime-whisper and the base Qwen3-ASR 1.7B packs are published on
-        # ModelScope alongside the VAD and aligner packs; the community Qwen3
-        # fine-tune pack is picked up only when dropped into model-packs/.
-        "anime_whisper": {"anime-whisper", "whisper-vad-asmr-onnx", "qwen3-forced-aligner"},
-        "qwen3_asr": {
-            "qwen3-asr-1.7b",
-            "qwen3-asr-1.7b-ja-anime-galgame",
-            "whisper-vad-asmr-onnx",
-            "qwen3-forced-aligner",
-        },
-    }.get(backend_id, set())
-
-
-def import_backend_model_packs(
-    backend_id: str,
-    *,
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> int:
-    pack_ids = backend_model_pack_ids(backend_id)
-    if not pack_ids:
-        return 0
-    for pack_id in sorted(pack_ids):
-        try:
-            prepare_remote_model_pack(
-                pack_id,
-                log=log_callback,
-                cancelled=cancel_event.is_set if cancel_event is not None else None,
-            )
-        except ModelPackDownloadPaused as exc:
-            raise InstallPausedError(str(exc)) from exc
-        except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
-            if log_callback is not None:
-                if external_downloads_allowed():
-                    log_callback(f"ModelScope 模型包不可用；已允许海外源，将尝试备用源：{exc}")
-                else:
-                    log_callback(f"ModelScope 模型包不可用；断点已保留且不会切换海外源：{exc}")
-    try:
-        results = import_discovered_model_packs(
-            pack_ids=pack_ids,
-            log=log_callback,
-            progress=(
-                (lambda message, current, total: log_callback(f"[{current}/{total}] {message}"))
-                if log_callback is not None
-                else None
-            ),
-        )
-    except (ModelPackError, OSError) as exc:
-        raise EnvironmentError(f"本地模型包导入失败：{exc}") from exc
-    if results and log_callback is not None:
-        log_callback(f"已优先处理 {len(results)} 个本地模型包。")
-    return len(results)
-
-
-def _install_indextts_runtime(
-    backend_id: str,
-    *,
-    timeout_seconds: float,
-    env: dict[str, str],
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> subprocess.CompletedProcess[str]:
-    info = current_platform()
-    if info.is_windows:
-        executable = _powershell_executable()
-        script_name = (
-            "install-indextts25.ps1" if backend_id == "indextts2_5" else "install-indextts2.ps1"
-        )
-        script = PROJECT_ROOT / "scripts" / "windows" / script_name
-        if executable is None:
-            raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
-        command = [
-            str(executable),
-            "-NoLogo",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-        ]
-    else:
-        executable = Path(shutil.which("bash") or "")
-        script_name = (
-            "install-indextts25.sh" if backend_id == "indextts2_5" else "install-indextts2.sh"
-        )
-        script = PROJECT_ROOT / "scripts" / "linux" / script_name
-        if not executable.is_file():
-            raise EnvironmentError("找不到 bash，无法安装 IndexTTS2 独立运行时。")
-        command = [str(executable), str(script)]
-    if not script.is_file():
-        raise EnvironmentError("IndexTTS2 安装脚本缺失；请重新下载完整项目。")
-    return _run_streaming_process(
-        command,
-        cwd=PROJECT_ROOT,
-        env=env,
-        timeout_seconds=max(timeout_seconds, 14_400),
-        log_callback=log_callback,
-        cancel_event=cancel_event,
-    )
-
-
-def _install_parakeet_runtime(
-    *,
-    timeout_seconds: float,
-    env: dict[str, str],
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> subprocess.CompletedProcess[str]:
-    info = current_platform()
-    if info.is_windows:
-        executable = _powershell_executable()
-        script = PROJECT_ROOT / "scripts" / "windows" / "install-parakeet.ps1"
-        if executable is None:
-            raise EnvironmentError("找不到 PowerShell；Windows 自带 5.1 或 PowerShell 7 均可。")
-        command = [
-            str(executable),
-            "-NoLogo",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-Variant",
-            "Auto",
-        ]
-    else:
-        executable = Path(shutil.which("bash") or "")
-        script = PROJECT_ROOT / "scripts" / "linux" / "install-parakeet.sh"
-        if not executable.is_file():
-            raise EnvironmentError("找不到 bash，无法安装 CrispASR。")
-        command = [str(executable), str(script)]
-    if not script.is_file():
-        raise EnvironmentError("Parakeet 安装脚本缺失；请重新下载完整项目。")
-    return _run_streaming_process(
-        command,
-        cwd=PROJECT_ROOT,
-        env=env,
-        timeout_seconds=max(timeout_seconds, 14_400),
-        log_callback=log_callback,
-        cancel_event=cancel_event,
-    )
-
-
-def download_backend_models(
-    backend_id: str,
-    *,
-    progress: Any | None = None,
-    log_callback: InstallLogCallback | None = None,
-    cancel_event: threading.Event | None = None,
-) -> str:
-    """Download and verify pinned built-in model snapshots."""
-    model_ids = _BACKEND_MODEL_REPOS.get(backend_id, ())
-    if not model_ids:
-        return "该后端在首次使用时由其官方运行库管理模型，无需预下载。"
-    if any(cached_model_path(model_id) is None for model_id in model_ids):
-        import_backend_model_packs(
-            backend_id,
-            log_callback=log_callback,
-            cancel_event=cancel_event,
-        )
-    try:
-        from .user_settings import load_user_settings
-
-        saved_endpoint = load_user_settings().huggingface_endpoint.strip()
-    except (OSError, ValueError, AsmrDubberError):
-        saved_endpoint = ""
-    endpoint = (
-        os.getenv("ASMR_DUBBER_HF_ENDPOINT", "").strip()
-        or os.getenv("HF_ENDPOINT", "").strip()
-        or saved_endpoint
-        or None
-    )
-    resolved: list[str] = []
-    for index, model_id in enumerate(model_ids, start=1):
-        if cancel_event is not None and cancel_event.is_set():
-            raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-        revision = OPTIONAL_ASR_MODEL_REVISIONS.get(model_id)
-        if revision is None:
-            raise EnvironmentError(f"模型 {model_id} 没有经过验证的固定版本。")
-        path = cached_model_path(model_id)
-        if path is None:
-            message = f"正在下载并校验模型 {index}/{len(model_ids)}：{model_id}"
-            if log_callback is not None:
-                log_callback(message)
-            if progress:
-                progress(
-                    (index - 1) / len(model_ids),
-                    desc=message,
-                )
-            # snapshot_download keeps real files (not symlinks) in the snapshot
-            # directory when the filesystem cannot symlink, as on Windows.
-            download_options: dict[str, Any] = {}
-            if model_id in _MODEL_DOWNLOAD_IGNORE:
-                download_options["ignore_patterns"] = list(_MODEL_DOWNLOAD_IGNORE[model_id])
-            try:
-                snapshot_download_with_fallback(
-                    repo_id=model_id,
-                    revision=revision,
-                    preferred_endpoint=endpoint,
-                    max_workers=4,
-                    **download_options,
-                )
-            except Exception as exc:
-                mirror = f"（当前端点：{endpoint}）" if endpoint else ""
-                hint = ""
-                if model_id not in _MODELSCOPE_PACK_FOR_MODEL and not external_downloads_allowed():
-                    hint = "\n该模型暂无国内镜像，需要在“设置 → 下载来源”选择“海外源”后重试。"
-                raise EnvironmentError(f"下载模型 {model_id} 失败{mirror}：{exc}{hint}") from exc
-            path = cached_model_path(model_id)
-            if path is None:
-                raise EnvironmentError(f"模型 {model_id} 下载后未通过完整性检查。")
-        elif log_callback is not None:
-            log_callback(f"复用已导入或已缓存的模型 {index}/{len(model_ids)}：{model_id}")
-        resolved.append(f"{model_id} → {path}")
-        if log_callback is not None:
-            log_callback(f"模型 {model_id} 已通过完整性检查。")
-        if cancel_event is not None and cancel_event.is_set():
-            raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-    if progress:
-        progress(1, desc="模型下载与完整性检查完成")
-    if log_callback is not None:
-        log_callback("模型下载与完整性检查完成。")
-    return "模型准备完成：\n" + "\n".join(resolved)
-
-
-def _download_backend_models_subprocess(
-    backend_id: str,
-    *,
-    timeout_seconds: float,
-    env: dict[str, str],
-    log_callback: InstallLogCallback | None,
-    cancel_event: threading.Event,
-) -> str:
-    completed = _run_streaming_process(
-        [
-            sys.executable,
-            "-m",
-            "asmr_dubber.cli",
-            "download-backend-models",
-            backend_id,
-        ],
-        cwd=PROJECT_ROOT,
-        env={**env, "PYTHONUNBUFFERED": "1"},
-        timeout_seconds=max(timeout_seconds, 14_400),
-        log_callback=log_callback,
-        cancel_event=cancel_event,
-    )
-    if completed.returncode != 0:
-        raise EnvironmentError(
-            f"模型下载失败（退出码 {completed.returncode}）：\n{completed.stdout[-4000:]}"
-        )
-    return completed.stdout.strip()
-
-
-def _install_backend_unlocked(
-    backend_id: str,
-    *,
-    progress: Any | None = None,
-    timeout_seconds: float = 3600,
-    log_callback: InstallLogCallback | None = None,
-    force: bool = False,
-    cancel_event: threading.Event | None = None,
-) -> str:
-    """Install a verified Python backend into the current application environment."""
-    registry = ASR_BACKENDS if backend_id in ASR_BACKENDS else TTS_BACKENDS
-    spec = registry.get(backend_id)
-    if spec is None:
-        raise EnvironmentError(f"未知后端：{backend_id}")
-    if spec.installer is None:
-        raise EnvironmentError(
-            "该后端暂不支持应用内自动安装；请按照后端说明启动外部服务或独立运行时。"
-        )
-    if not (PROJECT_ROOT / "scripts").is_dir() or not (PROJECT_ROOT / "mirrors.json").is_file():
-        raise EnvironmentError(
-            "当前为 wheel/API 安装，不包含便携安装器资源。"
-            "本地模型自动安装请使用完整源码或便携发行包；现有 CLI/API 功能不受影响。"
-        )
-    if backend_id == "moss_transcribe_diarize":
-        from . import moss
-
-        uv = _uv_executable()
-        if uv is None:
-            raise EnvironmentError("找不到 uv，请运行启动器准备安装环境。")
-
-        def run_moss(command, *, env):
-            return _run_streaming_process(
-                command,
-                cwd=PROJECT_ROOT,
-                env=env,
-                timeout_seconds=timeout_seconds,
-                log_callback=log_callback,
-                cancel_event=cancel_event,
-            )
-
-        return moss.install_runtime(
-            uv,
-            run_moss,
-            env=os.environ.copy(),
-            log=log_callback or (lambda message: None),
-            cancelled=cancel_event.is_set if cancel_event else lambda: False,
-        )
-    extra = spec.python_extra
-    if spec.installer == "python-extra" and not extra:
-        raise EnvironmentError(f"{spec.label} 的安装声明缺少 Python extra。")
-    saved_settings: Any | None = None
-    try:
-        from .user_settings import load_user_settings
-
-        saved_settings = load_user_settings()
-        pypi_index = saved_settings.pypi_index_url.strip()
-        huggingface_endpoint = saved_settings.huggingface_endpoint.strip()
-    except (OSError, ValueError, AsmrDubberError):
-        pypi_index = ""
-        huggingface_endpoint = ""
-    if not force:
-        status = backend_status(spec, settings=saved_settings)
-        if status.state == "ready":
-            result = f"{spec.label} 已经可用，无需重复安装。"
-            if log_callback is not None:
-                log_callback(result)
-            if progress:
-                progress(1, desc=result)
-            return result
-    if cancel_event is not None and cancel_event.is_set():
-        raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-    defer_model_pack = current_platform().is_windows and backend_id in _WINDOWS_SCRIPT_BACKENDS
-    imported_packs = 0
-    if not defer_model_pack:
-        imported_packs = import_backend_model_packs(
-            backend_id,
-            log_callback=log_callback,
-            cancel_event=cancel_event,
-        )
-    if cancel_event is not None and cancel_event.is_set():
-        raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-    if not force and imported_packs:
-        status = backend_status(spec, settings=saved_settings)
-        if status.state == "ready":
-            result = f"{spec.label} 已从本地模型包导入并可直接使用。"
-            if log_callback is not None:
-                log_callback(result)
-            if progress:
-                progress(1, desc=result)
-            return result
-    uv = _uv_executable()
-    if uv is None:
-        raise EnvironmentError("找不到项目安装器 uv；请重新运行对应平台的 setup 脚本。")
-    if spec.devices == ("cuda",):
-        profile = detect_hardware()
-        if not profile.cuda_available:
-            raise EnvironmentError(
-                f"{spec.label} 需要 NVIDIA CUDA GPU；当前未检测到 NVIDIA GPU。"
-                "请选择 CPU/外部服务后端，或在带 NVIDIA GPU 的机器上安装。"
-            )
-    start_message = f"正在安装 {spec.label}，请勿关闭页面。"
-    if log_callback is not None:
-        log_callback(start_message)
-    if progress:
-        progress(0, desc=start_message)
-    env = os.environ.copy()
-    env["ASMR_DUBBER_INSTALL_LOCK_HELD"] = "1"
-    env.setdefault("UV_LINK_MODE", "copy" if os.name == "nt" else "clone")
-    if imported_packs:
-        env["ASMR_DUBBER_MODEL_PACKS_PREPARED"] = "1"
-    if pypi_index:
-        env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
-    if huggingface_endpoint:
-        env["ASMR_DUBBER_HF_ENDPOINT"] = huggingface_endpoint
-    try:
-        if backend_id == "parakeet_nemo":
-            completed = _install_parakeet_runtime(
-                timeout_seconds=timeout_seconds,
-                env=env,
-                log_callback=log_callback,
-                cancel_event=cancel_event,
-            )
-        elif spec.installer == "isolated":
-            completed = _install_indextts_runtime(
-                backend_id,
-                timeout_seconds=timeout_seconds,
-                env=env,
-                log_callback=log_callback,
-                cancel_event=cancel_event,
-            )
-        elif current_platform().is_windows and backend_id in _WINDOWS_SCRIPT_BACKENDS:
-            completed = _install_windows_backend(
-                backend_id,
-                timeout_seconds=timeout_seconds,
-                env=env,
-                log_callback=log_callback,
-                cancel_event=cancel_event,
-            )
-        else:
-            attempts: list[str] = []
-            for index_url in download_candidates("pypi_indexes", preferred=pypi_index):
-                if log_callback is not None:
-                    log_callback(f"使用 Python 软件源：{index_url}")
-                command = [
-                    str(uv),
-                    "pip",
-                    "install",
-                    "--python",
-                    sys.executable,
-                    "--editable",
-                    f"{PROJECT_ROOT}[{extra}]",
-                    "--default-index",
-                    index_url,
-                ]
-                completed = _run_streaming_process(
-                    command,
-                    cwd=PROJECT_ROOT,
-                    env=env,
-                    timeout_seconds=timeout_seconds,
-                    log_callback=log_callback,
-                    cancel_event=cancel_event,
-                )
-                if completed.returncode == 0:
-                    break
-                attempts.append(f"{index_url}: {(completed.stderr or completed.stdout)[-800:]}")
-            else:
-                raise EnvironmentError(
-                    f"安装 {spec.label} 失败，所有 PyPI 源均不可用：\n" + "\n".join(attempts)
-                )
-    except subprocess.TimeoutExpired as exc:
-        raise EnvironmentError(f"安装 {spec.label} 超时。") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout)[-4000:]
-        raise EnvironmentError(f"安装 {spec.label} 失败：\n{detail}")
-    if defer_model_pack:
-        if cancel_event is not None and cancel_event.is_set():
-            raise InstallPausedError("下载已暂停；再次点击安装/修复可继续。")
-        imported_packs = import_backend_model_packs(
-            backend_id,
-            log_callback=log_callback,
-            cancel_event=cancel_event,
-        )
-    if spec.installer == "isolated":
-        if progress:
-            progress(1, desc=f"{spec.label} 独立环境与模型安装完成")
-        tail = (completed.stdout or completed.stderr).strip().splitlines()[-12:]
-        result = f"{spec.label} 安装完成。\n" + "\n".join(tail) + "\n请重启 ASMR Dubber。"
-        if log_callback is not None:
-            log_callback(f"{spec.label} 独立环境与模型安装完成。")
-        return result
-    if progress:
-        progress(0.5, desc=f"{spec.label} 运行环境安装完成，正在检查模型")
-    if log_callback is not None:
-        log_callback(f"{spec.label} 运行环境安装完成，正在检查模型。")
-    if cancel_event is not None:
-        model_detail = _download_backend_models_subprocess(
-            backend_id,
-            timeout_seconds=timeout_seconds,
-            env=env,
-            log_callback=log_callback,
-            cancel_event=cancel_event,
-        )
-    else:
-        model_detail = download_backend_models(
-            backend_id,
-            progress=progress,
-            log_callback=log_callback,
-        )
-    tail = (completed.stdout or completed.stderr).strip().splitlines()[-8:]
-    detail = "\n".join(tail)
-    restart = "\n请重启 ASMR Dubber，使新安装的运行时生效。" if os.name == "nt" else ""
-    result = f"{spec.label} 安装完成。\n{detail}\n{model_detail}{restart}".strip()
-    if progress:
-        progress(1, desc=f"{spec.label} 安装完成")
-    if log_callback is not None:
-        log_callback(f"{spec.label} 安装完成。")
-    return result
-
-
-def install_backend(
-    backend_id: str,
-    *,
-    progress: Any | None = None,
-    timeout_seconds: float = 3600,
-    log_callback: InstallLogCallback | None = None,
-    force: bool = False,
-    cancel_event: threading.Event | None = None,
-) -> str:
-    """Install one backend while excluding every inference/install process."""
-
-    lock_path = portable_home() / ".runtime-install.lock"
-    with exclusive_file_lock(lock_path, timeout_seconds=30.0):
-        return _install_backend_unlocked(
-            backend_id,
-            progress=progress,
-            timeout_seconds=timeout_seconds,
-            log_callback=log_callback,
-            force=force,
-            cancel_event=cancel_event,
-        )

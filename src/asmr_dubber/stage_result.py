@@ -12,10 +12,41 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-RESULT_SCHEMA = 1
+RESULT_SCHEMA = 2
+
+
+@dataclass(frozen=True)
+class StageOutcome:
+    """Typed representation of a CLI/in-process pipeline stage result (W11a)."""
+
+    stage: str
+    ok: bool
+    error: str = ""
+    error_type: str = ""
+    error_code: str = ""
+    error_hint: str = ""
+    total: int = 0
+    failed: list[dict[str, str]] = field(default_factory=list)
+    schema: int = RESULT_SCHEMA
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "stage": self.stage,
+            "ok": self.ok,
+            "error": self.error,
+            "error_type": self.error_type,
+            "error_code": self.error_code,
+            "error_hint": self.error_hint,
+            "total": self.total,
+            "failed": list(self.failed),
+        }
+
+
 STAGE_LABELS = {"translate": "翻译", "synthesize": "配音", "mix": "混音"}
 # Text the pipeline puts in its error when it finished the stage but left some
 # sentences without a result.  Other errors (bad key, service down) never match,
@@ -72,31 +103,37 @@ def build_result(
     project_path: Path | str,
     error: BaseException | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "schema": RESULT_SCHEMA,
-        "stage": stage,
-        "ok": error is None,
-        "error": "",
-        "error_type": "",
-        "total": 0,
-        "failed": [],
-    }
+    err_text = ""
+    err_type = ""
+    err_code = ""
+    err_hint = ""
+    total = 0
+    failed: list[dict[str, str]] = []
     try:
         if error is not None:
             from .app_logging import redact_sensitive
+            from .errors import classify_error
 
-            payload["error"] = redact_sensitive(error)[:4000]
-            payload["error_type"] = type(error).__name__
+            err_text = redact_sensitive(error)[:4000]
+            err_type = type(error).__name__
+            err_code, err_hint = classify_error(error)
         if stage in PARTIAL_MARKERS:
             from .models import load_project
 
             project, _ = load_project(project_path)
             total, failed = collect_failures(stage, project)
-            payload["total"] = total
-            payload["failed"] = failed
     except Exception:
         pass
-    return payload
+    return StageOutcome(
+        stage=stage,
+        ok=error is None,
+        error=err_text,
+        error_type=err_type,
+        error_code=err_code,
+        error_hint=err_hint,
+        total=total,
+        failed=failed,
+    ).to_dict()
 
 
 def write_result(

@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
-import json
 import logging
 import sys
-import uuid
 from pathlib import Path
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, NoReturn, cast
 
 import typer
 from dotenv import load_dotenv
@@ -15,18 +13,91 @@ from rich.console import Console
 from rich.table import Table
 
 from .app_logging import configure_logging
-from .asr import transcribe_source
-from .audio import make_analysis_copy
-from .constants import ASMR_VAD_MODEL, DEFAULT_ALIGNER_MODEL
-from .environment import cached_model_path, cuda_summary, ffmpeg_version
+from .asr import transcribe_source as transcribe_source
+from .audio import make_analysis_copy as make_analysis_copy
+from .cli_admin import (
+    _parse_setting_value as _parse_setting_value,
+)
+from .cli_admin import (
+    batch_command as batch_command,
+)
+from .cli_admin import (
+    download_backend_models_command as download_backend_models_command,
+)
+from .cli_admin import (
+    download_models_command as download_models_command,
+)
+from .cli_admin import (
+    import_model_packs_command as import_model_packs_command,
+)
+from .cli_admin import (
+    install_backend_command as install_backend_command,
+)
+from .cli_admin import (
+    list_model_packs_command as list_model_packs_command,
+)
+from .cli_admin import (
+    prepare_model_pack_command as prepare_model_pack_command,
+)
+from .cli_admin import (
+    register_admin_commands,
+)
+from .cli_admin import (
+    settings_app as settings_app,
+)
+from .cli_admin import (
+    settings_clear_translation_key_command as settings_clear_translation_key_command,
+)
+from .cli_admin import (
+    settings_clear_tts_key_command as settings_clear_tts_key_command,
+)
+from .cli_admin import (
+    settings_set_command as settings_set_command,
+)
+from .cli_admin import (
+    settings_set_translation_key_command as settings_set_translation_key_command,
+)
+from .cli_admin import (
+    settings_set_tts_key_command as settings_set_tts_key_command,
+)
+from .cli_admin import (
+    settings_show_command as settings_show_command,
+)
+from .cli_admin import (
+    verify_asr_command as verify_asr_command,
+)
+from .constants import (
+    ASMR_VAD_MODEL as ASMR_VAD_MODEL,
+)
+from .constants import (
+    DEFAULT_ALIGNER_MODEL as DEFAULT_ALIGNER_MODEL,
+)
+from .environment import (
+    cached_model_path as cached_model_path,
+)
+from .environment import (
+    cuda_summary,
+    ffmpeg_version,
+)
 from .errors import AsmrDubberError
 from .languages import SpeechSourceLanguage
-from .model_pack_download import ModelPackDownloadError, prepare_remote_model_pack
+from .model_pack_download import (
+    ModelPackDownloadError as ModelPackDownloadError,
+)
+from .model_pack_download import (
+    prepare_remote_model_pack as prepare_remote_model_pack,
+)
 from .model_packs import (
-    ModelPackError,
-    discover_model_packs,
-    import_discovered_model_packs,
-    import_model_pack,
+    ModelPackError as ModelPackError,
+)
+from .model_packs import (
+    discover_model_packs as discover_model_packs,
+)
+from .model_packs import (
+    import_discovered_model_packs as import_discovered_model_packs,
+)
+from .model_packs import (
+    import_model_pack as import_model_pack,
 )
 from .model_registry import ASR_BACKENDS, TTS_BACKENDS
 from .models import ProjectSettings, save_project
@@ -42,24 +113,46 @@ from .pipeline import (
     synthesize_project,
     translate_project,
 )
-from .platforms import current_platform, portable_home, require_supported_platform
+from .platforms import (
+    current_platform,
+    require_supported_platform,
+)
+from .platforms import (
+    portable_home as portable_home,
+)
 from .runtime_manager import (
     backend_status,
     detect_hardware,
-    download_backend_models,
-    install_backend,
+)
+from .runtime_manager import (
+    download_backend_models as download_backend_models,
+)
+from .runtime_manager import (
+    install_backend as install_backend,
 )
 from .subtitles import SubtitleLanguage
 from .user_settings import (
     PROVIDER_PRESETS,
-    UserSettings,
-    clear_api_key,
-    clear_service_key,
     load_user_settings,
     resolve_api_key,
-    save_api_key,
-    save_service_key,
-    save_user_settings,
+)
+from .user_settings import (
+    UserSettings as UserSettings,
+)
+from .user_settings import (
+    clear_api_key as clear_api_key,
+)
+from .user_settings import (
+    clear_service_key as clear_service_key,
+)
+from .user_settings import (
+    save_api_key as save_api_key,
+)
+from .user_settings import (
+    save_service_key as save_service_key,
+)
+from .user_settings import (
+    save_user_settings as save_user_settings,
 )
 
 
@@ -84,12 +177,6 @@ app = typer.Typer(
     help="日语/英语音声 → 逐句同音色中文复述（Windows / Linux）",
 )
 console = Console()
-settings_app = typer.Typer(
-    name="settings",
-    no_args_is_help=True,
-    help="读取或修改便携设置和 API 密钥。",
-)
-app.add_typer(settings_app, name="settings")
 
 
 class ConsoleProgress:
@@ -121,101 +208,6 @@ def _stage_failed(
 
     write_result(result_json, stage, project_path, exc)
     _fail(exc)
-
-
-def _parse_setting_value(value: str) -> Any:
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-
-@settings_app.command("show")
-def settings_show_command() -> None:
-    """以 JSON 显示当前全局设置；不会显示密钥。"""
-
-    console.print_json(data=load_user_settings().model_dump(mode="json"), ensure_ascii=False)
-
-
-@settings_app.command("set")
-def settings_set_command(
-    field: Annotated[str, typer.Argument(help="settings show 中的字段名")],
-    value: Annotated[str, typer.Argument(help="新值；布尔值和数字可直接填写 JSON 字面量")],
-) -> None:
-    """修改一个全局设置，并用与网页相同的模型完整校验。"""
-
-    try:
-        current = load_user_settings()
-        if field not in UserSettings.model_fields:
-            raise ValueError(f"未知设置项：{field}")
-        payload = current.model_dump()
-        payload[field] = _parse_setting_value(value)
-        settings = UserSettings.model_validate(payload)
-        destination = save_user_settings(settings)
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    console.print(f"[green]已保存 {field}：[/green]{destination}")
-
-
-@settings_app.command("set-translation-key")
-def settings_set_translation_key_command(
-    provider: Annotated[str, typer.Argument(help="deepseek、bailian、doubao 等服务 ID")],
-    key: Annotated[
-        str | None,
-        typer.Option("--key", help="省略时安全提示输入；自动化部署也可使用服务环境变量"),
-    ] = None,
-) -> None:
-    """保存翻译服务密钥到程序目录。"""
-
-    try:
-        secret = key if key is not None else typer.prompt("API Key", hide_input=True)
-        destination = save_api_key(provider, secret)
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    console.print(f"[green]翻译密钥已保存：[/green]{destination}")
-
-
-@settings_app.command("clear-translation-key")
-def settings_clear_translation_key_command(
-    provider: Annotated[str, typer.Argument(help="要清除的翻译服务 ID")],
-) -> None:
-    """清除一个已保存的翻译服务密钥。"""
-
-    try:
-        clear_api_key(provider)
-    except AsmrDubberError as exc:
-        _fail(exc)
-    console.print("[green]翻译密钥已清除。[/green]")
-
-
-@settings_app.command("set-tts-key")
-def settings_set_tts_key_command(
-    backend: Annotated[str, typer.Argument(help="mimo_tts、minimax、gpt_sovits 等后端 ID")],
-    key: Annotated[
-        str | None,
-        typer.Option("--key", help="省略时安全提示输入"),
-    ] = None,
-) -> None:
-    """保存外部 TTS 服务密钥到程序目录。"""
-
-    try:
-        if backend not in TTS_BACKENDS:
-            raise ValueError(f"未知 TTS 后端：{backend}")
-        secret = key if key is not None else typer.prompt("API Key", hide_input=True)
-        destination = save_service_key(f"tts:{backend}", secret)
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    console.print(f"[green]TTS 密钥已保存：[/green]{destination}")
-
-
-@settings_app.command("clear-tts-key")
-def settings_clear_tts_key_command(
-    backend: Annotated[str, typer.Argument(help="要清除的 TTS 后端 ID")],
-) -> None:
-    """清除一个已保存的外部 TTS 密钥。"""
-
-    clear_service_key(f"tts:{backend}")
-    console.print("[green]TTS 密钥已清除。[/green]")
 
 
 @app.command("create")
@@ -476,59 +468,6 @@ def run_command(
     console.print(f"[bold green]流程完成：{directory / 'project.json'}[/bold green]")
 
 
-@app.command("batch")
-def batch_command(
-    folder: Annotated[
-        Path | None, typer.Argument(help="DLsite 作品文件夹；省略则进入交互队列")
-    ] = None,
-    mode: Annotated[
-        str | None,
-        typer.Option("--mode", help="audio、video-normal 或 video-harmonized"),
-    ] = None,
-    layout: Annotated[
-        str | None,
-        typer.Option("--layout", help="merged、separate 或 both"),
-    ] = None,
-    edition: Annotated[str | None, typer.Option("--edition")] = None,
-    include_bonus: Annotated[bool, typer.Option("--include-bonus")] = False,
-    output_root: Annotated[Path | None, typer.Option("--output-root")] = None,
-    background: Annotated[str | None, typer.Option("--background")] = None,
-    embed_subtitles: Annotated[
-        str | None,
-        typer.Option("--embed-subtitles", help="yes 或 no"),
-    ] = None,
-    rebuild: Annotated[bool, typer.Option("--rebuild")] = False,
-    force: Annotated[bool, typer.Option("--force")] = False,
-    self_test: Annotated[bool, typer.Option("--self-test")] = False,
-) -> None:
-    """运行集成的 AutoFlow 批量音频/静态视频工作流。"""
-
-    from .autoflow.engine import main as autoflow_main
-
-    arguments: list[str] = []
-    if folder is not None:
-        arguments.append(str(folder))
-    for option, value in (
-        ("--mode", mode),
-        ("--layout", layout),
-        ("--edition", edition),
-        ("--output-root", str(output_root) if output_root is not None else None),
-        ("--background", background),
-        ("--embed-subtitles", embed_subtitles),
-    ):
-        if value is not None:
-            arguments.extend((option, value))
-    if include_bonus:
-        arguments.append("--include-bonus")
-    if rebuild:
-        arguments.append("--rebuild")
-    if force:
-        arguments.append("--force")
-    if self_test:
-        arguments.append("--self-test")
-    raise typer.Exit(code=autoflow_main(arguments))
-
-
 @app.command("set-timing")
 def set_timing_command(
     project_path: Annotated[Path, typer.Argument(exists=True)],
@@ -703,252 +642,7 @@ def doctor_command(
         raise typer.Exit(code=1)
 
 
-@app.command("download-models")
-def download_models_command(
-    backend: Annotated[
-        str,
-        typer.Option(
-            "--backend",
-            help=(
-                "Kotoba-Whisper v2.2、Faster-Whisper large-v2、Qwen3 ForcedAligner "
-                "和 ASMR VAD，或 all；advanced-asr 为旧别名"
-            ),
-        ),
-    ] = "all",
-) -> None:
-    """下载并校验进阶档的识别、VAD 和时间戳模型。"""
-
-    if backend not in {"进阶语音识别", "advanced-asr", "all"}:
-        _fail(ValueError("--backend 必须是“进阶语音识别”或 all。"))
-    for backend_id in ("kotoba_whisper", "faster_whisper"):
-        console.print(f"[cyan]准备 {ASR_BACKENDS[backend_id].label}[/cyan]")
-        try:
-            detail = download_backend_models(
-                backend_id,
-                log_callback=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-            )
-        except AsmrDubberError as exc:
-            _fail(exc)
-        console.print(f"[green]{detail}[/green]")
-    for pack_id, model_id, label in (
-        ("qwen3-forced-aligner", DEFAULT_ALIGNER_MODEL, "Qwen3 ForcedAligner 0.6B"),
-        ("whisper-vad-asmr-onnx", ASMR_VAD_MODEL, "日语 ASMR 专用 Whisper VAD"),
-    ):
-        if cached_model_path(model_id) is not None:
-            console.print(f"[green]复用已安装模型：{label}[/green]")
-            continue
-        console.print(f"[cyan]准备 {label}[/cyan]")
-        try:
-            archive = prepare_remote_model_pack(
-                pack_id,
-                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-            )
-            if archive is None:
-                raise ModelPackDownloadError(f"没有为 {pack_id} 配置 ModelScope 模型包。")
-            import_model_pack(archive, progress=ConsoleProgress())
-        except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
-            _fail(exc)
-        if cached_model_path(model_id) is None:
-            _fail(ModelPackError(f"{label} 导入后未通过完整性检查。"))
-        console.print(f"[green]{label} 已通过完整性检查。[/green]")
-
-
-@app.command("list-model-packs")
-def list_model_packs_command() -> None:
-    """列出项目根目录 model-packs 中发现的离线模型包。"""
-    inspections = discover_model_packs()
-    table = Table(title="ASMR Dubber 离线模型包")
-    table.add_column("文件")
-    table.add_column("模型包")
-    table.add_column("版本")
-    table.add_column("解压大小")
-    table.add_column("状态")
-    for inspection in inspections:
-        manifest = inspection.manifest
-        if manifest is None:
-            table.add_row(
-                inspection.archive.name,
-                "—",
-                "—",
-                "—",
-                f"无效：{inspection.error}",
-            )
-            continue
-        table.add_row(
-            inspection.archive.name,
-            manifest.display_name,
-            manifest.pack_version,
-            f"{manifest.uncompressed_bytes / 1024**3:.2f} GiB",
-            "可导入" if inspection.compatible else f"不兼容：{inspection.error}",
-        )
-    if not inspections:
-        table.add_row("—", "—", "—", "—", "未发现 ZIP 模型包")
-    console.print(table)
-
-
-@app.command("prepare-model-pack")
-def prepare_model_pack_command(
-    pack_id: Annotated[str, typer.Argument(help="要下载到 model-packs 的模型包 ID")],
-) -> None:
-    """从 mirrors.json 配置的远程来源下载并校验模型包。"""
-    try:
-        archive = prepare_remote_model_pack(
-            pack_id,
-            log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-        )
-    except (ModelPackDownloadError, ModelPackError, OSError, ValueError) as exc:
-        _fail(exc)
-    if archive is None:
-        console.print(f"没有为 {pack_id} 配置远程模型包；继续使用原始下载源。")
-        return
-    console.print(f"[green]模型包已就绪：[/green]{archive}")
-
-
-@app.command("import-model-packs")
-def import_model_packs_command(
-    archives: Annotated[
-        list[Path] | None,
-        typer.Argument(
-            exists=True,
-            dir_okay=False,
-            readable=True,
-            help="要导入的模型包 ZIP；可指定多个。",
-        ),
-    ] = None,
-    all_packs: Annotated[
-        bool,
-        typer.Option("--all", help="导入项目根目录 model-packs 中所有兼容模型包。"),
-    ] = False,
-    pack_ids: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--pack-id",
-            help="只导入指定 pack_id；可重复使用，供安装档位精确选择。",
-        ),
-    ] = None,
-) -> None:
-    """校验并原子导入离线模型包。"""
-    if not all_packs and not archives:
-        _fail(ValueError("请指定模型包 ZIP，或添加 --all。"))
-    try:
-        if all_packs:
-            results = import_discovered_model_packs(
-                pack_ids=set(pack_ids or ()) or None,
-                log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-                progress=ConsoleProgress(),
-            )
-        else:
-            results = [
-                import_model_pack(
-                    archive,
-                    log=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-                    progress=ConsoleProgress(),
-                )
-                for archive in archives or []
-            ]
-    except (ModelPackError, OSError) as exc:
-        _fail(exc)
-    if not results:
-        # Setup calls ``--all`` for every profile. An empty inbox is a normal
-        # online-install path, while malformed archives are rejected by the
-        # importer above and still produce a non-zero exit code.
-        console.print("未发现可导入的本地模型包；继续按所选档位准备。")
-        return
-    installed = sum(result.installed_files for result in results)
-    reused = sum(result.reused_files for result in results)
-    console.print(
-        f"[green]完成：处理 {len(results)} 个模型包，"
-        f"新增/更新 {installed} 个文件，复用 {reused} 个文件。[/green]"
-    )
-
-
-@app.command("install-backend")
-def install_backend_command(
-    backend_id: Annotated[str, typer.Argument(help="设置页显示的后端 ID")],
-) -> None:
-    """安装或修复一个后端，并预下载该后端的固定推荐模型。"""
-    try:
-        result = install_backend(backend_id)
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    console.print(f"[green]{result}[/green]")
-
-
-@app.command("download-backend-models", hidden=True)
-def download_backend_models_command(
-    backend_id: Annotated[str, typer.Argument(help="后端 ID")],
-) -> None:
-    """Download the pinned models for one backend."""
-    try:
-        result = download_backend_models(
-            backend_id,
-            log_callback=lambda message: console.print(f"[cyan]{message}[/cyan]"),
-        )
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    console.print(f"[green]{result}[/green]")
-
-
-@app.command("verify-asr")
-def verify_asr_command(
-    audio: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
-    backend: Annotated[str, typer.Option("--backend")],
-    model: Annotated[str, typer.Option("--model")],
-    device: Annotated[str, typer.Option("--device")] = "cuda",
-    compute_type: Annotated[str, typer.Option("--compute-type")] = "float16",
-    decoder: Annotated[str, typer.Option("--decoder")] = "tdt",
-    vad_mode: Annotated[str, typer.Option("--vad-mode")] = "off",
-    chunk_seconds: Annotated[float, typer.Option("--chunk-seconds")] = 120.0,
-    kotoba_chunk_seconds: Annotated[
-        float,
-        typer.Option("--kotoba-chunk-seconds"),
-    ] = 30.0,
-    batch_size: Annotated[int, typer.Option("--batch-size")] = 1,
-    source_language: Annotated[str, typer.Option("--source-language")] = "ja",
-) -> None:
-    """用短音频真实加载一个 ASR（语音识别）后端，不翻译或写入项目。"""
-    token = uuid.uuid4().hex
-    temporary = portable_home() / "temp" / f"verify-asr-{token}.wav"
-    try:
-        if source_language not in {"ja", "en", "zh"}:
-            raise ValueError("--source-language 只能是 ja、en 或 zh。")
-        analysis = make_analysis_copy(audio.resolve(), temporary)
-        settings = ProjectSettings.model_validate(
-            {
-                "asr_backend": backend,
-                "asr_model": model,
-                "asr_device": device,
-                "asr_compute_type": compute_type,
-                "asr_parakeet_decoder": decoder,
-                "asr_vad_mode": vad_mode,
-                "asr_chunk_seconds": chunk_seconds,
-                "asr_kotoba_chunk_seconds": kotoba_chunk_seconds,
-                "asr_batch_size": batch_size,
-            }
-        )
-        sentences, language = transcribe_source(
-            analysis,
-            settings,
-            source_language=cast(SpeechSourceLanguage, source_language),
-        )
-    except (AsmrDubberError, ValueError) as exc:
-        _fail(exc)
-    finally:
-        temporary.unlink(missing_ok=True)
-    console.print_json(
-        data={
-            "language": language,
-            "sentences": [
-                {
-                    "start": sentence.start_seconds,
-                    "end": sentence.end_seconds,
-                    "text": sentence.source_text,
-                }
-                for sentence in sentences
-            ],
-        },
-        ensure_ascii=False,
-    )
+register_admin_commands(app)
 
 
 @app.command("ui")

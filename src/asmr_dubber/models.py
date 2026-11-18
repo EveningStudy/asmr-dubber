@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -31,8 +33,6 @@ from .constants import (
     DEFAULT_INDEXTTS_EMOTION_WEIGHT,
     DEFAULT_INDEXTTS_MODEL_DIR,
     DEFAULT_TRANSLATION_MODEL,
-    FALLBACK_ASR_BACKEND,
-    FALLBACK_ASR_MODEL,
     MAX_CHINESE_AUTO_SPEED,
     PROJECT_SCHEMA_VERSION,
     RECOMMENDED_ASR_BACKEND,
@@ -43,16 +43,65 @@ from .constants import (
 from .errors import ProjectConflictError, ProjectError
 from .languages import SourceLanguage
 from .moss import DEFAULT_PROMPT as MOSS_DEFAULT_PROMPT
+from .project_migration import (
+    adapt_settings_values_for_source_language,
+    default_sentence_error_code,
+    is_legacy_asr_review_prompt,
+    migrate_project_payload,
+    normalize_project_settings_dict,
+    validate_moss_generation_json,
+    validate_separation_json_object,
+)
+from .settings_groups import (
+    AsrSettingsGroup,
+    MixSettingsGroup,
+    MixVariantSettings,
+    SeparationSettingsGroup,
+    SubtitleSettingsGroup,
+    TranslationSettingsGroup,
+    TtsSettingsGroup,
+    build_asr_group,
+    build_mix_group,
+    build_separation_group,
+    build_subtitles_group,
+    build_translation_group,
+    build_tts_group,
+)
 from .storage import atomic_write_text, exclusive_file_lock
 
+_is_legacy_asr_review_prompt = is_legacy_asr_review_prompt
 
-def _is_legacy_asr_review_prompt(value: str) -> bool:
-    prompt = str(value or "").strip()
-    return (
-        prompt.startswith("你是语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。")
-        or prompt.startswith("你是日语语音识别校对专家。你会收到按时间窗口组织的多个 ASR 候选。")
-        or ('"evidence_ids"' in prompt and ('"ja"' in prompt or "校对后的日文" in prompt))
-    )
+
+class SentenceStatus(StrEnum):
+    """Lifecycle state of a single dubbing sentence (W8 / H3)."""
+
+    PENDING = "pending"
+    REVIEW_ACCEPTED = "review_accepted"
+    TRANSLATED = "translated"
+    TRANSLATION_FAILED = "translation_failed"
+    SYNTHESIZED = "synthesized"
+    SKIPPED_FILLER = "skipped_filler"
+    SKIPPED_HALLUCINATION = "skipped_hallucination"
+    SKIPPED_SOUND = "skipped_sound"
+    SKIPPED_TTS = "skipped_tts"
+    ERROR = "error"
+
+
+SentenceStatusValue = (
+    SentenceStatus
+    | Literal[
+        "pending",
+        "review_accepted",
+        "translated",
+        "translation_failed",
+        "synthesized",
+        "skipped_filler",
+        "skipped_hallucination",
+        "skipped_sound",
+        "skipped_tts",
+        "error",
+    ]
+)
 
 
 class AudioInfo(BaseModel):
@@ -71,18 +120,24 @@ class AudioInfo(BaseModel):
 
 
 class Sentence(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
     speaker_id: str | None = None
     source_text: str = Field(validation_alias=AliasChoices("source_text", "ja_text"))
-    zh_text: str = ""
+    target_text: str = Field(
+        default="",
+        validation_alias=AliasChoices("target_text", "zh_text"),
+    )
     enabled: bool = True
     reference_file: str | None = None
     tts_file: str | None = None
     tts_duration_seconds: float | None = None
     tts_cache_key: str | None = None
-    status: str = "pending"
+    status: SentenceStatusValue = SentenceStatus.PENDING
+    error_code: str | None = None
     error: str | None = None
     script_review_note: str | None = None
     review_locked: bool = False
@@ -100,10 +155,15 @@ class Sentence(BaseModel):
     tts_candidates: list[dict[str, Any]] = Field(default_factory=list)
     voice_mode: Literal["modal", "whisper"] | None = None
 
-    @field_validator("source_text", "zh_text")
+    @field_validator("source_text", "target_text")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, value: Any) -> SentenceStatus:
+        return value if isinstance(value, SentenceStatus) else SentenceStatus(str(value))
 
     @property
     def ja_text(self) -> str:
@@ -115,10 +175,53 @@ class Sentence(BaseModel):
     def ja_text(self, value: str) -> None:
         self.source_text = value.strip()
 
+    @property
+    def zh_text(self) -> str:
+        """Compatibility alias for callers and projects created before schema v4."""
+
+        return self.target_text
+
+    @zh_text.setter
+    def zh_text(self, value: str) -> None:
+        self.target_text = value.strip()
+
+    def set_error(self, message: str, code: str | None = None) -> None:
+        self.error = message
+        self.error_code = code or default_sentence_error_code(str(self.status))
+
+    def clear_error(self) -> None:
+        self.error = None
+        self.error_code = None
+
+    def model_copy(
+        self,
+        *,
+        update: Mapping[str, Any] | None = None,
+        deep: bool = False,
+    ) -> Sentence:
+        if update and ("zh_text" in update or "ja_text" in update):
+            remapped = dict(update)
+            if "zh_text" in remapped and "target_text" not in remapped:
+                remapped["target_text"] = str(remapped.pop("zh_text") or "").strip()
+            else:
+                remapped.pop("zh_text", None)
+            if "ja_text" in remapped and "source_text" not in remapped:
+                remapped["source_text"] = str(remapped.pop("ja_text") or "").strip()
+            else:
+                remapped.pop("ja_text", None)
+            if "error" in remapped and not remapped["error"] and "error_code" not in remapped:
+                remapped["error_code"] = None
+            update = remapped
+        return super().model_copy(update=dict(update) if update is not None else None, deep=deep)
+
     @model_validator(mode="after")
     def valid_range(self) -> Sentence:
         if self.end_seconds <= self.start_seconds:
             raise ValueError("sentence end must be after start")
+        if self.error and not self.error_code:
+            self.error_code = default_sentence_error_code(str(self.status))
+        elif not self.error:
+            self.error_code = None
         return self
 
 
@@ -189,62 +292,7 @@ class ProjectSettings(BaseModel):
     )
     @classmethod
     def separation_json_object(cls, value: str, info: ValidationInfo) -> str:
-        parsed = json.loads(value or "{}")
-        if not isinstance(parsed, dict):
-            raise ValueError("分离参数必须为 JSON 对象。")
-        allowed = {
-            "separation_common_params": {
-                "invert_using_spec",
-                "use_torch_compile",
-                "use_native_fp16",
-                "amplification_threshold",
-            },
-            "separation_mdx_params": {
-                "hop_length",
-                "segment_size",
-                "overlap",
-                "batch_size",
-                "enable_denoise",
-            },
-            "separation_vr_params": {
-                "batch_size",
-                "window_size",
-                "aggression",
-                "enable_tta",
-                "enable_post_process",
-                "post_process_threshold",
-                "high_end_process",
-            },
-            "separation_demucs_params": {"segment_size", "shifts", "overlap", "segments_enabled"},
-            "separation_mdxc_params": {
-                "segment_size",
-                "override_model_segment_size",
-                "batch_size",
-                "overlap",
-                "pitch_shift",
-            },
-        }.get(info.field_name or "")
-        if allowed is not None and parsed.keys() - allowed:
-            raise ValueError("不支持的分离参数：" + ", ".join(sorted(parsed.keys() - allowed)))
-        if allowed is not None:
-            for key, parameter in parsed.items():
-                if (
-                    key in {"batch_size", "window_size", "hop_length", "segment_size"}
-                    and parameter != "Default"
-                ) and (
-                    isinstance(parameter, bool) or not isinstance(parameter, int) or parameter < 1
-                ):
-                    raise ValueError(f"{key} 必须是正整数。")
-                if key == "overlap":
-                    minimum, maximum = (
-                        (1, 32) if info.field_name == "separation_mdxc_params" else (0, 0.99)
-                    )
-                    if (
-                        not isinstance(parameter, (int, float))
-                        or not minimum <= parameter <= maximum
-                    ):
-                        raise ValueError(f"overlap 必须在 {minimum} 到 {maximum} 之间。")
-        return json.dumps(parsed, ensure_ascii=False)
+        return validate_separation_json_object(value, info.field_name or "")
 
     asr_backend: Literal[
         "moss_transcribe_diarize",
@@ -491,33 +539,7 @@ class ProjectSettings(BaseModel):
     @field_validator("asr_moss_generation_params")
     @classmethod
     def validate_moss_generation(cls, value: str) -> str:
-        parsed = json.loads(value or "{}")
-        if not isinstance(parsed, dict):
-            raise ValueError("MOSS generation parameters must be a JSON object")
-        protected = {
-            "input_ids",
-            "inputs",
-            "attention_mask",
-            "input_features",
-            "audio_feature_lengths",
-            "audio_chunk_mapping",
-            "streamer",
-            "generation_config",
-            "return_dict_in_generate",
-            "max_length",
-            "max_new_tokens",
-            "do_sample",
-            "temperature",
-            "top_p",
-            "top_k",
-            "num_beams",
-            "repetition_penalty",
-            "use_cache",
-            "num_return_sequences",
-        }
-        if protected.intersection(parsed):
-            raise ValueError("Use the dedicated MOSS controls for reserved generation parameters")
-        return value
+        return validate_moss_generation_json(value)
 
     @field_validator("asr_moss_prompt")
     @classmethod
@@ -527,102 +549,44 @@ class ProjectSettings(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_index_emotion(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            value = dict(value)
-            supported_asr = {
-                "moss_transcribe_diarize",
-                "generic_asr_api",
-                "parakeet_nemo",
-                "kotoba_whisper",
-                "faster_whisper",
-                "qwen3_asr",
-                "anime_whisper",
-            }
-            supported_tts = {
-                "indextts2_5",
-                "indextts2",
-                "indextts2_api",
-                "generic_tts_api",
-                "gpt_sovits",
-                "cosyvoice",
-                "fish_speech",
-                "edge_tts",
-                "mimo_tts",
-                "minimax",
-            }
-            if "asr_backend" in value and value.get("asr_backend") not in supported_asr:
-                value["asr_backend"] = FALLBACK_ASR_BACKEND
-                value["asr_model"] = FALLBACK_ASR_MODEL
-            if value.get("asr_backend") == "moss_transcribe_diarize":
-                from . import moss
+        return normalize_project_settings_dict(value)
 
-                cur_asr_model = str(value.get("asr_model") or "").strip()
-                other_defaults = {
-                    RECOMMENDED_ASR_MODEL,
-                    FALLBACK_ASR_MODEL,
-                    "Qwen/Qwen3-ASR-1.7B",
-                    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",
-                    "kotoba-tech/kotoba-whisper-v2.2",
-                    "large-v2",
-                    "large-v3",
-                    "large-v3-turbo",
-                    "",
-                }
-                if cur_asr_model in other_defaults:
-                    value["asr_model"] = moss.MODEL_ID
-            if "tts_backend" in value and value.get("tts_backend") not in supported_tts:
-                value["tts_backend"] = RECOMMENDED_TTS_BACKEND
-                value["tts_model"] = RECOMMENDED_TTS_MODEL
-            review_models = [
-                str(item)
-                for item in (value.get("asr_review_models") or [])
-                if str(item).partition("|")[0] in supported_asr
-            ]
-            if "asr_review_models" in value:
-                value["asr_review_models"] = review_models
-                if value.get("asr_review_enabled") and not review_models:
-                    value["asr_review_enabled"] = False
-            legacy_review_prompt = str(value.get("asr_review_prompt", "") or "").strip()
-            if _is_legacy_asr_review_prompt(legacy_review_prompt):
-                value["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
-            priority_defaults = {
-                "asr_review_text_priority_model": DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
-                "asr_review_timestamp_priority_model": (DEFAULT_ASR_REVIEW_TIMESTAMP_PRIORITY),
-            }
-            for field, default in priority_defaults.items():
-                configured = str(value.get(field, ""))
-                if (
-                    field in value
-                    and configured.partition("|")[0] not in supported_asr
-                    and not configured.startswith("qwen_forced_aligner|")
-                ):
-                    value[field] = default
-            if (
-                "tts_index_emotion_source" not in value
-                and value.get("tts_index_use_emo_text") is True
-            ):
-                value["tts_index_emotion_source"] = "text"
-            if "asr_vad_mode" not in value:
-                value["asr_vad_mode"] = "backend" if value.get("asr_vad_filter") else "off"
-            if value.get("asr_vad_mode") not in {"off", "backend", "asmr"}:
-                value["asr_vad_mode"] = "off"
-            # Older releases used 0 to mean automatic Parakeet chunking. The
-            # current runner creates bounded inputs for one model process and
-            # needs an explicit, validated 120-second default.
-            try:
-                legacy_chunk_seconds = float(value.get("asr_chunk_seconds", 120.0))
-            except (TypeError, ValueError):
-                legacy_chunk_seconds = 120.0
-            if legacy_chunk_seconds <= 0:
-                value["asr_chunk_seconds"] = 120.0
-            if value.get("tts_clone_mode") not in {"stable_reference", "reference_only"}:
-                value["tts_clone_mode"] = "stable_reference"
-            if "mix_output_mode" not in value:
-                value["mix_output_mode"] = (
-                    "both" if value.get("retain_chinese_stem", True) else "mixed"
-                )
-            value.pop("retain_chinese_stem", None)
-        return value
+    @property
+    def asr(self) -> AsrSettingsGroup:
+        return build_asr_group(self)
+
+    @property
+    def translation(self) -> TranslationSettingsGroup:
+        return build_translation_group(self)
+
+    @property
+    def tts(self) -> TtsSettingsGroup:
+        return build_tts_group(self)
+
+    @property
+    def mix(self) -> MixSettingsGroup:
+        return build_mix_group(self)
+
+    @property
+    def separation(self) -> SeparationSettingsGroup:
+        return build_separation_group(self)
+
+    @property
+    def subtitles(self) -> SubtitleSettingsGroup:
+        return build_subtitles_group(self)
+
+    def mix_variant(self, replacing: bool = False) -> MixVariantSettings:
+        return self.mix.variant(replacing)
+
+    def grouped_dump(self) -> dict[str, Any]:
+        return {
+            "asr": self.asr.model_dump(),
+            "translation": self.translation.model_dump(),
+            "tts": self.tts.model_dump(),
+            "mix": self.mix.model_dump(),
+            "separation": self.separation.model_dump(),
+            "subtitles": self.subtitles.model_dump(),
+        }
 
     @model_validator(mode="after")
     def valid_loudness_range(self) -> ProjectSettings:
@@ -653,41 +617,9 @@ def settings_for_source_language(
 
     if source_language == "ja":
         return settings
-    values = settings.model_dump()
-    model = str(values.get("asr_model", ""))
-    if (
-        values.get("asr_backend")
-        not in {"faster_whisper", "generic_asr_api", "moss_transcribe_diarize", "qwen3_asr"}
-        or model.startswith("kotoba-tech/")
-        or (source_language == "zh" and (model.endswith(".en") or "distil" in model.lower()))
-    ):
-        values["asr_backend"] = "faster_whisper"
-        values["asr_model"] = "large-v2"
-    primary = f"{values['asr_backend']}|{values['asr_model']}"
-    review_models = [
-        str(item)
-        for item in values.get("asr_review_models") or []
-        if str(item).startswith(("faster_whisper|", "moss_transcribe_diarize|"))
-        and "kotoba-tech/kotoba-whisper" not in str(item)
-    ]
-    if source_language == "zh":
-        review_models = [
-            item
-            for item in review_models
-            if not item.endswith(".en") and "distil" not in item.lower()
-        ]
-    values["asr_review_models"] = review_models
-    if not any(item != primary for item in review_models):
-        values["asr_review_enabled"] = False
-    text_priority = str(values.get("asr_review_text_priority_model", ""))
-    if not text_priority.startswith("faster_whisper|") or "kotoba-tech/" in text_priority:
-        values["asr_review_text_priority_model"] = primary
-    if values.get("asr_vad_mode") == "asmr":
-        values["asr_vad_mode"] = "off"
-    review_prompt = str(values.get("asr_review_prompt", ""))
-    if _is_legacy_asr_review_prompt(review_prompt):
-        values["asr_review_prompt"] = DEFAULT_ASR_REVIEW_PROMPT
-    return ProjectSettings.model_validate(values)
+    return ProjectSettings.model_validate(
+        adapt_settings_values_for_source_language(settings.model_dump(), source_language)
+    )
 
 
 class DubProject(BaseModel):
@@ -832,125 +764,6 @@ def save_project(project: DubProject, project_dir: str | os.PathLike[str]) -> Pa
 
 
 def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
-    """Migrate historical project manifests without modifying them on load."""
+    """Compatibility wrapper around ``project_migration.migrate_project_payload``."""
 
-    payload = dict(data)
-    version = int(payload.get("schema_version", 1))
-    if version > PROJECT_SCHEMA_VERSION:
-        raise ValueError(
-            f"project schema {version} is newer than supported {PROJECT_SCHEMA_VERSION}"
-        )
-    warnings = list(payload.get("migration_warnings") or [])
-    if version == 1:
-        settings = dict(payload.get("settings") or {})
-        supported_asr = {
-            "moss_transcribe_diarize",
-            "generic_asr_api",
-            "parakeet_nemo",
-            "kotoba_whisper",
-            "faster_whisper",
-        }
-        supported_tts = {
-            "indextts2",
-            "indextts2_api",
-            "generic_tts_api",
-            "gpt_sovits",
-            "cosyvoice",
-            "fish_speech",
-            "edge_tts",
-            "mimo_tts",
-            "minimax",
-        }
-        if settings.get("asr_backend") not in supported_asr:
-            old = settings.get("asr_backend", "未知")
-            settings["asr_backend"] = FALLBACK_ASR_BACKEND
-            settings["asr_model"] = FALLBACK_ASR_MODEL
-            warnings.append(f"旧语音识别后端 {old} 已停止支持，已切换为 Parakeet。")
-        if settings.get("tts_backend") not in supported_tts:
-            old = settings.get("tts_backend", "未知")
-            settings["tts_backend"] = RECOMMENDED_TTS_BACKEND
-            settings["tts_model"] = RECOMMENDED_TTS_MODEL
-            warnings.append(f"旧语音合成后端 {old} 已停止支持，已切换为 IndexTTS2。")
-        if settings.get("asr_vad_mode") not in {"off", "backend", "asmr"}:
-            settings["asr_vad_mode"] = "off"
-            warnings.append("未知 VAD（语音活动检测）模式已关闭。")
-        review_models = [
-            item
-            for item in settings.get("asr_review_models", [])
-            if str(item).partition("|")[0] in supported_asr
-        ]
-        settings["asr_review_models"] = review_models or [
-            DEFAULT_ASR_REVIEW_TEXT_PRIORITY,
-            "faster_whisper|large-v2",
-        ]
-        for field in ("asr_review_text_priority_model", "asr_review_timestamp_priority_model"):
-            value = str(settings.get(field, ""))
-            if value.partition("|")[0] not in supported_asr and not value.startswith(
-                "qwen_forced_aligner|"
-            ):
-                settings[field] = DEFAULT_ASR_REVIEW_TEXT_PRIORITY
-        payload["settings"] = settings
-        payload["schema_version"] = 2
-        payload["app_version"] = "2.2.1"
-        payload["revision"] = int(payload.get("revision", 0))
-        payload["migration_warnings"] = warnings
-        version = 2
-    if version == 2:
-        sentences = []
-        for raw_sentence in payload.get("sentences") or []:
-            sentence = dict(raw_sentence)
-            if "source_text" not in sentence:
-                sentence["source_text"] = sentence.pop("ja_text", "")
-            else:
-                sentence.pop("ja_text", None)
-            sentences.append(sentence)
-        settings = dict(payload.get("settings") or {})
-        if "mix_output_mode" not in settings:
-            settings["mix_output_mode"] = (
-                "both" if settings.get("retain_chinese_stem", True) else "mixed"
-            )
-        settings.pop("retain_chinese_stem", None)
-        source_language: SourceLanguage = "ja"
-        if (
-            sentences
-            and all(not str(item.get("source_text", "")).strip() for item in sentences)
-            and any(str(item.get("zh_text", "")).strip() for item in sentences)
-        ):
-            source_language = "zh"
-        payload["sentences"] = sentences
-        payload["settings"] = settings
-        payload["source_language"] = source_language
-        if payload.get("subtitle_language") == "ja":
-            payload["subtitle_language"] = "source"
-        payload["schema_version"] = 3
-        payload["revision"] = int(payload.get("revision", 0))
-        payload["migration_warnings"] = warnings
-        version = 3
-    if version != PROJECT_SCHEMA_VERSION:
-        raise ValueError(f"unsupported project schema {version}")
-    # Settings added in 2.3 change how dubs are generated.  A project written before
-    # them keeps the old behaviour, so its existing dubs stay valid; new projects
-    # get the improved defaults.
-    settings = payload.get("settings")
-    if isinstance(settings, dict):
-        updated_settings = dict(settings)
-        prompt = str(updated_settings.get("translation_prompt", "") or "").strip()
-        if prompt:
-            from .user_settings import _is_legacy_builtin_translation_prompt
-
-            if _is_legacy_builtin_translation_prompt(prompt):
-                updated_settings["translation_prompt"] = ""
-        legacy = {
-            key: value for key, value in _PRE_2_3_SETTINGS.items() if key not in updated_settings
-        }
-        if legacy or updated_settings != settings:
-            payload["settings"] = {**updated_settings, **legacy}
-    return payload
-
-
-_PRE_2_3_SETTINGS: dict[str, Any] = {
-    "reference_audio_mode": "legacy",
-    "tts_normalize_pauses": False,
-    "tts_fit_source_duration": False,
-    "tts_dual_voice_anchor": False,
-}
+    return migrate_project_payload(data)

@@ -55,6 +55,7 @@ class Projects:
             active, directory, result["source_url"], self.media.register
         )
         for sentence in result["sentences"]:
+            sentence.setdefault("zh_text", sentence.get("target_text", ""))
             stored = sentence.get("tts_file")
             sentence["tts_url"] = self.media.register(directory / stored) if stored else None
             for take in sentence.get("tts_candidates") or []:
