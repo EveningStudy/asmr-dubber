@@ -30,7 +30,7 @@ BALANCED = {
     "tts_index25_num_beams": 2,
     "replacement_voice_match_strength": 0.8,
     "replacement_bandwidth_extension": True,
-    "replacement_whisper_match": 1.0,
+    "replacement_whisper_match": 0.5,
 }
 QUALITY_KEYS = tuple(FAST)
 
@@ -45,10 +45,17 @@ REPLACEMENT = {
     "separation_enabled": True,
     "separation_mix_mode": "replace",
     "spatial_rtf_enabled": True,
+    "tts_fit_source_duration": True,
+    "tts_dual_voice_anchor": True,
+    "tts_asr_quality_check": True,
     "replacement_scope": "dubbed_speech",
     "replacement_timing_mode": "fit_then_shift",
-    "replacement_max_auto_speed": 1.2,
+    "replacement_max_auto_speed": 1.25,
+    "replacement_voice_match_strength": 0.85,
+    "replacement_whisper_match": 0.65,
     "replacement_noise_fill": True,
+    "replacement_residual_suppression": 0.5,
+    "replacement_residual_asr_check": True,
     "autoflow_default_content": "replacement",
 }
 

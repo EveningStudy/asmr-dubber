@@ -124,8 +124,30 @@ def _vad_clips(
             clip = audio.read(end - start, dtype="float32", always_2d=True).mean(axis=1)
             for a, b in _split_long_clip(clip, sample_rate):
                 pieces.append((start + a, start + b))
-                clips.append(clip[a:b])
+                clips.append(_level_whisper_clip(clip[a:b], sample_rate))
     return sample_rate, pieces, clips
+
+
+def _level_whisper_clip(clip: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Bring very quiet whispered VAD clips up into the ASR encoder's sweet spot."""
+    samples = np.asarray(clip, dtype=np.float64)
+    if samples.size < max(64, sample_rate // 20):
+        return clip
+    hop = max(1, sample_rate // 50)
+    count = samples.size // hop
+    if count < 2:
+        return clip
+    rms = np.sqrt(np.mean(samples[: count * hop].reshape(count, hop) ** 2, axis=1))
+    peak_rms = float(rms.max(initial=0.0))
+    if peak_rms <= 1e-6:
+        return clip
+    active_rms = float(np.sqrt(np.mean(rms[rms >= peak_rms * 0.2] ** 2)))
+    target = 10 ** (-20.0 / 20.0)
+    if active_rms >= target * 0.8:
+        return clip
+    gain = min(target / max(active_rms, 1e-6), 12.0)
+    boosted = np.tanh(samples * gain * 1.05) / 1.05
+    return boosted.astype(np.float32)
 
 
 def _split_long_clip(clip: np.ndarray, sample_rate: int) -> list[tuple[int, int]]:
@@ -147,9 +169,9 @@ def _split_long_clip(clip: np.ndarray, sample_rate: int) -> list[tuple[int, int]
 
 
 _ACTIVE_FRAME_SECONDS = 0.02
-_ACTIVE_DROP = 0.1  # frames within 20 dB of the clip's loudest frame count as voice
-_MIN_ALIGNED_SHARE = 0.35
-_MAX_EDGE_MISS_SECONDS = 0.8
+_ACTIVE_DROP = 0.032  # frames within ~30 dB of the clip's 98th-percentile frame count as voice
+_MIN_ALIGNED_SHARE = 0.45
+_MAX_EDGE_MISS_SECONDS = 0.45
 
 
 def _active_frames(clip: np.ndarray, sample_rate: int) -> tuple[np.ndarray, float]:
@@ -158,7 +180,9 @@ def _active_frames(clip: np.ndarray, sample_rate: int) -> tuple[np.ndarray, floa
     if count == 0:
         return np.zeros(0, dtype=bool), hop / sample_rate
     rms = np.sqrt(np.mean(clip[: count * hop].astype(np.float64).reshape(count, hop) ** 2, axis=1))
-    return rms >= max(float(rms.max()) * _ACTIVE_DROP, 1e-6), hop / sample_rate
+    ref = float(np.percentile(rms, 98)) if len(rms) >= 4 else float(rms.max())
+    floor = float(np.percentile(rms, 10)) * 2.2 if len(rms) >= 8 else 1e-6
+    return rms >= max(ref * _ACTIVE_DROP, floor, 1e-6), hop / sample_rate
 
 
 def _alignment_is_plausible(
@@ -209,6 +233,63 @@ def _spread_over_voice(
     return tokens
 
 
+def _extend_tokens_over_active_voice(
+    aligned: list[TimedToken],
+    active: np.ndarray,
+    hop_seconds: float,
+    offset: float,
+    end: float,
+) -> list[TimedToken]:
+    """Bridge whispered vowel tails that ForcedAligner collapses to point-onsets."""
+    if not aligned or not active.any():
+        return aligned
+    indices = np.flatnonzero(active)
+    voice_start = max(offset, float(offset + indices[0] * hop_seconds))
+    voice_end = min(end, float(offset + (indices[-1] + 1) * hop_seconds))
+    out = list(aligned)
+    if out[0].start_seconds > voice_start:
+        out[0] = TimedToken(
+            out[0].text,
+            max(voice_start, out[0].start_seconds - 1.2),
+            max(out[0].end_seconds, voice_start + 0.02),
+        )
+    # Bridge intra-group active-voice tails between consecutive tokens so sustained
+    # whispered vowels ("メアァ…の") never look like multi-second silences.
+    for idx in range(len(out) - 1):
+        cur = out[idx]
+        nxt = out[idx + 1]
+        if nxt.start_seconds <= cur.end_seconds + hop_seconds:
+            continue
+        f_lo = max(0, int((cur.end_seconds - offset) / hop_seconds))
+        f_hi = min(len(active), int(np.ceil((nxt.start_seconds - offset) / hop_seconds)))
+        if f_hi > f_lo and float(np.mean(active[f_lo:f_hi])) >= 0.45:
+            bridged_end = nxt.start_seconds - 0.01
+            if bridged_end > cur.end_seconds:
+                out[idx] = TimedToken(cur.text, cur.start_seconds, bridged_end)
+        else:
+            # Extend across contiguous trailing voice up to a 160 ms silence gap.
+            quiet = 0
+            tail = cur.end_seconds
+            max_quiet = max(1, round(0.16 / hop_seconds))
+            for f in range(f_lo, f_hi):
+                if active[f]:
+                    quiet = 0
+                    tail = min(nxt.start_seconds - 0.01, offset + (f + 1) * hop_seconds)
+                else:
+                    quiet += 1
+                    if quiet > max_quiet:
+                        break
+            if tail > cur.end_seconds:
+                out[idx] = TimedToken(cur.text, cur.start_seconds, tail)
+    if out[-1].end_seconds < voice_end:
+        out[-1] = TimedToken(
+            out[-1].text,
+            out[-1].start_seconds,
+            min(voice_end, out[-1].end_seconds + 2.2),
+        )
+    return out
+
+
 def _group_tokens(
     text: str,
     items: Any,
@@ -224,7 +305,7 @@ def _group_tokens(
         return aligned or [TimedToken(text, offset, end)]
     active, hop_seconds = _active_frames(clip, sample_rate)
     if aligned and _alignment_is_plausible(aligned, active, hop_seconds, offset):
-        return aligned
+        return _extend_tokens_over_active_voice(aligned, active, hop_seconds, offset, end)
     return _spread_over_voice(text, active, hop_seconds, offset, end)
 
 
@@ -357,7 +438,7 @@ def transcribe_anime_whisper(
     *,
     source_language: SpeechSourceLanguage = "ja",
 ) -> tuple[list[Sentence], str]:
-    from .asr import _cleanup_cuda, _finish_tokens, _run_transformers_asr_pipeline
+    from .asr import _cleanup_cuda, _finish_tokens, _run_transformers_asr_pipeline, _session_model
 
     check_cancelled(cancel_event)
     if source_language != "ja":
@@ -383,21 +464,28 @@ def transcribe_anime_whisper(
     dtype = torch.float16 if use_cuda else torch.float32
     device = settings.asr_device if use_cuda else "cpu"
     texts: list[str] = []
-    model = processor = pipe = None
+    pipe = None
     try:
         if progress:
             progress(f"加载 anime-whisper：{settings.asr_model}", 0, len(groups))
-        processor = AutoProcessor.from_pretrained(source, revision=revision)
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            source, revision=revision, dtype=dtype, low_cpu_mem_usage=True
-        ).to(device)
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            dtype=dtype,
-            device=device,
+
+        def _build_anime_pipe() -> Any:
+            proc = AutoProcessor.from_pretrained(source, revision=revision)
+            mdl = AutoModelForSpeechSeq2Seq.from_pretrained(
+                source, revision=revision, dtype=dtype, low_cpu_mem_usage=True
+            ).to(device)
+            return pipeline(
+                "automatic-speech-recognition",
+                model=mdl,
+                tokenizer=proc.tokenizer,
+                feature_extractor=proc.feature_extractor,
+                dtype=dtype,
+                device=device,
+            )
+
+        pipe = _session_model(
+            f"anime-whisper:{source}:{revision}:{device}:{dtype}",
+            _build_anime_pipe,
         )
         batch = max(1, settings.asr_batch_size) * 4
         for first in range(0, len(clips), batch):
@@ -424,7 +512,7 @@ def transcribe_anime_whisper(
                 for output in (outputs if isinstance(outputs, list) else [outputs])
             )
     finally:
-        del pipe, model, processor
+        del pipe
         _cleanup_cuda()
 
     # 2. Align each recognised group to get per-character times.
@@ -435,7 +523,10 @@ def transcribe_anime_whisper(
     try:
         if progress:
             progress("加载 Qwen3 ForcedAligner（逐字时间戳）", 0, len(pending))
-        aligner_model = Qwen3ForcedAligner.from_pretrained(aligner_source, **aligner_kwargs)
+        aligner_model = _session_model(
+            f"qwen3-aligner:{aligner_source}:{settings.asr_device}",
+            lambda: Qwen3ForcedAligner.from_pretrained(aligner_source, **aligner_kwargs),
+        )
         for first in range(0, len(pending), _ALIGN_BATCH):
             check_cancelled(cancel_event)
             chunk = pending[first : first + _ALIGN_BATCH]
@@ -462,4 +553,61 @@ def transcribe_anime_whisper(
     finally:
         del aligner_model
         _cleanup_cuda()
-    return _finish_tokens(tokens, "".join(texts[i] for i in pending), "Japanese", settings, "ja")
+    finished, detected_lang = _finish_tokens(
+        tokens, "".join(texts[i] for i in pending), "Japanese", settings, "ja"
+    )
+    return (
+        _preserve_nonverbal_vad_groups(finished, texts, groups, clips, sample_rate),
+        detected_lang,
+    )
+
+
+def _preserve_nonverbal_vad_groups(
+    sentences: list[Sentence],
+    texts: list[str],
+    groups: list[tuple[int, int]],
+    clips: list[np.ndarray],
+    sample_rate: int,
+) -> list[Sentence]:
+    """Emit disabled ``skipped_sound`` rows for VAD vocal groups with no lexical words.
+
+    anime-whisper suppresses pure breaths, kisses and sighs to ``""``. Recording
+    sustained vocal groups (>= 0.40 s) as ``skipped_sound`` rows preserves their
+    original voice in replacement mixes and blocks neighbouring dubs from overlapping.
+    """
+    extra: list[Sentence] = []
+    for idx, text in enumerate(texts):
+        if text.strip():
+            continue
+        start_s = groups[idx][0] / sample_rate
+        end_s = groups[idx][1] / sample_rate
+        if end_s - start_s < 0.40:
+            continue
+        active, hop_s = _active_frames(clips[idx], sample_rate)
+        if active.sum() * hop_s < 0.35:
+            continue
+        act_idx = np.flatnonzero(active)
+        v_start = round(start_s + act_idx[0] * hop_s, 3)
+        v_end = round(min(end_s, start_s + (act_idx[-1] + 1) * hop_s), 3)
+        if v_end - v_start < 0.35:
+            continue
+        # Skip if already overlapping an existing sentence.
+        if any(min(v_end, s.end_seconds) - max(v_start, s.start_seconds) > 0.08 for s in sentences):
+            continue
+        extra.append(
+            Sentence(
+                id=f"s9{idx:05d}",
+                start_seconds=v_start,
+                end_seconds=v_end,
+                source_text="（吐息）",
+                enabled=False,
+                chinese_audio_enabled=False,
+                status="skipped_sound",
+            )
+        )
+    if not extra:
+        return sentences
+    combined = sorted([*sentences, *extra], key=lambda s: (s.start_seconds, s.end_seconds, s.id))
+    for i, s in enumerate(combined, start=1):
+        s.id = f"s{i:06d}"
+    return combined

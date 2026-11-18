@@ -98,6 +98,7 @@ class Sentence(BaseModel):
     translation_warning: str | None = None
     # Alternative takes of this line (F1): {attempt, file, duration, warning}.
     tts_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    voice_mode: Literal["modal", "whisper"] | None = None
 
     @field_validator("source_text", "zh_text")
     @classmethod
@@ -415,8 +416,12 @@ class ProjectSettings(BaseModel):
     translation_chars_per_second: float = Field(default=4.5, ge=2.0, le=12.0)
     # Reject empty, truncated, runaway or clipped dubs and regenerate them.
     tts_quality_check: bool = True
+    tts_asr_quality_check: bool = False
+    tts_fit_source_duration: bool = True
+    tts_dual_voice_anchor: bool = True
     tts_clone_mode: Literal["stable_reference", "reference_only"] = "stable_reference"
     tts_reference_sentence_id: str | None = None
+    tts_whisper_reference_sentence_id: str | None = None
 
     chinese_dubbing_offset_ms: int = Field(
         default=DEFAULT_CHINESE_DUBBING_OFFSET_MS,
@@ -455,18 +460,20 @@ class ProjectSettings(BaseModel):
     replacement_chinese_line_peak_dbfs: float = Field(default=-6.0, ge=-20.0, le=-1.0)
     replacement_chinese_stem_peak_dbfs: float = Field(default=-3.0, ge=-12.0, le=-0.1)
     replacement_chinese_fade_ms: float = Field(default=8.0, ge=0.0, le=100.0)
-    # Replacement 2.0: the dub sits on the original sentence instead of trailing it.
+    # Replacement 3.0: the dub sits on the original sentence instead of trailing it.
     replacement_scope: Literal["dubbed_speech", "all_vocals"] = "dubbed_speech"
     replacement_dubbing_offset_ms: int = Field(default=0, ge=-30_000, le=30_000)
-    replacement_max_auto_speed: float = Field(default=1.2, ge=1.0, le=MAX_CHINESE_AUTO_SPEED)
+    replacement_max_auto_speed: float = Field(default=1.25, ge=1.0, le=MAX_CHINESE_AUTO_SPEED)
     replacement_timing_mode: Literal["fit_window", "sequential", "fit_then_shift"] = (
         "fit_then_shift"
     )
-    replacement_voice_match_strength: float = Field(default=0.8, ge=0.0, le=1.0)
+    replacement_voice_match_strength: float = Field(default=0.85, ge=0.0, le=1.0)
     replacement_bandwidth_extension: bool = True
     replacement_noise_fill: bool = True
-    # Experimental: push a voiced dub towards a whisper where the original whispers.
-    replacement_whisper_match: float = Field(default=1.0, ge=0.0, le=1.0)
+    replacement_residual_suppression: float = Field(default=0.0, ge=0.0, le=1.0)
+    replacement_residual_asr_check: bool = False
+    # Push a voiced dub towards a whisper where the original whispers (harmonic-selective).
+    replacement_whisper_match: float = Field(default=0.65, ge=0.0, le=1.0)
     chinese_channel_routing: Literal["auto", "all"] = "auto"
     mix_peak_protection: bool = True
     mix_peak_limit_dbfs: float = Field(default=-1.0, ge=-6.0, le=-0.1)
@@ -925,4 +932,6 @@ def _migrate_project_payload(data: dict[str, Any]) -> dict[str, Any]:
 _PRE_2_3_SETTINGS: dict[str, Any] = {
     "reference_audio_mode": "legacy",
     "tts_normalize_pauses": False,
+    "tts_fit_source_duration": False,
+    "tts_dual_voice_anchor": False,
 }

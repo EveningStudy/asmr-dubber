@@ -43,10 +43,17 @@ from .task_control import (
     unregister_cancel_callback,
     unregister_process,
 )
-from .tts import attempt_seed, spoken_text, tts_cache_key, valid_tts_cache
+from .tts import (
+    attempt_seed,
+    spoken_text,
+    target_duration_for_sentence,
+    tts_cache_key,
+    valid_tts_cache,
+)
 from .user_settings import saved_service_key
 from .voice_reference import (
     VoiceReference,
+    effective_index_emotion_weight,
     prepare_index_emotion_reference,
     prepare_index_speaker_reference,
     prepare_voice_reference,
@@ -259,6 +266,12 @@ def _synthesize_indextts_cli_batch(
     manifest = tts_dir / ".indextts2_batch.jsonl"
     tasks: list[tuple[Sentence, VoiceReference, Path]] = []
     lines: list[str] = []
+    settings = project.settings
+    use_custom_worker = (
+        len(command_prefix) >= 3
+        and command_prefix[-2:] == ["-m", "indextts.cli_v2"]
+        and Path(__file__).with_name("indextts2_worker.py").is_file()
+    )
     for sentence in pending:
         check_cancelled(cancel_event)
         reference = prepare_index_speaker_reference(project, project_dir, source, sentence)
@@ -271,37 +284,74 @@ def _synthesize_indextts_cli_batch(
         )
         output = (tts_dir / f".{sentence.id}.indextts2.tmp.wav").resolve()
         output.unlink(missing_ok=True)
+        emo_weight = effective_index_emotion_weight(project, sentence)
         payload: dict[str, Any] = {
-            "text": spoken_text(project.settings, sentence.zh_text),
+            "text": spoken_text(settings, sentence.zh_text),
             "voice": str(reference.path.resolve()),
             "output": str(output),
         }
-        if project.settings.tts_index_emotion_source == "text":
-            payload["emotion_text"] = project.settings.tts_index_emo_text.strip() or spoken_text(
-                project.settings, sentence.zh_text
+        if use_custom_worker:
+            payload.update(
+                {
+                    "id": sentence.id,
+                    "sentence_id": sentence.id,
+                    "seed": attempt_seed(settings.random_seed, sentence),
+                    "do_sample": settings.tts_index25_do_sample,
+                    "temperature": settings.tts_temperature,
+                    "top_p": settings.tts_top_p,
+                    "top_k": settings.tts_index25_top_k,
+                    "num_beams": settings.tts_index25_num_beams,
+                    "repetition_penalty": settings.tts_index25_repetition_penalty,
+                    "length_penalty": settings.tts_index25_length_penalty,
+                    "max_mel_tokens": settings.tts_index25_max_mel_tokens,
+                    "interval_silence_ms": settings.tts_index25_interval_silence_ms,
+                    "max_text_tokens": settings.tts_index25_max_text_tokens,
+                    "emotion_weight": emo_weight,
+                }
             )
-            payload["emotion_weight"] = project.settings.tts_index_emo_alpha
-        elif project.settings.tts_index_emotion_source == "vector":
-            payload["emotion_vector"] = project.settings.tts_index25_emotion_vector
-            payload["emotion_weight"] = project.settings.tts_index_emo_alpha
+            target_dur = target_duration_for_sentence(project, sentence)
+            if target_dur is not None:
+                payload["target_duration_seconds"] = target_dur
+        if settings.tts_index_emotion_source == "text":
+            payload["emotion_text"] = settings.tts_index_emo_text.strip() or spoken_text(
+                settings, sentence.zh_text
+            )
+            payload["emotion_weight"] = emo_weight
+        elif settings.tts_index_emotion_source == "vector":
+            payload["emotion_vector"] = settings.tts_index25_emotion_vector
+            payload["emotion_weight"] = emo_weight
         elif emotion is not None:
             payload["emotion_audio"] = str(emotion.path.resolve())
-            payload["emotion_weight"] = project.settings.tts_index_emo_alpha
+            payload["emotion_weight"] = emo_weight
         lines.append(json.dumps(payload, ensure_ascii=False))
         tasks.append((sentence, reference, output))
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    command = [
-        *command_prefix,
-        "batch",
-        "--batch-file",
-        str(manifest),
-        "--model-dir",
-        str(model_dir),
-        "--device",
-        project.settings.tts_device,
-        "--fp16" if project.settings.tts_index_use_fp16 else "--no-fp16",
-        "--force",
-    ]
+    if use_custom_worker:
+        worker_script = Path(__file__).with_name("indextts2_worker.py").resolve()
+        command = [
+            command_prefix[0],
+            str(worker_script),
+            "--batch-file",
+            str(manifest),
+            "--model-dir",
+            str(model_dir),
+            "--device",
+            settings.tts_device,
+            "--fp16" if settings.tts_index_use_fp16 else "--no-fp16",
+        ]
+    else:
+        command = [
+            *command_prefix,
+            "batch",
+            "--batch-file",
+            str(manifest),
+            "--model-dir",
+            str(model_dir),
+            "--device",
+            settings.tts_device,
+            "--fp16" if settings.tts_index_use_fp16 else "--no-fp16",
+            "--force",
+        ]
     logger.info(
         "IndexTTS2 开始：device=%s fp16=%s sentences=%d",
         project.settings.tts_device,
@@ -317,16 +367,26 @@ def _synthesize_indextts_cli_batch(
     process: subprocess.Popen[str] | None = None
     cancelled: OperationCancelledError | None = None
     try:
+        env = isolated_runtime_environment("index-tts")
+        if use_custom_worker:
+            env["HF_HUB_OFFLINE"] = "1"
+            env["TRANSFORMERS_OFFLINE"] = "1"
+            runtime_source = str(model_dir.parent)
+            existing_pythonpath = env.get("PYTHONPATH", "").strip()
+            env["PYTHONPATH"] = os.pathsep.join(
+                part for part in (runtime_source, existing_pythonpath) if part
+            )
         process = subprocess.Popen(
             command,
             start_new_session=os.name != "nt",
+            cwd=model_dir.parent if use_custom_worker else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,
-            env=isolated_runtime_environment("index-tts"),
+            env=env,
         )
         register_process(process, cancel_event)
         messages: queue.Queue[str | None] = queue.Queue()
@@ -499,13 +559,15 @@ def _synthesize_indextts25_batch(
         )
         output = (tts_dir / f".{sentence.id}.indextts25.tmp.wav").resolve()
         output.unlink(missing_ok=True)
+        emo_weight = effective_index_emotion_weight(project, sentence)
         payload: dict[str, Any] = {
             "id": sentence.id,
+            "sentence_id": sentence.id,
             "text": spoken_text(project.settings, sentence.zh_text),
             "voice": str(reference.path.resolve()),
             "output": str(output),
             "language": settings.tts_target_language,
-            "emotion_weight": settings.tts_index_emo_alpha,
+            "emotion_weight": emo_weight,
             "use_random": settings.tts_index25_use_random,
             "interval_silence_ms": settings.tts_index25_interval_silence_ms,
             "max_text_tokens": settings.tts_index25_max_text_tokens,
@@ -521,6 +583,9 @@ def _synthesize_indextts25_batch(
             "max_mel_tokens": settings.tts_index25_max_mel_tokens,
             "seed": attempt_seed(settings.random_seed, sentence),
         }
+        target_dur = target_duration_for_sentence(project, sentence)
+        if target_dur is not None:
+            payload["target_duration_seconds"] = target_dur
         if settings.tts_index_emotion_source == "text":
             payload["emotion_text"] = settings.tts_index_emo_text.strip() or spoken_text(
                 project.settings, sentence.zh_text

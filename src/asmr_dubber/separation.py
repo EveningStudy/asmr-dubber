@@ -21,7 +21,6 @@ from urllib.parse import urlparse
 import httpx
 import numpy as np
 import soundfile as sf
-import soxr
 
 from .api_contracts import parse_json_object
 from .audio import _run_ffmpeg, sha256_file
@@ -508,26 +507,60 @@ def _ensure_separation_impl(
         normalized = root / "source.wav"
         if not normalized.exists():
             normalized_partial = root / "source.partial.wav"
-            _run_ffmpeg(
-                [
-                    "-y",
-                    "-i",
-                    str(source),
-                    "-map",
-                    "0:a:0",
-                    "-vn",
-                    "-ar",
-                    str(rate),
-                    "-ac",
-                    str(channels),
-                    "-c:a",
-                    "pcm_f32le",
-                    "-rf64",
-                    "auto",
-                    str(normalized_partial),
-                ]
-            )
-            os.replace(normalized_partial, normalized)
+            native_decoded = root / "source.native.partial.wav"
+            try:
+                _run_ffmpeg(
+                    [
+                        "-y",
+                        "-i",
+                        str(source),
+                        "-map",
+                        "0:a:0",
+                        "-vn",
+                        "-ac",
+                        str(channels),
+                        "-c:a",
+                        "pcm_f32le",
+                        "-rf64",
+                        "auto",
+                        str(native_decoded),
+                    ]
+                )
+                import soxr
+
+                with sf.SoundFile(native_decoded) as src_audio:
+                    if src_audio.samplerate == rate:
+                        src_audio.close()
+                        os.replace(native_decoded, normalized_partial)
+                    else:
+                        stream = soxr.ResampleStream(
+                            src_audio.samplerate,
+                            rate,
+                            channels,
+                            dtype="float32",
+                            quality="VHQ",
+                        )
+                        with sf.SoundFile(
+                            normalized_partial,
+                            "w",
+                            samplerate=rate,
+                            channels=channels,
+                            format="RF64",
+                            subtype="FLOAT",
+                        ) as dst_audio:
+                            step = src_audio.samplerate * 10
+                            pos = 0
+                            while pos < src_audio.frames:
+                                check_cancelled()
+                                chunk = src_audio.read(step, dtype="float32", always_2d=True)
+                                pos += len(chunk)
+                                dst_audio.write(
+                                    stream.resample_chunk(chunk, last=pos >= src_audio.frames)
+                                )
+                os.replace(normalized_partial, normalized)
+            finally:
+                native_decoded.unlink(missing_ok=True)
+                normalized_partial.unlink(missing_ok=True)
         block = round(rate * settings.separation_chunk_seconds)
         padding = round(rate * settings.separation_overlap_seconds)
         params = {

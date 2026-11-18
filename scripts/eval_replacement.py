@@ -32,7 +32,14 @@ BANDS = [(100, 400), (400, 1500), (1500, 4000), (4000, 8000), (8000, 12000), (12
 
 
 # ----------------------------------------------------------------- rendering
-def render(root: Path, take: str, overrides: dict, synthesize: bool) -> None:
+def render(
+    root: Path,
+    take: str,
+    overrides: dict,
+    synthesize: bool,
+    *,
+    variant: str = "replace",
+) -> None:
     from asmr_dubber.filtering import has_speakable_text
     from asmr_dubber.models import load_project, save_project
     from asmr_dubber.pipeline import mix_project, synthesize_project
@@ -40,8 +47,10 @@ def render(root: Path, take: str, overrides: dict, synthesize: bool) -> None:
     destination = root / "takes" / take
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "settings.json").write_text(
-        json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps({"variant": variant, **overrides}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
+    mix_mode = "bilingual" if variant == "bilingual" else "replace"
     for directory in sorted((root / "projects").iterdir()):
         if not (directory / "project.json").is_file():
             continue
@@ -49,7 +58,7 @@ def render(root: Path, take: str, overrides: dict, synthesize: bool) -> None:
         project, project_dir = load_project(directory)
         values = {
             "separation_enabled": True,
-            "separation_mix_mode": "replace",
+            "separation_mix_mode": mix_mode,
             "mix_output_mode": "both",
             **overrides,
         }
@@ -64,7 +73,7 @@ def render(root: Path, take: str, overrides: dict, synthesize: bool) -> None:
         if synthesize:
             synthesize_project(project, project_dir)
             project, project_dir = load_project(directory)
-        mix_project(project, project_dir, output_variant="replace")
+        mix_project(project, project_dir, output_variant=mix_mode)
         project, project_dir = load_project(directory)
         shutil.copyfile(project_dir / project.output_file, destination / f"{clip}.mix.wav")
         shutil.copyfile(project_dir / project.chinese_stem_file, destination / f"{clip}.stem.wav")
@@ -250,6 +259,12 @@ def measure_clip(source: Path, vocals: Path, take: Path, clip: str) -> dict | No
         "outside_seconds": round(float(outside.sum() / rate), 1),
         "original_left_in_lines_db": median("original_left_db"),
         "onset_ms": median("onset_ms"),
+        "onset_p95_ms": round(float(np.percentile([abs(r["onset_ms"]) for r in rows], 95)), 2)
+        if rows
+        else None,
+        "speed_over_1_1": round(float(np.mean([r["speed"] > 1.10 for r in rows])), 2)
+        if rows
+        else None,
         "speed_over_1_15": round(float(np.mean([r["speed"] > 1.15 for r in rows])), 2)
         if rows
         else None,
@@ -271,8 +286,10 @@ def measure_clip(source: Path, vocals: Path, take: Path, clip: str) -> dict | No
 LABELS = {
     "outside_change_dbfs": "配音句以外被改动的量（dBFS，越低越好，< −90 为未改动）",
     "original_left_in_lines_db": "配音句内保留的原声（相对原声 dB，越低越干净）",
-    "onset_ms": "配音起点相对原句起点（ms，接近 0 为好）",
-    "speed_over_1_15": "加速超过 1.15 倍的句子比例",
+    "onset_ms": "配音起点相对原句起点中位数（ms，接近 0 为好，门槛 ≤ 80）",
+    "onset_p95_ms": "配音起点绝对偏差 95 分位（ms，门槛 ≤ 300）",
+    "speed_over_1_1": "事后变速超过 1.10 倍的句子比例（门槛 ≤ 0.10）",
+    "speed_over_1_15": "事后变速超过 1.15 倍的句子比例",
     "level_error_db": "配音与原人声的响度差（dB）",
     "ild_error_db": "左右电平差误差（dB）",
     "itd_error_ms": "左右时间差误差（ms）",
@@ -284,7 +301,9 @@ LABELS = {
 
 
 def report(root: Path) -> None:
-    takes = sorted(p for p in (root / "takes").iterdir() if p.is_dir())
+    takes = sorted(
+        p for p in (root / "takes").iterdir() if p.is_dir() and (p / "settings.json").is_file()
+    )
     takes.sort(key=lambda p: p.stat().st_ctime)
     results: dict[str, dict] = {}
     clips: list[tuple[str, Path]] = []
@@ -312,12 +331,21 @@ def report(root: Path) -> None:
         encoding="utf-8",
     )
     _write_page(root, [t.name for t in takes], clips, summary)
+    from eval_blind_page import write_blind_listening_page
+
+    blind_candidates = [
+        t.name
+        for t in takes
+        if t.name in {"11-anime", "12-defaults"} or t.name.startswith(("15-", "16-", "17-", "18-"))
+    ]
+    blind_path = write_blind_listening_page(root, blind_candidates, clips)
     header = f"{'':44}" + "".join(f"{t.name[:14]:>16}" for t in takes)
     print(header)
     for key in LABELS:
         cells = "".join(f"{summary.get(t.name, {}).get(key)!s:>16}" for t in takes)
         print(f"{key:44}{cells}")
     print(f"\n试听页：{root / 'index.html'}")
+    print(f"匿名盲听页：{blind_path}")
 
 
 def _write_page(root: Path, takes: list[str], clips: list[tuple[str, Path]], summary: dict):
@@ -402,6 +430,12 @@ def main() -> None:
     r.add_argument("--set", default="{}", help="JSON object of project setting overrides")
     r.add_argument("--set-file", type=Path, help="JSON file of project setting overrides")
     r.add_argument("--no-tts", action="store_true", help="reuse existing dubs, only remix")
+    r.add_argument(
+        "--variant",
+        choices=("replace", "bilingual"),
+        default="replace",
+        help="mix variant to benchmark (W7 adds bilingual)",
+    )
     p = commands.add_parser("report")
     p.add_argument("root", type=Path)
     args = parser.parse_args()
@@ -409,7 +443,7 @@ def main() -> None:
         overrides = json.loads(args.set)
         if args.set_file:
             overrides.update(json.loads(args.set_file.read_text(encoding="utf-8")))
-        render(args.root.resolve(), args.take, overrides, not args.no_tts)
+        render(args.root.resolve(), args.take, overrides, not args.no_tts, variant=args.variant)
     else:
         report(args.root.resolve())
 

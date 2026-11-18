@@ -619,6 +619,7 @@ def _analyze_project_impl(
             progress(f"已存在 {len(project.sentences)} 句识别缓存", 1, 1)
         return
     source = verify_source(project_dir, project.source)
+    vocals: Path | None = None
     if project.settings.separation_enabled:
         from .separation import ensure_separation
 
@@ -695,9 +696,16 @@ def _analyze_project_impl(
     bounded_sentences.sort(
         key=lambda sentence: (sentence.start_seconds, sentence.end_seconds, sentence.id)
     )
+    from .dub_qc import detect_uncovered_vocal_sounds, snap_sentences_to_silence
+    from .voice_reference import annotate_sentence_voice_modes
+
+    bounded_sentences = snap_sentences_to_silence(bounded_sentences, analysis)
+    if vocals is not None and project.source_language == "ja":
+        bounded_sentences = detect_uncovered_vocal_sounds(bounded_sentences, vocals)
     for index, sentence in enumerate(bounded_sentences, start=1):
         sentence.id = f"s{index:06d}"
     project.sentences = bounded_sentences
+    annotate_sentence_voice_modes(project, vocals if vocals is not None else source)
     project.translation_language = project.settings.tts_target_language
     project.asr_language = language
     project.asr_settings_dirty = False
@@ -1242,15 +1250,20 @@ def _mix_project_impl(
     )
     output = output_dir / output_filename(project, project_dir)
     if replacing:
-        from .audio import sha256_file
+        if separated_vocals is not None and separated_vocals.is_file():
+            # Full-bandwidth stereo vocals preserve high-frequency whisper energy and
+            # equal-power single-ear levels without an extra 16 kHz FFmpeg downmix pass.
+            loudness_reference = separated_vocals
+        else:
+            from .audio import sha256_file
 
-        reference_key = sha256_file(reference_source)
-        receipt = project_dir / "analysis" / "replacement_loudness_source.sha256"
-        reference_audio = project_dir / "analysis" / "replacement_loudness_16k_mono.wav"
-        if not receipt.is_file() or receipt.read_text(encoding="utf-8") != reference_key:
-            reference_audio.unlink(missing_ok=True)
-        loudness_reference = make_analysis_copy(reference_source, reference_audio)
-        atomic_write_text(receipt, reference_key)
+            reference_key = sha256_file(reference_source)
+            receipt = project_dir / "analysis" / "replacement_loudness_source.sha256"
+            reference_audio = project_dir / "analysis" / "replacement_loudness_16k_mono.wav"
+            if not receipt.is_file() or receipt.read_text(encoding="utf-8") != reference_key:
+                reference_audio.unlink(missing_ok=True)
+            loudness_reference = make_analysis_copy(reference_source, reference_audio)
+            atomic_write_text(receipt, reference_key)
     else:
         loudness_reference = make_analysis_copy(
             source, project_dir / "analysis" / "asr_16k_mono.wav"

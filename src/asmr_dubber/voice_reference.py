@@ -177,6 +177,125 @@ def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | Non
     return max(scored, key=lambda item: (item[0], item[1]))[2]
 
 
+def pick_whisper_reference_sentence(project: DubProject, source: Path) -> Sentence | None:
+    """Choose a clean whispered line as the project's whisper voice anchor (W5).
+
+    Scores lines with low ``voiced_ratio`` (<= 0.26) that still stand clearly above
+    the room's noise floor, so whispered dubs are synthesized from an actual whisper
+    rather than forcing a modal reference through post-hoc breath conversion.
+    """
+    from .filtering import is_japanese_filler_only
+    from .voice_match import voiced_ratio
+
+    candidates = [
+        s
+        for s in project.sentences
+        if s.enabled
+        and s.source_text.strip()
+        and 1.8 <= s.end_seconds - s.start_seconds <= 20.0
+        and not is_japanese_filler_only(s.source_text)
+    ]
+    if not candidates:
+        return None
+    candidates = sorted(
+        candidates, key=lambda s: (-(s.end_seconds - s.start_seconds), s.start_seconds)
+    )[:_PICK_MAX_CANDIDATES]
+    try:
+        with sf.SoundFile(source) as audio:
+            rate = audio.samplerate
+            levels = np.concatenate(
+                [
+                    _frame_levels(block, rate)
+                    for block in audio.blocks(blocksize=rate * 30, dtype="float32", always_2d=True)
+                ]
+            )
+            floor = float(np.percentile(levels[levels > 0], 10)) if np.any(levels > 0) else 1e-9
+            scored = []
+            for sentence in candidates:
+                audio.seek(max(0, round(sentence.start_seconds * rate)))
+                frames = round((sentence.end_seconds - sentence.start_seconds) * rate)
+                clip = audio.read(frames, dtype="float32", always_2d=True)
+                clip_levels = _frame_levels(clip, rate)
+                if not len(clip_levels) or clip_levels.max() <= 0:
+                    continue
+                active = clip_levels[clip_levels >= clip_levels.max() * 0.1]
+                snr_db = 20 * math.log10(max(float(np.mean(active)), 1e-9) / max(floor, 1e-9))
+                if snr_db < 4.5:
+                    continue
+                vr = voiced_ratio(clip.mean(axis=1), rate)
+                if vr > 0.26:
+                    continue
+                dur = sentence.end_seconds - sentence.start_seconds
+                dur_score = 1.0 if 3.5 <= dur <= 10.0 else max(0.0, 1.0 - abs(dur - 6.0) / 8.0)
+                whisper_score = 1.0 - min(vr / 0.28, 1.0)
+                score = dur_score + 0.5 * min(max(snr_db, 0.0) / 25.0, 1.0) + 0.8 * whisper_score
+                scored.append((score, -sentence.start_seconds, sentence))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not scored:
+        return None
+    return max(scored, key=lambda item: (item[0], item[1]))[2]
+
+
+def annotate_sentence_voice_modes(project: DubProject, source: Path) -> None:
+    """Classify sentences into ``modal`` vs ``whisper`` from ``source`` audio."""
+    from .voice_match import voiced_ratio
+
+    if not project.sentences or not source.is_file():
+        return
+    try:
+        with sf.SoundFile(source) as audio:
+            rate = audio.samplerate
+            for sentence in project.sentences:
+                if sentence.end_seconds - sentence.start_seconds < 0.20:
+                    continue
+                lo = max(0, min(audio.frames, round(sentence.start_seconds * rate)))
+                hi = max(lo, min(audio.frames, round(sentence.end_seconds * rate)))
+                if hi - lo < rate // 10:
+                    continue
+                audio.seek(lo)
+                clip = audio.read(hi - lo, dtype="float32", always_2d=True)
+                # Pick whichever stereo ear is louder so single-ear whispers aren't halved.
+                ear_rms = np.sqrt(np.mean(clip.astype(np.float64) ** 2, axis=0))
+                mono = clip[:, int(np.argmax(ear_rms))] if clip.shape[1] >= 2 else clip[:, 0]
+                vr = voiced_ratio(mono, rate)
+                sentence.voice_mode = "whisper" if vr < 0.24 else "modal"
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+
+def effective_project_reference_sentence(
+    project: DubProject,
+    sentence: Sentence,
+) -> tuple[Sentence, bool]:
+    """Return ``(anchor_sentence, is_whisper_anchor)`` for IndexTTS speaker prompt."""
+    if (
+        project.settings.tts_dual_voice_anchor
+        and sentence.voice_mode == "whisper"
+        and project.settings.tts_whisper_reference_sentence_id
+    ):
+        whisper_id = project.settings.tts_whisper_reference_sentence_id
+        anchor = next((s for s in project.sentences if s.id == whisper_id), None)
+        if anchor is not None:
+            return anchor, True
+    return shared_reference_sentence(project), False
+
+
+def effective_index_emotion_weight(project: DubProject, sentence: Sentence) -> float:
+    """Boost emotion conditioning on whispers, and back off on QC retries to stop slurring."""
+    base = float(project.settings.tts_index_emo_alpha)
+    weight = (
+        max(base, 0.85)
+        if project.settings.tts_dual_voice_anchor and sentence.voice_mode == "whisper"
+        else base
+    )
+    if sentence.tts_attempt == 1:
+        return min(weight, 0.30)
+    if sentence.tts_attempt >= 2:
+        return min(weight, 0.10)
+    return weight
+
+
 def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sentence | None:
     """Choose a deterministic project reference that is not the rejected sentence."""
 
@@ -513,7 +632,10 @@ def prepare_index_speaker_reference(
             role="speaker",
         )
     shared = source_id == "project_reference"
-    reference_sentence = shared_reference_sentence(project) if shared else sentence
+    if shared:
+        reference_sentence, _ = effective_project_reference_sentence(project, sentence)
+    else:
+        reference_sentence = sentence
     reference = _index_sentence_reference(
         project,
         project_dir,

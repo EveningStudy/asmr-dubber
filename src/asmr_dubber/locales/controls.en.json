@@ -518,5 +518,11 @@
   "翻译 API 测试通过：{source} → {target}": "Translation API test passed: {source} → {target}",
   "anime-whisper 负责日语识别，IndexTTS2 负责模仿原声音色配音。显存较小可改用轻量的 Parakeet；英语或中文音频识别请改用 Faster-Whisper。": "anime-whisper recognises Japanese speech and IndexTTS2 dubs in the original voice. On lower-memory GPUs use the lighter Parakeet; for English or Chinese audio, use Faster-Whisper for recognition.",
   "anime-whisper 负责日语识别；当前显存不足以在本地运行 IndexTTS2，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。": "anime-whisper recognises Japanese speech; this GPU does not have enough video memory to run IndexTTS2 locally, so use built-in Edge TTS or cloud dubbing. For English or Chinese audio, use Faster-Whisper.",
-  "当前设备改用轻量的 Parakeet 负责日语识别，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。": "This computer uses the lighter Parakeet for Japanese recognition; use built-in Edge TTS or cloud dubbing for speech. For English or Chinese audio, use Faster-Whisper."
+  "当前设备改用轻量的 Parakeet 负责日语识别，配音可直接用内置的 Edge TTS 或云端配音。英语或中文音频识别请改用 Faster-Whisper。": "This computer uses the lighter Parakeet for Japanese recognition; use built-in Edge TTS or cloud dubbing for speech. For English or Chinese audio, use Faster-Whisper.",
+  "用语音识别复听检查配音读音": "Verify dubbed pronunciation with speech recognition",
+  "配音生成时直接贴合原句时长": "Match source line duration natively during synthesis",
+  "耳语句自动切换气声参考锚点": "Switch to a whispered voice anchor on whispered lines",
+  "项目耳语参考句 ID": "Project whisper reference line ID",
+  "替换窗口内高人声频段残差抑制强度": "Vocal-band residual suppression strength inside replaced windows",
+  "混音后用识别模型检查残留原声": "Scan replaced windows for leftover source speech"
 }

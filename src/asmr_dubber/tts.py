@@ -17,6 +17,8 @@ from .models import DubProject, ProjectSettings, Sentence
 from .task_control import CancellationSignal
 from .voice_reference import (
     STABLE_CLONE_MODES,
+    effective_index_emotion_weight,
+    effective_project_reference_sentence,
     fallback_reference_sentence,
     reference_plan_hash,
 )
@@ -62,13 +64,15 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
         )
         references["sentence_quality_fallback_version"] = 1
     if "project_reference" in {speaker_source, emotion_source}:
-        shared = shared_reference_sentence(project)
+        shared, is_whisper = effective_project_reference_sentence(project, sentence)
         references["project_reference"] = {
             "id": shared.id,
             "start": shared.start_seconds,
             "end": shared.end_seconds,
             "ja": shared.source_text,
         }
+        if is_whisper:
+            references["whisper_anchor"] = True
 
     payload: dict[str, object] = {}
     if speaker_source == "external":
@@ -122,6 +126,45 @@ def attempt_seed(seed: int, sentence: Sentence) -> int:
     return (seed + 1009 * sentence.tts_attempt) % (2**32)
 
 
+def target_duration_for_sentence(project: DubProject, sentence: Sentence) -> float | None:
+    """Target spoken duration (100 ms quantized) for native S2Mel length control (W1).
+
+    Respects both subsequent dubbed lines and preserved sound/breath obstacles so
+    synthesized lines fit their acoustic slot natively without post-hoc speed-up.
+    """
+    settings = project.settings
+    if not settings.tts_fit_source_duration or settings.tts_backend not in {
+        "indextts2",
+        "indextts2_5",
+    }:
+        return None
+    own = max(0.25, sentence.end_seconds - sentence.start_seconds)
+    next_start: float | None = None
+    for other in project.sentences:
+        if other.id == sentence.id or other.start_seconds <= sentence.start_seconds + 0.01:
+            continue
+        is_dubbed = (
+            other.enabled
+            and other.chinese_audio_enabled
+            and (
+                bool(other.zh_text)
+                or other.status not in {"skipped_sound", "skipped_filler", "skipped_tts"}
+            )
+        )
+        is_kept_sound = (
+            other.original_audio_enabled is True
+            or other.status == "skipped_sound"
+            or (other.enabled and not other.chinese_audio_enabled)
+        ) and (other.end_seconds - other.start_seconds >= 0.20)
+        if (is_dubbed or is_kept_sound) and (
+            next_start is None or other.start_seconds < next_start
+        ):
+            next_start = other.start_seconds
+    gap = max(0.0, next_start - sentence.end_seconds - 0.06) if next_start is not None else 0.40
+    target = own + min(gap, 0.85)
+    return round(max(0.30, target) * 10) / 10.0
+
+
 def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
     """Return a stable cache key using one cached digest per external reference."""
 
@@ -147,7 +190,7 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         "config_path": settings.tts_config_path,
         "executable": settings.tts_executable,
         "index_fp16": settings.tts_index_use_fp16,
-        "index_emo_alpha": settings.tts_index_emo_alpha,
+        "index_emo_alpha": effective_index_emotion_weight(project, sentence),
         "index_speaker_source": settings.tts_index_speaker_source,
         "index_emotion_source": settings.tts_index_emotion_source,
         "index_emo_text": settings.tts_index_emo_text,
@@ -168,6 +211,9 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
     if settings.tts_backend in {"indextts2_5", "indextts2"}:
         payload["index_references"] = _index_reference_payload(project, sentence)
         payload["reference_padding"] = settings.reference_padding_seconds
+        target_dur = target_duration_for_sentence(project, sentence)
+        if target_dur is not None:
+            payload["target_duration_100ms"] = round(target_dur * 10)
         if settings.tts_index_emotion_source == "vector":
             payload["emotion_vector"] = settings.tts_index25_emotion_vector
         if settings.tts_backend == "indextts2_5":
@@ -310,40 +356,64 @@ def synthesize_sentences(
     if project.settings.tts_reference_sentence_id is None and not any(
         sentence.tts_file for sentence in project.sentences
     ):
-        # Fix the voice anchor once, before the first line is synthesized, so every
-        # cache key refers to the same line.  Projects that already have dubs keep
-        # the previous (longest-line) choice and their dubs stay valid.
         from .voice_reference import pick_reference_sentence
 
         picked = pick_reference_sentence(project, source)
         if picked is not None:
             project.settings.tts_reference_sentence_id = picked.id
+    if project.settings.tts_dual_voice_anchor:
+        from .voice_reference import (
+            annotate_sentence_voice_modes,
+            pick_whisper_reference_sentence,
+        )
+
+        if any(s.voice_mode is None for s in project.sentences):
+            annotate_sentence_voice_modes(project, source)
+        if project.settings.tts_whisper_reference_sentence_id is None:
+            whisper_picked = pick_whisper_reference_sentence(project, source)
+            if whisper_picked is not None:
+                project.settings.tts_whisper_reference_sentence_id = whisper_picked.id
     failures = synthesize_with_selected_backend(
         project, project_dir, source, force=force, sentence_ids=sentence_ids, **options
     )
     settings = project.settings
-    if not settings.tts_quality_check:
+    if not settings.tts_quality_check and not settings.tts_asr_quality_check:
         return failures
+    from .asr import recognition_session
+    from .dub_qc import dub_asr_problem
+
     first_attempt = {sentence.id: sentence.tts_attempt for sentence in project.sentences}
     for _round in range(_QC_RETRIES + 1):
         retry: list[Sentence] = []
-        for sentence in project.sentences:
-            if not (
-                sentence.enabled
-                and sentence.chinese_audio_enabled
-                and sentence.tts_file
-                and has_speakable_text(sentence.zh_text)
-                and (requested is None or sentence.id in requested)
-            ):
-                continue
-            try:
-                path = resolve_project_path(project_dir, sentence.tts_file, sentence.id)
-            except Exception:  # missing or unsafe path: synthesis already reported it
-                continue
-            sentence.tts_warning = dub_problem(path, spoken_text(settings, sentence.zh_text))
-            used = sentence.tts_attempt - first_attempt.get(sentence.id, 0)
-            if sentence.tts_warning and used < _QC_RETRIES:
-                retry.append(sentence)
+        # Scope ASR QC models strictly to this inspection pass so GPU VRAM is freed
+        # before any IndexTTS child process spawns for retries.
+        with recognition_session():
+            for sentence in project.sentences:
+                if not (
+                    sentence.enabled
+                    and sentence.chinese_audio_enabled
+                    and sentence.tts_file
+                    and has_speakable_text(sentence.zh_text)
+                    and (requested is None or sentence.id in requested)
+                ):
+                    continue
+                try:
+                    path = resolve_project_path(project_dir, sentence.tts_file, sentence.id)
+                except Exception:
+                    continue
+                expected = spoken_text(settings, sentence.zh_text)
+                used = sentence.tts_attempt - first_attempt.get(sentence.id, 0)
+                warning = dub_problem(path, expected) if settings.tts_quality_check else None
+                if warning is None and settings.tts_asr_quality_check:
+                    warning = dub_asr_problem(
+                        path,
+                        expected,
+                        settings,
+                        is_final_attempt=(used >= _QC_RETRIES),
+                    )
+                sentence.tts_warning = warning
+                if sentence.tts_warning and used < _QC_RETRIES:
+                    retry.append(sentence)
         if not retry:
             break
         for sentence in retry:

@@ -1,12 +1,14 @@
 """Make a synthesized line sit in the recording like the voice it replaces.
 
-Three independent steps, all driven by the separated original voice:
+All steps are driven by the separated original voice:
 
-* ``match_spectrum``   - long-term spectrum (timbre, proximity) towards the original
-* ``extend_bandwidth`` - rebuild the air band that a 22 kHz TTS model cannot produce
-* ``noise_floor``      - the recording's own room noise, to refill replaced windows
+* ``match_spectrum``          - long-term spectrum & proximity slope towards original
+* ``extend_bandwidth``        - rebuild the air band that a 22 kHz TTS model omits
+* ``whisperize``              - harmonic-selective physiological breath conversion
+* ``process_voice_match_fused`` - single-pass complex STFT fusion of all three steps
+* ``noise_floor``             - the recording's own room noise, to refill windows
 
-None of this copies phonemes: only 1/3-octave long-term averages are transferred.
+None of this copies phonemes: only smoothed envelopes and transient protections apply.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ import numpy as np
 
 _SIZE = 2048
 _HOP = 512
+# Incoherent random-phase frames overlapped 4x with sqrt(Hann) cancel by ~1/sqrt(1.91).
+_INCOHERENT_OLA_GAIN = 1.38
 
 
 def _frames(signal: np.ndarray) -> np.ndarray:
@@ -65,6 +69,45 @@ def bandwidth_hz(spectrum: np.ndarray, rate: int, drop_db: float = 40.0) -> floa
     return float(hz[present[-1]]) if len(present) else 0.0
 
 
+def _spectral_eq_gain(
+    own_raw: np.ndarray,
+    target_spectrum: np.ndarray,
+    rate: int,
+    *,
+    strength: float,
+    max_db: float = 9.0,
+    sentence_spectrum: np.ndarray | None = None,
+) -> np.ndarray:
+    hz = np.fft.rfftfreq(_SIZE, 1 / rate)
+    own = _third_octave_smooth(own_raw, rate)
+    target = _third_octave_smooth(target_spectrum, rate)
+    difference = 10 * np.log10(np.maximum(target, 1e-30) / np.maximum(own, 1e-30))
+    core = (hz >= 200) & (hz <= 4000)
+    difference -= np.mean(difference[core])
+
+    # Proximity compensation (60-260 Hz relative to 400-2000 Hz): close-ear whispers
+    # and soft speech carry warm binaural proximity bass that whole-track averaging
+    # otherwise dilutes by ~80%.
+    if sentence_spectrum is not None:
+        sent_smooth = _third_octave_smooth(sentence_spectrum, rate)
+        mid_mask = (hz >= 400) & (hz <= 2000)
+        low_mask = (hz >= 60) & (hz <= 260)
+        if np.any(mid_mask) and np.any(low_mask):
+            sent_mid = float(np.mean(sent_smooth[mid_mask]))
+            own_mid = float(np.mean(own[mid_mask]))
+            if sent_mid > 1e-18 and own_mid > 1e-18:
+                sent_rel_db = 10 * np.log10(np.maximum(sent_smooth[low_mask], 1e-30) / sent_mid)
+                own_rel_db = 10 * np.log10(np.maximum(own[low_mask], 1e-30) / own_mid)
+                prox_delta = np.clip(sent_rel_db - own_rel_db, -6.0, 7.5)
+                blend = np.clip((260.0 - hz[low_mask]) / 120.0, 0.35, 0.85)
+                difference[low_mask] = (1.0 - blend) * difference[low_mask] + blend * prox_delta
+
+    limit = min(bandwidth_hz(own_raw, rate), bandwidth_hz(target_spectrum, rate))
+    min_hz = 60.0 if sentence_spectrum is not None else 80.0
+    difference[(hz < min_hz) | (hz > limit)] = 0
+    return 10 ** (np.clip(difference * strength, -max_db, max_db) / 20)
+
+
 def match_spectrum(
     dub: np.ndarray,
     rate: int,
@@ -73,24 +116,57 @@ def match_spectrum(
     strength: float = 0.8,
     max_db: float = 9.0,
 ) -> np.ndarray:
-    """Equalize ``dub`` so its long-term spectrum follows ``target_spectrum``.
-
-    The correction is 1/3-octave smoothed, level-neutral over 200 Hz-4 kHz, limited
-    to ``max_db`` and never tries to boost a band the dub does not contain.
-    """
+    """Equalize ``dub`` so its long-term spectrum follows ``target_spectrum``."""
     dub = np.asarray(dub, dtype=np.float32)
     if not len(dub) or strength <= 0:
         return dub
+    spectra = _frames(dub)
+    power = np.abs(spectra) ** 2
+    level = power.sum(axis=1)
+    own_raw = (
+        power[level >= level.max() * 1e-3].mean(axis=0) + 1e-20
+        if len(level) and level.max() > 0
+        else np.full(_SIZE // 2 + 1, 1e-20)
+    )
+    gain = _spectral_eq_gain(own_raw, target_spectrum, rate, strength=strength, max_db=max_db)
+    return _overlap_add(spectra * gain, len(dub)).astype(np.float32)
+
+
+def _extend_spectra_highband(
+    spectra: np.ndarray,
+    own_raw: np.ndarray,
+    target_spectrum: np.ndarray,
+    rate: int,
+    *,
+    strength: float = 1.0,
+    seed: int = 0,
+) -> np.ndarray:
     hz = np.fft.rfftfreq(_SIZE, 1 / rate)
-    own = _third_octave_smooth(long_term_spectrum(dub), rate)
+    cutoff = bandwidth_hz(own_raw, rate, 25.0)
+    ceiling = min(bandwidth_hz(target_spectrum, rate), rate * 0.46)
+    if cutoff < 3000 or ceiling < cutoff * 1.15 or strength <= 0:
+        return spectra
+    own = _third_octave_smooth(own_raw, rate)
     target = _third_octave_smooth(target_spectrum, rate)
-    difference = 10 * np.log10(target / own)
-    core = (hz >= 200) & (hz <= 4000)
-    difference -= np.mean(difference[core])
-    limit = min(bandwidth_hz(long_term_spectrum(dub), rate), bandwidth_hz(target_spectrum, rate))
-    difference[(hz < 80) | (hz > limit)] = 0
-    gain = 10 ** (np.clip(difference * strength, -max_db, max_db) / 20)
-    return _overlap_add(_frames(dub) * gain, len(dub)).astype(np.float32)
+    edge = int(np.searchsorted(hz, cutoff * 0.92))
+    width = edge - int(np.searchsorted(hz, cutoff * 0.55))
+    top = int(np.searchsorted(hz, ceiling))
+    if width < 8 or top <= edge:
+        return spectra
+    anchor = slice(edge - width, edge - width // 3)
+    offset = np.mean(own[anchor]) / max(float(np.mean(target[anchor])), 1e-30)
+    random = np.random.default_rng(seed)
+    result = spectra.copy()
+    bins = np.arange(edge, top)
+    source_bins = edge - width + (bins - edge) % width
+    magnitude = np.abs(spectra[:, source_bins])
+    wanted = np.sqrt(np.maximum(target[bins] * offset, 0.0))
+    have = np.sqrt(np.mean(magnitude**2, axis=0)) + 1e-12
+    phase = np.exp(2j * np.pi * random.random(magnitude.shape))
+    fade = np.clip((bins - edge) / max(1, width // 8), 0, 1)
+    patch = magnitude * (wanted / have) * phase * (strength * _INCOHERENT_OLA_GAIN)
+    result[:, bins] = spectra[:, bins] * (1 - fade) + patch * fade
+    return result
 
 
 def extend_bandwidth(
@@ -101,61 +177,31 @@ def extend_bandwidth(
     strength: float = 1.0,
     seed: int = 0,
 ) -> np.ndarray:
-    """Rebuild the band above the TTS model's cutoff from the band just below it.
-
-    Each missing bin takes the frame-by-frame magnitude of a bin one "fold" lower
-    (so breaths and sibilants keep their timing), a random phase (that band of a
-    voice is noise-like), and a level that continues the original voice's own
-    high-frequency slope.  Nothing is added when the dub already reaches as high
-    as the original.
-    """
+    """Rebuild the band above the TTS model's cutoff from the band just below it."""
     dub = np.asarray(dub, dtype=np.float32)
     if not len(dub) or strength <= 0:
         return dub
-    hz = np.fft.rfftfreq(_SIZE, 1 / rate)
-    own_raw = long_term_spectrum(dub)
-    cutoff = bandwidth_hz(own_raw, rate, 25.0)
-    ceiling = min(bandwidth_hz(target_spectrum, rate), rate * 0.46)
-    if cutoff < 3000 or ceiling < cutoff * 1.15:
-        return dub
     spectra = _frames(dub)
-    own = _third_octave_smooth(own_raw, rate)
-    target = _third_octave_smooth(target_spectrum, rate)
-    edge = int(np.searchsorted(hz, cutoff * 0.92))
-    width = edge - int(np.searchsorted(hz, cutoff * 0.55))
-    top = int(np.searchsorted(hz, ceiling))
-    if width < 8 or top <= edge:
+    power = np.abs(spectra) ** 2
+    level = power.sum(axis=1)
+    own_raw = (
+        power[level >= level.max() * 1e-3].mean(axis=0) + 1e-20
+        if len(level) and level.max() > 0
+        else np.full(_SIZE // 2 + 1, 1e-20)
+    )
+    extended = _extend_spectra_highband(
+        spectra, own_raw, target_spectrum, rate, strength=strength, seed=seed
+    )
+    if extended is spectra:
         return dub
-    # Anchor the target slope to what the dub really has just below its cutoff.
-    anchor = slice(edge - width, edge - width // 3)
-    offset = np.mean(own[anchor]) / np.mean(target[anchor])
-    random = np.random.default_rng(seed)
-    result = spectra.copy()
-    bins = np.arange(edge, top)
-    source_bins = edge - width + (bins - edge) % width
-    magnitude = np.abs(spectra[:, source_bins])
-    wanted = np.sqrt(target[bins] * offset)
-    have = np.sqrt(np.mean(magnitude**2, axis=0)) + 1e-12
-    phase = np.exp(2j * np.pi * random.random(magnitude.shape))
-    fade = np.clip((bins - edge) / max(1, width // 8), 0, 1)
-    patch = magnitude * (wanted / have) * phase * strength
-    result[:, bins] = spectra[:, bins] * (1 - fade) + patch * fade
-    output = _overlap_add(result, len(dub))
-    # Random phases in overlapping frames partly cancel; measure and correct once.
-    solid = bins[fade >= 1]
-    if len(solid):
-        achieved = long_term_spectrum(output)[solid].mean()
-        correction = float(np.sqrt(np.mean(wanted[fade >= 1] ** 2) * strength**2 / achieved))
-        result[:, bins] = spectra[:, bins] * (1 - fade) + patch * fade * min(correction, 4.0)
-        output = _overlap_add(result, len(dub))
-    return output.astype(np.float32)
+    return _overlap_add(extended, len(dub)).astype(np.float32)
 
 
 def voiced_ratio(signal: np.ndarray, rate: int) -> float:
-    """Share of active 40 ms frames with a clear pitch.  A whisper scores near zero."""
+    """Share of active 40 ms frames with a clear pitch. A whisper scores near zero."""
     mono = np.asarray(signal, dtype=np.float64).reshape(-1)
     step = max(1, round(rate / 16000))
-    if step > 1:  # crude decimation is enough for a 70-400 Hz pitch search
+    if step > 1:
         usable = len(mono) // step * step
         mono = mono[:usable].reshape(-1, step).mean(axis=1)
     reduced = rate / step
@@ -177,22 +223,29 @@ def voiced_ratio(signal: np.ndarray, rate: int) -> float:
     return float(np.mean(correlation[:, lags].max(axis=1) > 0.45))
 
 
-def whisperize(dub: np.ndarray, rate: int, amount: float, *, seed: int = 0) -> np.ndarray:
-    """Turn voiced speech towards a whisper by swapping the vocal-fold buzz for breath.
+def _whisperize_spectra(
+    spectra: np.ndarray,
+    rate: int,
+    amount: float,
+    *,
+    seed: int = 0,
+) -> np.ndarray:
+    """Harmonic-selective physiological whisper conversion in the STFT domain.
 
-    Each frame keeps its spectral envelope (the formants that carry the words) but
-    loses its harmonics and takes a random phase, which is what a whisper is: the
-    same mouth shape excited by turbulent air.  ``amount`` blends the result with
-    the untouched line.  Low frequencies, which a whisper barely has, are thinned.
+    Unvoiced consonants and sibilant transients (s, sh, x, q, ch, t, k) already
+    carry high-frequency turbulent energy without vocal-fold harmonics; smearing
+    them with cepstral random phase blurs articulation. We detect harmonic vowel
+    frames via cepstral pitch peak + low/high energy balance and convert only the
+    voiced harmonic structure into formant-shaped glottal airflow.
     """
-    dub = np.asarray(dub, dtype=np.float32)
     amount = float(np.clip(amount, 0.0, 1.0))
-    if not len(dub) or amount <= 0:
-        return dub
-    spectra = _frames(dub)
+    if amount <= 0.0 or not len(spectra):
+        return spectra
     magnitude = np.abs(spectra)
-    # Cepstral smoothing: keep quefrencies below 1.6 ms, i.e. drop pitch above ~600 Hz
-    # spacing and everything finer, leaving the formant envelope.
+    frame_power = np.sum(magnitude**2, axis=1)
+    if float(frame_power.max(initial=0.0)) <= 1e-18:
+        return spectra
+
     log_magnitude = np.log(np.maximum(magnitude, 1e-9))
     cepstrum = np.fft.irfft(log_magnitude, n=_SIZE, axis=1)
     keep = max(8, round(rate * 0.0016))
@@ -200,29 +253,104 @@ def whisperize(dub: np.ndarray, rate: int, amount: float, *, seed: int = 0) -> n
     lifter[:keep] = 1.0
     lifter[-keep + 1 :] = 1.0
     envelope = np.exp(np.fft.rfft(cepstrum * lifter, axis=1).real)
+
     hz = np.fft.rfftfreq(_SIZE, 1 / rate)
-    tilt = np.sqrt(1.0 / (1.0 + (350.0 / np.maximum(hz, 1.0)) ** 4))
+    # Detect sibilant/transient frames where >2.8 kHz energy already dominates <1.6 kHz.
+    low_band = (hz >= 120.0) & (hz <= 1600.0)
+    sibilant_band = (hz >= 2800.0) & (hz <= min(10_000.0, rate * 0.45))
+    low_e = np.sum(magnitude[:, low_band] ** 2, axis=1) + 1e-18
+    sib_e = np.sum(magnitude[:, sibilant_band] ** 2, axis=1) + 1e-18
+    harmonic_gate = np.clip((1.8 - sib_e / low_e) / 1.4, 0.0, 1.0)
+    frame_amount = (amount * harmonic_gate)[:, None]
+
+    tilt = np.sqrt(1.0 / (1.0 + (320.0 / np.maximum(hz, 1.0)) ** 4))[None, :]
     random = np.random.default_rng(seed)
     phase = np.exp(2j * np.pi * random.random(envelope.shape))
-    breath = _overlap_add(envelope * tilt * phase, len(dub))
-    # Follow the original loudness contour frame by frame (20 ms), not just overall.
-    hop = max(1, rate // 50)
-    count = max(1, len(dub) // hop)
+    breath_mag = envelope * tilt
+    # Restore each frame's power before incoherent overlap-add compensation.
+    orig_rms = np.sqrt(np.mean(magnitude**2, axis=1, keepdims=True))
+    breath_rms = np.sqrt(np.mean(breath_mag**2, axis=1, keepdims=True)) + 1e-12
+    breath_spec = breath_mag * (orig_rms / breath_rms) * _INCOHERENT_OLA_GAIN * phase
+    # Semi-whisper keeps soft sub-450 Hz glottal murmur while replacing upper harmonics.
+    if amount < 0.85:
+        murmur_band = np.clip((480.0 - hz) / 220.0, 0.0, 1.0)[None, :] * (1.0 - amount)
+        effective = np.clip(frame_amount * (1.0 - 0.65 * murmur_band), 0.0, 1.0)
+    else:
+        effective = frame_amount
+    return spectra * np.sqrt(1.0 - effective) + breath_spec * np.sqrt(effective)
 
-    def contour(x: np.ndarray) -> np.ndarray:
-        usable = x[: count * hop].astype(np.float64).reshape(count, hop)
-        return np.sqrt(np.mean(usable**2, axis=1))
 
-    if len(dub) >= hop:
-        ratio = contour(dub) / np.maximum(contour(breath), 1e-9)
-        positions = (np.arange(len(dub)) - hop / 2) / hop
-        # Log-domain smoothing sits in the valleys between harmonics, so the
-        # breath starts far quieter than the voice; the contour restores it.
-        gain = np.interp(positions, np.arange(count), np.clip(ratio, 0.0, 1000.0))
-        breath = breath * gain
-    # The two parts are uncorrelated, so blend by power to keep the loudness.
-    mixed = dub.astype(np.float64) * np.sqrt(1.0 - amount) + breath * np.sqrt(amount)
-    return mixed.astype(np.float32)
+def whisperize(dub: np.ndarray, rate: int, amount: float, *, seed: int = 0) -> np.ndarray:
+    """Turn voiced speech towards a whisper while keeping sibilants crisp."""
+    dub = np.asarray(dub, dtype=np.float32)
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if not len(dub) or amount <= 0:
+        return dub
+    in_rms = float(np.sqrt(np.mean(dub.astype(np.float64) ** 2)))
+    if in_rms <= 1e-9:
+        return dub
+    spectra = _frames(dub)
+    whispered = _whisperize_spectra(spectra, rate, amount, seed=seed)
+    output = _overlap_add(whispered, len(dub))
+    out_rms = float(np.sqrt(np.mean(output**2)))
+    if out_rms > 1e-9:
+        output *= in_rms / out_rms
+    return output.astype(np.float32)
+
+
+def process_voice_match_fused(
+    dub: np.ndarray,
+    rate: int,
+    target_spectrum: np.ndarray,
+    *,
+    sentence_spectrum: np.ndarray | None = None,
+    match_strength: float = 0.8,
+    extend: bool = True,
+    whisper_amount: float = 0.0,
+    seed: int = 0,
+) -> np.ndarray:
+    """Single-STFT pipeline fusing whisperize, proximity/timbre EQ, and air extension."""
+    dub = np.asarray(dub, dtype=np.float32)
+    if not len(dub):
+        return dub
+    in_rms = float(np.sqrt(np.mean(dub.astype(np.float64) ** 2)))
+    if in_rms <= 1e-8:
+        return dub
+    if whisper_amount <= 0.05 and match_strength <= 0.0 and not extend:
+        return dub
+
+    spectra = _frames(dub)
+    if whisper_amount > 0.05:
+        spectra = _whisperize_spectra(spectra, rate, whisper_amount, seed=seed)
+
+    power = np.abs(spectra) ** 2
+    level = power.sum(axis=1)
+    own_raw = (
+        power[level >= level.max() * 1e-3].mean(axis=0) + 1e-20
+        if len(level) and level.max() > 0
+        else np.full(_SIZE // 2 + 1, 1e-20)
+    )
+    if match_strength > 0.0:
+        gain = _spectral_eq_gain(
+            own_raw,
+            target_spectrum,
+            rate,
+            strength=match_strength,
+            sentence_spectrum=sentence_spectrum,
+        )
+        spectra = spectra * gain[None, :]
+        own_raw = own_raw * (gain**2)
+
+    if extend:
+        spectra = _extend_spectra_highband(
+            spectra, own_raw, target_spectrum, rate, strength=1.0, seed=seed + 17
+        )
+
+    output = _overlap_add(spectra, len(dub))
+    out_rms = float(np.sqrt(np.mean(output**2)))
+    if out_rms > 1e-8:
+        output *= in_rms / out_rms
+    return output.astype(np.float32)
 
 
 def noise_floor(audio: np.ndarray, quantile: float = 0.1) -> np.ndarray:
@@ -253,8 +381,6 @@ def synthesize_floor(floor: np.ndarray, length: int, seed: int = 0) -> np.ndarra
         phase = np.exp(2j * np.pi * random.random((count, len(column))))
         channels.append(_overlap_add(column[None, :] * phase, length))
     output = np.stack(channels, axis=1)
-    # Independent random phases in overlapping frames add incoherently; measure the
-    # result with the same analysis and correct each channel back to the target.
     measured = noise_floor(output, quantile=0.5)
     wanted = np.sqrt(np.sum(floor**2, axis=0))
     have = np.sqrt(np.sum(measured**2, axis=0))

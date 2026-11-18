@@ -525,6 +525,23 @@ def speech_bounds(path: Path) -> tuple[float, float]:
     return start, end
 
 
+def _default_replacement_obstacles(
+    sentences: list[Sentence],
+    dubbed_ids: set[str],
+) -> list[tuple[float, float]]:
+    obstacles: list[tuple[float, float]] = []
+    for s in sentences:
+        if s.id in dubbed_ids or s.original_audio_enabled is False:
+            continue
+        duration = s.end_seconds - s.start_seconds
+        if duration < 0.20:
+            continue
+        if s.status == "skipped_filler" and s.original_audio_enabled is not True and duration < 0.5:
+            continue
+        obstacles.append((s.start_seconds, s.end_seconds))
+    return obstacles
+
+
 def sentence_events(
     project_dir: Path,
     sentences: Iterable[Sentence],
@@ -533,13 +550,15 @@ def sentence_events(
     chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
     *,
     trim_silence: bool = False,
+    obstacles: Iterable[tuple[float, float]] | None = None,
 ) -> list[StemEvent]:
+    all_sentences = list(sentences)
     available: list[Sentence] = []
     audio_paths: dict[str, Path] = {}
     durations: dict[str, float] = {}
     bounds: dict[str, tuple[float, float]] = {}
     sentence_by_id: dict[str, Sentence] = {}
-    for sentence in sentences:
+    for sentence in all_sentences:
         if (
             not sentence.enabled
             or not has_speakable_text(sentence.zh_text)
@@ -552,12 +571,13 @@ def sentence_events(
             f"句子 {sentence.id} 的中文音频",
         )
         if not sentence.chinese_audio_enabled:
-            available.append(sentence)
-            sentence_by_id[sentence.id] = sentence
-            audio_paths[sentence.id] = audio_path
-            durations[sentence.id] = (
-                sentence.tts_duration_seconds or sentence.end_seconds - sentence.start_seconds
-            )
+            if not trim_silence:
+                available.append(sentence)
+                sentence_by_id[sentence.id] = sentence
+                audio_paths[sentence.id] = audio_path
+                durations[sentence.id] = (
+                    sentence.tts_duration_seconds or sentence.end_seconds - sentence.start_seconds
+                )
             continue
         if not audio_path.is_file():
             raise ProjectError(f"句子 {sentence.id} 的中文音频不存在：{audio_path}")
@@ -575,12 +595,25 @@ def sentence_events(
             bounds[sentence.id] = speech_bounds(audio_path)
             durations[sentence.id] = bounds[sentence.id][1] - bounds[sentence.id][0]
 
+    effective_obstacles = (
+        list(obstacles)
+        if obstacles is not None
+        else (
+            _default_replacement_obstacles(
+                all_sentences,
+                {s.id for s in available if s.chinese_audio_enabled},
+            )
+            if trim_silence
+            else None
+        )
+    )
     timings = plan_dubbing_timing(
         available,
         offset_ms=chinese_dubbing_offset_ms,
         max_auto_speed=chinese_max_auto_speed,
         durations=durations,
         mode=chinese_dubbing_timing_mode,
+        obstacles=effective_obstacles,
     )
     return [
         StemEvent(
@@ -601,6 +634,35 @@ def sentence_events(
     ]
 
 
+def _read_adjusted_mono(
+    source: Path,
+    target_rate: int,
+    speed_factor: float,
+    trim_start_seconds: float = 0.0,
+    trim_end_seconds: float | None = None,
+) -> np.ndarray:
+    """Trim, time-stretch with MIT phase-locked vocoder, and resample in memory."""
+    from .time_stretch import stretch_speech
+
+    if not math.isfinite(speed_factor) or not 0.75 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
+        raise ProjectError(f"中文配音自动变速倍速必须在 0.75 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
+    data, source_rate = sf.read(source, dtype="float32", always_2d=True)
+    mono = np.asarray(np.mean(data, axis=1, dtype=np.float32), dtype=np.float32)
+    if trim_start_seconds > 0.0 or trim_end_seconds is not None:
+        lo = max(0, min(len(mono), round(trim_start_seconds * source_rate)))
+        hi = (
+            len(mono)
+            if trim_end_seconds is None
+            else max(lo + 1, min(len(mono), round(trim_end_seconds * source_rate)))
+        )
+        mono = mono[lo:hi]
+    if abs(speed_factor - 1.0) > 1e-4 and len(mono) > 0:
+        mono = stretch_speech(mono, source_rate, speed_factor)
+    if source_rate != target_rate and len(mono) > 0:
+        mono = soxr.resample(mono, source_rate, target_rate, quality="VHQ")
+    return np.asarray(mono, dtype=np.float32)
+
+
 def _tempo_adjusted_audio(
     source: Path,
     destination: Path,
@@ -608,35 +670,20 @@ def _tempo_adjusted_audio(
     trim_start_seconds: float = 0.0,
     trim_end_seconds: float | None = None,
 ) -> Path:
-    if not math.isfinite(speed_factor) or not 1.0 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
-        raise ProjectError(f"中文配音自动加速倍速必须在 1.0 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
+    if not math.isfinite(speed_factor) or not 0.75 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
+        raise ProjectError(f"中文配音自动变速倍速必须在 0.75 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
     trimmed = trim_start_seconds > 0.0 or trim_end_seconds is not None
-    if speed_factor <= 1.0 + 1e-9 and not trimmed:
+    if abs(speed_factor - 1.0) <= 1e-4 and not trimmed:
         return source
-    filters: list[str] = []
-    if trimmed:
-        end = "" if trim_end_seconds is None else f":end={trim_end_seconds:.6f}"
-        filters.append(f"atrim=start={trim_start_seconds:.6f}{end},asetpts=PTS-STARTPTS")
-    if speed_factor > 1.0 + 1e-9:
-        stages = max(1, math.ceil(math.log2(speed_factor)))
-        stage_factor = speed_factor ** (1.0 / stages)
-        filters.extend(f"atempo={stage_factor:.8f}" for _ in range(stages))
-    tempo_filter = ",".join(filters)
-    _run_ffmpeg(
-        [
-            "-y",
-            "-i",
-            str(source),
-            "-map",
-            "0:a:0",
-            "-vn",
-            "-filter:a",
-            tempo_filter,
-            "-c:a",
-            "pcm_f32le",
-            str(destination),
-        ]
+    info = sf.info(source)
+    mono = _read_adjusted_mono(
+        source,
+        info.samplerate,
+        speed_factor,
+        trim_start_seconds,
+        trim_end_seconds,
     )
+    sf.write(destination, mono, info.samplerate, subtype="FLOAT")
     return destination
 
 
@@ -819,11 +866,9 @@ class _VoiceMatcher:
         whisper: float = 0.0,
     ) -> np.ndarray:
         from .voice_match import (
-            extend_bandwidth,
             long_term_spectrum,
-            match_spectrum,
+            process_voice_match_fused,
             voiced_ratio,
-            whisperize,
         )
 
         if self.project is None or len(clip) < self.rate // 20:
@@ -833,26 +878,27 @@ class _VoiceMatcher:
             return clip
         window = self._window(event)
         target = self.project
-        if len(window) >= self.rate // 2:
+        sentence_spec: np.ndarray | None = None
+        if len(window) >= self.rate // 4:
             own = long_term_spectrum(window)
-            weight = min(1.0, len(window) / (3.0 * self.rate)) * 0.5
-            scale = np.sum(self.project) / max(float(np.sum(own)), 1e-30)
-            target = self.project ** (1 - weight) * (own * scale) ** weight
-        result = clip
+            sentence_spec = own
+            if len(window) >= self.rate // 2:
+                weight = min(1.0, len(window) / (3.0 * self.rate)) * 0.5
+                scale = np.sum(self.project) / max(float(np.sum(own)), 1e-30)
+                target = self.project ** (1 - weight) * (own * scale) ** weight
+        whisper_amount = 0.0
         if whisper > 0 and len(window) >= self.rate // 4:
-            # Only as far as the dub is more voiced than the line it replaces.
             original, dub = voiced_ratio(window, self.rate), voiced_ratio(clip, self.rate)
-            amount = whisper * float(np.clip((dub - original) / max(dub, 1e-3), 0.0, 1.0))
-            if amount > 0.05:
-                result = whisperize(result, self.rate, amount)
-        if strength > 0:
-            result = match_spectrum(result, self.rate, target, strength=strength)
-        if extend:
-            result = extend_bandwidth(result, self.rate, target)
-        after = float(np.sqrt(np.mean(result.astype(np.float64) ** 2)))
-        if after > 1e-8:
-            result = result * np.float32(level / after)
-        return np.asarray(result, dtype=np.float32)
+            whisper_amount = whisper * float(np.clip((dub - original) / max(dub, 1e-3), 0.0, 1.0))
+        return process_voice_match_fused(
+            clip,
+            self.rate,
+            target,
+            sentence_spectrum=sentence_spec,
+            match_strength=strength,
+            extend=extend,
+            whisper_amount=whisper_amount,
+        )
 
     def close(self) -> None:
         self.handle.close()
@@ -899,7 +945,12 @@ def build_chinese_stem(
         clip_info = sf.info(event.audio_path)
         if clip_info.samplerate <= 0 or clip_info.frames <= 0:
             raise ProjectError(f"中文句子 {event.sentence_id} 的音频参数无效。")
-        resampled_frames = math.ceil(clip_info.frames * rate / clip_info.samplerate)
+        resampled_frames = (
+            math.ceil(
+                clip_info.frames / max(event.speed_factor, 0.70) * rate / clip_info.samplerate
+            )
+            + 64
+        )
         start_frame = round(event.start_seconds * rate)
         prepared.append((event, start_frame))
         total_frames = max(total_frames, start_frame + resampled_frames)
@@ -937,20 +988,13 @@ def build_chinese_stem(
                 check_cancelled()
                 # Only one synthesized line is resident at a time, so multi-hour
                 # projects do not accumulate every Chinese waveform in RAM.
-                tempo_file = destination.with_name(
-                    f".{destination.stem}.{uuid.uuid4().hex}.tempo.wav"
+                clip = _read_adjusted_mono(
+                    event.audio_path,
+                    rate,
+                    event.speed_factor,
+                    event.trim_start_seconds,
+                    event.trim_end_seconds,
                 )
-                try:
-                    clip_path = _tempo_adjusted_audio(
-                        event.audio_path,
-                        tempo_file,
-                        event.speed_factor,
-                        event.trim_start_seconds,
-                        event.trim_end_seconds,
-                    )
-                    clip = _read_resampled_mono(clip_path, rate)
-                finally:
-                    tempo_file.unlink(missing_ok=True)
                 if normalize_loudness:
                     target_level = target_active_rms_dbfs
                     if source_reference is not None:
@@ -975,13 +1019,13 @@ def build_chinese_stem(
                             dtype="float32",
                             always_2d=True,
                         )
-                        source_level = active_rms_dbfs(
-                            np.asarray(
-                                np.mean(source_window, axis=1, dtype=np.float32),
-                                dtype=np.float32,
-                            ),
-                            source_rate,
-                        )
+                        # Total binaural power sqrt(L^2 + R^2) matches FFmpeg's -ac 1 diotic
+                        # reference while avoiding single-ear -3 dB loss and phase cancellation.
+                        ch_scale = min(2, source_window.shape[1])
+                        equal_power_env = np.sqrt(
+                            np.mean(source_window.astype(np.float64) ** 2, axis=1) * ch_scale
+                        ).astype(np.float32)
+                        source_level = active_rms_dbfs(equal_power_env, source_rate)
                         if math.isfinite(source_level):
                             target_level = source_level + relative_loudness_db
                         else:

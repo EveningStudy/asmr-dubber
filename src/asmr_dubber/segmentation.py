@@ -9,6 +9,11 @@ from .models import Sentence
 
 _SENTENCE_END = re.compile(r"[。！？!?\.]+[」』】）)]*$")
 _SOFT_END = re.compile(r"[、，,；;：:…]+[」』】）)]*$")
+_JA_BOUND_HEAD = re.compile(
+    r"^[のをにがはでとへもやねよなっーぁぃぅぇぉゃゅょ]|^(?:でも|から|けど|ちゃ|じゃ|てる|てい|ない|ます|です)"
+)
+_SMALL_KANA_HEAD = re.compile(r"^[ぁぃぅぇぉゃゅょゎっーァィゥェォャュョヮッ]")
+_TRAILING_SINGLE_KANA = re.compile(r"(?:^|[、，,。！？…\s])[ぁ-ゖァ-ヶ]$")
 _CJK = r"\u3040-\u30ff\u3400-\u9fff"
 _NON_CONTENT = re.compile(rf"[^A-Za-z0-9{_CJK}]")
 
@@ -273,10 +278,30 @@ def split_timed_tokens(
         )
         duration = token.end_seconds - current[0].start_seconds
 
-        should_split = bool(_SENTENCE_END.search(text))
-        should_split = should_split or gap >= pause_seconds
-        if duration >= max_sentence_seconds:
-            should_split = should_split or bool(_SOFT_END.search(text)) or len(current) > 1
+        has_hard_end = bool(_SENTENCE_END.search(text))
+        has_soft_end = bool(_SOFT_END.search(text))
+        next_clean = next_token.text.strip() if next_token is not None else ""
+        starts_small_kana = bool(next_clean) and bool(_SMALL_KANA_HEAD.match(next_clean))
+        mid_word_continuation = (
+            not has_hard_end
+            and not has_soft_end
+            and bool(next_clean)
+            and (
+                starts_small_kana
+                or bool(_JA_BOUND_HEAD.match(next_clean))
+                or bool(_TRAILING_SINGLE_KANA.search(text))
+            )
+        )
+        effective_pause = max(pause_seconds * 3.2, 1.8) if mid_word_continuation else pause_seconds
+
+        should_split = has_hard_end or gap >= effective_pause
+        # Split long sentences gracefully at natural comma/ellipsis pauses before hitting hard cap.
+        if duration >= max_sentence_seconds * 0.55 and has_soft_end:
+            should_split = True
+        if duration >= max_sentence_seconds and not starts_small_kana:
+            should_split = should_split or has_soft_end or len(current) > 1
+        elif duration >= max_sentence_seconds * 1.25:
+            should_split = True
         if next_token is None:
             should_split = True
         if should_split:

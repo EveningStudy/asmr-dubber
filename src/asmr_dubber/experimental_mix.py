@@ -161,6 +161,12 @@ def spatialize_clip(
         pad = min(round(rate * 0.2), chunk // 4)
         result = np.zeros((len(mono), 2), dtype=np.float32)
         weights = np.zeros(len(mono), dtype=np.float32)
+        single_chunk = len(mono) <= chunk
+        handle.seek(lo)
+        sentence_ref_rms = max(
+            rms(handle.read(hi - lo, dtype="float32", always_2d=True)),
+            1e-7,
+        )
         for start in range(0, len(mono), chunk):
             check_cancelled()
             end = min(len(mono), start + chunk)
@@ -194,11 +200,6 @@ def spatialize_clip(
                         hop_divisor=settings.spatial_rtf_hop_divisor,
                     )
             except ValueError as exc:
-                # Quiet ASMR phrases can pass the coarse RMS check but still
-                # contain no frame that is loud enough for reliable spatial
-                # cue estimation.  RTF is an enhancement, so one quiet
-                # reference block must not fail the whole batch item.  Keep
-                # the Chinese clip and apply only the safe level fallback.
                 if "参考片段电平过低" in str(exc):
                     audio = _short_reference_fallback(
                         mono[a:b],
@@ -208,8 +209,18 @@ def spatialize_clip(
                     )
                 else:
                     raise ProjectError(f"{event.sentence_id} RTF 失败：{exc}") from exc
-            # Leave overall loudness to the application's existing loudness controls.
-            audio *= rms(mono[a:b]) / max(rms(audio), 1e-8)
+            # Preserve inter-block approaching/receding distance envelope across multi-chunk lines.
+            chunk_scale = rms(mono[a:b]) / max(rms(audio), 1e-8)
+            if not single_chunk and rms(ref) >= 1e-7:
+                rel_distance = float(
+                    np.clip(
+                        (rms(ref) / sentence_ref_rms) ** settings.spatial_rtf_level_strength,
+                        0.25,
+                        2.5,
+                    )
+                )
+                chunk_scale *= rel_distance
+            audio *= chunk_scale
             weight = np.ones(b - a, dtype=np.float32)
             if a < start:
                 weight[: start - a] = np.linspace(0, 1, start - a)
@@ -218,6 +229,8 @@ def spatialize_clip(
             result[a:b] += audio * weight[:, None]
             weights[a:b] += weight
         result /= np.maximum(weights[:, None], 1e-8)
+        if not single_chunk and rms(result) > 1e-8:
+            result *= rms(mono) / rms(result)
     strength = settings.spatial_rtf_strength
     result = result * strength + mono[:, None] * (1 - strength)
     peak = float(np.max(np.abs(result)))
@@ -741,7 +754,15 @@ def residual_voice_report(
 
 
 def _write_residual_report(
-    project, directory, decoded, voice_file, envelope, hop_seconds, windows, ids
+    project,
+    directory,
+    decoded,
+    voice_file,
+    envelope,
+    hop_seconds,
+    windows,
+    ids,
+    bed_path: Path | None = None,
 ):
     """Write mix/replacement-report.json; the report never decides whether the mix succeeds."""
     from .errors import OperationCancelledError
@@ -750,6 +771,16 @@ def _write_residual_report(
         report = residual_voice_report(
             project, decoded, voice_file, envelope, hop_seconds, windows, ids
         )
+        if (
+            bed_path is not None
+            and project.source_language == "ja"
+            and project.settings.replacement_residual_asr_check
+        ):
+            from .dub_qc import scan_residual_japanese_windows
+
+            if scan_residual_japanese_windows(bed_path, report["sentences"], project.settings):
+                report["kind"] = "energy_and_asr"
+                report["flagged_ids"] = [e["id"] for e in report["sentences"] if e["exceeds"]]
         atomic_write_text(
             directory / "mix/replacement-report.json",
             json.dumps(report, ensure_ascii=False, indent=2),
@@ -758,6 +789,63 @@ def _write_residual_report(
         raise
     except Exception:
         logger.warning("残留原声报告生成失败，已跳过。", exc_info=True)
+
+
+def _suppress_vocal_residual(
+    subtracted: np.ndarray,
+    vocal_estimate: np.ndarray,
+    removal: np.ndarray,
+    rate: int,
+    strength: float = 0.5,
+) -> np.ndarray:
+    """Soft Wiener residual suppression in vocal-dominated time-frequency bins."""
+    from .spatial_rtf import istft, stft
+
+    if strength <= 0.0:
+        return subtracted
+    active_idx = np.flatnonzero(removal > 1e-4)
+    if not len(active_idx):
+        return subtracted
+    lo = max(0, int(active_idx[0]) - 1024)
+    hi = min(len(subtracted), int(active_idx[-1]) + 1025)
+    if hi - lo < 512:
+        return subtracted
+    size, hop = 2048, 512
+    sub_slice = subtracted[lo:hi].astype(np.float64)
+    voc_slice = vocal_estimate[lo:hi].astype(np.float64)
+    channels = sub_slice.shape[1]
+    if channels == 1:
+        sub_2ch = np.repeat(sub_slice, 2, axis=1)
+        voc_2ch = np.repeat(voc_slice, 2, axis=1)
+    else:
+        sub_2ch = sub_slice[:, :2]
+        voc_2ch = voc_slice[:, :2]
+    r_spec = stft(sub_2ch, size, hop)
+    v_spec = stft(voc_2ch, size, hop)
+    v_pow = np.abs(v_spec) ** 2
+    r_pow = np.abs(r_spec) ** 2
+    vocal_share = v_pow / np.maximum(v_pow + r_pow, 1e-16)
+
+    hz = np.fft.rfftfreq(size, 1.0 / rate)
+    # Mirror vocal dominance from 14-21.5 kHz into >21.8 kHz where 44.1 kHz separator had 0 output.
+    upper_ref = (hz >= 14_000.0) & (hz <= 21_500.0)
+    ultrasonic = hz > 21_800.0
+    if np.any(upper_ref) and np.any(ultrasonic):
+        high_share = np.mean(vocal_share[:, upper_ref, :], axis=1, keepdims=True)
+        vocal_share[:, ultrasonic, :] = np.maximum(vocal_share[:, ultrasonic, :], high_share)
+
+    # Attenuate up to 6 dB (gain >= 0.5 at strength=0.5) where separator confirms vocal dominance.
+    max_atten = min(0.75, float(strength))
+    suppression = 1.0 - max_atten * np.clip((vocal_share - 0.62) / 0.32, 0.0, 1.0)
+    filtered = istft(r_spec * suppression, size, hop, hi - lo)
+    if channels == 1:
+        filtered = filtered[:, :1]
+    out = subtracted.copy()
+    gate = removal[lo:hi, None].astype(np.float32)
+    out[lo:hi, : filtered.shape[1]] = (
+        subtracted[lo:hi, : filtered.shape[1]] * (1.0 - gate) + filtered.astype(np.float32) * gate
+    )
+    return out
 
 
 def compose_speech_replacement(
@@ -830,6 +918,14 @@ def compose_speech_replacement(
                 if active.any():
                     raw = raw.copy()
                     raw[active] -= estimate[active] * removal[active, None].astype(np.float32)
+                    if settings.replacement_residual_suppression > 0.0:
+                        raw = _suppress_vocal_residual(
+                            raw,
+                            estimate,
+                            removal,
+                            rate,
+                            strength=settings.replacement_residual_suppression,
+                        )
                     full = removal >= 0.99
                     if floor_noise is not None and floor_level > 0 and full.sum() > rate // 20:
                         # Add only what is missing: nothing if the bed kept its own floor.
@@ -852,7 +948,15 @@ def compose_speech_replacement(
                 out.write(raw)
         temporary.replace(target)
         _write_residual_report(
-            project, directory, decoded, voice_file, envelope, hop_seconds, windows, replaced_ids
+            project,
+            directory,
+            decoded,
+            voice_file,
+            envelope,
+            hop_seconds,
+            windows,
+            replaced_ids,
+            bed_path=target,
         )
     finally:
         for path in (temporary, decoded, voice_file):

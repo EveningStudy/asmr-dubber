@@ -288,7 +288,8 @@ class UserSettings(ProjectSettings):
             {
                 name: getattr(self, name)
                 for name in ProjectSettings.model_fields
-                if base is None or name != "tts_reference_sentence_id"
+                if base is None
+                or name not in {"tts_reference_sentence_id", "tts_whisper_reference_sentence_id"}
             }
         )
         language = source_language or self.default_source_language

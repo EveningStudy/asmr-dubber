@@ -48,7 +48,7 @@ def _cache_key(
 ) -> dict[str, Any]:
     stat = audio_path.stat()
     return {
-        "schema": 1,
+        "schema": 2,
         "audio_size": stat.st_size,
         "audio_mtime_ns": stat.st_mtime_ns,
         "model": ASMR_VAD_MODEL,
@@ -144,6 +144,47 @@ def _speech_segments_from_probabilities(
     return [VadSegment(start, end) for start, end in padded if end > start]
 
 
+def _whisper_drc_waveform(waveform: np.ndarray, sample_rate: int = _SAMPLE_RATE) -> np.ndarray:
+    """Lift ultra-quiet whispers (-55 dBFS) out of WhisperFeatureExtractor's 80 dB floor.
+
+    When a 30 s chunk contains both a loud mic touch (-3 dBFS) and a soft whisper
+    (-52 dBFS), Whisper's global ``max - 8.0`` log-mel clamp erases the whisper.
+    A slow 120 ms envelope compressor raises signals above the chunk's own noise
+    floor while soft-limiting loud foley spikes, used solely for VAD probability.
+    """
+    samples = np.asarray(waveform, dtype=np.float64)
+    if samples.size == 0:
+        return waveform
+    hop = max(1, round(sample_rate * 0.040))
+    count = max(1, samples.size // hop)
+    usable = samples[: count * hop].reshape(count, hop)
+    rms = np.sqrt(np.mean(usable**2, axis=1))
+    positive = rms[rms > 1e-7]
+    if positive.size < 4:
+        return waveform
+    floor = float(np.percentile(positive, 12))
+    peak = float(np.max(positive))
+    if peak / max(floor, 1e-7) < 8.0:
+        return waveform
+    # Smooth envelope across 3 frames (~120 ms) to avoid pumping on syllables.
+    kernel = np.array([0.25, 0.5, 0.25], dtype=np.float64)
+    smooth_rms = np.convolve(np.pad(rms, (1, 1), mode="edge"), kernel, mode="valid")
+    target_rms = 10 ** (-22.0 / 20.0)
+    desired_gain = np.ones_like(smooth_rms)
+    above_floor = smooth_rms > max(floor * 2.2, 2e-5)
+    if np.any(above_floor):
+        raw_gain = (target_rms / np.maximum(smooth_rms[above_floor], 1e-6)) ** 0.60
+        # Fade gain smoothly near the noise floor so room hiss is never boosted into speech.
+        gate = np.clip((smooth_rms[above_floor] - floor * 1.8) / max(floor * 2.0, 1e-6), 0.0, 1.0)
+        desired_gain[above_floor] = 1.0 + gate * (np.clip(raw_gain, 0.35, 14.0) - 1.0)
+    loud_spikes = smooth_rms > target_rms * 2.5
+    desired_gain[loud_spikes] = (target_rms * 2.5) / smooth_rms[loud_spikes]
+    sample_positions = np.linspace(0, count - 1, samples.size)
+    gain_curve = np.interp(sample_positions, np.arange(count), desired_gain)
+    leveled = np.tanh(samples * gain_curve * 1.1) / 1.1
+    return leveled.astype(np.float32)
+
+
 def detect_asmr_speech(
     audio_path: Path,
     *,
@@ -218,24 +259,29 @@ def detect_asmr_speech(
                 )
             waveform = audio.read(chunk_samples, dtype="float32", always_2d=False)
             actual_samples = len(waveform)
+            drc_waveform = _whisper_drc_waveform(waveform, _SAMPLE_RATE)
             if actual_samples < chunk_samples:
                 waveform = np.pad(waveform, (0, chunk_samples - actual_samples))
-            features = extractor(
-                waveform,
-                sampling_rate=_SAMPLE_RATE,
-                return_tensors="np",
-            ).input_features
-            # ONNX Runtime's generated stubs describe the output as a sparse
-            # tensor even though this model returns a dense NumPy array.
-            # Keep the runtime value dynamic and normalize it immediately.
-            outputs: Any = session.run(output_names, {input_name: features})
-            logits = np.asarray(outputs[0][0])
-            valid_frames = min(
-                len(logits),
-                math.ceil(actual_samples / (_FRAME_SECONDS * _SAMPLE_RATE)),
-            )
-            logits = np.clip(logits[:valid_frames], -30.0, 30.0)
-            probabilities.append(1.0 / (1.0 + np.exp(-logits)))
+                drc_waveform = np.pad(drc_waveform, (0, chunk_samples - actual_samples))
+
+            def _chunk_probs(signal: np.ndarray, n_samples: int = actual_samples) -> np.ndarray:
+                features = extractor(
+                    signal,
+                    sampling_rate=_SAMPLE_RATE,
+                    return_tensors="np",
+                ).input_features
+                outputs: Any = session.run(output_names, {input_name: features})
+                logits = np.asarray(outputs[0][0])
+                valid_frames = min(
+                    len(logits),
+                    math.ceil(n_samples / (_FRAME_SECONDS * _SAMPLE_RATE)),
+                )
+                logits = np.clip(logits[:valid_frames], -30.0, 30.0)
+                return 1.0 / (1.0 + np.exp(-logits))
+
+            prob_raw = _chunk_probs(waveform)
+            prob_drc = _chunk_probs(drc_waveform) if drc_waveform is not waveform else prob_raw
+            probabilities.append(np.maximum(prob_raw, prob_drc))
             check_cancelled(cancel_event)
 
     combined = np.concatenate(probabilities) if probabilities else np.empty(0, dtype=np.float32)
