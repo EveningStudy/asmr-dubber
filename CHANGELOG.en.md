@@ -38,8 +38,8 @@ Measured wall-clock processing time divided by source audio duration (`RTF`, low
 - **Mixing, Spatial RTF & Voice Matching**: `~0.03x–0.06x`.
 
 ### Migration from 2.2.x / 2.3
-- Existing `2.2.x` (`schema_version = 2`) and `2.3` (`schema_version = 3`) projects open directly in `3.0.0`.
-- On first save, `3.0.0` writes a timestamped backup under `backups/project-schema-v*-*.json` and upgrades the manifest to `schema_version = 4` (`ja_text -> source_text`, `zh_text -> target_text`).
+- Projects from `2.2.x` and `2.3` (`schema_version = 3`) open directly in `3.0.0` and can be translated, mixed and exported further; the regression test uses projects written by the released 2.2.1 code.
+- On first save, `3.0.0` writes a timestamped backup under `backups/project-schema-v3-*.json` and upgrades the manifest to `schema_version = 4` (each sentence's `zh_text` becomes `target_text`). An upgraded project no longer opens in 2.x; use that backup to go back.
 - Pre-existing legacy settings (`reference_audio_mode = "legacy"`, `tts_normalize_pauses = false`, `tts_fit_source_duration = false`, `tts_dual_voice_anchor = false`, `tts_spoken_normalization = false`) are preserved automatically on migrated projects so **existing synthesized dubs remain 100% cache-valid and are never forced to re-synthesize**.
 
 ## [2.2.1] - Previous Stable Release

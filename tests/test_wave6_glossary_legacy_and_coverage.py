@@ -84,7 +84,7 @@ def test_w15_pronunciation_glossary_and_chinese_spoken_numbers() -> None:
     assert spoken_text(p_gloss.settings, "请重来一次") == "请虫来一次"
 
 
-def test_w27_legacy_2_2_1_project_opens_translates_mixes_without_forced_resynthesis(
+def test_w27_hand_written_old_manifest_opens_translates_mixes_without_forced_resynthesis(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path / "home"))
@@ -95,7 +95,7 @@ def test_w27_legacy_2_2_1_project_opens_translates_mixes_without_forced_resynthe
     info = probe_audio(src_wav, sha256=src_hash)
     info.path = "source.wav"
 
-    # Compute the exact 2.2.1 tts_cache_key for s000001 (pre-2.3 settings, edge_tts).
+    # Cache key the current code gives s000001 under pre-2.3 settings (edge_tts).
     legacy_equiv = DubProject(
         source=info,
         settings=ProjectSettings(
@@ -126,7 +126,8 @@ def test_w27_legacy_2_2_1_project_opens_translates_mixes_without_forced_resynthe
     dub_dir.mkdir(parents=True)
     s1_wav = _write_wav(dub_dir / f"s000001-{s1_key}.wav", seconds=0.9, mono=True)
 
-    # Genuine v2.2.1 (schema_version=2) manifest with ja_text, zh_text, retain_chinese_stem!
+    # Hand-written older manifest (ja_text, retain_chinese_stem); projects written by the
+    # real 2.2.1 code are covered by tests/test_legacy_2_2_1_projects.py.
     v221_manifest = {
         "schema_version": 2,
         "app_version": "2.2.1",

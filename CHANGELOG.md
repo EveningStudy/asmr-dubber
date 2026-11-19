@@ -38,8 +38,8 @@ ASMR Dubber 各版本的重要变更记录在此文件中。
 - **混音、空间跟随与音色贴合**：约 `0.03×–0.06×`。
 
 ### 从 2.2.x / 2.3 升级与旧项目兼容
-- `2.2.x`（`schema_version = 2`）与 `2.3`（`schema_version = 3`）生成的项目可直接在 `3.0.0` 中打开、继续翻译、混音和导出。
-- 首次保存时自动在项目 `backups/` 下写入旧版备份（`project-schema-v*-*.json`），并升级为 `schema_version = 4`（`ja_text -> source_text`，`zh_text -> target_text`）。
+- `2.2.x` 与 `2.3` 生成的项目（`schema_version = 3`）可直接在 `3.0.0` 中打开、继续翻译、混音和导出；回归测试用的是 2.2.1 原版代码生成的项目。
+- 首次保存时自动在项目 `backups/` 下写入原文件备份（`project-schema-v3-*.json`），并升级为 `schema_version = 4`（句子的 `zh_text` 改名为 `target_text`）。升级后的项目不能再用 2.x 打开；要退回旧版，请用这份备份。
 - 旧项目自动保留原有的参考音频与停顿/数字处理设置（`reference_audio_mode = "legacy"`、`tts_normalize_pauses = false`、`tts_fit_source_duration = false`、`tts_dual_voice_anchor = false`、`tts_spoken_normalization = false`），**已有配音缓存 100% 继续有效，不会被迫重新合成**。
 
 ## [2.2.1] - 上一正式版
