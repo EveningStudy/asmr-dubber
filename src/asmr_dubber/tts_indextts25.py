@@ -187,16 +187,21 @@ def _synthesize_indextts25_batch(
                             on_sentence()
                 return True
 
-            return_code = tts_backends.run_resident_indextts_batch(
-                worker_id="indextts25",
+            # A worker that dies part-way (crash, out of memory) is restarted once and
+            # only the lines it never delivered are resubmitted.
+            return_code = tts_backends.run_resident_with_one_restart(
+                manifest=manifest,
+                entries=[
+                    (sentence.id, line) for (sentence, _, _), line in zip(tasks, lines, strict=True)
+                ],
+                committed=committed,
                 label="IndexTTS-2.5",
+                progress=progress,
+                worker_id="indextts25",
                 daemon_command=daemon_cmd,
                 cwd=model_dir.parent,
                 env=env,
-                manifest=manifest,
-                total_items=len(tasks),
                 timeout_seconds=settings.tts_timeout_seconds,
-                progress=progress,
                 cancel_event=cancel_event,
                 on_line=_on_v25_line,
                 output_tail=output_tail,
@@ -302,7 +307,7 @@ def _synthesize_indextts25_batch(
                 terminate_process_tree(process)
         manifest.unlink(missing_ok=True)
 
-    detail = "".join(output_tail)[-3000:]
+    detail = tts_backends.readable_output_tail(output_tail)
     failures: list[str] = []
     for index, (sentence, reference, temporary) in enumerate(tasks, start=1):
         output = tts_backends._cache_output(project, sentence, project_dir)

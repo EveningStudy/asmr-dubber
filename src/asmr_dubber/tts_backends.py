@@ -66,7 +66,13 @@ from .tts_daemon import (
     daemon_pool_active as daemon_pool_active,
 )
 from .tts_daemon import (
+    readable_output_tail as readable_output_tail,
+)
+from .tts_daemon import (
     run_resident_indextts_batch as run_resident_indextts_batch,
+)
+from .tts_daemon import (
+    run_resident_with_one_restart as run_resident_with_one_restart,
 )
 from .tts_http_runners import (
     _cosyvoice_runner as _cosyvoice_runner,
