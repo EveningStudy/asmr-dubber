@@ -70,9 +70,11 @@ def _file(directory, name):
 
 
 def test_idle_tokens_are_reclaimed_but_requested_ones_survive(home, monkeypatch):
-    store = MediaStore()
     clock = [1000.0]
     monkeypatch.setattr(media_module.time, "monotonic", lambda: clock[0])
+    # Create the store on the fake clock: its first purge time comes from the clock, and
+    # a real uptime above ~11 h would otherwise keep every purge in the "future".
+    store = MediaStore()
     playing = store.register(_file(home, "playing.wav")).removeprefix("/media/")
     idle = store.register(_file(home, "idle.wav")).removeprefix("/media/")
     for _ in range(3):  # Range requests keep refreshing the playing token
