@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
+from .audio import replacement_obstacles
 from .lifecycle import project_operation
 from .models import DubProject
 from .subtitles import SubtitleLanguage
@@ -113,6 +114,15 @@ def generate_subtitles(
         dubbing_durations=dubbing_durations,
         media_duration_seconds=media_duration,
         warnings=subtitle_warnings,
+        # Same plan as the fully dubbed mix: kept original sounds and the recording's end.
+        dubbing_obstacles=(
+            replacement_obstacles(project.sentences, dubbing_durations)
+            if dubbing_durations is not None
+            else None
+        ),
+        dubbing_end_seconds=(
+            project.source.duration_seconds if dubbing_durations is not None else None
+        ),
     )
     if progress and subtitle_warnings:
         fallback_count = sum("缺少译文" in item for item in subtitle_warnings)
@@ -195,6 +205,12 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
             max_auto_speed=max_auto_speed,
             durations=durations,
             mode=timing_mode,
+            obstacles=(
+                replacement_obstacles(project.sentences, durations)
+                if durations is not None
+                else None
+            ),
+            end_seconds=project.source.duration_seconds if durations is not None else None,
         )
     }
     rows = [

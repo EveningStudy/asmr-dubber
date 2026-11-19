@@ -107,6 +107,8 @@ def write_subtitle_files(
     dubbing_durations: Mapping[str, float] | None = None,
     media_duration_seconds: float | None = None,
     warnings: list[str] | None = None,
+    dubbing_obstacles: Iterable[tuple[float, float]] | None = None,
+    dubbing_end_seconds: float | None = None,
 ) -> tuple[Path, Path]:
     """Write readable, atomic UTF-8 SRT and LRC subtitle files."""
 
@@ -126,6 +128,8 @@ def write_subtitle_files(
             max_auto_speed=chinese_max_auto_speed,
             durations=dubbing_durations,
             mode=chinese_dubbing_timing_mode,
+            obstacles=dubbing_obstacles,
+            end_seconds=dubbing_end_seconds,
         )
     }
 

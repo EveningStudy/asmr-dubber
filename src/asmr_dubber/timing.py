@@ -84,12 +84,15 @@ def plan_dubbing_timing(
     durations: Mapping[str, float] | None = None,
     mode: DubbingTimingMode = "fit_window",
     obstacles: Iterable[tuple[float, float]] | None = None,
+    end_seconds: float | None = None,
 ) -> list[DubbingTiming]:
     """Plan starts and minimal tempo changes for available Chinese clips.
 
     Only enabled sentences with Chinese text and a known positive TTS duration
     participate. In replacement mode, ``obstacles`` supplies preserved original-voice
-    intervals (e.g. kisses, breaths, kept sound lines) so a dub never talks over them.
+    intervals (e.g. kisses, breaths, kept sound lines) so a dub never talks over them,
+    and ``end_seconds`` (the end of the recording) lets the last line speed up to stay
+    inside it instead of running past the end at its natural pace.
     """
 
     if not math.isfinite(max_auto_speed) or not 1.0 <= max_auto_speed <= MAX_CHINESE_AUTO_SPEED:
@@ -130,6 +133,7 @@ def plan_dubbing_timing(
             max_auto_speed,
             min_auto_speed,
             kept_obstacles,
+            end_seconds,
         )
     if mode == "sequential":
         starts: list[float] = []
@@ -149,8 +153,9 @@ def plan_dubbing_timing(
         raw_next = starts[index + 1] if index + 1 < len(starts) else None
         boundary = _next_boundary_seconds(start, sentence.start_seconds, raw_next, kept_obstacles)
         speed = 1.0
-        if mode == "fit_window" and boundary is not None:
-            available = boundary - start
+        ceiling = _speed_ceiling(boundary, start, end_seconds)
+        if mode == "fit_window" and ceiling is not None:
+            available = ceiling - start
             required = duration / available if available > 0.0 else math.inf
             speed = min(max(required, min_auto_speed), max_auto_speed)
         effective_duration = duration / speed
@@ -171,12 +176,20 @@ def plan_dubbing_timing(
     return planned
 
 
+def _speed_ceiling(boundary: float | None, start: float, end_seconds: float | None) -> float | None:
+    """The point a line should finish by: the next boundary, else the end of the recording."""
+    if boundary is not None:
+        return boundary
+    return end_seconds if end_seconds is not None and end_seconds > start else None
+
+
 def _plan_fit_then_shift(
     candidates: list[tuple[Sentence, float]],
     requested_starts: list[float],
     max_auto_speed: float,
     min_auto_speed: float,
     obstacles: list[tuple[float, float]],
+    end_seconds: float | None = None,
 ) -> list[DubbingTiming]:
     """Speed a line up to fit before the next line or kept sound; only then delay."""
     planned: list[DubbingTiming] = []
@@ -197,8 +210,9 @@ def _plan_fit_then_shift(
             obstacles,
         )
         speed = 1.0
-        if boundary is not None:
-            available = boundary - start
+        ceiling = _speed_ceiling(boundary, start, end_seconds)
+        if ceiling is not None:
+            available = ceiling - start
             required = duration / available if available > 0.0 else math.inf
             speed = min(max(required, min_auto_speed), max_auto_speed)
         elif min_auto_speed < 1.0:

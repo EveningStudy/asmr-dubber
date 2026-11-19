@@ -373,6 +373,17 @@ def _default_replacement_obstacles(
     return obstacles
 
 
+def replacement_obstacles(
+    sentences: Iterable[Sentence], dubbed_ids: Iterable[str]
+) -> list[tuple[float, float]]:
+    """Original-voice intervals a fully dubbed line must not talk over.
+
+    The mix, the dubbing-timeline subtitles and the exported timing table all plan
+    with these, so they place every line at the same time.
+    """
+    return _default_replacement_obstacles(list(sentences), set(dubbed_ids))
+
+
 def sentence_events(
     project_dir: Path,
     sentences: Iterable[Sentence],
@@ -382,6 +393,7 @@ def sentence_events(
     *,
     trim_silence: bool = False,
     obstacles: Iterable[tuple[float, float]] | None = None,
+    source_duration_seconds: float | None = None,
 ) -> list[StemEvent]:
     all_sentences = list(sentences)
     available: list[Sentence] = []
@@ -445,6 +457,7 @@ def sentence_events(
         durations=durations,
         mode=chinese_dubbing_timing_mode,
         obstacles=effective_obstacles,
+        end_seconds=source_duration_seconds,
     )
     return [
         StemEvent(

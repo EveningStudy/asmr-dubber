@@ -107,6 +107,7 @@ def _events(project, project_dir: Path) -> list[dict]:
         if replacing
         else settings.chinese_dubbing_timing_mode,
         trim_silence=replacing,
+        source_duration_seconds=project.source.duration_seconds if replacing else None,
     )
     return [
         {

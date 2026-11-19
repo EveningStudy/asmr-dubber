@@ -131,6 +131,8 @@ def _mix_project_impl(
             else project.settings.chinese_dubbing_timing_mode
         ),
         trim_silence=replacing,
+        # The fully dubbed last line speeds up to end with the recording when it can.
+        source_duration_seconds=project.source.duration_seconds if replacing else None,
     )
     enabled_sentences = [s for s in project.sentences if s.enabled]
     if not events and (
