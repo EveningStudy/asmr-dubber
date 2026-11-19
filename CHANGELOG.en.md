@@ -25,17 +25,17 @@ All notable changes to ASMR Dubber are documented in this file.
 - **Native Desktop File Handling & Lifecycle**: Added loopback-only native Windows file selection (`files/media`), same-volume hard links for video sources to avoid duplicate multi-GB copies (audio is still copied, so retagging the original cannot break a project), incremental task polling (`tasks/poll`), single-row save I/O optimization, first-run hardware/model/key wizard, quality & mix-type presets, global task panel, and a clean **Quit App** action.
 
 ### Batch Engine, Architecture & Model Packs
-- **In-Process Batch Execution & Resident Workers**: AutoFlow batch queues execute pipeline stages directly in-process (`inprocess_pipeline.py`) with resident ASR sessions and persistent IndexTTS daemon pools (`tts_daemon.py`), keeping model load overhead `< 10%` across multi-track queues. Removed all blocking CLI `input()` / `print()` calls from `autoflow/`.
+- **In-Process Batch Execution & Resident Workers**: AutoFlow batch queues execute pipeline stages directly in-process (`inprocess_pipeline.py`) with resident ASR sessions and persistent IndexTTS daemon pools (`tts_daemon.py`), so recognition and dubbing models load once per queue (about 10%-14% of a 10-work run). Removed all blocking CLI `input()` / `print()` calls from `autoflow/`.
 - **Project Schema v4 & Modular Codebase**: Upgraded project manifests to `PROJECT_SCHEMA_VERSION = 4` (`Sentence.target_text` with `zh_text` compatibility property, `SentenceStatus` enum, structured `error_code` + recovery hints, and `ProjectSettings` domain submodels `asr` / `translation` / `tts` / `mix` / `separation` / `subtitles`). Split all oversized modules so every source file is `<= 800` lines (`frontend/*.js` and `services/*.py` `<= 500` lines).
 - **ModelScope Domestic Mirror Expansion**: Added ModelScope domestic mirror model packs for `anime-whisper`, `qwen3-asr-1.7b`, and `qwen3-asr-1.7b-ja-anime-galgame`.
 
-### Stage Processing Speed Reference (RTX 5070 Ti Laptop GPU, 12 GB VRAM)
-Measured wall-clock processing time divided by source audio duration (`RTF`, lower is faster):
-- **Vocal Separation** (`Mel-Band RoFormer`, cached by source SHA-256): `~0.18x–0.25x` on first run; `0.00x` when cached across re-exports.
-- **Speech Recognition** (`anime-whisper` + ASMR VAD + Qwen3 ForcedAligner): `~0.12x–0.20x`.
-- **Translation** (`deepseek-v4-flash` with context & duration budget): `~0.03x–0.06x`.
-- **Voice-Cloned Dubbing** (`IndexTTS-2.5` / `IndexTTS2` resident worker): `~0.45x–0.85x` of spoken line duration (`< 10%` model-load share on 10-track queues).
-- **Mixing, Spatial RTF & Voice Matching**: `~0.03x–0.06x`.
+### Processing Speed (RTX 5070 Ti Laptop GPU, 12 GB VRAM)
+Measured processing time divided by source audio duration (lower is faster):
+- **Unattended 10-work batch** (about 9 minutes of audio, fully dubbed, IndexTTS2): about 19 minutes, `~2.1x` overall; all 10 works finished. Recognition and dubbing models load once per queue; model loading is about `10%–14%` of the total (vocal separation still loads once per work).
+- **Vocal separation** (`Mel-Band RoFormer`): `~0.25x` on first run; reused when the same project is exported again.
+- **Speech recognition** (`Faster-Whisper large-v2`): `~0.25x`.
+- **Voice-cloned dubbing**: about `2x` the spoken line duration, similar for IndexTTS2 and IndexTTS-2.5; the resident worker takes about 30 s to load once.
+- Translation depends on the chosen provider; mixing and voice matching take a few seconds.
 
 ### Migration from 2.2.x / 2.3
 - Projects from `2.2.x` and `2.3` (`schema_version = 3`) open directly in `3.0.0` and can be translated, mixed and exported further; the regression test uses projects written by the released 2.2.1 code.
