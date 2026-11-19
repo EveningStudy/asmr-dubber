@@ -34,7 +34,8 @@
 | [架构](ARCHITECTURE.md) | 代码是怎么组织的 |
 | [Prompt 维护](PROMPTS.md) | 内置的翻译和校对提示词 |
 | [镜像制品维护](MODELSCOPE_UPLOADS.md) | 模型和依赖包是怎么发布的 |
-| [历史发布记录](RELEASE.md) | 各版本的变化 |
+| [发布说明](RELEASE.md) | 当前版本的主要变化、下载与升级方法 |
+| [更新日志](../CHANGELOG.md) | 每个版本的完整变更列表 |
 | [贡献指南](../CONTRIBUTING.md) | 怎么提交代码 |
 
 ## 其他

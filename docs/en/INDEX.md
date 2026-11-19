@@ -34,7 +34,8 @@ If this is your first time, read these two in order:
 | [Architecture](ARCHITECTURE.md) | How the code is organised |
 | [Prompt maintenance](PROMPTS.md) | The built-in translation and review prompts |
 | [Mirror artifact maintenance](MODELSCOPE_UPLOADS.md) | How models and dependency packs are published |
-| [Release history](RELEASE.md) | What changed in each version |
+| [Release notes](RELEASE.md) | Highlights of the current version, download and upgrade |
+| [Changelog](../../CHANGELOG.en.md) | The full list of changes in each version |
 | [Contributing](../../CONTRIBUTING.en.md) | How to submit code |
 
 ## Other
