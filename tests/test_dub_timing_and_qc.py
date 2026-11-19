@@ -126,6 +126,46 @@ def test_broken_dubs_are_regenerated_with_a_new_seed_then_flagged(monkeypatch, t
     assert calls == [(False, None), (True, ["flaky", "broken"]), (True, ["broken"])]
 
 
+def test_when_every_retry_fails_the_least_wrong_take_is_kept(monkeypatch, tmp_path) -> None:
+    project = DubProject(
+        source={
+            "path": "source.wav",
+            "sha256": "0" * 64,
+            "duration_seconds": 10.0,
+            "sample_rate": 16000,
+            "channels": 1,
+        },
+        sentences=[
+            Sentence(
+                id="hard", start_seconds=0, end_seconds=1, source_text="a", zh_text="被治愈了哦"
+            ),
+        ],
+    )
+    project.settings.tts_asr_quality_check = True
+    error_by_attempt = {0: 0.5, 1: 0.2, 2: 0.6}
+
+    def fake_backend(project, project_dir, source, force=False, sentence_ids=None, **kwargs):
+        for sentence in project.sentences:
+            name = f"{sentence.id}-{sentence.tts_attempt}.wav"
+            _wav(project_dir / name, 1.2)
+            sentence.tts_file = name
+            sentence.tts_cache_key = f"key-{sentence.tts_attempt}"
+            sentence.tts_duration_seconds = 1.2 + sentence.tts_attempt
+        return []
+
+    def fake_check(path, expected, settings):
+        cer = error_by_attempt[int(Path(path).stem.rsplit("-", 1)[1])]
+        return f"配音回听字错率 {cer * 100:.0f}%", cer
+
+    monkeypatch.setattr("asmr_dubber.tts_backends.synthesize_with_selected_backend", fake_backend)
+    monkeypatch.setattr("asmr_dubber.dub_qc.dub_asr_check", fake_check)
+    tts.synthesize_sentences(project, tmp_path, tmp_path / "source.wav")
+    hard = project.sentences[0]
+    assert (hard.tts_attempt, hard.tts_file, hard.tts_cache_key) == (1, "hard-1.wav", "key-1")
+    assert hard.tts_duration_seconds == 2.2
+    assert hard.tts_warning == "配音回听字错率 20%"
+
+
 def test_retry_attempt_changes_the_cache_key_only_after_a_retry() -> None:
     project = DubProject(
         source={

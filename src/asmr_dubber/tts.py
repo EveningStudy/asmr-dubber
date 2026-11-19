@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -335,6 +336,62 @@ _QC_RETRIES = 2
 _SPOKEN_UNITS = re.compile(r"[\w\u3040-\u30ff\u3400-\u9fff]", re.UNICODE)
 
 
+@dataclass(frozen=True)
+class _InspectedTake:
+    """One take of a line as the automatic check saw it, enough to switch back to it."""
+
+    attempt: int
+    file: str | None
+    duration: float | None
+    cache_key: str | None
+    reference_file: str | None
+    warning: str | None
+    broken: bool  # failed the gross check (silence, clipping, far too short/long)
+    cer: float | None  # back-listening error rate, when it was measured
+
+    @classmethod
+    def of(cls, sentence: Sentence, broken: bool, cer: float | None) -> _InspectedTake:
+        return cls(
+            sentence.tts_attempt,
+            sentence.tts_file,
+            sentence.tts_duration_seconds,
+            sentence.tts_cache_key,
+            sentence.reference_file,
+            sentence.tts_warning,
+            broken,
+            cer,
+        )
+
+    def badness(self) -> tuple[bool, float]:
+        return self.broken, self.cer if self.cer is not None else 0.0
+
+
+def _keep_best_take(directory: Path, sentence: Sentence, history: list[_InspectedTake]) -> None:
+    """After every retry failed the check, keep the least bad take rather than the last one.
+
+    A gross failure is worse than any recognition mismatch; among mismatches the lowest
+    error rate wins, and a tie keeps the newest take.
+    """
+    from .audio import resolve_project_path
+
+    best = min(reversed(history), key=_InspectedTake.badness)
+    if best.attempt == sentence.tts_attempt or not best.file:
+        return
+    try:
+        if not resolve_project_path(directory, best.file, sentence.id).is_file():
+            return
+    except Exception:
+        return
+    sentence.tts_attempt = best.attempt
+    sentence.tts_file = best.file
+    sentence.tts_duration_seconds = best.duration
+    sentence.tts_cache_key = best.cache_key
+    sentence.reference_file = best.reference_file
+    sentence.tts_warning = best.warning
+    sentence.status = "synthesized"
+    sentence.error = None
+
+
 def dub_problem(path: Path, text: str) -> str | None:
     """Return why a synthesized line looks broken, or None when it looks usable.
 
@@ -406,9 +463,10 @@ def synthesize_sentences(
     if not settings.tts_quality_check and not settings.tts_asr_quality_check:
         return failures
     from .asr import recognition_session
-    from .dub_qc import dub_asr_problem
+    from .dub_qc import dub_asr_check
 
     first_attempt = {sentence.id: sentence.tts_attempt for sentence in project.sentences}
+    takes: dict[str, list[_InspectedTake]] = {}
     for _round in range(_QC_RETRIES + 1):
         retry: list[Sentence] = []
         # Scope ASR QC models strictly to this inspection pass so GPU VRAM is freed
@@ -430,14 +488,12 @@ def synthesize_sentences(
                 expected = spoken_text(settings, sentence.zh_text)
                 used = sentence.tts_attempt - first_attempt.get(sentence.id, 0)
                 warning = dub_problem(path, expected) if settings.tts_quality_check else None
+                broken = warning is not None
+                cer = None
                 if warning is None and settings.tts_asr_quality_check:
-                    warning = dub_asr_problem(
-                        path,
-                        expected,
-                        settings,
-                        is_final_attempt=(used >= _QC_RETRIES),
-                    )
+                    warning, cer = dub_asr_check(path, expected, settings)
                 sentence.tts_warning = warning
+                takes.setdefault(sentence.id, []).append(_InspectedTake.of(sentence, broken, cer))
                 if sentence.tts_warning and used < _QC_RETRIES:
                     retry.append(sentence)
         if not retry:
@@ -455,4 +511,8 @@ def synthesize_sentences(
             **options,
         )
         failures = list(dict.fromkeys([*failures, *again]))
+    for sentence in project.sentences:
+        history = takes.get(sentence.id, [])
+        if sentence.tts_warning and len(history) > 1:
+            _keep_best_take(project_dir, sentence, history)
     return failures

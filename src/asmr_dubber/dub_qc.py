@@ -176,6 +176,33 @@ def transcribe_dub_clip(
     return None
 
 
+def dub_asr_check(
+    audio_path: Path,
+    expected_text: str,
+    settings: ProjectSettings,
+) -> tuple[str | None, float | None]:
+    """Back-listen to a dub: the QC warning (>10% phonetic CER) and the CER itself.
+
+    The CER is ``None`` when the line was not checked (no local recogniser, or an
+    interjection too short to judge).
+    """
+    target_lang = settings.tts_target_language
+    norm_expected = normalize_for_cer(expected_text, target_lang)
+    unit_count = len(norm_expected.split()) if target_lang == "en" else len(norm_expected)
+    if unit_count < 1:
+        return None, None
+    if unit_count == 1 and norm_expected in {"嗯", "啊", "唔", "哦", "噢", "喔", "哈", "嘿"}:
+        return None, None
+    recognized = transcribe_dub_clip(audio_path, target_lang, settings)
+    if recognized is None:
+        return None, None
+    cer = character_error_rate(expected_text, recognized, target_lang)
+    if cer > 0.10:
+        preview = recognized[:24] if recognized else "（未识别出语音）"
+        return f"配音回听字错率 {cer * 100:.0f}%（识别为「{preview}」）", cer
+    return None, cer
+
+
 def dub_asr_problem(
     audio_path: Path,
     expected_text: str,
@@ -184,22 +211,7 @@ def dub_asr_problem(
     is_final_attempt: bool = False,
 ) -> str | None:
     """Return a Chinese QC warning if ASR back-listening detects >10% phonetic CER (B12)."""
-    target_lang = settings.tts_target_language
-    norm_expected = normalize_for_cer(expected_text, target_lang)
-    unit_count = len(norm_expected.split()) if target_lang == "en" else len(norm_expected)
-    if unit_count < 1:
-        return None
-    if unit_count == 1 and norm_expected in {"嗯", "啊", "唔", "哦", "噢", "喔", "哈", "嘿"}:
-        return None
-    recognized = transcribe_dub_clip(audio_path, target_lang, settings)
-    if recognized is None:
-        return None
-    cer = character_error_rate(expected_text, recognized, target_lang)
-    threshold = 0.10
-    if cer > threshold:
-        preview = recognized[:24] if recognized else "（未识别出语音）"
-        return f"配音回听字错率 {cer * 100:.0f}%（识别为「{preview}」）"
-    return None
+    return dub_asr_check(audio_path, expected_text, settings)[0]
 
 
 def meaningful_japanese_residual(text: str) -> str:
