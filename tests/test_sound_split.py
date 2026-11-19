@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from asmr_dubber import asr, asr_candidates
+from asmr_dubber import asr, asr_candidates, asr_token_timing
 from asmr_dubber.models import ProjectSettings
 from asmr_dubber.segmentation import TimedToken, split_sound_runs, split_timed_tokens
 
@@ -89,7 +89,7 @@ def test_aligned_items_become_offset_tokens() -> None:
         SimpleNamespace(text="そ", start_time=0.1, end_time=0.2),
         SimpleNamespace(text="う", start_time=0.2, end_time=float("nan")),
     ]
-    assert asr_candidates._items_to_tokens(items, 5.0) == [TimedToken("そ", 5.1, 5.2)]
+    assert asr_token_timing.items_to_tokens(items, 5.0) == [TimedToken("そ", 5.1, 5.2)]
 
 
 @pytest.mark.parametrize("backend", ["qwen3_asr", "anime_whisper"])
@@ -139,7 +139,7 @@ def test_collapsed_alignment_is_replaced_by_the_voiced_span() -> None:
         SimpleNamespace(text=c, start_time=1.0 + i * 0.05, end_time=1.05 + i * 0.05)
         for i, c in enumerate("みあのおいる")
     ]
-    tokens = asr_candidates._group_tokens(
+    tokens = asr_token_timing.group_tokens(
         "みあのおいる", squeezed, (10 * rate, 18 * rate), rate, clip
     )
     assert tokens[0].start_seconds == pytest.approx(11.0, abs=0.05)
@@ -154,7 +154,7 @@ def test_plausible_alignment_is_kept() -> None:
         SimpleNamespace(text=c, start_time=0.5 + i, end_time=1.5 + i)
         for i, c in enumerate("そうで")
     ]
-    tokens = asr_candidates._group_tokens("そうで", items, (0, 4 * rate), rate, clip)
+    tokens = asr_token_timing.group_tokens("そうで", items, (0, 4 * rate), rate, clip)
     assert [t.start_seconds for t in tokens] == [0.5, 1.5, 2.5]
 
 
