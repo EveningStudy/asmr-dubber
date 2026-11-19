@@ -97,7 +97,7 @@ Click **Translation** at the top.
 The translations fill into the table. **The translation is the script the dub will read**, so it is worth reading carefully:
 
 - If a line reads badly, click into the cell and rewrite it.
-- A long translation makes a long dub, which may have to be sped up to fit. Try to keep each translation about as long as the original line.
+- A long translation makes a long dub, which may have to be sped up to fit. Each line gets a length limit from its timing, and lines over it are shortened once automatically. Lines still well over the limit are marked **Translation may be wrong**; click **Shorten this line** on one, or **Shorten over-budget lines** under **Translation result** to do them all.
 - Laughter, breathing and other sounds with no real content are not translated. An empty translation there is normal.
 
 **Translate remaining** only fills in sentences that have no translation and leaves your edits alone. **Translate everything again** retranslates every sentence, including the ones you edited by hand, and asks for confirmation first.
@@ -125,6 +125,7 @@ Click **Dubbing** at the top.
 ### Choose a dubbing model
 
 - **IndexTTS2**: imitates the original voice. Needs an NVIDIA GPU. Use this when you want it to sound like the same person speaking another language.
+- **IndexTTS-2.5**: the newer IndexTTS, downloaded separately on the Models page; 10 GB of video memory or more is recommended. The **Fully dubbed** preset uses it when it is installed.
 - **Edge TTS**: Microsoft's online voices. Free, no GPU needed, but the voices are fixed and cannot imitate the original.
 - For other cloud services, see [Models and services](BACKENDS.md).
 
@@ -194,13 +195,13 @@ Click a row in the table to select it. Buttons appear below the table, and **Sel
 | Make this sentence's dub louder or quieter | Change **Dubbing adjustment (dB)**. Positive is louder, negative is quieter |
 | Leave the dub out of the export but keep what was generated | Untick **Play dub** |
 | Keep the original voice of a line in the fully dubbed mix, or force it out | Set **Original voice** in the table to **Keep original** or **Replace the original**; **Auto** replaces it when there is a dub |
-| A dub came out wrong and you want another take | Click ↻ in the dub column to redo that line, or `+3` to generate candidate takes. **Needs checking** lists failed checks and suspected leftover voice |
+| A dub came out wrong and you want another take | Click ↻ in the dub column to redo that line, or `+3` to generate a few candidate takes, preview them and click **Use** on the best. **Needs checking** lists failed checks and suspected leftover voice |
 | Add a sentence that was missed | Click **Add sentence** |
 | Remove this sentence | Click **Delete sentence** |
 | Undo or redo recent edits | Click **Undo / Redo**, or press `Ctrl+Z` / `Ctrl+Y` |
 | Use this sentence as the voice reference | Click **Set as project voice reference** |
 
-Above the table you can search or filter **Untranslated**, **Not dubbed**, and **Needs checking**. The table uses virtual scrolling so 1,000+ sentences scroll smoothly without paging, with keyboard shortcuts (`↑/↓` select, `Space` play, `Enter` edit translation). On Windows you can also click **Choose Local File** on the home page to create a project straight from the file's path without a browser upload; a video on the same drive is not copied again, while audio is still copied so later edits to the original cannot affect the project. and click **Quit App** in the sidebar footer to stop the background server cleanly.
+Above the table you can search or filter **Untranslated**, **Not dubbed**, and **Needs checking**. The table uses virtual scrolling so 1,000+ sentences scroll smoothly without paging, with keyboard shortcuts (`↑/↓` select, `Space` play, `Enter` edit translation). On Windows you can also click **Choose Local File** on the home page to create a project straight from the file's path without a browser upload; a video on the same drive is not copied again, while audio is still copied so later edits to the original cannot affect the project. Click **Quit App** in the sidebar footer to stop the background server cleanly.
 
 What needs redoing after a change:
 
