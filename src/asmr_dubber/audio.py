@@ -99,6 +99,13 @@ Progress = Callable[[str, int, int], None]
 _SOURCE_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
 _SOURCE_DIGEST_LOCK = threading.Lock()
 _COPY_BUFFER_SIZE = 8 * 1024 * 1024
+# A project may hard-link its source instead of copying it only for video.  A link
+# shares the user's file, and audio libraries are often retagged in place (Mp3tag,
+# foobar2000), which would change the project's source and lock the project; large
+# videos are rarely edited in place and are where a copy costs the most.
+_LINKABLE_SOURCE_SUFFIXES = frozenset(
+    {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts", ".flv", ".wmv"}
+)
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -234,11 +241,12 @@ def copy_source_verbatim(
     else:
         total = original.stat().st_size
         linked = False
-        try:
-            os.link(original, destination)
-            linked = True
-        except OSError:
-            linked = False
+        if suffix in _LINKABLE_SOURCE_SUFFIXES:
+            try:
+                os.link(original, destination)
+                linked = True
+            except OSError:
+                linked = False
         if linked:
             digest = hashlib.sha256()
             copied = 0

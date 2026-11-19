@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from asmr_dubber.audio import copy_source_verbatim, extract_waveform_peaks
+from asmr_dubber.audio import copy_source_verbatim, extract_waveform_peaks, sha256_file
 from asmr_dubber.http_server import Server
 from asmr_dubber.models import Sentence, save_project
 from asmr_dubber.pipeline import create_project
@@ -28,7 +28,7 @@ def _make_wav(path: Path, seconds: float = 4.0, rate: int = 16_000) -> Path:
     return path
 
 
-def test_copy_source_verbatim_uses_same_volume_hardlink_and_waveform_peaks(
+def test_audio_sources_are_copied_videos_hardlinked_and_waveform_peaks(
     tmp_path: Path,
 ) -> None:
     src = _make_wav(tmp_path / "original.wav", seconds=3.0)
@@ -36,8 +36,18 @@ def test_copy_source_verbatim_uses_same_volume_hardlink_and_waveform_peaks(
     dst, info = copy_source_verbatim(src, proj_dir)
     assert dst.is_file()
     assert info.duration_seconds == pytest.approx(3.0, abs=0.05)
-    # Same-volume NTFS/POSIX hardlink shares inode (st_nlink >= 2).
-    assert os.stat(src).st_ino == os.stat(dst).st_ino
+    # Audio is copied: retagging the user's file in place must not change the project.
+    assert os.stat(src).st_ino != os.stat(dst).st_ino
+    with src.open("r+b") as handle:
+        handle.seek(-4, os.SEEK_END)
+        handle.write(b"\x00\x01\x02\x03")
+    assert sha256_file(dst) == info.sha256
+
+    # A large video on the same volume is hard-linked instead of copied.
+    video = tmp_path / "movie.mp4"
+    video.write_bytes(src.read_bytes())
+    linked, _ = copy_source_verbatim(video, tmp_path / "video_project")
+    assert os.stat(video).st_ino == os.stat(linked).st_ino
 
     peaks = extract_waveform_peaks(dst, 0.2, 2.2, bins=80)
     assert len(peaks) == 80
