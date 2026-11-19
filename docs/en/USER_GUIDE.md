@@ -200,7 +200,7 @@ Click a row in the table to select it. Buttons appear below the table, and **Sel
 | Undo or redo recent edits | Click **Undo / Redo**, or press `Ctrl+Z` / `Ctrl+Y` |
 | Use this sentence as the voice reference | Click **Set as project voice reference** |
 
-Above the table you can search or filter **Untranslated**, **Not dubbed**, and **Needs checking**. The table uses virtual scrolling so 1,000+ sentences scroll smoothly without paging, with keyboard shortcuts (`↑/↓` select, `Space` play, `Enter` edit translation). On Windows you can also click **Choose Local File** on the home page to link large local media without browser upload copying, and click **Quit App** in the sidebar footer to stop the background server cleanly.
+Above the table you can search or filter **Untranslated**, **Not dubbed**, and **Needs checking**. The table uses virtual scrolling so 1,000+ sentences scroll smoothly without paging, with keyboard shortcuts (`↑/↓` select, `Space` play, `Enter` edit translation). On Windows you can also click **Choose Local File** on the home page to create a project straight from the file's path without a browser upload; a video on the same drive is not copied again, while audio is still copied so later edits to the original cannot affect the project. and click **Quit App** in the sidebar footer to stop the background server cleanly.
 
 What needs redoing after a change:
 
