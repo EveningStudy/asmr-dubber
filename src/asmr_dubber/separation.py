@@ -604,7 +604,7 @@ def _ensure_separation_impl(
                 )
                 if not valid_cache:
                     if progress:
-                        progress("实验性人声分离（不推荐）：处理片段", index, total)
+                        progress("人声分离：处理片段", index, total)
                     with tempfile.TemporaryDirectory(dir=root, prefix="worker-") as temporary:
                         temp = Path(temporary)
                         original.seek(lo)
@@ -680,7 +680,7 @@ def _ensure_separation_impl(
         os.replace(bp, residual)
         atomic_write_text(done, json.dumps({p.name: sha256_file(p) for p in (vocals, residual)}))
         if progress:
-            progress("实验分离完成；请试听检查日语泄漏与音效损伤", 1, 1)
+            progress("人声分离完成；请试听检查日语泄漏与音效损伤", 1, 1)
         return vocals, residual
 
 
