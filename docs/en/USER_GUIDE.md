@@ -187,16 +187,20 @@ Click a row in the table to select it. Buttons appear below the table, and **Sel
 |---|---|
 | Change the original or the translation | Click into the cell and edit. It saves when you click elsewhere |
 | Leave this sentence undubbed | Untick the box at the far left of the row |
-| Adjust when the sentence starts and ends | Change **Start (s)** and **End (s)** |
+| Adjust when the sentence starts and ends | Drag the left/right blue handles on the mini waveform below the table, or edit **Start (s)** and **End (s)** |
+| Audition just this sentence's original or dub | Click ▶ in the Time column to play the original slice, or ▶ in the Dubbing column to play its dub |
+| Change this sentence's speaker ID | Edit **Speaker** (e.g. `S01`, `S02`) under **Selected sentence**; multi-speaker projects pick an anchor per speaker |
+| Fix polyphone or proper-noun pronunciation | Under Dubbing → **More settings → Pronunciation glossary**, add lines like `重来=虫来` (changes spoken synthesis only, not subtitles) |
 | Make this sentence's dub louder or quieter | Change **Dubbing adjustment (dB)**. Positive is louder, negative is quieter |
 | Leave the dub out of the export but keep what was generated | Untick **Play dub** |
 | Keep the original voice of a line in the fully dubbed mix, or force it out | Set **Original voice** in the table to **Keep original** or **Replace the original**; **Auto** replaces it when there is a dub |
-| A dub came out wrong and you want another take | Click the ↻ in the dub column to redo only that line. The **Needs checking** filter lists lines that failed the check or may still carry the original voice |
+| A dub came out wrong and you want another take | Click ↻ in the dub column to redo that line, or `+3` to generate candidate takes. **Needs checking** lists failed checks and suspected leftover voice |
 | Add a sentence that was missed | Click **Add sentence** |
 | Remove this sentence | Click **Delete sentence** |
+| Undo or redo recent edits | Click **Undo / Redo**, or press `Ctrl+Z` / `Ctrl+Y` |
 | Use this sentence as the voice reference | Click **Set as project voice reference** |
 
-Above the table you can search, or show only **Untranslated** or **Not dubbed** sentences to see what is left. Long projects show 50 sentences per page, with paging below the table.
+Above the table you can search or filter **Untranslated**, **Not dubbed**, and **Needs checking**. The table uses virtual scrolling so 1,000+ sentences scroll smoothly without paging, with keyboard shortcuts (`↑/↓` select, `Space` play, `Enter` edit translation). On Windows you can also click **Choose Local File** on the home page to link large local media without browser upload copying, and click **Quit App** in the sidebar footer to stop the background server cleanly.
 
 What needs redoing after a change:
 

@@ -50,7 +50,10 @@ def test_real_loudness_remix_preserves_tts_and_first_output(tmp_path, monkeypatc
     bil, _ = sf.read(first_stem, dtype="float32")
     repl, _ = sf.read(replacement_stem, dtype="float32")
     difference = active_rms_dbfs(repl[:, 0], rate) - active_rms_dbfs(bil[:, 0], rate)
-    assert difference == pytest.approx(8 - 20 * np.log10(2), abs=0.15)
+    # Bilingual follows FFmpeg's mono fold of the mix ((L+R)/sqrt2, +3 dB for this centred
+    # voice) minus its default 8 dB; replacement matches the half-level separated voice
+    # channel for channel, so it is 8 - 6 - 3 dB relative to the bilingual stem.
+    assert difference == pytest.approx(8 - 20 * np.log10(2) - 10 * np.log10(2), abs=0.15)
     project.settings.replacement_chinese_relative_loudness_db = -6
     save_project(project, tmp_path)
     pipeline.mix_project(project, tmp_path, output_variant="replace")

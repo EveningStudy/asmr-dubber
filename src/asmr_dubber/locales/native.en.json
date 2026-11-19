@@ -465,7 +465,7 @@
   "替换处补回原录音的底噪": "Refill the recording's noise floor where voice is replaced",
   "空间线索只参考人声（需开启人声分离）": "Spatial cues from vocals only (requires vocal separation)",
   "参考音频质量": "Reference audio quality",
-  "16 kHz 单声道（旧）": "16 kHz mono (legacy)",
+  "16 kHz 单声道（推荐）": "16 kHz mono (recommended)",
   "全带宽": "Full bandwidth",
   "全带宽，取自分离后的人声": "Full bandwidth, from separated vocals",
   "完全配音版原声": "Fully dubbed original audio",

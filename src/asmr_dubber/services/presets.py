@@ -1,8 +1,10 @@
 """Parameter presets: two independent groups, each a set of conservative setting changes.
 
-A preset only touches settings that need no extra installation.  It never switches
-the recognition or dubbing backend; the "best quality" preset is the shipped
-defaults, computed from the model so it cannot drift from them.
+A preset only touches settings that need no extra installation.  Its fixed
+changes never switch the recognition or dubbing backend; the full-dub preset only
+*prefers* IndexTTS-2.5, applied by the front end when that model is already
+installed.  The "best quality" preset is the shipped defaults, computed from the
+model so it cannot drift from them.
 """
 
 from ..models import ProjectSettings
@@ -58,9 +60,12 @@ REPLACEMENT = {
     "replacement_residual_asr_check": True,
     "autoflow_default_content": "replacement",
 }
+# Blind tests and the timing benchmark favoured IndexTTS-2.5 for the full dub; it is
+# a separate install, so it is only switched to when present.
+REPLACEMENT_PREFERRED = {"tts_backend": "indextts2_5", "tts_model": "IndexTTS-2.5"}
 
 
-def _entry(identifier, group, label, description, changes, requires=""):
+def _entry(identifier, group, label, description, changes, requires="", prefer=None):
     return {
         "id": identifier,
         "group": group,
@@ -68,6 +73,9 @@ def _entry(identifier, group, label, description, changes, requires=""):
         "description": description,
         "changes": changes,
         "requires": requires,
+        # Extra changes applied only when the backend they name is installed.
+        "prefer": dict(prefer or {}),
+        "prefer_requires": (prefer or {}).get("tts_backend", ""),
     }
 
 
@@ -111,11 +119,12 @@ def catalog():
             "在有配音的句子处去掉原人声，需要先装好人声分离模型。",
             REPLACEMENT,
             requires="separation_roformer",
+            prefer=REPLACEMENT_PREFERRED,
         ),
     ]
     for item in result:
         known = set(item["changes"])
-        unknown = known - set(defaults)
+        unknown = (known | set(item["prefer"])) - set(defaults)
         if unknown:  # a typo in a preset must fail loudly in tests, not silently at apply time
             raise KeyError(sorted(unknown))
         item["project_keys"] = sorted(known & project_keys)

@@ -4,7 +4,7 @@
 
 # 完整参数参考
 
-按当前 `services/parameters.py` 清单生成，**237 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
+按当前 `services/parameters.py` 清单生成，**247 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
 
 项目字段出现在项目/新默认中；全局字段作用于全局/新项目/新队列。Always 表示无静态显示条件，高级分组仍需展开。选项可能随后端变化；校验还包括跨字段依赖、语言能力与 JSON 合同。
 
@@ -55,6 +55,8 @@
 | `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD 边界保留 | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
 | `aligner_model`<br>时间对齐模型 | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
 | `asr_forced_alignment_enabled`<br>Qwen3 时间对齐 | boolean<br>project | `false` | — | Always |
+| `asr_diarize_speakers`<br>自动区分说话人 | boolean<br>project | `false` | — | Always |
+| `asr_speaker_count`<br>说话人数量（0 为自动） | integer<br>project | `0` | ≥0; ≤12 | asr_diarize_speakers in [true] |
 | `asr_condition_on_previous_text`<br>参考前面的文字 | boolean<br>project | `true` | — | asr_backend in ["faster_whisper"] |
 | `asr_initial_prompt`<br>提示词 | string<br>project | 空 | — | asr_backend in ["faster_whisper"] |
 | `asr_timeout_seconds`<br>Parakeet 连续无响应超时 | number<br>project | `600.0` | ≥10.0; ≤7200.0 | asr_backend in ["parakeet_nemo"] |
@@ -122,7 +124,7 @@
 
 | 键 / 界面名称 | 类型 / 范围归属 | 默认值 | 范围 / 可选值 | 显示条件 |
 |---|---|---|---|---|
-| `reference_audio_mode`<br>参考音频质量 | string<br>project | `fullband` | legacy, fullband, fullband_vocals | Always |
+| `reference_audio_mode`<br>参考音频质量 | string<br>project | `legacy` | legacy, fullband, fullband_vocals | Always |
 | `tts_target_language`<br>配音成 | string<br>project | `zh` | zh, en | Always |
 | `tts_backend`<br>配音模型 | string<br>project | `indextts2` | indextts2, indextts2_5, edge_tts, indextts2_api, gpt_sovits, cosyvoice, mimo_tts, minimax, fish_speech, generic_tts_api | Always |
 | `tts_model`<br>模型 | string<br>project | `IndexTTS2` | 随所选后端 | Always |
@@ -179,9 +181,15 @@
 | `tts_gpt_sample_steps`<br>采样步数 | integer<br>project | `32` | ≥1; ≤64 | tts_backend in ["gpt_sovits"] |
 | `tts_cosyvoice_mode`<br>模式 | string<br>project | `zero_shot` | zero_shot, cross_lingual | tts_backend in ["cosyvoice"] |
 | `tts_normalize_pauses`<br>配音前把省略号等长停顿改成逗号 | boolean<br>project | `true` | — | Always |
+| `tts_spoken_normalization`<br>配音前把数字和百分比转成中文读法 | boolean<br>project | `true` | — | tts_target_language in ["zh"] |
+| `tts_pronunciation_glossary`<br>读音词典 | string<br>project | 空 | — | Always |
 | `tts_quality_check`<br>自动检查配音，坏的换种子重做 | boolean<br>project | `true` | — | Always |
+| `tts_asr_quality_check`<br>用语音识别复听检查配音读音 | boolean<br>project | `false` | — | Always |
+| `tts_fit_source_duration`<br>配音生成时直接贴合原句时长 | boolean<br>project | `true` | — | tts_backend in ["indextts2","indextts2_5"] |
+| `tts_dual_voice_anchor`<br>耳语句自动切换气声参考锚点 | boolean<br>project | `true` | — | tts_backend in ["indextts2","indextts2_5"] |
 | `tts_clone_mode`<br>模仿方式 | string<br>project | `stable_reference` | stable_reference, reference_only | Always |
 | `tts_reference_sentence_id`<br>项目统一参考句 ID | string / nullable<br>project | `null` | — | Always |
+| `tts_whisper_reference_sentence_id`<br>项目耳语参考句 ID | string / nullable<br>project | `null` | — | Always |
 | `skip_japanese_fillers`<br>跳过纯语气词 | boolean<br>project | `true` | — | Always |
 | `reference_padding_seconds`<br>参考音频边缘扩展 | number<br>project | `0.0` | ≥0.0; ≤2.0 | Always |
 | `random_seed`<br>随机种子 | integer<br>project | `20260722` | ≥0 | Always |
@@ -228,12 +236,14 @@
 | `replacement_chinese_fade_ms`<br>句首句尾淡入淡出 | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
 | `replacement_scope`<br>原人声去除范围 | string<br>project | `dubbed_speech` | dubbed_speech, all_vocals | separation_mix_mode in ["replace"] |
 | `replacement_dubbing_offset_ms`<br>完全配音版的配音偏移（毫秒） | integer<br>project | `0` | ≥-30000; ≤30000 | separation_mix_mode in ["replace"] |
-| `replacement_max_auto_speed`<br>完全配音版的最大自动加速 | number<br>project | `1.2` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
+| `replacement_max_auto_speed`<br>完全配音版的最大自动加速 | number<br>project | `1.25` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
 | `replacement_timing_mode`<br>完全配音版：配音比原句长时 | string<br>project | `fit_then_shift` | fit_then_shift, fit_window, sequential | separation_mix_mode in ["replace"] |
-| `replacement_voice_match_strength`<br>配音音色贴合原声的强度 | number<br>project | `0.8` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_voice_match_strength`<br>配音音色贴合原声的强度 | number<br>project | `0.85` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `replacement_bandwidth_extension`<br>补全配音缺少的高频（气声、齿音） | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
 | `replacement_noise_fill`<br>替换处补回原录音的底噪 | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
-| `replacement_whisper_match`<br>原声是耳语时把配音转成气声（实验） | number<br>project | `1.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_residual_suppression`<br>替换窗口内高人声频段残差抑制强度 | number<br>project | `0.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_residual_asr_check`<br>混音后用识别模型检查残留原声 | boolean<br>project | `false` | — | separation_mix_mode in ["replace"] |
+| `replacement_whisper_match`<br>原声是耳语时把配音转成气声（实验） | number<br>project | `0.65` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `chinese_channel_routing`<br>多声道时配音放在 | string<br>project | `auto` | auto, all | Always |
 | `mix_peak_protection`<br>成品峰值保护 | boolean<br>project | `true` | — | Always |
 | `mix_peak_limit_dbfs`<br>峰值上限 | number<br>project | `-1.0` | ≥-6.0; ≤-0.1 | Always |

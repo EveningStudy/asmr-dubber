@@ -88,15 +88,22 @@ async function applyPreset(id, scope) {
   const preset = state.boot.presets.find((item) => item.id === id);
   if (!preset) return;
   if (scope === 'proj' && !state.project) throw new Error(t('请先新建或打开项目。'));
-  await saveParameters(presetChanges(preset, scope), scope);
+  const catalog = preset.requires || preset.prefer_requires ? await api('models/list') : { items: [] };
+  const stateOf = (identifier) => catalog.items.find((entry) => entry.id === identifier)?.state;
+  const changes = presetChanges(preset, scope);
+  // The preferred backend is a separate install: switch to it only when it is ready.
+  const preferred = preset.prefer_requires && stateOf(preset.prefer_requires) === 'ready';
+  if (preferred) Object.assign(changes, preset.prefer);
+  await saveParameters(changes, scope);
   notice(t('已应用预设：{name}', { name: t(preset.label) }));
-  if (!preset.requires) return;
-  const catalog = await api('models/list');
-  const item = catalog.items.find((entry) => entry.id === preset.requires);
-  if (item && item.state !== 'ready')
+  if (preset.requires && stateOf(preset.requires) && stateOf(preset.requires) !== 'ready')
     notice(t('“{name}”需要先在“模型”页安装人声分离模型，否则无法导出。', { name: t(preset.label) }), true, {
       sticky: true,
     });
+  if (preset.prefer_requires && !preferred)
+    notice(t('“{name}”推荐配合 IndexTTS-2.5，配音时长更贴合原句；在“模型”页装好后再点一次此预设即可切换。', {
+      name: t(preset.label),
+    }));
 }
 
 export function initializePresets() {

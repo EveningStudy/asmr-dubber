@@ -161,7 +161,8 @@ def test_projects_written_before_2_3_keep_their_dubbing_behaviour(tmp_path) -> N
     old, _ = load_project(tmp_path)
     assert old.settings.reference_audio_mode == "legacy"
     assert old.settings.tts_normalize_pauses is False
-    assert ProjectSettings().reference_audio_mode == "fullband"
+    # Full-band references made IndexTTS crackle; new projects use 16 kHz ones again.
+    assert ProjectSettings().reference_audio_mode == "legacy"
     assert ProjectSettings().tts_normalize_pauses is True
 
 

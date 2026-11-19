@@ -280,7 +280,9 @@ class ProjectSettings(BaseModel):
     spatial_rtf_hop_divisor: Literal[4, 8, 16] = 8
     spatial_rtf_block_seconds: float = Field(default=10, ge=1, le=30)
     spatial_rtf_vocal_weighting: bool = True
-    reference_audio_mode: Literal["legacy", "fullband", "fullband_vocals"] = "fullband"
+    # 16 kHz references: full-band ones carried breath and mouth noise into IndexTTS
+    # output as audible crackle in blind listening tests.
+    reference_audio_mode: Literal["legacy", "fullband", "fullband_vocals"] = "legacy"
 
     @field_validator(
         "separation_mdx_params",
@@ -460,6 +462,8 @@ class ProjectSettings(BaseModel):
     tts_cosyvoice_mode: Literal["zero_shot", "cross_lingual"] = "zero_shot"
     # Long ellipses make zero-shot TTS pause for a second or more per line.
     tts_normalize_pauses: bool = True
+    tts_spoken_normalization: bool = True
+    tts_pronunciation_glossary: str = ""
     # Ask the translator for lines that fit the source timing (B6).  The rate is
     # Chinese characters per second; English uses 0.6 of it as words per second.
     translation_length_budget: bool = True
@@ -626,7 +630,7 @@ class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "2.2.1"
+    app_version: str = "3.0.0"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

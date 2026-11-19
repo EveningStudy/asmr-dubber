@@ -352,7 +352,41 @@ def test_chinese_loudness_follows_japanese_with_audible_floor(tmp_path: Path) ->
     assert second == pytest.approx(-42.0, abs=0.5)
 
 
-@pytest.mark.parametrize("speed_factor", [1.25, 3.0])
+@pytest.mark.parametrize("layout", ["diotic", "one_ear"])
+def test_stereo_source_loudness_is_matched_per_channel_not_summed(
+    tmp_path: Path, layout: str
+) -> None:
+    """A stereo voice must not make the placed line 3 dB louder than the original."""
+    rate = 48_000
+    level = 10.0 ** (-36.0 / 20.0)
+    left = np.full(rate, level, dtype=np.float32)
+    right = left if layout == "diotic" else np.zeros(rate, dtype=np.float32)
+    source = tmp_path / "source.wav"
+    sf.write(source, np.column_stack([left, right]), rate, subtype="FLOAT")
+    chinese = tmp_path / "chinese.wav"
+    sf.write(chinese, np.full(rate // 4, 0.3, dtype=np.float32), rate, subtype="FLOAT")
+
+    stem = tmp_path / "matched.wav"
+    build_chinese_stem(
+        stem,
+        [StemEvent("line", 0.1, chinese, 0.0, 1.0)],
+        probe_audio(source),
+        0.0,
+        source_reference_path=source,
+        match_source_loudness=True,
+        minimum_active_rms_dbfs=-60.0,
+        target_active_rms_dbfs=-20.0,
+    )
+    data, _ = sf.read(stem, dtype="float32", always_2d=True)
+    placed = data[int(0.1 * rate) : int(0.35 * rate)]
+    original = np.column_stack([left, right])[: len(placed)]
+    placed_power = float(np.mean(placed.astype(np.float64) ** 2))
+    original_power = float(np.mean(original.astype(np.float64) ** 2))
+
+    assert 10 * np.log10(placed_power / original_power) == pytest.approx(0.0, abs=0.5)
+
+
+@pytest.mark.parametrize("speed_factor", [0.9, 1.25, 3.0])
 def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
     tmp_path: Path,
     speed_factor: float,
@@ -390,4 +424,4 @@ def test_mix_time_stretch_shortens_clip_without_changing_pitch_or_raw_cache(
     dominant = frequencies[int(np.argmax(spectrum))]
     assert dominant == pytest.approx(440.0, abs=3.0)
     assert sha256_file(chinese) == original_hash
-    assert not list(tmp_path.glob("*.tempo.wav"))
+    assert not list(tmp_path.glob("*.tempo*.wav"))

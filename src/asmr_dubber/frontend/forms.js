@@ -121,7 +121,8 @@ function control(parameter, values, scope, language) {
     key.includes('prompt') ||
     key.endsWith('params') ||
     key.endsWith('extra_body') ||
-    key === 'autoflow_timestamp_footer'
+    key === 'autoflow_timestamp_footer' ||
+    key === 'tts_pronunciation_glossary'
   )
     input = `<textarea class="mono" rows="3"${key.startsWith('translation_prompt') ? ` placeholder="${esc(state.boot.choices.translation_prompts[key.endsWith('_ja') ? 'ja' : key.endsWith('_en') ? 'en' : key.endsWith('_zh') ? 'zh' : language] || '')}"` : ''} ${data}>${esc(parameter.type === 'array' ? JSON.stringify(value) : value)}</textarea>`;
   else input = `<input type="text" value="${esc(value)}" ${data}>`;

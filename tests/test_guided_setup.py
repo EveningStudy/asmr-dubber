@@ -40,9 +40,17 @@ def test_presets_are_valid_settings_and_best_quality_is_the_defaults():
             **{k: item["changes"][k] for k in item["project_keys"]},
         }
         ProjectSettings.model_validate(values).validate_mix_dependencies()
-        # Presets never switch the recognition or dubbing backend.
+        # Fixed preset changes never switch the recognition or dubbing backend.
         assert not {"asr_backend", "tts_backend", "asr_model"} & set(item["changes"])
     assert "autoflow_default_content" not in entries["replacement"]["project_keys"]
+    # The full dub only prefers IndexTTS-2.5, switched to when it is installed.
+    replacement = entries["replacement"]
+    assert replacement["prefer"] == {"tts_backend": "indextts2_5", "tts_model": "IndexTTS-2.5"}
+    assert replacement["prefer_requires"] == "indextts2_5"
+    ProjectSettings.model_validate(
+        {**ProjectSettings().model_dump(), **replacement["prefer"]}
+    ).validate_mix_dependencies()
+    assert all(not item["prefer"] for key, item in entries.items() if key != "replacement")
 
 
 def test_preset_roundtrips_through_the_settings_service(tmp_path, monkeypatch):

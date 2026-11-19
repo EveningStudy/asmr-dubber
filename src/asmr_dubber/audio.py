@@ -572,13 +572,15 @@ def build_chinese_stem(
                             dtype="float32",
                             always_2d=True,
                         )
-                        # Total binaural power sqrt(L^2 + R^2) matches FFmpeg's -ac 1 diotic
-                        # reference while avoiding single-ear -3 dB loss and phase cancellation.
-                        ch_scale = min(2, source_window.shape[1])
-                        equal_power_env = np.sqrt(
-                            np.mean(source_window.astype(np.float64) ** 2, axis=1) * ch_scale
+                        # Mean power per channel: both channel routing and RTF place the mono
+                        # line so that every output channel carries its RMS on average, so this
+                        # is the like-for-like level.  It avoids the single-ear -6 dB loss and
+                        # phase cancellation of an (L+R)/2 fold; summing L^2 + R^2 instead made
+                        # every replacement line 3 dB louder than the original voice.
+                        power_env = np.sqrt(
+                            np.mean(source_window.astype(np.float64) ** 2, axis=1)
                         ).astype(np.float32)
-                        source_level = active_rms_dbfs(equal_power_env, source_rate)
+                        source_level = active_rms_dbfs(power_env, source_rate)
                         if math.isfinite(source_level):
                             target_level = source_level + relative_loudness_db
                         else:

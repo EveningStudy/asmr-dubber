@@ -141,6 +141,12 @@ REMOTE_MODEL_PACKS: dict[str, RemoteModelPack] = {
         size=4_700_346_153,
         sha256="9e29f248833e429b8702e297f2806b0e93ae0d83a3cb78a9763be9f55da081dd",
     ),
+    "qwen3-asr-1.7b-ja-anime-galgame": RemoteModelPack(
+        pack_id="qwen3-asr-1.7b-ja-anime-galgame",
+        filename="ASMR-Dubber-ModelPack-qwen3-asr-1.7b-ja-anime-galgame-v1.0.0.zip",
+        size=4_080_150_938,
+        sha256="2d78c2ad0436a2c82052fc89afa98a04e212621091df552ed9e4b5f58782fe3a",
+    ),
 }
 
 LogCallback = Callable[[str], None]

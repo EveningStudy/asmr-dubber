@@ -121,6 +121,8 @@ class TtsSettingsGroup(BaseModel):
     dual_voice_anchor: bool
     fit_source_duration: bool
     normalize_pauses: bool
+    spoken_normalization: bool
+    pronunciation_glossary: str
     quality_check: bool
     asr_quality_check: bool
     speed: float
@@ -299,6 +301,8 @@ def build_tts_group(s: Any) -> TtsSettingsGroup:
         dual_voice_anchor=s.tts_dual_voice_anchor,
         fit_source_duration=s.tts_fit_source_duration,
         normalize_pauses=s.tts_normalize_pauses,
+        spoken_normalization=s.tts_spoken_normalization,
+        pronunciation_glossary=s.tts_pronunciation_glossary,
         quality_check=s.tts_quality_check,
         asr_quality_check=s.tts_asr_quality_check,
         speed=s.tts_speed,

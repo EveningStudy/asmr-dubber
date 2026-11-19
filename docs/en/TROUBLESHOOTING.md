@@ -6,7 +6,7 @@ English | [中文](../TROUBLESHOOTING.md)
 
 ## Do these two things first
 
-**1. Read the error.** When a task fails, the task box on the right shows the reason, and **Log** expands to show more. Most problems explain themselves there.
+**1. Read the error.** When a task fails, the task box on the right shows an error code (such as `API_KEY_MISSING`, `TRANSLATION_RATE_LIMIT`, `CUDA_OOM`, or `RUNTIME_MISSING`), the reason, and a recovery hint; **Log** expands to show more. When filing a bug report, export the redacted log or diagnostic bundle from **Settings → Logs and diagnostics** or the **Batch** page.
 
 **2. Run the environment check.** Open **Settings → Logs and diagnostics** and click **Start check**.
 

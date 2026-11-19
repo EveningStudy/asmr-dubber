@@ -175,6 +175,27 @@ def test_voice_match_fused_and_harmonic_selective_whisperize() -> None:
     assert bandwidth_hz(long_term_spectrum(fused), rate) > 12_500.0
 
 
+def test_rebuilt_air_band_stays_close_to_the_original_voice() -> None:
+    """16 kHz references leave nothing above 8 kHz; the rebuild must not leave the dub dull."""
+    rate = 48_000
+    noise = np.random.default_rng(3).standard_normal(rate * 3).astype(np.float32) * 0.05
+    spectrum = np.fft.rfft(noise)
+    spectrum[np.fft.rfftfreq(len(noise), 1 / rate) > 8000] = 0
+    band_limited = np.fft.irfft(spectrum, len(noise)).astype(np.float32)
+
+    def air_db(x: np.ndarray) -> float:
+        power = long_term_spectrum(x)
+        hz = np.fft.rfftfreq(2048, 1 / rate)
+        air = power[(hz >= 8500) & (hz <= 12_000)].mean()
+        return float(10 * np.log10(air / power[(hz >= 1000) & (hz <= 4000)].mean()))
+
+    rebuilt = process_voice_match_fused(
+        band_limited, rate, long_term_spectrum(noise), match_strength=0.0, extend=True, seed=1
+    )
+    assert air_db(band_limited) < air_db(noise) - 40
+    assert air_db(rebuilt) == pytest.approx(air_db(noise), abs=2.0)
+
+
 def test_dual_modal_and_whisper_voice_anchor_selection(tmp_path: Path) -> None:
     rate = 24_000
     silence = np.zeros((round(rate * 1.0), 2), dtype=np.float32) + 1e-4

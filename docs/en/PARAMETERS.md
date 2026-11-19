@@ -4,7 +4,7 @@ English | [中文](../PARAMETERS.md)
 
 # Complete parameter reference
 
-Generated from `services/parameters.py`: **237 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
+Generated from `services/parameters.py`: **247 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
 
 Project fields appear in project panels/new defaults; global fields affect future projects/queue entries. Always means no static visibility condition; expand advanced groups. Options can depend on backend. Validation also checks cross-field dependencies, language and JSON contracts.
 
@@ -55,6 +55,8 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD boundary padding | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
 | `aligner_model`<br>Alignment model | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
 | `asr_forced_alignment_enabled`<br>Qwen3 alignment | boolean<br>project | `false` | — | Always |
+| `asr_diarize_speakers`<br>Automatically separate speakers | boolean<br>project | `false` | — | Always |
+| `asr_speaker_count`<br>Speaker count (0 = auto) | integer<br>project | `0` | ≥0; ≤12 | asr_diarize_speakers in [true] |
 | `asr_condition_on_previous_text`<br>Condition recognition on previous text | boolean<br>project | `true` | — | asr_backend in ["faster_whisper"] |
 | `asr_initial_prompt`<br>Prompts | string<br>project | Empty | — | asr_backend in ["faster_whisper"] |
 | `asr_timeout_seconds`<br>Parakeet idle timeout | number<br>project | `600.0` | ≥10.0; ≤7200.0 | asr_backend in ["parakeet_nemo"] |
@@ -122,7 +124,7 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 
 | Key / label | Type / scope | Default | Range / options | Display condition |
 |---|---|---|---|---|
-| `reference_audio_mode`<br>Reference audio quality | string<br>project | `fullband` | legacy, fullband, fullband_vocals | Always |
+| `reference_audio_mode`<br>Reference audio quality | string<br>project | `legacy` | legacy, fullband, fullband_vocals | Always |
 | `tts_target_language`<br>Dub into | string<br>project | `zh` | zh, en | Always |
 | `tts_backend`<br>TTS backend | string<br>project | `indextts2` | indextts2, indextts2_5, edge_tts, indextts2_api, gpt_sovits, cosyvoice, mimo_tts, minimax, fish_speech, generic_tts_api | Always |
 | `tts_model`<br>Models | string<br>project | `IndexTTS2` | Backend-dependent | Always |
@@ -179,9 +181,15 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `tts_gpt_sample_steps`<br>Sampling steps | integer<br>project | `32` | ≥1; ≤64 | tts_backend in ["gpt_sovits"] |
 | `tts_cosyvoice_mode`<br>CosyVoice mode | string<br>project | `zero_shot` | zero_shot, cross_lingual | tts_backend in ["cosyvoice"] |
 | `tts_normalize_pauses`<br>Turn ellipses and other long pauses into commas before dubbing | boolean<br>project | `true` | — | Always |
+| `tts_spoken_normalization`<br>Expand numbers and percentages into spoken Chinese before dubbing | boolean<br>project | `true` | — | tts_target_language in ["zh"] |
+| `tts_pronunciation_glossary`<br>Pronunciation glossary | string<br>project | Empty | — | Always |
 | `tts_quality_check`<br>Check every dub and regenerate broken ones with a new seed | boolean<br>project | `true` | — | Always |
+| `tts_asr_quality_check`<br>Verify dubbed pronunciation with speech recognition | boolean<br>project | `false` | — | Always |
+| `tts_fit_source_duration`<br>Match source line duration natively during synthesis | boolean<br>project | `true` | — | tts_backend in ["indextts2","indextts2_5"] |
+| `tts_dual_voice_anchor`<br>Switch to a whispered voice anchor on whispered lines | boolean<br>project | `true` | — | tts_backend in ["indextts2","indextts2_5"] |
 | `tts_clone_mode`<br>Reference strategy | string<br>project | `stable_reference` | stable_reference, reference_only | Always |
 | `tts_reference_sentence_id`<br>Shared reference sentence ID | string / nullable<br>project | `null` | — | Always |
+| `tts_whisper_reference_sentence_id`<br>Project whisper reference line ID | string / nullable<br>project | `null` | — | Always |
 | `skip_japanese_fillers`<br>Skip nonsemantic Japanese fillers | boolean<br>project | `true` | — | Always |
 | `reference_padding_seconds`<br>Reference edge padding | number<br>project | `0.0` | ≥0.0; ≤2.0 | Always |
 | `random_seed`<br>Random seed | integer<br>project | `20260722` | ≥0 | Always |
@@ -228,12 +236,14 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `replacement_chinese_fade_ms`<br>Sentence fade in and out | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
 | `replacement_scope`<br>Original-vocal removal scope | string<br>project | `dubbed_speech` | dubbed_speech, all_vocals | separation_mix_mode in ["replace"] |
 | `replacement_dubbing_offset_ms`<br>Fully dubbed dub offset (ms) | integer<br>project | `0` | ≥-30000; ≤30000 | separation_mix_mode in ["replace"] |
-| `replacement_max_auto_speed`<br>Fully dubbed maximum auto speed-up | number<br>project | `1.2` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
+| `replacement_max_auto_speed`<br>Fully dubbed maximum auto speed-up | number<br>project | `1.25` | ≥1.0; ≤4.0 | separation_mix_mode in ["replace"] |
 | `replacement_timing_mode`<br>Fully dubbed: when a dub is longer than its line | string<br>project | `fit_then_shift` | fit_then_shift, fit_window, sequential | separation_mix_mode in ["replace"] |
-| `replacement_voice_match_strength`<br>Match dub timbre to the original voice | number<br>project | `0.8` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_voice_match_strength`<br>Match dub timbre to the original voice | number<br>project | `0.85` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `replacement_bandwidth_extension`<br>Restore missing dub highs (breath, sibilance) | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
 | `replacement_noise_fill`<br>Refill the recording's noise floor where voice is replaced | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
-| `replacement_whisper_match`<br>Turn the dub breathy where the original whispers (experimental) | number<br>project | `1.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_residual_suppression`<br>Vocal-band residual suppression strength inside replaced windows | number<br>project | `0.0` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
+| `replacement_residual_asr_check`<br>Scan replaced windows for leftover source speech | boolean<br>project | `false` | — | separation_mix_mode in ["replace"] |
+| `replacement_whisper_match`<br>Turn the dub breathy where the original whispers (experimental) | number<br>project | `0.65` | ≥0.0; ≤1.0 | separation_mix_mode in ["replace"] |
 | `chinese_channel_routing`<br>Multichannel routing | string<br>project | `auto` | auto, all | Always |
 | `mix_peak_protection`<br>Final mix peak protection | boolean<br>project | `true` | — | Always |
 | `mix_peak_limit_dbfs`<br>Final peak ceiling | number<br>project | `-1.0` | ≥-6.0; ≤-0.1 | Always |

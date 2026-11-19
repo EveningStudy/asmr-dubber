@@ -113,9 +113,11 @@ def _read_adjusted_mono(
     trim_start_seconds: float = 0.0,
     trim_end_seconds: float | None = None,
 ) -> np.ndarray:
-    """Trim, time-stretch with MIT phase-locked vocoder, and resample in memory."""
-    from .time_stretch import stretch_speech
+    """Trim, change tempo with FFmpeg ``atempo``, and resample in memory.
 
+    ``atempo`` won the blind comparison against the in-tree phase-locked vocoder
+    (``time_stretch.py``) on whispered lines at 1.1x and 1.2x, so it stays the method.
+    """
     if not math.isfinite(speed_factor) or not 0.75 <= speed_factor <= MAX_CHINESE_AUTO_SPEED:
         raise ProjectError(f"中文配音自动变速倍速必须在 0.75 到 {MAX_CHINESE_AUTO_SPEED:g} 之间。")
     data, source_rate = sf.read(source, dtype="float32", always_2d=True)
@@ -129,10 +131,42 @@ def _read_adjusted_mono(
         )
         mono = mono[lo:hi]
     if abs(speed_factor - 1.0) > 1e-4 and len(mono) > 0:
-        mono = stretch_speech(mono, source_rate, speed_factor)
+        mono = _atempo(mono, source_rate, speed_factor, source)
     if source_rate != target_rate and len(mono) > 0:
         mono = soxr.resample(mono, source_rate, target_rate, quality="VHQ")
     return np.asarray(mono, dtype=np.float32)
+
+
+def _atempo(mono: np.ndarray, rate: int, speed_factor: float, near: Path) -> np.ndarray:
+    """Pitch-preserving tempo change; one ``atempo`` stage per factor-of-two step."""
+    import uuid
+
+    from .audio import _run_ffmpeg
+
+    stages = max(1, math.ceil(abs(math.log2(speed_factor))))
+    stage_factor = speed_factor ** (1.0 / stages)
+    token = uuid.uuid4().hex
+    source = near.with_name(f".{near.stem}.{token}.tempo-in.wav")
+    destination = near.with_name(f".{near.stem}.{token}.tempo-out.wav")
+    try:
+        sf.write(source, mono, rate, subtype="FLOAT")
+        _run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(source),
+                "-filter:a",
+                ",".join(f"atempo={stage_factor:.8f}" for _ in range(stages)),
+                "-c:a",
+                "pcm_f32le",
+                str(destination),
+            ]
+        )
+        stretched, _ = sf.read(destination, dtype="float32", always_2d=True)
+    finally:
+        source.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+    return np.asarray(stretched[:, 0], dtype=np.float32)
 
 
 def _tempo_adjusted_audio(

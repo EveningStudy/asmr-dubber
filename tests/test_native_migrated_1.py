@@ -323,10 +323,10 @@ def test_workflow_controls_follow_prerequisites(app):
 
 
 def test_sentence_table_uses_bounded_native_editor(app):
-    script = FRONTEND.joinpath("projects.js").read_text(encoding="utf-8")
-    assert "slice(rowPage * 50, (rowPage + 1) * 50)" in script
-    assert "contenteditable" in script
-    assert 'data-row-field="enabled"' in script
+    editor = FRONTEND.joinpath("sentence_editor.js").read_text(encoding="utf-8")
+    assert ".slice(startIdx, endIdx)" in editor
+    assert "contenteditable" in editor
+    assert 'data-row-field="enabled"' in editor
     assert "table-layout: fixed" in FRONTEND.joinpath("styles.css").read_text(encoding="utf-8")
 
 
@@ -345,10 +345,10 @@ def test_sentence_table_does_not_send_whole_table_on_cell_edit(app, tmp_path):
 
 def test_review_feature_and_result_panel_have_explicit_experimental_warning(app):
     html = FRONTEND.joinpath("index.html").read_text(encoding="utf-8")
-    script = FRONTEND.joinpath("projects.js").read_text(encoding="utf-8")
+    dialogs = FRONTEND.joinpath("project_dialogs.js").read_text(encoding="utf-8")
     assert "实验性，效果可能不如单模型" in html
-    assert "实验性，效果可能不如单模型" in script
-    assert "普通单模型识别不需要使用" in script
+    assert "实验性，效果可能不如单模型" in dialogs
+    assert "普通单模型识别不需要使用" in dialogs
 
 
 def test_backend_usage_distinguishes_current_project_from_pending_form(app, tmp_path):

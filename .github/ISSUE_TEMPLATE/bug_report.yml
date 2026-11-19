@@ -64,8 +64,8 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: 其他错误日志
-      description: 不要包含密钥、音频内容或私人转写。
+      label: 诊断包与其他错误日志
+      description: 推荐在“设置 → 日志与诊断”导出已自动脱敏的日志，或在“批量”页失败作品旁导出诊断包（zip）并拖拽上传；不要包含密钥、音频内容或私人转写。
       render: text
   - type: checkboxes
     id: checks

@@ -285,8 +285,12 @@ def test_download_reuses_models_that_are_already_complete(monkeypatch, tmp_path:
 def test_missing_mirror_error_names_the_download_source_setting(
     monkeypatch, tmp_path: Path
 ) -> None:
-    present = {"Qwen/Qwen3-ASR-1.7B", DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL}
-    _record_downloads(monkeypatch, tmp_path, present=present)
+    monkeypatch.setitem(
+        _BACKEND_MODEL_REPOS,
+        "kotoba_whisper",
+        ("kotoba-tech/kotoba-whisper-v2.1",),
+    )
+    _record_downloads(monkeypatch, tmp_path)
 
     def refuse(**_kwargs):
         raise RuntimeError("未启用海外模型源")
@@ -294,14 +298,24 @@ def test_missing_mirror_error_names_the_download_source_setting(
     monkeypatch.setattr("asmr_dubber.runtime_manager.snapshot_download_with_fallback", refuse)
     monkeypatch.setattr("asmr_dubber.runtime_manager.external_downloads_allowed", lambda: False)
 
-    with pytest.raises(AppEnvironmentError, match="海外源"):
-        download_backend_models("qwen3_asr")
+    with pytest.raises(AppEnvironmentError, match=r"暂无国内镜像.*海外源"):
+        download_backend_models("kotoba_whisper")
 
 
+@pytest.mark.parametrize(
+    ("backend_id", "present", "expected_repo"),
+    [
+        ("anime_whisper", {DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL}, "litagin/anime-whisper"),
+        (
+            "qwen3_asr",
+            {"Qwen/Qwen3-ASR-1.7B", DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL},
+            FINE_TUNE,
+        ),
+    ],
+)
 def test_models_with_a_modelscope_pack_do_not_get_the_mirror_hint(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, backend_id: str, present: set[str], expected_repo: str
 ) -> None:
-    present = {DEFAULT_ALIGNER_MODEL, ASMR_VAD_MODEL}
     _record_downloads(monkeypatch, tmp_path, present=present)
 
     def refuse(**_kwargs):
@@ -311,9 +325,9 @@ def test_models_with_a_modelscope_pack_do_not_get_the_mirror_hint(
     monkeypatch.setattr("asmr_dubber.runtime_manager.external_downloads_allowed", lambda: False)
 
     with pytest.raises(AppEnvironmentError) as caught:
-        download_backend_models("anime_whisper")
+        download_backend_models(backend_id)
 
-    assert "litagin/anime-whisper" in str(caught.value)
+    assert expected_repo in str(caught.value)
     assert "国内镜像" not in str(caught.value)
 
 

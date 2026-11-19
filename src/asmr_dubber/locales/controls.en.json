@@ -381,6 +381,7 @@
   "没有匹配的参数": "No matching settings",
   "已应用预设：{name}": "Preset applied: {name}",
   "“{name}”需要先在“模型”页安装人声分离模型，否则无法导出。": "\"{name}\" needs the vocal separation model from the Models page, or export will fail.",
+  "“{name}”推荐配合 IndexTTS-2.5，配音时长更贴合原句；在“模型”页装好后再点一次此预设即可切换。": "\"{name}\" works best with IndexTTS-2.5, whose dubs follow the original line lengths more closely. Install it from the Models page, then apply this preset again to switch.",
   "快速": "Fast",
   "均衡": "Balanced",
   "最佳质量": "Best quality",
@@ -550,5 +551,9 @@
   "请在“设备与模型”页面安装或修复对应的本地模型运行环境。": "Install or repair the local model runtime on the Models page.",
   "其余译文已保存；可在句子表中筛选未翻译项单独重译。": "Other translations are saved; filter untranslated lines in the table to retry them.",
   "成功句子的配音缓存已保留；请检查报错句后单独重新生成。": "Dubbed cache for succeeded lines is kept; inspect failed lines and regenerate them.",
-  "操作意外失败；已完成部分已保存，可导出诊断包排查具体原因。": "Operation failed unexpectedly; completed work is saved. Export a diagnostic bundle to investigate."
+  "操作意外失败；已完成部分已保存，可导出诊断包排查具体原因。": "Operation failed unexpectedly; completed work is saved. Export a diagnostic bundle to investigate.",
+  "配音前把数字和百分比转成中文读法": "Expand numbers and percentages into spoken Chinese before dubbing",
+  "读音词典": "Pronunciation glossary",
+  "每行一条，格式如“重来=虫来”或“ASMR=音声”，仅影响送入配音模型的读法，不改字幕。": "One rule per line, e.g. '重来=虫来' or 'ASMR=音声'. Affects spoken synthesis only, leaving subtitles unchanged.",
+  "点击安装会下载两款 Qwen3-ASR 模型、时间戳对齐和 ASMR VAD（均已有国内镜像）。": "Installing downloads both Qwen3-ASR models, forced alignment, and ASMR VAD (all available on the domestic mirror)."
 }

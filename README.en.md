@@ -66,8 +66,8 @@ Media is used for demonstration; contact the maintainer about rights concerns.
 | 🎧 **Any result you want** | A bilingual mix of original plus dub, a fully dubbed mix in which dubbed sentences replace the original voice, a separate dub track, translated subtitles only, or a video with a cover image. |
 | 🧭 **Spatial following** | Voices in these works move from ear to ear and from far to near. The program analyses the position and distance of each original line and places the dub in the same spot instead of leaving it in the centre. |
 | 🎼 **Vocal separation** | Splits the original into voice and background and removes the original voice only inside dubbed sentences, making the fully dubbed mix. Laughter, sighs and anything recognition did not pick up keep the original voice. |
-| 🗣️ **Voice cloning** | Pick one line of the original as a reference and the dub speaks in that voice. This uses IndexTTS2 on your own GPU. |
-| ✍️ **Edit any sentence** | Fix a misheard line, rewrite a translation, and only that sentence is dubbed again. |
+| 🗣️ **Voice cloning & multi-speaker** | Pick one line of the original as a reference and the dub speaks in that voice (IndexTTS-2.5 and IndexTTS2 on your own GPU); multi-speaker works can automatically separate speakers and clone each voice independently. |
+| ✍️ **Edit any sentence** | Virtual-scrolling editor handles 1,000+ lines smoothly with draggable waveform handles, independent original/dub clip audition, keyboard shortcuts and undo/redo; only edited lines are re-dubbed. |
 | 📦 **A whole work in one go** | Hand a work folder to the Batch page. Every track runs through the full pipeline and can be merged into one file or turned into a video. |
 | 📝 **Use existing subtitles** | Original-language subtitles skip recognition. Translated subtitles skip translation too. You can also export subtitles only. |
 | 🎚️ **Every parameter is exposed** | Over two hundred settings, folded away until you need them. Changes inside a project affect only that project. |
@@ -111,7 +111,7 @@ The full walkthrough with screenshots is in the [user guide](docs/en/USER_GUIDE.
 | Look up a parameter | [Parameter reference](docs/en/PARAMETERS.md) |
 | Fix an error | [Troubleshooting](docs/en/TROUBLESHOOTING.md) |
 
-For developers: [Architecture](docs/en/ARCHITECTURE.md) · [Command line](docs/en/CLI.md) · [Contributing](CONTRIBUTING.en.md) · [All docs](docs/en/INDEX.md)
+For developers: [Changelog](CHANGELOG.en.md) · [Architecture](docs/en/ARCHITECTURE.md) · [Command line](docs/en/CLI.md) · [Contributing](CONTRIBUTING.en.md) · [All docs](docs/en/INDEX.md)
 
 ## Things to know
 

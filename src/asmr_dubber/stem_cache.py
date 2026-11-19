@@ -29,7 +29,10 @@ def build_cached_stem(builder, **kwargs):
         }
     }
     parameters["source"] = kwargs["source_info"].model_dump(mode="json")
-    parameters["implementation"] = 2
+    # 3: per-channel mean-power loudness reference (was summed L^2 + R^2, +3 dB).
+    # 4: +2 dB high-band rebuild in the fused voice match.
+    # 5: tempo changes back to FFmpeg atempo.
+    parameters["implementation"] = 5
     parameters["events"] = []
     for event in kwargs["events"]:
         check_cancelled()

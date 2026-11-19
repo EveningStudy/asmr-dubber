@@ -39,6 +39,7 @@ PRE_2_3_SETTINGS: dict[str, Any] = {
     "tts_normalize_pauses": False,
     "tts_fit_source_duration": False,
     "tts_dual_voice_anchor": False,
+    "tts_spoken_normalization": False,
 }
 
 

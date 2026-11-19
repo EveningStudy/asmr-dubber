@@ -84,7 +84,7 @@ You will not need these most of the time. Download them when you do:
 - **Vocal separation**: only needed for the replacement mix.
 - **anime-whisper** (the recommended recognizer, about 5 GB): fine-tuned on anime and game voices, more accurate on whispers and quiet lines. It also downloads ASMR speech detection and Qwen3 alignment, all with ModelScope China mirrors. Until it is installed, new projects use Parakeet instead of failing; saved settings and existing projects are not changed. The Windows Advanced setup profile tries to download it, and a failed download does not stop the installation.
 - **Kotoba-Whisper**: another Japanese recognition model to compare against Parakeet.
-- **Qwen3-ASR** (experimental, about 11 GB): Alibaba's recognizer plus a community Japanese anime/visual-novel fine-tune. The base Qwen3-ASR 1.7B model has a China mirror, while the community fine-tune still uses **International sources**.
+- **Qwen3-ASR** (experimental, about 11 GB): Alibaba's recognizer plus the Japanese anime/visual-novel fine-tune, both available on China mirrors.
 - **IndexTTS-2.5**: a newer cloning model with more languages. Needs 10 GB of VRAM or more.
 
 #### Slow or failed downloads

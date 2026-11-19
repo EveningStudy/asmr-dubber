@@ -224,6 +224,9 @@
     ],
     "qwen3-asr-1.7b": [
       "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-qwen3-asr-1.7b-v1.0.0.zip"
+    ],
+    "qwen3-asr-1.7b-ja-anime-galgame": [
+      "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Windows-Advanced/resolve/master/ASMR-Dubber-ModelPack-qwen3-asr-1.7b-ja-anime-galgame-v1.0.0.zip"
     ]
   },
   "indextts2_source_archives": [

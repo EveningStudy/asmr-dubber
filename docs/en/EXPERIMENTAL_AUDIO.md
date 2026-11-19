@@ -75,14 +75,14 @@ To change the volume of one sentence only, see [Changing a single sentence](USER
 
 The fully dubbed mix replaces the original voice with the dub in every dubbed sentence and leaves the rest of the sound exactly as recorded. On the **Mix mode** choice the interface calls it **Replacement mix (experimental)**; the batch page calls it **Fully dubbed**. It is the same thing, and it is still experimental. What follows first describes how it works, then its limits.
 
-### How version 2.0 works
+### How version 3.0 works
 
-1. **Recognise, translate and dub first**, as for the bilingual mix. A vocal separation model then splits the original into voice and background.
+1. **Recognise, translate and dub first**, as for the bilingual mix (the Fully Dubbed preset recommends IndexTTS-2.5 when installed and fits source duration natively during synthesis via `tts_fit_source_duration`). A vocal separation model then splits the original into voice and background.
 2. **The voice is removed only inside dubbed sentences.** A span is the sentence start and end with a little room on each side. Its edges snap to the quietest point of the separated voice and fade over 30 ms, and spans less than 150 ms apart are merged. Outside the spans the result is identical, sample for sample, to the original file, so breaths, mouth sounds, effects and the room between sentences stay as recorded.
 3. **Following the end of the line.** Recognition often ends a line too early, and a soft tail would leak through. The span follows the separated voice until the line really ends (at most 1.5 s later) and back to its real start (at most 0.6 s earlier), never crossing a neighbouring sentence.
-4. **The noise floor is refilled.** Separation files room and microphone noise under "voice", so a span would otherwise drop to digital silence. The program adds back the missing part of the recording's own noise floor.
-5. **The dub is moved towards the original.** Its spectral shape is matched to the original line (strength in the table below), the highs above 11 kHz that dubbing models drop (breath, sibilance) are restored, and where the original whispers the dub is turned breathy. Spatial following works as usual and looks only at where the separated voice sits, so an effect in the other ear cannot mislead it.
-6. **Timing.** Silence at the start and end of each dub is trimmed first, then the dub is placed at the start of the original line. A dub longer than its line is first sped up within the cap, and only pushed later if it still does not fit; the next line then speeds up to catch up. One long line therefore neither delays everything after it nor overlaps it.
+4. **Noise-floor refill and optional residual suppression.** Separation files room and microphone noise under "voice", so a span would otherwise drop to digital silence. The program adds back the missing part of the recording's own noise floor and can apply gentle vocal-band Wiener suppression (`replacement_residual_suppression`).
+5. **Dual voice anchors and acoustic matching.** With `tts_dual_voice_anchor` enabled, separate voiced and whispered anchors are selected automatically; during mixing, spectral shape and `60–260 Hz` proximity EQ match the original line, highs above 11 kHz are restored, and harmonic-selective whisper conversion turns voiced harmonics breathy where the original whispers. Spatial following looks only at the separated voice.
+6. **Timing and tempo.** Leading/trailing silence is trimmed first, then the dub sits on the original onset; any remaining speed adjustment uses FFmpeg `atempo`, which keeps the pitch (`0.90×–1.25×`). It sounded cleaner than the in-tree phase-locked vocoder in blind listening, so it stays.
 
 ### Defaults
 
@@ -93,14 +93,17 @@ New projects use these defaults (older projects keep their old behaviour, so exi
 | Original-vocal removal scope `replacement_scope` | Only dubbed sentences | The other option, removing all vocals, is the old 1.0 behaviour |
 | Dub offset `replacement_dubbing_offset_ms` | 0 ms | The dub starts at the start of the original line. The bilingual mix uses 500 ms; the two do not affect each other |
 | When a dub is longer than its line `replacement_timing_mode` | Speed up first, then shift | |
-| Maximum auto speed-up `replacement_max_auto_speed` | 1.2× | The bilingual mix uses 1.4× |
-| Timbre matching `replacement_voice_match_strength` | 0.8 | 0 is off |
+| Maximum auto speed-up `replacement_max_auto_speed` | 1.25× | The bilingual mix uses 1.4× |
+| Timbre matching `replacement_voice_match_strength` | 0.85 | 0 is off |
 | Restore highs `replacement_bandwidth_extension` | On | |
 | Refill noise floor `replacement_noise_fill` | On | |
-| Whisper to breath `replacement_whisper_match` | 1.0 | 0 is off. Experimental |
-| Reference audio quality `reference_audio_mode` | Full band | The voice-cloning reference is no longer reduced to 16 kHz. Older projects use "legacy"; changing it makes existing dubs need regenerating |
-| Pause handling before dubbing `tts_normalize_pauses` | On | Ellipses and repeated dashes inside a line become commas, and those at the start or end are removed. Only the text sent to the dubbing model changes; the translation in the table does not |
-| Automatic dub check `tts_quality_check` | On | See below |
+| Whisper to breath `replacement_whisper_match` | 0.65 | 0 is off; harmonic-selective whisperization |
+| Native duration fit `tts_fit_source_duration` | On | Controls target spoken duration natively in IndexTTS-2.5 / IndexTTS2 |
+| Dual voice anchor `tts_dual_voice_anchor` | On | Switches whispered lines to a whispered reference anchor |
+| Reference audio quality `reference_audio_mode` | 16 kHz mono | Full-band references carried breath and mouth noise into IndexTTS and caused audible crackle in blind tests, so 3.0 goes back to 16 kHz; "Restore highs" adds the top end back. Existing projects keep their setting; changing it makes existing dubs need regenerating |
+| Pause handling before dubbing `tts_normalize_pauses` | On | Ellipses and repeated dashes inside a line become commas, and those at the start or end are removed |
+| Spoken number expansion `tts_spoken_normalization` | On | Expands years, percentages and digits into natural spoken Chinese before synthesis |
+| Automatic dub check `tts_quality_check` | On | See below; `tts_asr_quality_check` can also verify pronunciation with ASR |
 | Translate to a duration budget `translation_length_budget` | On | With a large language model each line is limited to what its time slot allows, about 4.5 Chinese characters per second |
 
 ### Automatic dub check

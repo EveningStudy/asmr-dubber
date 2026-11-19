@@ -19,6 +19,10 @@ _SIZE = 2048
 _HOP = 512
 # Incoherent random-phase frames overlapped 4x with sqrt(Hann) cancel by ~1/sqrt(1.91).
 _INCOHERENT_OLA_GAIN = 1.38
+# The binaural RTF stage that follows smooths ~1.4 dB off the rebuilt band; across the
+# 67 evaluation lines a +2 dB rebuild left 8-12 kHz within 0.5 dB of the original voice
+# (16 kHz references: -2.1 -> -0.1 dB) and lifted 12-20 kHz from -3.7 to -1.7 dB.
+_EXTENSION_GAIN = 10 ** (2.0 / 20)
 
 
 def _frames(signal: np.ndarray) -> np.ndarray:
@@ -343,7 +347,7 @@ def process_voice_match_fused(
 
     if extend:
         spectra = _extend_spectra_highband(
-            spectra, own_raw, target_spectrum, rate, strength=1.0, seed=seed + 17
+            spectra, own_raw, target_spectrum, rate, strength=_EXTENSION_GAIN, seed=seed + 17
         )
 
     output = _overlap_add(spectra, len(dub))

@@ -120,7 +120,17 @@ def normalize_pauses(text: str) -> str:
 
 def spoken_text(settings: ProjectSettings, text: str) -> str:
     """The exact text sent to a TTS backend for a translated line."""
-    return normalize_pauses(text) if settings.tts_normalize_pauses else text
+    from .zh_phonetics import apply_spoken_normalization
+
+    value = normalize_pauses(text) if settings.tts_normalize_pauses else text
+    if settings.tts_pronunciation_glossary or settings.tts_spoken_normalization:
+        value = apply_spoken_normalization(
+            value,
+            glossary=settings.tts_pronunciation_glossary,
+            normalize_numbers=settings.tts_spoken_normalization,
+            target_language=settings.tts_target_language,
+        )
+    return value
 
 
 def attempt_seed(seed: int, sentence: Sentence) -> int:
