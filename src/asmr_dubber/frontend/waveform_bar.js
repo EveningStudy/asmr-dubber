@@ -1,4 +1,4 @@
-import { $, state, api, t, time, projectBusy } from './session.js';
+import { $, state, api, t, time, guard, projectBusy } from './session.js';
 
 const waveCache = new Map();
 const MAX_CACHE = 48;
@@ -88,7 +88,7 @@ export async function refreshWaveform(sentence) {
       currentWindow.end - currentWindow.start > Math.max(8, (sentence.end_seconds - sentence.start_seconds) * 4))
   ) {
     const bounds = windowBounds(sentence, mediaDur);
-    currentWindow = { ...bounds, peaks: currentWindow.peaks };
+    currentWindow = { ...bounds, peaks: [] };
     drawWaveform(sentence);
     try {
       const result = await fetchPeaks(state.project.manifest, bounds.start, bounds.end);
@@ -115,7 +115,7 @@ export function initializeWaveform({ getSelectedSentence, onBoundaryCommit, onAu
 
   document.addEventListener('pointerdown', (event) => {
     const canvas = event.target.closest('#sentenceWaveform');
-    if (!canvas || projectBusy()) return;
+    if (!canvas) return;
     const sentence = getSelectedSentence();
     if (!sentence) return;
     const rect = canvas.getBoundingClientRect();
@@ -126,7 +126,7 @@ export function initializeWaveform({ getSelectedSentence, onBoundaryCommit, onAu
     const dStart = Math.abs(localX - xStart);
     const dEnd = Math.abs(localX - xEnd);
     const side = Math.min(dStart, dEnd) <= 12 ? (dStart <= dEnd ? 'start' : 'end') : null;
-    if (!side) {
+    if (!side || projectBusy()) {
       onAuditionSlice(sentence);
       return;
     }
@@ -172,18 +172,24 @@ export function initializeWaveform({ getSelectedSentence, onBoundaryCommit, onAu
     drawWaveform(sentence);
   });
 
-  document.addEventListener('pointerup', async () => {
-    if (!dragging) return;
-    const finished = dragging;
+  document.addEventListener(
+    'pointerup',
+    guard(async () => {
+      if (!dragging) return;
+      const finished = dragging;
+      dragging = null;
+      const sentence = getSelectedSentence();
+      if (!sentence || sentence.id !== finished.id) return;
+      if (
+        sentence.start_seconds !== finished.beforeStart ||
+        sentence.end_seconds !== finished.beforeEnd
+      ) {
+        await onBoundaryCommit(sentence, finished.beforeStart, finished.beforeEnd);
+      }
+      await refreshWaveform(sentence);
+    }),
+  );
+  document.addEventListener('pointercancel', () => {
     dragging = null;
-    const sentence = getSelectedSentence();
-    if (!sentence || sentence.id !== finished.id) return;
-    if (
-      sentence.start_seconds !== finished.beforeStart ||
-      sentence.end_seconds !== finished.beforeEnd
-    ) {
-      await onBoundaryCommit(sentence, finished.beforeStart, finished.beforeEnd);
-    }
-    await refreshWaveform(sentence);
   });
 }

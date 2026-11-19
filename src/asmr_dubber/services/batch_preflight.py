@@ -18,7 +18,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from ..app_logging import redact_sensitive
 from ..platforms import portable_home
@@ -154,32 +154,41 @@ def plan_seconds(plan: Any) -> float:
 
 def estimate_bytes(plan: Any, seconds: float) -> int:
     """Disk a plan needs: working files plus delivered files."""
-
-    if plan.source_subtitles_only:
-        return 0
-    policy = plan.edition.get("output_policy") or {}
-    if plan.subtitles_only:
+    if getattr(plan, "source_subtitles_only", False):
         return int(seconds * BYTES_PER_SECOND_ORIGINAL_ONLY)
+    policy = plan.edition.get("output_policy") or {}
+    layout_factor = 2.0 if getattr(plan, "layout", "") == "both" else 1.0
+    harmonized = 200_000 if getattr(plan, "mode", "") == "video_harmonized" else 0
+    if getattr(plan, "subtitles_only", False):
+        return int(seconds * (BYTES_PER_SECOND_ORIGINAL_ONLY + harmonized) * layout_factor)
     variants = max(1, len(policy.get("variants") or []))
     separated = bool((policy.get("settings") or {}).get("separation_enabled")) or (
         "replace" in (policy.get("variants") or [])
     )
-    per_second = BYTES_PER_SECOND_DUBBED * variants + (
+    per_second = (BYTES_PER_SECOND_DUBBED * variants + harmonized) * layout_factor + (
         BYTES_PER_SECOND_SEPARATED if separated else 0
     )
     return int(seconds * per_second)
 
 
-def check_disk(plans: list[Any]) -> list[Check]:
-    title = "磁盘空间"
-    needs: dict[int, list[Any]] = {}
-    total_seconds, total_need, work_home = 0.0, 0, portable_home()
+def check_disk(plans: list[Any], user: Any | None = None) -> list[Check]:
+    title, needs, home = "磁盘空间", {}, portable_home()
+    if user is None:
+        from ..user_settings import load_user_settings
+
+        try:
+            user = load_user_settings()
+        except Exception:
+            user = None
+    raw_root = str(getattr(user, "projects_root", "") or "").strip() if user else ""
+    projects_home = Path(raw_root).expanduser() if raw_root else (home / "projects")
+    total_seconds, total_need = 0.0, 0
     for plan in plans:
         seconds = plan_seconds(plan)
         need = estimate_bytes(plan, seconds)
-        total_seconds += seconds
-        total_need += need
-        for path, share in ((work_home, 0.6), (Path(plan.output_root), 0.4)) if need else ():
+        total_seconds, total_need = total_seconds + seconds, total_need + need
+        targets = ((projects_home, 0.5), (home, 0.1), (Path(plan.output_root), 0.4)) if need else ()
+        for path, share in targets:
             free, drive = _disk_free(path)
             needs.setdefault(drive, [free, 0, path])[1] += int(need * share)
     if not total_need:
@@ -187,16 +196,17 @@ def check_disk(plans: list[Any]) -> list[Check]:
     scale = {"count": len(plans), "hours": f"{total_seconds / 3600:.1f}"}
     checks = []
     for free, need, path in needs.values():
-        required = need + SAFETY_MARGIN
-        drive_name = Path(path).anchor or str(path)
-        values = {"drive": drive_name, "free": _gb(free), "need": _gb(required), **scale}
+        required, anchor = need + SAFETY_MARGIN, Path(path).anchor or str(path)
+        values = {"drive": anchor, "free": _gb(free), "need": _gb(required), **scale}
         if free < required:
             checks.append(_check("disk", FAIL, title, DISK_FAIL, **values))
         elif free < required * 1.3:
             checks.append(_check("disk", WARN, title, DISK_TIGHT, **values))
-    return checks or [
-        _check("disk", OK, title, DISK_OK, need=_gb(total_need + SAFETY_MARGIN), **scale)
-    ]
+    if checks:
+        return checks
+    if all(getattr(plan, "source_subtitles_only", False) for plan in plans):
+        return [_check("disk", SKIP, title, DISK_SUBTITLES)]
+    return [_check("disk", OK, title, DISK_OK, need=_gb(total_need + SAFETY_MARGIN), **scale)]
 
 
 def _plan_policy(plan: Any) -> dict[str, Any]:
@@ -306,8 +316,7 @@ def _check_separation(policy: dict[str, Any]) -> Check:
     return _check("separation", OK if ready else FAIL, title, tpl, model=model)
 
 
-@dataclass(frozen=True)
-class _StageVram:
+class _StageVram(NamedTuple):
     label: str
     min_gb: float
     rec_gb: float
@@ -327,9 +336,8 @@ def _backend_stage(spec: Any) -> _StageVram | None:
     if not spec or spec.runtime == "http" or not spec.minimum_vram_gb:
         return None
     min_gb = float(spec.minimum_vram_gb)
-    return _StageVram(
-        spec.label, min_gb, float(spec.recommended_vram_gb or min_gb), tuple(spec.devices)
-    )
+    rec_gb = float(spec.recommended_vram_gb or min_gb)
+    return _StageVram(spec.label, min_gb, rec_gb, tuple(spec.devices))
 
 
 def check_vram(plans: list[Any], user: Any, policy: dict[str, Any] | None = None) -> Check:
@@ -471,14 +479,12 @@ def run_preflight(
     plans: list[Any], *, settings: Any | None = None, network: bool = True
 ) -> PreflightReport:
     """Run every check; a check that itself breaks is reported, not raised."""
-
     from ..user_settings import load_user_settings
 
     user = settings or load_user_settings()
-    policy = _policy_settings(plans)
-    checks: list[Check] = []
+    policy, checks = _policy_settings(plans), []
     steps = (
-        ("disk", lambda: check_disk(plans)),
+        ("disk", lambda: check_disk(plans, user)),
         ("vram", lambda: [check_vram(plans, user, policy)]),
         ("models", lambda: check_models(plans, user, policy)),
         ("translation", lambda: [check_translation(plans, user, network)]),

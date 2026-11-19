@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .api_contracts import APIContractError
 from .errors import TranslationError
 from .models import Sentence
 
@@ -19,15 +20,22 @@ Progress = Callable[[str, int, int], None]
 # whole batch already used the translator's full retry budget.
 _SPLIT_RETRY_ATTEMPTS = 2
 _MAX_CONSECUTIVE_BATCH_FAILURES = 3
-_FATAL_HTTP_STATUS = frozenset({401, 402, 403})
+_FATAL_HTTP_STATUS = frozenset({401, 402, 403, 404, 422})
 
 
 class _NonRetryableTranslationError(TranslationError):
     """Authentication, billing, permission, and request-schema failures."""
 
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        fatal: bool | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.fatal = (status_code in _FATAL_HTTP_STATUS) if fatal is None else fatal
 
 
 class _OutputLengthTranslationError(TranslationError):
@@ -35,11 +43,13 @@ class _OutputLengthTranslationError(TranslationError):
 
 
 def _is_fatal_translation_error(error: BaseException) -> bool:
-    """Credentials, billing and permission errors repeat for every request."""
+    """Credentials, billing, misconfiguration, contract and safety-block errors stop immediately."""
 
-    return (
-        isinstance(error, _NonRetryableTranslationError) and error.status_code in _FATAL_HTTP_STATUS
-    )
+    if isinstance(error, APIContractError):
+        return True
+    if isinstance(error, _NonRetryableTranslationError):
+        return error.fatal or isinstance(error.__cause__, APIContractError)
+    return False
 
 
 @dataclass(frozen=True)
@@ -128,9 +138,13 @@ class TranslationItem(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("zh")
+    @field_validator("zh", mode="before")
     @classmethod
-    def normalize_translation(cls, value: str) -> str:
+    def normalize_translation(cls, value: str | None) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("zh must be a string or null")
         return value.strip()
 
     @field_validator("kind")
@@ -194,8 +208,11 @@ def _strip_trailing_commas(text: str) -> str:
     return "".join(pieces)
 
 
+_THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
 def _extract_json(content: str) -> dict:
-    value = content.strip()
+    value = _THINK_BLOCK.sub("", content).strip()
     if value.startswith("```"):
         value = re.sub(r"^```(?:json)?\s*", "", value, flags=re.IGNORECASE)
         value = re.sub(r"\s*```$", "", value)

@@ -57,6 +57,7 @@ def _reconcile_untimed_script(
     *,
     script_lines: list[str],
     script_language: TranscriptLanguage,
+    role: Literal["source", "target"] | None = None,
     script_source: str = "",
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
@@ -107,7 +108,9 @@ def _reconcile_untimed_script(
             progress=progress,
             cancel_event=cancel_event,
         )
-        target: Literal["source", "zh"] = "zh" if script_language == "zh" else "source"
+        target: Literal["source", "zh"] = (
+            "source" if role == "source" else ("zh" if script_language == "zh" else "source")
+        )
         corrections, report = pipeline.reconcile_script_sentences(
             working.sentences,
             script_lines,
@@ -143,19 +146,30 @@ def _reconcile_untimed_script(
             if sentence.id in review_ids:
                 unmatched_ids.append(sentence.id)
                 continue
-            candidate = sentence.source_text if target == "source" else sentence.zh_text
             corrected = str(corrections.get(sentence.id, "")).strip()
-            if target == "source" and not corrected and candidate.strip():
-                unmatched_ids.append(sentence.id)
             if target == "source":
-                sentence.source_text = corrected
-                sentence.zh_text = ""
-                sentence.status = "pending" if corrected else "skipped_filler"
-            else:
-                sentence.zh_text = corrected
-                sentence.status = "translated" if corrected else "pending"
-                if not corrected and sentence.source_text.strip():
+                if corrected:
+                    sentence.source_text = corrected
+                    sentence.zh_text = ""
+                    sentence.status = "pending"
+                elif sentence.source_text.strip():
+                    # Keep existing ASR text and flag for review rather than clearing to "".
+                    sentence.zh_text = ""
+                    sentence.status = "pending"
+                    sentence.script_review_note = "台本未匹配该句，保留原识别文本，请人工核对。"
                     unmatched_ids.append(sentence.id)
+                else:
+                    sentence.status = "skipped_filler"
+            else:
+                if corrected:
+                    sentence.zh_text = corrected
+                    sentence.status = "translated"
+                else:
+                    sentence.zh_text = ""
+                    sentence.status = "pending"
+                    if sentence.source_text.strip():
+                        sentence.script_review_note = "中文台本未匹配该句，需人工核对或后续翻译。"
+                        unmatched_ids.append(sentence.id)
             sentence.enabled = bool(sentence.source_text.strip() or sentence.zh_text.strip())
             sentence.tts_file = None
             sentence.tts_cache_key = None
@@ -273,11 +287,15 @@ def reconcile_analyzed_project_script(
         if target == "source":
             if corrected:
                 matched += 1
+                sentence.source_text = corrected
+                sentence.zh_text = ""
+                sentence.status = "pending"
             else:
                 unmatched.append(sentence.id)
-            sentence.source_text = corrected
-            sentence.zh_text = ""
-            sentence.status = "pending" if sentence.source_text.strip() else "skipped_filler"
+                if sentence.source_text.strip():
+                    sentence.script_review_note = "台本未匹配该句，保留原识别文本，请人工核对。"
+                else:
+                    sentence.status = "skipped_filler"
         elif corrected:
             sentence.zh_text = corrected
             sentence.status = "translated"
@@ -335,6 +353,7 @@ def import_project_transcript(
     pasted_text: str = "",
     plain_timing: str = "estimate",
     script_language: str = "ja",
+    script_kind: Literal["source", "zh"] | None = None,
     use_embedded_timing: bool = True,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
@@ -348,9 +367,13 @@ def import_project_transcript(
         raise ProjectError("纯台本时间轴方式无效。")
     if script_language not in {"ja", "en", "zh"}:
         raise ProjectError("台本语言必须是日语、英语或中文。")
-    if script_language == "zh" and plain_timing == "qwen":
+    role: Literal["source", "target"] | None = (
+        "source" if script_kind == "source" else ("target" if script_kind == "zh" else None)
+    )
+    is_target_zh = script_language == "zh" and script_kind != "source"
+    if is_target_zh and plain_timing == "qwen":
         raise ProjectError("中文纯台本不能使用 Qwen3 自动对齐，请选择按台词长度估算。")
-    if plain_timing == "script_review" and project.source_language == "zh":
+    if plain_timing == "script_review" and project.source_language == "zh" and is_target_zh:
         raise ProjectError(
             "当前项目已经是中文台本项目，不能再次运行源音频识别；请新建原始音频项目。"
         )
@@ -360,6 +383,7 @@ def import_project_transcript(
         path=transcript_path,
         pasted_text=pasted_text,
         language=cast(TranscriptLanguage, script_language),
+        role=role,
         use_embedded_timing=use_embedded_timing,
     )
     sentences = [sentence.model_copy(deep=True) for sentence in parsed.sentences]
@@ -368,7 +392,7 @@ def import_project_transcript(
     reconciled = False
     if not parsed.timed and plain_timing == "script_review":
         script_lines = [
-            sentence.zh_text if script_language == "zh" else sentence.source_text
+            sentence.zh_text if is_target_zh else sentence.source_text
             for sentence in parsed.sentences
         ]
         sentences, reconciliation_report = pipeline._reconcile_untimed_script(
@@ -376,6 +400,7 @@ def import_project_transcript(
             project_dir,
             script_lines=script_lines,
             script_language=cast(TranscriptLanguage, script_language),
+            role=role,
             script_source=str(transcript_path) if transcript_path else "粘贴台本",
             progress=progress,
             cancel_event=cancel_event,
@@ -422,7 +447,7 @@ def import_project_transcript(
 
     project.sentences = sentences
     project.translation_language = project.settings.tts_target_language
-    if project.settings.tts_target_language == "en" and parsed.language == "zh":
+    if project.settings.tts_target_language == "en" and is_target_zh:
         for sentence in project.sentences:
             sentence.zh_text = ""
     if not reconciled:
@@ -434,7 +459,7 @@ def import_project_transcript(
         project.asr_language = f"{language_name} (imported {parsed.source_format})"
     else:
         language_name = pipeline.source_language_label(project.source_language)
-        suffix = "翻译 + 台本校对" if parsed.language == "zh" else "台本校对"
+        suffix = "中文台本校对" if is_target_zh else "台本校对"
         project.asr_language = f"{language_name}（ASR + {suffix}）"
     project.asr_settings_dirty = False
     project.settings.tts_reference_sentence_id = None

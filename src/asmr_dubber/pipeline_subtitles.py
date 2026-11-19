@@ -16,6 +16,25 @@ from .task_control import CancellationSignal
 
 Progress = Callable[[str, int, int], None]
 
+_SPEECH_DURATION_CACHE: dict[tuple[str, int, int, int], float] = {}
+_MAX_SPEECH_DURATION_CACHE = 4096
+
+
+def _cached_speech_duration(
+    audio_path: Path, speech_bounds_fn: Callable[[Path], tuple[float, float]]
+) -> float:
+    stat = audio_path.stat()
+    key = (str(audio_path), stat.st_size, stat.st_mtime_ns, id(speech_bounds_fn))
+    cached = _SPEECH_DURATION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    lo, hi = speech_bounds_fn(audio_path)
+    duration = hi - lo
+    if len(_SPEECH_DURATION_CACHE) >= _MAX_SPEECH_DURATION_CACHE:
+        _SPEECH_DURATION_CACHE.pop(next(iter(_SPEECH_DURATION_CACHE)))
+    _SPEECH_DURATION_CACHE[key] = duration
+    return duration
+
 
 def _replacement_dubbing_durations(project: DubProject, project_dir: Path) -> dict[str, float]:
     from . import pipeline
@@ -28,21 +47,21 @@ def _replacement_dubbing_durations(project: DubProject, project_dir: Path) -> di
             or not pipeline.has_speakable_text(sentence.zh_text)
         ):
             continue
-        if sentence.tts_file:
-            try:
-                audio_path = pipeline.resolve_project_path(
-                    project_dir,
-                    sentence.tts_file,
-                    f"句子 {sentence.id} 的中文音频",
-                )
-                if audio_path.is_file():
-                    lo, hi = pipeline.speech_bounds(audio_path)
-                    durations[sentence.id] = hi - lo
-                    continue
-            except Exception:
-                pass
-        if sentence.tts_duration_seconds is not None and sentence.tts_duration_seconds > 0:
-            durations[sentence.id] = float(sentence.tts_duration_seconds)
+        if not sentence.tts_file or sentence.tts_cache_key != pipeline.tts_cache_key(
+            project, sentence
+        ):
+            continue
+        try:
+            audio_path = pipeline.resolve_project_path(
+                project_dir,
+                sentence.tts_file,
+                f"句子 {sentence.id} 的中文音频",
+            )
+            if audio_path.is_file():
+                durations[sentence.id] = _cached_speech_duration(audio_path, pipeline.speech_bounds)
+                continue
+        except Exception:
+            pass
     return durations
 
 
@@ -68,12 +87,14 @@ def generate_subtitles(
     if progress:
         progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
     media_duration = project.source.duration_seconds
-    if project.settings.subtitle_timeline == "dubbing" and project.output_file:
+    if project.settings.subtitle_timeline == "dubbing":
         from .audio import probe_audio
 
-        mixed = pipeline.resolve_project_path(project_dir, project.output_file, "完成音频")
-        if mixed.is_file():
-            media_duration = probe_audio(mixed).duration_seconds
+        audio_ref = project.output_file or project.chinese_stem_file
+        if audio_ref:
+            mixed = pipeline.resolve_project_path(project_dir, audio_ref, "完成音频")
+            if mixed.is_file():
+                media_duration = probe_audio(mixed).duration_seconds
     replacing = (
         output_variant == "replace"
         if output_variant in {"bilingual", "replace"}
@@ -96,6 +117,7 @@ def generate_subtitles(
         maximum_chars=project.settings.subtitle_max_chars_per_line,
         minimum_duration=project.settings.subtitle_min_duration_seconds,
         maximum_cps=project.settings.subtitle_max_cps,
+        target_language=project.settings.tts_target_language,
         chinese_dubbing_offset_ms=(
             project.settings.replacement_dubbing_offset_ms
             if replacing
@@ -124,7 +146,8 @@ def generate_subtitles(
             project.source.duration_seconds if dubbing_durations is not None else None
         ),
     )
-    if progress and subtitle_warnings:
+    warning_summary = ""
+    if subtitle_warnings:
         fallback_count = sum("缺少译文" in item for item in subtitle_warnings)
         duration_count = len(subtitle_warnings) - fallback_count
         parts = []
@@ -132,7 +155,9 @@ def generate_subtitles(
             parts.append(f"{fallback_count} 句缺少译文已回退原文")
         if duration_count:
             parts.append(f"{duration_count} 句字幕可读时长受下一句或媒体末尾限制")
-        progress("；".join(parts), 1, 2)
+        warning_summary = "；".join(parts)
+        if progress and warning_summary:
+            progress(warning_summary, 1, 2)
     pipeline.check_cancelled(cancel_event)
 
     video_output: Path | None = None
@@ -169,7 +194,8 @@ def generate_subtitles(
     )
     pipeline.save_project(project, project_dir)
     if progress:
-        progress("字幕生成完成", 1, 1)
+        final_message = f"字幕生成完成（{warning_summary}）" if warning_summary else "字幕生成完成"
+        progress(final_message, 1, 1)
     return srt, lrc, video_output
 
 
@@ -216,6 +242,7 @@ def export_transcript(project: DubProject, project_dir: Path) -> None:
     rows = [
         {
             "id": sentence.id,
+            "speaker_id": sentence.speaker_id,
             "enabled": sentence.enabled,
             "source_language": project.source_language,
             "source_start_seconds": sentence.start_seconds,

@@ -127,7 +127,7 @@ def evict_recognition_session_if_low_vram(min_free_gb: float = 5.0) -> None:
     except Exception:
         return
     models.clear()
-    _cleanup_cuda()
+    _cleanup_cuda(force=True)
 
 
 def _session_model(key: str, factory: Callable[[], Any]) -> Any:
@@ -135,6 +135,17 @@ def _session_model(key: str, factory: Callable[[], Any]) -> Any:
     if models is None:
         return factory()
     if key not in models:
+        if models:
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    free_bytes, _total_bytes = torch.cuda.mem_get_info()
+                    if free_bytes < 4.0 * (1024**3):
+                        models.clear()
+                        _cleanup_cuda(force=True)
+            except Exception:
+                pass
         models[key] = factory()
     return models[key]
 
@@ -225,6 +236,8 @@ def _finish_tokens(
     language: str,
     settings: ProjectSettings,
     source_language: SpeechSourceLanguage = "ja",
+    *,
+    restore: bool = True,
 ) -> tuple[list[Sentence], str]:
     values = list(tokens)
     if not values:
@@ -233,7 +246,7 @@ def _finish_tokens(
         if not full_text.strip():
             raise AsmrDubberError("未检测到可识别的语音；请检查音频或调整语音检测设置。")
         raise AsmrDubberError("识别出了文字，但所选 ASR（语音识别）后端没有返回可用时间戳。")
-    punctuated = restore_punctuation(values, full_text)
+    punctuated = restore_punctuation(values, full_text) if restore else values
     sentences = split_timed_tokens(
         punctuated,
         pause_seconds=settings.pause_split_seconds,
@@ -246,8 +259,8 @@ def _finish_tokens(
     return sentences, language or source_language
 
 
-def _cleanup_cuda() -> None:
-    if _REVIEW_MODELS.get() is not None:
+def _cleanup_cuda(force: bool = False) -> None:
+    if not force and _REVIEW_MODELS.get() is not None:
         return
     gc.collect()
     try:

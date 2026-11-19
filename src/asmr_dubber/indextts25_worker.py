@@ -300,6 +300,16 @@ def _run_batch_tasks(model: Any, hook_state: dict[str, Any], batch_file: Path) -
         )
         return EXIT_MISSING_RESOURCE
 
+    if (
+        any(bool(kwargs["use_emo_text"]) for kwargs in kwargs_by_task)
+        and getattr(model, "qwen_emo", None) is None
+        and hasattr(model, "cfg")
+        and hasattr(model, "model_dir")
+    ):
+        from indextts.infer_v2_5 import QwenEmotion
+
+        model.qwen_emo = QwenEmotion(str(Path(model.model_dir) / model.cfg.qwen_emo_path))
+
     failures = 0
     for task, raw_kwargs in zip(tasks, kwargs_by_task, strict=True):
         kwargs = dict(raw_kwargs)
@@ -386,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_MISSING_RESOURCE
         use_qwen_emo = any(bool(kwargs["use_emo_text"]) for kwargs in kwargs_by_task)
     else:
-        use_qwen_emo = True
+        use_qwen_emo = False
 
     try:
         import torch

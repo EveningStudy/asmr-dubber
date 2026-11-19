@@ -19,12 +19,27 @@ def clean_user_path(value: str) -> Path:
     return Path(text).expanduser().resolve()
 
 
+_RESERVED_WINDOWS_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+
+
 def safe_filename_component(value: str, *, fallback: str = "未命名", limit: int = 80) -> str:
     text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" ._")
     text = re.sub(r"\s+", " ", text)
     if not text:
         text = fallback
-    return text[:limit].rstrip(" ._") or fallback
+    text = text[:limit].rstrip(" ._") or fallback
+    if text.partition(".")[0].upper() in _RESERVED_WINDOWS_NAMES:
+        text = f"_{text}"[:limit].rstrip(" ._") or fallback
+    return text
 
 
 def file_stat_payload(path: Path | None) -> dict[str, Any] | None:

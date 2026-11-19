@@ -334,7 +334,8 @@ def render_static_bilingual_video(
 ) -> None:
     """Render a lightweight static video, preferring visible hard subtitles."""
 
-    clean_video = destination.with_name(f".{destination.stem}.clean-{uuid.uuid4().hex}.mp4")
+    constants.WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    clean_video = constants.WORK_ROOT / f"clean-{uuid.uuid4().hex[:12]}.mp4"
     render_dir: Path | None = None
     try:
         render_static_video(
@@ -345,10 +346,10 @@ def render_static_bilingual_video(
             lead_seconds=lead_seconds,
             volume_db=volume_db,
         )
-        constants.WORK_ROOT.mkdir(parents=True, exist_ok=True)
         render_dir = Path(tempfile.mkdtemp(prefix="subtitle-render-", dir=constants.WORK_ROOT))
         local_subtitle = render_dir / "subtitle.srt"
         shutil.copy2(subtitle_file, local_subtitle)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         partial = partial_output_path(destination)
         try:
             processes.run_ffmpeg(

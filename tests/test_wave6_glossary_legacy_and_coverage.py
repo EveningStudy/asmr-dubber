@@ -249,5 +249,14 @@ def test_w25_spatial_wiener_suppression_and_machine_translator_errors() -> None:
         tr2 = DeepLTranslator(
             api_key="k", model="deepl", base_url="https://api.deepl.com", client=client
         )
-        with pytest.raises(TranslationError, match="数量或内容无效"):
-            tr2.translate_chunk(chunk, "[]", "[]", "job")
+        entries = tr2.translate_chunk(chunk, "[]", "[]", "job")
+        assert entries == {"s1": ""}
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"translations": []}))
+    ) as client:
+        tr3 = DeepLTranslator(
+            api_key="k", model="deepl", base_url="https://api.deepl.com", client=client
+        )
+        with pytest.raises(TranslationError, match="数量无效"):
+            tr3.translate_chunk(chunk, "[]", "[]", "job")

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +22,7 @@ from .fileio import atomic_copy, atomic_write_text, bracketed
 from .media_audio import concat_audio_files
 from .modes import layout_label, mode_label, normalize_mode
 from .output_files import format_timestamp_from_samples
+from .output_policy import variant_output_dir
 from .plan_files import _single_track_source
 from .project_cli import project_asset, read_project
 from .subtitle_files import combine_lrc_files, combine_srt_files
@@ -119,17 +122,33 @@ def _subtitle_entries_from_states(
     return srt_entries, lrc_entries, delay_samples * 1000 // SAMPLE_RATE
 
 
+def _reuse_original_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex[:12]}.tmp")
+    try:
+        try:
+            os.link(source, temporary)
+            os.replace(temporary, destination)
+            return
+        except OSError:
+            temporary.unlink(missing_ok=True)
+    finally:
+        temporary.unlink(missing_ok=True)
+    atomic_copy(source, destination)
+
+
 def build_merged_outputs(paths: ToolPaths, config: AppConfig, **kwargs: Any) -> dict[str, str]:
     variants = config.output_policy.get("variants", [])
     if not variants or kwargs.get("subtitles_only"):
         return _build_merged_outputs(paths, config, **kwargs)
     result: dict[str, str] = {}
+    existing_original: Path | None = None
     for variant in variants:
         selected = dict(kwargs)
-        selected["output_folder"] = kwargs["output_folder"] / (
-            "双语版" if variant == "bilingual" else "替换配音版"
-        )
+        selected["output_folder"] = variant_output_dir(kwargs["output_folder"], variant)
         selected["output_stem"] = "双语版" if variant == "bilingual" else "配音版"
+        if existing_original is not None:
+            selected["existing_original"] = existing_original
         selected["states"] = [
             {
                 **state,
@@ -139,6 +158,10 @@ def build_merged_outputs(paths: ToolPaths, config: AppConfig, **kwargs: Any) -> 
             for state in kwargs["states"]
         ]
         outputs = _build_merged_outputs(paths, replace(config, output_policy={}), **selected)
+        if existing_original is None and outputs.get("original"):
+            candidate = Path(outputs["original"])
+            if candidate.is_file():
+                existing_original = candidate
         if not result:
             result.update(outputs)
         result.update({f"{variant}_{key}": value for key, value in outputs.items()})
@@ -160,6 +183,7 @@ def _build_merged_outputs(
     embed_subtitles: bool,
     subtitles_only: bool = False,
     output_stem: str = "双语版",
+    existing_original: Path | None = None,
 ) -> dict[str, str]:
     """Build the merged product from completed per-track projects."""
 
@@ -171,17 +195,32 @@ def _build_merged_outputs(
         sum(int(item.get("duration_samples") or 0) for item in state.get("timeline") or [])
         for state in states
     ]
-    masters = [
-        _state_master_audio(paths, state, source, work)
-        for source, state in zip(sources, states, strict=True)
-    ]
-    original_master, _ = concat_audio_files(
-        paths,
-        masters,
-        work,
-        expected_samples=expected,
-        name="original",
+    needs_original_subtitle_video = (
+        subtitles_only and embed_subtitles
+    ) or config.original_hard_subtitles
+    reusable_original = (
+        existing_original
+        if existing_original is not None
+        and existing_original.is_file()
+        and (
+            (mode == MODE_AUDIO and existing_original.suffix.casefold() == ".flac")
+            or (mode != MODE_AUDIO and existing_original.suffix.casefold() == ".mp4")
+        )
+        else None
     )
+    original_master: Path | None = None
+    if reusable_original is None or needs_original_subtitle_video:
+        masters = [
+            _state_master_audio(paths, state, source, work)
+            for source, state in zip(sources, states, strict=True)
+        ]
+        original_master, _ = concat_audio_files(
+            paths,
+            masters,
+            work,
+            expected_samples=expected,
+            name="original",
+        )
     mixed_master: Path | None = None
     if not subtitles_only:
         mixed_files = [
@@ -226,7 +265,11 @@ def _build_merged_outputs(
 
     if mode == MODE_AUDIO:
         original_destination = output_folder / "原声.flac"
-        atomic_copy(original_master, original_destination)
+        if reusable_original is not None:
+            _reuse_original_file(reusable_original, original_destination)
+        else:
+            assert original_master is not None
+            atomic_copy(original_master, original_destination)
         outputs = {
             "original": str(original_destination),
             "srt": str(srt),
@@ -242,20 +285,25 @@ def _build_merged_outputs(
         original_destination = output_folder / "原声.mp4"
         lead = int(config.harmonized_delay_seconds) if mode == MODE_VIDEO_HARMONIZED else 0
         volume = config.harmonized_volume_db if mode == MODE_VIDEO_HARMONIZED else 0.0
-        media_video.render_static_video(
-            paths,
-            original_master,
-            background,
-            original_destination,
-            lead_seconds=lead,
-            volume_db=volume,
-        )
+        if reusable_original is not None:
+            _reuse_original_file(reusable_original, original_destination)
+        else:
+            assert original_master is not None
+            media_video.render_static_video(
+                paths,
+                original_master,
+                background,
+                original_destination,
+                lead_seconds=lead,
+                volume_db=volume,
+            )
         outputs = {
             "original": str(original_destination),
             "srt": str(srt),
             "lrc": str(lrc),
         }
-        if (subtitles_only and embed_subtitles) or config.original_hard_subtitles:
+        if needs_original_subtitle_video:
+            assert original_master is not None
             subtitle_destination = output_folder / "原声字幕版.mp4"
             media_video.render_static_bilingual_video(
                 paths,

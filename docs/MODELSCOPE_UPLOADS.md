@@ -113,8 +113,11 @@ EveningStudyW/ASMR-Dubber-Windows-Advanced/
 | `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-faster-whisper-large-v2-v1.0.0.zip` | 3,087,767,076 | `4a4a213561d327e82d5dc5a8e8c071313bd948ad90f7b4c51e650044fd3bc949` |
 | `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-qwen3-forced-aligner-v1.0.0.zip` | 1,837,358,823 | `6697b80bfba3a182a86290ba0f7b8adc958d7112bfe6cc9caa73bc7207b74242` |
 | `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-whisper-vad-asmr-onnx-v1.0.0.zip` | 54,692,316 | `f7d4c6ec7c9576d325685ffeaf7a39e5160fa1d3e6fe94ae60ed7dc866e5eaa9` |
+| `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-anime-whisper-v1.0.0.zip` | 3,026,403,601 | `070c2eafe2baf086935d76fc2311597959d4e56cd6aad6bdbe9782102c9f455f` |
+| `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-qwen3-asr-1.7b-v1.0.0.zip` | 4,700,346,153 | `9e29f248833e429b8702e297f2806b0e93ae0d83a3cb78a9763be9f55da081dd` |
+| `ASMR-Dubber-Windows-Advanced` | `ASMR-Dubber-ModelPack-qwen3-asr-1.7b-ja-anime-galgame-v1.0.0.zip` | 4,080,150,938 | `2d78c2ad0436a2c82052fc89afa98a04e212621091df552ed9e4b5f58782fe3a` |
 
-文件级哈希只是第一层。导入器还检查 ZIP 内的 `manifest.json`、平台、pack ID、相对路径、解压后字节数和每个文件 SHA-256。不能用普通模型目录随手压缩后覆盖这些文件。
+文件级哈希只是第一层。导入器还检查 ZIP 内的 `model-pack.json`、平台、pack ID、相对路径、解压后字节数和每个文件 SHA-256。不能用普通模型目录随手压缩后覆盖这些文件。
 
 需要制作模型包时先查看脚本参数：
 

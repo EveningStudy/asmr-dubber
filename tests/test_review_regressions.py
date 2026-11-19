@@ -124,8 +124,12 @@ def test_separation_model_needs_every_recorded_file_and_removal_keeps_shared_one
 
 def test_optional_model_skips_backend_install_when_runtime_modules_exist(home, monkeypatch):
     installed = []
+    extras = []
     monkeypatch.setattr(
         models.runtime, "install_backend", lambda *a, **k: installed.append(a) or "ok"
+    )
+    monkeypatch.setattr(
+        models, "_install_optional_extra", lambda extra, *a, **k: extras.append(extra)
     )
     monkeypatch.setattr(models.importlib.util, "find_spec", lambda name: object())
     monkeypatch.setattr(
@@ -138,10 +142,11 @@ def test_optional_model_skips_backend_install_when_runtime_modules_exist(home, m
             return False
 
     models._download({"model": "asmr_vad"}, lambda *a, **k: None, Token())
-    assert installed == []
+    assert installed == [] and extras == []
     monkeypatch.setattr(models.importlib.util, "find_spec", lambda name: None)
     models._download({"model": "asmr_vad"}, lambda *a, **k: None, Token())
-    assert [call[0] for call in installed] == ["kotoba_whisper"]
+    assert installed == []
+    assert extras == ["asr-asmr-vad"]
 
 
 @pytest.fixture

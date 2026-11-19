@@ -3,7 +3,8 @@ param(
     [string]$IndexUrl = "",
     [string]$HuggingFaceEndpoint = "",
     [string]$SourceUrl = "",
-    [string]$SourceSha256 = "7ed8bc742e2eeeb83f922247ef0e27f96327f418acacb6c63f182cafd66887ba"
+    [string]$SourceSha256 = "7ed8bc742e2eeeb83f922247ef0e27f96327f418acacb6c63f182cafd66887ba",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,19 +36,47 @@ if (-not (Test-Path $Uv)) {
     throw "缺少 uv；请运行项目根目录的 ASMR-Dubber.exe 准备基础环境。"
 }
 New-Item -ItemType Directory -Force -Path $DataRoot, $DownloadRoot | Out-Null
+
+function Test-IndexTTSCheckpointsComplete {
+    $ValidationScript = @'
+import sys
+from pathlib import Path
+
+from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
+
+model_dir = Path(sys.argv[1])
+files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
+dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
+print("ready" if files_ready and dirs_ready else "missing")
+'@
+    $AppPython = [string]$Paths.Python
+    # Windows PowerShell 5.1 strips the embedded double quotes when a multiline
+    # script is passed as a native `python -c` argument. Feed the script over
+    # stdin instead; `-` tells Python to read it while keeping ModelDir as argv[1].
+    $ValidationResult = $ValidationScript | & $AppPython - $ModelDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法读取 IndexTTS2 checkpoints 必需资源定义。"
+    }
+    return ([string]$ValidationResult).Trim() -eq "ready"
+}
+
 if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
-    & $Paths.Python -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints
-    if ($LASTEXITCODE -eq 0) {
-        & $Paths.Python -m asmr_dubber.cli import-model-packs --all `
-            --pack-id indextts2-checkpoints
-        if ($LASTEXITCODE -ne 0) {
-            throw "IndexTTS2 ModelScope 模型包已下载，但导入失败。"
-        }
+    if (-not $Force -and (Test-IndexTTSCheckpointsComplete)) {
+        Write-Host "IndexTTS2 本地 checkpoints 已完整，跳过模型包下载。" -ForegroundColor Green
     } else {
-        throw (
-            "IndexTTS2 ModelScope 模型包下载未完成。断点文件已保留；" +
-            "请重新运行安装继续，不会改用另一条 11 GB 下载链路。"
-        )
+        & $Paths.Python -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints
+        if ($LASTEXITCODE -eq 0) {
+            & $Paths.Python -m asmr_dubber.cli import-model-packs --all `
+                --pack-id indextts2-checkpoints
+            if ($LASTEXITCODE -ne 0) {
+                throw "IndexTTS2 ModelScope 模型包已下载，但导入失败。"
+            }
+        } else {
+            throw (
+                "IndexTTS2 ModelScope 模型包下载未完成。断点文件已保留；" +
+                "请重新运行安装继续，不会改用另一条 11 GB 下载链路。"
+            )
+        }
     }
 }
 $env:UV_LINK_MODE = "copy"
@@ -224,29 +253,6 @@ Write-Host "共享版 FFmpeg：$SharedFFmpeg" -ForegroundColor DarkGray
 $IndexPython = Join-Path $RuntimeRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $IndexPython)) {
     throw "IndexTTS2 Python 环境安装后不存在：$IndexPython"
-}
-
-function Test-IndexTTSCheckpointsComplete {
-    $ValidationScript = @'
-import sys
-from pathlib import Path
-
-from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
-
-model_dir = Path(sys.argv[1])
-files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
-dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
-print("ready" if files_ready and dirs_ready else "missing")
-'@
-    $AppPython = [string]$Paths.Python
-    # Windows PowerShell 5.1 strips the embedded double quotes when a multiline
-    # script is passed as a native `python -c` argument. Feed the script over
-    # stdin instead; `-` tells Python to read it while keeping ModelDir as argv[1].
-    $ValidationResult = $ValidationScript | & $AppPython - $ModelDir
-    if ($LASTEXITCODE -ne 0) {
-        throw "无法读取 IndexTTS2 checkpoints 必需资源定义。"
-    }
-    return ([string]$ValidationResult).Trim() -eq "ready"
 }
 
 if (Test-IndexTTSCheckpointsComplete) {

@@ -1,4 +1,4 @@
-import { $, state, api, esc, t, size, startTask, guard, notice, localize } from './session.js';
+import { $, state, api, esc, t, size, startTask, guard, notice, localize, dialog } from './session.js';
 import { saveParameters } from './forms.js';
 import { renderKeys } from './settings.js';
 
@@ -30,7 +30,7 @@ export async function openWizard() {
 }
 
 async function finish(startProject) {
-  await saveParameters({ onboarding_completed: true }, 'def');
+  await saveParameters({ onboarding_completed: true, asr_upgrade_prompt_dismissed: true }, 'def');
   $('#wizard').classList.remove('on');
   if (!startProject) return;
   window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'home' } }));
@@ -162,6 +162,65 @@ async function saveAndTest() {
   renderWizard();
 }
 
+function openAsrUpgradePrompt(prompt) {
+  const current = t(prompt.current_label || prompt.current_backend);
+  const ready = Boolean(prompt.recommended_ready);
+  const statusLine = ready
+    ? t('本机已安装 anime-whisper，切换后新项目和批量任务会立即使用它。')
+    : t(
+        '本机尚未安装 anime-whisper（约 {disk} GB），点击下方按钮会切换默认设置并跳转到“模型”页开始下载。',
+        { disk: prompt.disk_gb || 3.5 },
+      );
+  const body =
+    `<div class="card wz-card"><p>${esc(
+      t(
+        '你当前保存的默认日语识别模型仍是 {current}。3.0 推荐改用 anime-whisper，对日语耳语和轻声识别更准，漏句更少。',
+        { current },
+      ),
+    )}</p><p class="stat">${esc(
+      t('已有项目不受影响，只更新之后新建项目与批量的默认设置。'),
+    )}</p><p class="stat">${esc(statusLine)}</p></div>` +
+    `<div class="row wz-test"><button class="btn plain" type="button" id="dismissAsrUpgrade">${esc(
+      t('保持当前设置，不再提示'),
+    )}</button></div>`;
+  dialog(
+    '推荐切换到 anime-whisper',
+    body,
+    ready ? '立即切换' : '切换并下载',
+    async () => {
+      if (!ready) {
+        const busy = state.tasks.some(
+          (task) => ACTIVE.includes(task.status) && task.kind !== 'diagnostic',
+        );
+        if (busy) {
+          throw new Error(t('请等当前任务结束后再操作。'));
+        }
+        await startTask('download', { model: prompt.recommended_backend }, false);
+      }
+      await saveParameters(
+        { asr_backend: prompt.recommended_backend, asr_upgrade_prompt_dismissed: true },
+        'def',
+      );
+      state.boot.asr_upgrade_prompt = null;
+      if (ready) {
+        notice(t('已将默认识别模型切换为 anime-whisper。'));
+        return;
+      }
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'models' } }));
+      notice(t('已将默认识别模型切换为 anime-whisper，并开始下载模型。'));
+    },
+    t('3.0 更新了日语识别推荐模型。'),
+  );
+  const dismiss = $('#dismissAsrUpgrade');
+  if (dismiss) {
+    dismiss.onclick = guard(async () => {
+      await saveParameters({ asr_upgrade_prompt_dismissed: true }, 'def');
+      state.boot.asr_upgrade_prompt = null;
+      $('#dialog').classList.remove('on');
+    });
+  }
+}
+
 export function initializeWizard() {
   $('#wizardNext').onclick = guard(async () => {
     if (step < 3) {
@@ -175,7 +234,7 @@ export function initializeWizard() {
     $('#wizardBody').dataset.step = '';
     renderWizard();
   };
-  $('#wizardSkip').onclick = guard(() => finish(step === 3));
+  $('#wizardSkip').onclick = guard(() => finish(false));
   $('#wizardBody').addEventListener(
     'click',
     guard(async (event) => {
@@ -193,4 +252,5 @@ export function initializeWizard() {
     renderWizard();
   });
   if (state.boot.onboarding_required ?? !state.boot.settings.onboarding_completed) guard(openWizard)();
+  else if (state.boot.asr_upgrade_prompt) openAsrUpgradePrompt(state.boot.asr_upgrade_prompt);
 }

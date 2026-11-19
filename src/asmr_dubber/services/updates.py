@@ -13,7 +13,9 @@ import httpx
 
 from .. import __version__
 from ..errors import OperationCancelledError
+from ..mirrors import github_url_candidates
 from ..platforms import portable_home
+from .settings import current
 
 REPOSITORY = "EveningStudy/asmr-dubber"
 RELEASE_PAGE = f"https://github.com/{REPOSITORY}/releases/latest"
@@ -24,6 +26,7 @@ REQUIRED_FILES = ("ASMR-Dubber.exe", "pyproject.toml", "src/asmr_dubber/__init__
 DATA_DIRECTORY = ".asmr-dubber"
 CACHE_SECONDS = 3600
 WINDOWS = os.name == "nt"
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _cached = (0.0, None)
 
@@ -54,8 +57,9 @@ def check(force=False):
         return _cached[1]
     root = installable_root()
     if root is not None:
-        with contextlib.suppress(OSError):
-            (root / "ASMR-Dubber.exe.old").unlink(missing_ok=True)
+        for retired in root.glob("ASMR-Dubber.exe.old*"):
+            with contextlib.suppress(OSError):
+                retired.unlink(missing_ok=True)
     result = {
         "current": __version__,
         "latest": None,
@@ -94,11 +98,34 @@ def check(force=False):
         page=release.get("html_url") or RELEASE_PAGE,
     )
     if asset:
+        raw_digest = asset.get("digest")
+        sha256 = ""
+        digest_malformed = False
+        if raw_digest is not None and str(raw_digest).strip():
+            text = str(raw_digest).strip()
+            if text.lower().startswith("sha256:"):
+                text = text[7:].strip()
+            if _SHA256_RE.fullmatch(text.lower()):
+                sha256 = text.lower()
+            else:
+                digest_malformed = True
+        sidecar_name = f"{asset['name']}.sha256"
+        sidecar = next(
+            (
+                item
+                for item in release.get("assets", [])
+                if item.get("name") == sidecar_name
+                and str(item.get("browser_download_url", "")).startswith(DOWNLOAD_PREFIX)
+            ),
+            None,
+        )
         result["asset"] = {
             "name": asset["name"],
             "url": asset["browser_download_url"],
             "size": int(asset.get("size") or 0),
-            "sha256": str(asset.get("digest") or "").removeprefix("sha256:"),
+            "sha256": sha256,
+            "digest_malformed": digest_malformed,
+            "sha256_url": sidecar["browser_download_url"] if sidecar else "",
         }
         result["automatic"] = result["newer"] and installable_root() is not None
     _cached = (time.monotonic(), result)
@@ -129,29 +156,84 @@ def install(request, report, token):
     }
 
 
+def _download_candidates(url):
+    try:
+        source = current().download_source
+    except Exception:
+        source = "modelscope"
+    if source == "modelscope":
+        candidates = github_url_candidates(url, allow_external=True)
+        if candidates:
+            return candidates
+    return (url,)
+
+
+def _resolve_expected_sha256(asset):
+    if asset.get("digest_malformed"):
+        raise ValueError("更新包的 SHA-256 摘要格式无效。")
+    raw_sha256 = str(asset.get("sha256") or "").strip().lower()
+    if raw_sha256:
+        if not _SHA256_RE.fullmatch(raw_sha256):
+            raise ValueError("更新包的 SHA-256 摘要格式无效。")
+        return raw_sha256
+    sidecar_url = str(asset.get("sha256_url") or "").strip()
+    if not sidecar_url:
+        return ""
+    last_exc = None
+    for candidate in _download_candidates(sidecar_url):
+        try:
+            response = httpx.get(candidate, timeout=15, follow_redirects=True)
+            response.raise_for_status()
+            match = re.match(r"^([0-9a-fA-F]{64})(?:\s|$)", response.text.strip())
+            if not match:
+                raise ValueError("更新包的 SHA-256 校验文件格式无效。")
+            return match.group(1).lower()
+        except ValueError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+    raise ValueError("无法下载更新包的 SHA-256 校验文件，请重试。") from last_exc
+
+
 def _download(asset, archive, report, token):
-    digest = hashlib.sha256()
-    done = 0
-    with httpx.stream("GET", asset["url"], timeout=30, follow_redirects=True) as response:
-        response.raise_for_status()
-        total = asset["size"] or int(response.headers.get("Content-Length", 0))
-        with archive.open("wb") as output:
-            for block in response.iter_bytes(1024 * 1024):
-                if token.is_set():
-                    raise OperationCancelledError("更新已取消。")
-                output.write(block)
-                digest.update(block)
-                done += len(block)
-                report(f"正在下载新版本… {done / 1048576:.0f} MB", done, total)
-    if asset["size"] and done != asset["size"]:
-        raise ValueError("下载的更新包大小不对，请重试。")
-    if asset["sha256"] and digest.hexdigest() != asset["sha256"]:
-        raise ValueError("下载的更新包校验失败，请重试。")
+    expected_sha256 = _resolve_expected_sha256(asset)
+    last_error = None
+    for candidate in _download_candidates(asset["url"]):
+        digest = hashlib.sha256()
+        done = 0
+        try:
+            with httpx.stream("GET", candidate, timeout=30, follow_redirects=True) as response:
+                response.raise_for_status()
+                total = asset["size"] or int(response.headers.get("Content-Length", 0))
+                with archive.open("wb") as output:
+                    for block in response.iter_bytes(1024 * 1024):
+                        if token.is_set():
+                            raise OperationCancelledError("更新已取消。")
+                        output.write(block)
+                        digest.update(block)
+                        done += len(block)
+                        report(f"正在下载新版本… {done / 1048576:.0f} MB", done, total)
+            if asset["size"] and done != asset["size"]:
+                raise ValueError("下载的更新包大小不对，请重试。")
+            if expected_sha256 and digest.hexdigest() != expected_sha256:
+                raise ValueError("下载的更新包校验失败，请重试。")
+            return
+        except OperationCancelledError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            archive.unlink(missing_ok=True)
+    if last_error is not None:
+        raise last_error
 
 
 def _members(archive):
     """Program files in the release archive, keyed by path relative to the program folder."""
-    names = [info for info in archive.infolist() if not info.is_dir()]
+    all_infos = archive.infolist()
+    for info in all_infos:
+        if (info.external_attr >> 16) & 0o170000 == 0o120000:
+            raise ValueError("更新包里有不安全的符号链接。")
+    names = [info for info in all_infos if not info.is_dir()]
     paths = {info: PurePosixPath(info.filename.replace("\\", "/")) for info in names}
     tops = {path.parts[0] for path in paths.values() if path.parts}
     prefix = 1 if len(tops) == 1 and all(len(path.parts) > 1 for path in paths.values()) else 0
@@ -199,9 +281,21 @@ def apply(archive_path, root, staging):
 def _replace(source, target):
     try:
         os.replace(source, target)
-    except PermissionError:
+    except PermissionError as exc:
         # A running executable cannot be overwritten on Windows, but it can be renamed.
-        retired = target.with_name(target.name + ".old")
-        retired.unlink(missing_ok=True)
-        os.replace(target, retired)
-        os.replace(source, target)
+        retired = target.with_name(f"{target.name}.old")
+        try:
+            retired.unlink(missing_ok=True)
+            os.replace(target, retired)
+            os.replace(source, target)
+            return
+        except PermissionError:
+            pass
+        unique_retired = target.with_name(f"{target.name}.old.{os.getpid()}.{time.monotonic_ns()}")
+        try:
+            os.replace(target, unique_retired)
+            os.replace(source, target)
+        except PermissionError as inner_exc:
+            raise ValueError(
+                "无法替换正在运行的程序文件，请先关闭所有 ASMR Dubber 窗口后重试。"
+            ) from (inner_exc or exc)

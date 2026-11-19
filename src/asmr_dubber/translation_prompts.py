@@ -220,16 +220,40 @@ def _context_for_chunk(
     if maximum_sentences <= 0:
         return "[]"
     positions = {sentence.id: index for index, sentence in enumerate(sentences)}
-    indices = [positions[item.id] for item in chunk.sentences if item.id in positions]
+    indices = sorted({positions[item.id] for item in chunk.sentences if item.id in positions})
     if not indices:
         return "[]"
-    first, last = min(indices), max(indices)
-    room = max(0, maximum_sentences - (last - first + 1))
-    start = max(0, first - room // 2)
-    end = min(len(sentences), last + 1 + (room - (first - start)))
-    if end - start < maximum_sentences:
-        start = max(0, end - maximum_sentences)
-    return _json_lines(sentences[start:end], field="both")
+    first, last = indices[0], indices[-1]
+    if last - first + 1 <= maximum_sentences:
+        room = max(0, maximum_sentences - (last - first + 1))
+        start = max(0, first - room // 2)
+        end = min(len(sentences), last + 1 + (room - (first - start)))
+        if end - start < maximum_sentences:
+            start = max(0, end - maximum_sentences)
+        return _json_lines(sentences[start:end], field="both")
+
+    selected: set[int] = set()
+    for idx in indices:
+        if len(selected) >= maximum_sentences:
+            break
+        selected.add(idx)
+    radius = 1
+    while len(selected) < maximum_sentences:
+        added = False
+        for offset in (-radius, radius):
+            for idx in indices:
+                neighbor = idx + offset
+                if 0 <= neighbor < len(sentences) and neighbor not in selected:
+                    selected.add(neighbor)
+                    added = True
+                    if len(selected) >= maximum_sentences:
+                        break
+            if len(selected) >= maximum_sentences:
+                break
+        if not added:
+            break
+        radius += 1
+    return _json_lines([sentences[idx] for idx in sorted(selected)], field="both")
 
 
 def _bounded_translation_memory(
@@ -240,10 +264,23 @@ def _bounded_translation_memory(
     if maximum_sentences <= 0:
         return "[]"
     current_ids = {sentence.id for sentence in chunk.sentences}
-    confirmed = [
-        sentence for sentence in sentences if sentence.zh_text and sentence.id not in current_ids
-    ]
-    return _translation_memory(confirmed[-maximum_sentences:])
+    positions = {sentence.id: index for index, sentence in enumerate(sentences)}
+    target_positions = [positions[item.id] for item in chunk.sentences if item.id in positions]
+    anchor = min(target_positions) if target_positions else len(sentences)
+    before: list[tuple[int, Sentence]] = []
+    after: list[tuple[int, Sentence]] = []
+    for index, sentence in enumerate(sentences):
+        if not sentence.zh_text or sentence.id in current_ids or sentence.status == "skipped_sound":
+            continue
+        if index < anchor:
+            before.append((index, sentence))
+        else:
+            after.append((index, sentence))
+    chosen = before[-maximum_sentences:]
+    if len(chosen) < maximum_sentences:
+        chosen.extend(after[: maximum_sentences - len(chosen)])
+    chosen.sort(key=lambda item: item[0])
+    return _translation_memory([sentence for _, sentence in chosen])
 
 
 def _as_entry(value: TranslationEntry | str) -> TranslationEntry:
@@ -269,7 +306,7 @@ def _mark_translated(sentence: Sentence, text: str) -> None:
         sentence.chinese_audio_enabled = True
     sentence.zh_text = text
     sentence.status = "translated"
-    sentence.error = None
+    sentence.clear_error()
 
 
 def _mark_filler(sentence: Sentence) -> None:
@@ -277,18 +314,26 @@ def _mark_filler(sentence: Sentence) -> None:
     sentence.enabled = False
     _clear_audio(sentence)
     sentence.status = "skipped_filler"
-    sentence.error = None
+    sentence.clear_error()
 
 
 def _looks_like_romaji(text: str) -> bool:
     return bool(text) and all(ord(character) < 128 or character in "…’‘—–" for character in text)
 
 
-def _sound_text(sentence: Sentence, model_text: str, policy: str) -> str:
+def _sound_text(
+    sentence: Sentence,
+    model_text: str,
+    policy: str,
+    *,
+    allow_empty: bool = False,
+) -> str:
     """Subtitle text for a sound row under the romaji and keep_source policies."""
 
     if policy == "keep_source":
         return sentence.source_text
+    if allow_empty and not model_text.strip():
+        return ""
     if _looks_like_romaji(model_text):
         return model_text
     converted = kana_to_romaji(sentence.source_text)
@@ -296,14 +341,22 @@ def _sound_text(sentence: Sentence, model_text: str, policy: str) -> str:
     return sentence.source_text if re.search(r"[㐀-鿿]", converted) else converted
 
 
-def _mark_sound(sentence: Sentence, model_text: str, policy: str) -> None:
+def _mark_sound(
+    sentence: Sentence,
+    model_text: str,
+    policy: str,
+    *,
+    explicit: bool = False,
+) -> None:
     """Apply the sound policy: skip it, or keep a subtitle that is never voiced."""
 
     _clear_audio(sentence)
-    text = "" if policy == "skip" else _sound_text(sentence, model_text, policy)
+    text = (
+        "" if policy == "skip" else _sound_text(sentence, model_text, policy, allow_empty=explicit)
+    )
     sentence.zh_text = text
     sentence.status = "skipped_sound"
-    sentence.error = None
+    sentence.clear_error()
     if text:
         # Visible in subtitles, but the Chinese TTS must not read "ki" aloud.
         sentence.chinese_audio_enabled = False

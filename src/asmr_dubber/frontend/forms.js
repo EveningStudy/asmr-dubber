@@ -40,6 +40,7 @@ export function renderForms() {
     };
     const matches = (rule) =>
       Object.entries(rule).every(([key, allowed]) => allowed.includes(conditions[key]));
+    const query = state.paramQuery[scope] || '';
     const fields = state.boot.parameters.filter(
       (parameter) =>
         !parameter.hidden &&
@@ -48,7 +49,7 @@ export function renderForms() {
         (part === 'all' || parameter.basic === (part === 'basic')) &&
         matches(parameter.visible_when) &&
         (!parameter.visible_any || parameter.visible_any.some(matches)) &&
-        matchesQuery(parameter, state.paramQuery),
+        matchesQuery(parameter, query),
     );
     const groups = new Map();
     for (const parameter of fields) {
@@ -56,7 +57,7 @@ export function renderForms() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(parameter);
     }
-    const searching = !!state.paramQuery.trim();
+    const searching = !!query.trim();
     const open = new Set($$('details[open]', box).map((node) => node.dataset.group));
     box.innerHTML = [...groups]
       .map(([group, list]) => {
@@ -137,18 +138,21 @@ function control(parameter, values, scope, language) {
 }
 export function saveParameters(changes, scope) {
   return enqueueSave(async () => {
-    const request = { changes };
-    if (scope === 'proj') {
-      request.project = state.project.manifest;
-      request.revision = state.project.revision;
+    try {
+      const request = { changes };
+      if (scope === 'proj') {
+        request.project = state.project.manifest;
+        request.revision = state.project.revision;
+      }
+      const result = await api('settings/update', request);
+      if (scope === 'proj') {
+        const latest = await api('projects/get', { project: state.project.manifest });
+        state.project = latest;
+      } else state.boot.settings = result;
+      window.dispatchEvent(new CustomEvent('settings-changed', { detail: changes }));
+    } finally {
+      renderForms();
     }
-    const result = await api('settings/update', request);
-    if (scope === 'proj') {
-      const latest = await api('projects/get', { project: state.project.manifest });
-      state.project = latest;
-    } else state.boot.settings = result;
-    window.dispatchEvent(new CustomEvent('settings-changed', { detail: changes }));
-    renderForms();
   });
 }
 export function initializeForms() {
@@ -169,6 +173,16 @@ export function initializeForms() {
         } else value = Number(value);
       }
       if (parameter.nullable && value === '') value = null;
+      if (
+        node.dataset.scope === 'proj' &&
+        parameter.key === 'tts_target_language' &&
+        value !== state.project?.settings?.tts_target_language &&
+        state.project?.sentences?.some((s) => Boolean(s.target_text ?? s.zh_text)) &&
+        !window.confirm(t('切换目标配音语言会清空当前项目的已有译文和配音（切换前会自动备份），确定继续吗？'))
+      ) {
+        renderForms();
+        return;
+      }
       await saveParameters({ [parameter.key]: value }, node.dataset.scope);
     }),
   );

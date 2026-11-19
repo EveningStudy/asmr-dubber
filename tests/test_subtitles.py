@@ -29,9 +29,9 @@ def test_custom_line_width_persists_and_controls_srt_lrc(tmp_path, width):
         maximum_chars=restored.subtitle_max_chars_per_line,
     )
     assert srt.read_text(encoding="utf-8").splitlines()[2:] == ["字" * width, "字" * 5]
+    # LRC keeps each language on one unwrapped line so players do not drop wrapped tails.
     assert [line.split("]", 1)[1] for line in lrc.read_text(encoding="utf-8").splitlines()] == [
-        "字" * width,
-        "字" * 5,
+        text,
     ]
 
 

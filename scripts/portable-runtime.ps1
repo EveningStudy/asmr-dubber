@@ -80,6 +80,18 @@ function Repair-ASMRDubberPortablePythonPaths {
             PythonPattern = "cpython-3.11.*-windows-x86_64-none"
             EditablePattern = "_editable_impl_indextts.pth"
             EditableTarget = Join-Path $RuntimeRoot "index-tts-2.5"
+        },
+        @{
+            Venv = Join-Path $RuntimeRoot "moss-transcribe-diarize\.venv"
+            PythonPattern = "cpython-3.12.*-windows-x86_64-none"
+            EditablePattern = ""
+            EditableTarget = ""
+        },
+        @{
+            Venv = Join-Path $RuntimeRoot "separation\.venv"
+            PythonPattern = "cpython-3.12.*-windows-x86_64-none"
+            EditablePattern = ""
+            EditableTarget = ""
         }
     )
 
@@ -116,8 +128,8 @@ function Repair-ASMRDubberPortablePythonPaths {
         }
 
         $SitePackages = Join-Path $EnvironmentRoot "Lib\site-packages"
-        $Editable = Join-Path $SitePackages ([string]$Environment.EditablePattern)
-        if (Test-Path -LiteralPath $SitePackages) {
+        if ($Environment.EditablePattern -and (Test-Path -LiteralPath $SitePackages)) {
+            $Editable = Join-Path $SitePackages ([string]$Environment.EditablePattern)
             Set-ASMRDubberTextFileIfChanged `
                 -Path $Editable -Content (([string]$Environment.EditableTarget) + "`r`n")
         }

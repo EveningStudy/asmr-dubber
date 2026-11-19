@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$Version = "2.2.1"
+    [string]$Version = "3.0.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,8 +20,11 @@ if (-not $BasePython -or -not (Test-Path (Join-Path $UvSource "uv.exe"))) {
 New-Item -ItemType Directory -Force -Path $Package, $PackageHome | Out-Null
 try {
     & (Join-Path $Root "launcher\windows\build.ps1")
-    foreach ($Name in @("src", "scripts", "launcher")) {
-        Copy-Item -LiteralPath (Join-Path $Root $Name) -Destination $Package -Recurse
+    foreach ($Name in @("src", "scripts", "launcher", "assets")) {
+        $SourceDir = Join-Path $Root $Name
+        if (Test-Path -LiteralPath $SourceDir) {
+            Copy-Item -LiteralPath $SourceDir -Destination $Package -Recurse
+        }
     }
     Get-ChildItem -LiteralPath $Package -Directory -Filter "__pycache__" -Recurse | ForEach-Object {
         $CachePath = [IO.Path]::GetFullPath($_.FullName)
@@ -31,8 +34,15 @@ try {
         Remove-Item -LiteralPath $CachePath -Recurse -Force
     }
     foreach ($Name in @("ASMR-Dubber.exe", "pyproject.toml", "uv.lock", "mirrors.json",
-        "modelscope-artifacts.lock.json", "LICENSE", "README.md")) {
+        "modelscope-artifacts.lock.json", "LICENSE", "README.md", "README.en.md",
+        "CHANGELOG.md", "CHANGELOG.en.md")) {
         Copy-Item -LiteralPath (Join-Path $Root $Name) -Destination $Package
+    }
+    foreach ($OptionalName in @("DEPENDENCIES.json")) {
+        $OptionalPath = Join-Path $Root $OptionalName
+        if (Test-Path -LiteralPath $OptionalPath -PathType Leaf) {
+            Copy-Item -LiteralPath $OptionalPath -Destination $Package
+        }
     }
     $Runtime = Join-Path $PackageHome "runtimes\python"
     New-Item -ItemType Directory -Force -Path $Runtime | Out-Null
@@ -63,7 +73,7 @@ try {
         }
         Remove-Item -LiteralPath $GeneratedPath -Recurse -Force -ErrorAction SilentlyContinue
     }
-    $Destination = Join-Path $OutputRoot "ASMR-Dubber-Windows-v$Version.zip"
+    $Destination = Join-Path $OutputRoot "ASMR-Dubber-windows-portable-v$Version.zip"
     & $BasePython.FullName -m zipfile -c $Destination $Package
     if ($LASTEXITCODE -ne 0) { throw "ZIP 打包失败。" }
     (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLower() |

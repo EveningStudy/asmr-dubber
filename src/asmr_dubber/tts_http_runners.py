@@ -10,6 +10,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from .api_contracts import (
     APIContractError,
     bearer_headers,
@@ -20,8 +22,37 @@ from .api_contracts import (
 from .errors import OperationCancelledError, SynthesisError
 from .model_registry import TTS_BACKENDS
 from .models import DubProject, Sentence
+from .task_control import check_cancelled
 from .tts import attempt_seed, spoken_text
 from .voice_reference import VoiceReference
+
+_RETRYABLE_HTTP_STATUS = frozenset({429, 502, 503, 504})
+
+
+def _post_with_retry(
+    request_fn: Callable[[], httpx.Response],
+    *,
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+) -> httpx.Response:
+    """Retry transient HTTP 429/502/503/504 or transport errors with bounded backoff."""
+    for attempt in range(max_retries + 1):
+        check_cancelled()
+        try:
+            response = request_fn()
+        except (httpx.RequestError, OSError, TimeoutError):
+            if attempt >= max_retries:
+                raise
+            delay = min(8.0, base_delay * (2**attempt))
+            check_cancelled()
+            time.sleep(delay)
+            continue
+        if response.status_code not in _RETRYABLE_HTTP_STATUS or attempt >= max_retries:
+            return response
+        delay = min(8.0, base_delay * (2**attempt))
+        check_cancelled()
+        time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _gpt_sovits_runner(
@@ -52,7 +83,7 @@ def _gpt_sovits_runner(
             "streaming_mode": False,
             "sample_steps": project.settings.tts_gpt_sample_steps,
         }
-        response = client.post(url, json=payload)
+        response = _post_with_retry(lambda: client.post(url, json=payload))
         if response.is_error:
             raise SynthesisError(f"GPT-SoVITS API {response.status_code}: {response.text[:500]}")
         output.write_bytes(response.content)
@@ -77,12 +108,16 @@ def _cosyvoice_runner(
         data = {"tts_text": spoken_text(project.settings, sentence.zh_text)}
         if mode == "zero_shot":
             data["prompt_text"] = reference.text
-        with reference.path.open("rb") as handle:
-            response = client.post(
-                url,
-                data=data,
-                files={"prompt_wav": (reference.path.name, handle, "audio/wav")},
-            )
+
+        def do_post() -> httpx.Response:
+            with reference.path.open("rb") as handle:
+                return client.post(
+                    url,
+                    data=data,
+                    files={"prompt_wav": (reference.path.name, handle, "audio/wav")},
+                )
+
+        response = _post_with_retry(do_post)
         if response.is_error:
             raise SynthesisError(f"CosyVoice API {response.status_code}: {response.text[:500]}")
         output.write_bytes(response.content)
@@ -130,7 +165,7 @@ def _fish_runner(
                 }
             ],
         }
-        response = client.post(url, json=payload)
+        response = _post_with_retry(lambda: client.post(url, json=payload))
         if response.is_error:
             raise SynthesisError(f"Fish Speech API {response.status_code}: {response.text[:500]}")
         output.write_bytes(response.content)
@@ -185,20 +220,24 @@ def _indextts_api_runner(
             else str(value)
             for key, value in payload.items()
         }
-        files: dict[str, tuple[str, Any, str]] = {
-            "voice": (reference.path.name, reference.path.open("rb"), "audio/wav")
-        }
-        if reference.emotion_path and reference.emotion_path.is_file():
-            files["emotion_audio"] = (
-                reference.emotion_path.name,
-                reference.emotion_path.open("rb"),
-                "audio/wav",
-            )
-        try:
-            response = client.post(url, data=data, files=files)
-        finally:
-            for item in files.values():
-                item[1].close()
+
+        def do_post() -> httpx.Response:
+            files: dict[str, tuple[str, Any, str]] = {
+                "voice": (reference.path.name, reference.path.open("rb"), "audio/wav")
+            }
+            if reference.emotion_path and reference.emotion_path.is_file():
+                files["emotion_audio"] = (
+                    reference.emotion_path.name,
+                    reference.emotion_path.open("rb"),
+                    "audio/wav",
+                )
+            try:
+                return client.post(url, data=data, files=files)
+            finally:
+                for item in files.values():
+                    item[1].close()
+
+        response = _post_with_retry(do_post)
         try:
             write_audio_response(response, output, client=client)
         except APIContractError as exc:
@@ -241,7 +280,7 @@ def _generic_tts_api_runner(
             )
         except APIContractError as exc:
             raise SynthesisError(str(exc)) from exc
-        response = client.post(url, json=payload)
+        response = _post_with_retry(lambda: client.post(url, json=payload))
         try:
             write_audio_response(response, output, client=client)
         except APIContractError as exc:
@@ -365,9 +404,11 @@ def _mimo_runner(
             audio["voice"] = (
                 project.settings.tts_voice.strip() or TTS_BACKENDS["mimo_tts"].default_voice
             )
-        response = client.post(
-            url,
-            json={"model": model, "messages": messages, "audio": audio, "stream": False},
+        response = _post_with_retry(
+            lambda: client.post(
+                url,
+                json={"model": model, "messages": messages, "audio": audio, "stream": False},
+            )
         )
         if response.is_error:
             raise SynthesisError(f"小米 MiMo TTS API {response.status_code}: {response.text[:500]}")
@@ -431,7 +472,7 @@ def _minimax_runner(
             "output_format": "hex",
             "subtitle_enable": False,
         }
-        response = client.post(url, json=payload)
+        response = _post_with_retry(lambda: client.post(url, json=payload))
         if response.is_error:
             raise SynthesisError(f"MiniMax TTS API {response.status_code}: {response.text[:500]}")
         try:

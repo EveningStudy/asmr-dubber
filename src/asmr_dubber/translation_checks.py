@@ -94,8 +94,13 @@ def _allow_same_as_source(
     return source_language == "ja" and len(word) <= 4
 
 
+_WORD_TOKEN = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*")
+
+
 def _used_length(text: str, budget_key: str) -> int:
-    return len(text.split()) if budget_key == "max_words" else speakable_character_count(text)
+    if budget_key == "max_words":
+        return len(_WORD_TOKEN.findall(unicodedata.normalize("NFKC", text)))
+    return speakable_character_count(text)
 
 
 def check_translations(
@@ -129,12 +134,24 @@ def check_translations(
     previous: Sentence | None = None
     for sentence in ordered:
         before, previous = previous, sentence
-        if (wanted is not None and sentence.id not in wanted) or sentence.status != "translated":
+        if (wanted is not None and sentence.id not in wanted) or sentence.status not in {
+            "translated",
+            "synthesized",
+            "error",
+        }:
             continue
         text = sentence.zh_text
         if _KANA.search(text):
             flags.append(
                 TranslationFlag(sentence.id, "kana_left", "译文里还有日文假名，可能漏译或没译完。")
+            )
+        if source_language == "zh" and resolved_target == "en" and _HANZI_CHAR.search(text):
+            flags.append(
+                TranslationFlag(
+                    sentence.id,
+                    "cjk_left",
+                    "英文译文里还有中文字符，可能漏译或没译完。",
+                )
             )
         budget = (budgets or {}).get(sentence.id)
         if budget:

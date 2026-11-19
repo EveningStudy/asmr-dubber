@@ -15,6 +15,7 @@ from .languages import SourceLanguage, source_language_label
 from .models import Sentence
 from .translation_llm_formats import (
     OPENAI_COMPATIBLE_PROVIDERS,
+    _raise_for_translation_status,
     _request_anthropic_messages,
     _request_deepseek_chat,
     _request_gemini_content,
@@ -260,10 +261,14 @@ class LLMTranslator(_BaseLLMTranslator):
         self.max_retries = max_retries
         self.source_language = source_language
         self.extra_body = extra_body
+        self._use_response_format = True
         self.client = client or _default_http_client(
             f"{provider} 翻译 API", timeout=timeout_seconds
         )
         self._owns_client = client is None
+
+    def _disable_response_format(self) -> None:
+        self._use_response_format = False
 
     def _messages(
         self,
@@ -303,13 +308,7 @@ class LLMTranslator(_BaseLLMTranslator):
         return messages
 
     def _raise_for_status(self, response: httpx.Response) -> None:
-        if response.status_code in {400, 401, 402, 403, 404, 422}:
-            raise _NonRetryableTranslationError(
-                f"{self.provider} API 拒绝请求（HTTP {response.status_code}）："
-                f"{response.text[:500]}",
-                response.status_code,
-            )
-        response.raise_for_status()
+        _raise_for_translation_status(response, self.provider)
 
     def _request(self, messages: list[dict[str, str]], job_id: str) -> tuple[str, bool]:
         if self.provider in OPENAI_COMPATIBLE_PROVIDERS:
@@ -326,6 +325,8 @@ class LLMTranslator(_BaseLLMTranslator):
                 top_p=self.top_p,
                 extra_body=self.extra_body,
                 raise_for_status=self._raise_for_status,
+                include_response_format=self._use_response_format,
+                on_response_format_unsupported=self._disable_response_format,
             )
         if self.provider == "anthropic":
             return _request_anthropic_messages(
@@ -338,6 +339,7 @@ class LLMTranslator(_BaseLLMTranslator):
                 max_output_tokens=self.max_output_tokens,
                 temperature=self.temperature,
                 top_p=self.top_p,
+                extra_body=self.extra_body,
                 raise_for_status=self._raise_for_status,
             )
         if self.provider == "gemini":
@@ -351,6 +353,7 @@ class LLMTranslator(_BaseLLMTranslator):
                 max_output_tokens=self.max_output_tokens,
                 temperature=self.temperature,
                 top_p=self.top_p,
+                extra_body=self.extra_body,
                 raise_for_status=self._raise_for_status,
             )
         raise TranslationError(f"不支持的大模型翻译服务：{self.provider}")

@@ -71,8 +71,11 @@ namespace ASMRDubberLauncher
                 {
                     WriteError("启动失败：" + exception.Message);
                     Console.WriteLine();
-                    Console.WriteLine("按任意键关闭窗口。");
-                    Console.ReadKey(true);
+                    if (!Console.IsInputRedirected)
+                    {
+                        Console.WriteLine("按任意键关闭窗口。");
+                        Console.ReadKey(true);
+                    }
                     return 1;
                 }
                 finally
@@ -101,6 +104,14 @@ namespace ASMRDubberLauncher
             }
 
             PrintHeader();
+            try
+            {
+                RepairPortablePaths(root);
+            }
+            catch
+            {
+                // Fall through to IsInstalled/setup when an existing venv is damaged.
+            }
             if (!IsInstalled(root))
             {
                 WriteInfo("正在准备基础运行环境，模型可在界面内下载……");
@@ -110,8 +121,8 @@ namespace ASMRDubberLauncher
                 if (activeProcess.ExitCode != 0)
                     throw new InvalidOperationException("基础环境准备失败，请查看上方日志。");
                 activeProcess = null;
+                RepairPortablePaths(root);
             }
-            RepairPortablePaths(root);
 
             int previousPort = ReadSavedPort(root);
             string previousUrl = UrlForPort(previousPort);

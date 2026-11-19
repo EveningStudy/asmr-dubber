@@ -84,12 +84,17 @@ export function initializeModels() {
               task.request.model === download.dataset.downloadModel &&
               ['failed', 'cancelled', 'interrupted'].includes(task.status),
           );
-        if (prior) await api('tasks/resume', { identifier: prior.id });
-        else await startTask('download', { model: download.dataset.downloadModel }, false);
+        if (prior) {
+          await api('tasks/resume', { identifier: prior.id });
+          window.dispatchEvent(new Event('tasks-resumed'));
+        } else await startTask('download', { model: download.dataset.downloadModel }, false);
         return;
       }
       const remove = event.target.closest('[data-remove-model]');
       if (remove) {
+        const entry = catalog?.items?.find((item) => item.id === remove.dataset.removeModel);
+        const name = t(entry?.name || remove.dataset.removeModel);
+        if (!window.confirm(t('确定要删除已下载的模型“{name}”吗？之后需要重新下载才能使用。', { name }))) return;
         await api('models/remove', { model: remove.dataset.removeModel });
         await refreshModels();
         return;

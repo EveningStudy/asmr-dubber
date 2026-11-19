@@ -260,11 +260,11 @@ def translate_sentences(
     budgets: dict[str, int] = {}
     budget_key = "max_words" if target_language == "en" else "max_chars"
     if compress:
-        if (
-            source_language == target_language
-            or not length_budget_rate
-            or provider in MACHINE_TRANSLATION_PROVIDERS
-        ):
+        if provider in MACHINE_TRANSLATION_PROVIDERS:
+            if progress:
+                progress("当前机器翻译服务不支持自动压缩译文", 1, 1)
+            return report
+        if source_language == target_language or not length_budget_rate:
             if progress:
                 progress("所有句子已符合时长预算", 1, 1)
             return report
@@ -273,7 +273,7 @@ def translate_sentences(
             for sentence in sentences
             if sentence.enabled
             and sentence.zh_text.strip()
-            and sentence.status == "translated"
+            and sentence.status in {"translated", "synthesized", "error"}
             and (selected is None or sentence.id in selected)
             and (overwrite_edited or not sentence.review_locked)
         ]
@@ -407,7 +407,7 @@ def translate_sentences(
         nonlocal last_failure
         last_failure = reason
         sentence.status = "translation_failed"
-        sentence.error = reason[:400]
+        sentence.set_error(reason[:400])
         report.failed.append(TranslationFailure(sentence.id, reason[:400]))
 
     def settle(sentence: Sentence, entry: TranslationEntry, *, retry_allowed: bool) -> None:
@@ -415,7 +415,7 @@ def translate_sentences(
         duration = sentence.end_seconds - sentence.start_seconds
         reason = ""
         if entry.kind == "sound":
-            _mark_sound(sentence, text, sound_policy)
+            _mark_sound(sentence, text, sound_policy, explicit=True)
             report.skipped_ids.append(sentence.id)
             stale_ids.discard(sentence.id)
             return
@@ -501,7 +501,7 @@ def translate_sentences(
         *,
         count_translated: bool,
         record_failure: bool,
-    ) -> None:
+    ) -> bool:
         """Shorten existing over-budget lines without overwriting text on error."""
         check_cancelled(cancel_event)
         count = len(chunk.sentences)
@@ -519,15 +519,12 @@ def translate_sentences(
                     logger.warning(
                         "压缩过长译文超出上限（%s），保留原译文。", chunk.sentences[0].id
                     )
-                return
+                return False
             next_attempts = attempts
         except TranslationError as exc:
             check_cancelled(cancel_event)
             if _is_fatal_translation_error(exc):
-                if record_failure:
-                    raise
-                logger.warning("自动压缩译文遇到致命错误，保留已有译文：%s", exc)
-                return
+                raise
             if count == 1:
                 if record_failure:
                     report.failed.append(TranslationFailure(chunk.sentences[0].id, str(exc)[:400]))
@@ -535,7 +532,7 @@ def translate_sentences(
                     logger.warning(
                         "压缩过长译文失败（%s），保留原译文：%s", chunk.sentences[0].id, exc
                     )
-                return
+                return False
             next_attempts = _SPLIT_RETRY_ATTEMPTS
         else:
             changed = False
@@ -556,25 +553,27 @@ def translate_sentences(
                     report.translated += 1
             if changed:
                 checkpoint()
-            return
+            return True
         middle = count // 2
-        tighten_chunk(
+        left_ok = tighten_chunk(
             make_compress_chunk(chunk.sentences[:middle]),
             next_attempts,
             count_translated=count_translated,
             record_failure=record_failure,
         )
-        tighten_chunk(
+        right_ok = tighten_chunk(
             make_compress_chunk(chunk.sentences[middle:]),
             next_attempts,
             count_translated=count_translated,
             record_failure=record_failure,
         )
+        return left_ok or right_ok
 
     def tighten_all(
         targets: list[Sentence], *, count_translated: bool, record_failure: bool
     ) -> None:
         tighten_batches = [make_compress_chunk(c.sentences) for c in _chunks(targets)]
+        consecutive_failures = 0
         for index, chunk in enumerate(tighten_batches):
             check_cancelled(cancel_event)
             label = "压缩过长译文" if compress else "精简过长译文"
@@ -584,12 +583,35 @@ def translate_sentences(
                     index,
                     len(tighten_batches),
                 )
-            tighten_chunk(
-                chunk,
-                None,
-                count_translated=count_translated,
-                record_failure=record_failure,
-            )
+            try:
+                ok = tighten_chunk(
+                    chunk,
+                    None,
+                    count_translated=count_translated,
+                    record_failure=record_failure,
+                )
+            except TranslationError as exc:
+                if _is_fatal_translation_error(exc):
+                    if record_failure:
+                        raise
+                    logger.warning("自动压缩译文遇到致命错误，保留已有译文：%s", exc)
+                    return
+                raise
+            if ok:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                    if record_failure:
+                        report.stopped_reason = (
+                            f"连续 {consecutive_failures} 批压缩失败，翻译服务可能不可用。"
+                        )
+                        raise TranslationError(f"{report.stopped_reason}保留已有译文。")
+                    logger.warning(
+                        "连续 %d 批自动压缩失败，停止压缩并保留已有译文。",
+                        consecutive_failures,
+                    )
+                    return
             check_cancelled(cancel_event)
             if progress:
                 progress(
@@ -653,12 +675,13 @@ def translate_sentences(
                         tighten_all(over_sentences, count_translated=False, record_failure=False)
     finally:
         unregister_cancel_callback(cancel_translation, callback_signal)
-    report.flagged = check_translations(
-        sentences,
-        budgets,
-        budget_key,
-        only_ids=translated_ids,
-        source_language=source_language,
-        target_language=target_language,
-    )
+        if translated_ids:
+            report.flagged = check_translations(
+                sentences,
+                budgets,
+                budget_key,
+                only_ids=translated_ids,
+                source_language=source_language,
+                target_language=target_language,
+            )
     return report

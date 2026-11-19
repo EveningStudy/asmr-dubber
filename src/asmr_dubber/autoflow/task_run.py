@@ -11,6 +11,8 @@ from . import (
     stages,
 )
 from .constants import (
+    MODE_AUDIO,
+    MODE_VIDEO_HARMONIZED,
     ReferenceEventCallback,
 )
 from .domain import (
@@ -20,6 +22,7 @@ from .domain import (
     ToolPaths,
 )
 from .errors import VideoPreparerError
+from .modes import normalize_mode
 from .project_cli import (
     apply_shared_reference,
     ensure_autoflow_project_outputs,
@@ -316,12 +319,19 @@ def _subtitles_stage(
         state["status"] = "subtitles_ready"
         save_state(state_file, state)
     if not status_at_least(state, "subtitles_ready"):
+        normalized_mode = normalize_mode(str(state.get("mode") or MODE_AUDIO))
+        embed_subtitles = bool(state.get("embed_subtitles", True))
+        subtitles_only = bool(state.get("subtitles_only", False))
+        skip_sub_video = normalized_mode != MODE_AUDIO and (
+            not embed_subtitles or normalized_mode == MODE_VIDEO_HARMONIZED or subtitles_only
+        )
         project_cli.run_asmr_cli(
             paths,
             "subtitles",
             str(project_json),
             "--language",
             state.get("output_policy", {}).get("subtitle", "bilingual"),
+            *(("--no-video",) if skip_sub_video else ()),
         )
         state["status"] = "subtitles_ready"
         save_state(state_file, state)

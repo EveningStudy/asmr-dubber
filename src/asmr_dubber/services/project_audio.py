@@ -142,11 +142,34 @@ def preview_edge_tts_voice(voice: str) -> str:
 
 
 @lru_cache(maxsize=16)
-def _scored_reference_id(source: str, stamp: tuple, project_json: str) -> str | None:
-    from ..models import DubProject
+def _scored_reference_id(
+    source: str,
+    stamp: tuple[Any, ...],
+    sentence_key: tuple[tuple[str, float, float, str, bool], ...],
+) -> str | None:
+    from ..models import AudioInfo, DubProject, Sentence
     from ..voice_reference import pick_reference_sentence
 
-    picked = pick_reference_sentence(DubProject.model_validate_json(project_json), Path(source))
+    stub = DubProject(
+        source=AudioInfo(
+            path=Path(source).name,
+            sha256=str(stamp[0]),
+            duration_seconds=1.0,
+            sample_rate=16000,
+            channels=1,
+        ),
+        sentences=[
+            Sentence(
+                id=sid,
+                start_seconds=start,
+                end_seconds=end,
+                source_text=text,
+                enabled=enabled,
+            )
+            for sid, start, end, text, enabled in sentence_key
+        ],
+    )
+    picked = pick_reference_sentence(stub, Path(source))
     return picked.id if picked is not None else None
 
 
@@ -157,8 +180,12 @@ def recommended_reference_id(project, directory: Path) -> str | None:
         info = source.stat()
     except OSError:
         return None
-    lines = project.model_dump_json(include={"source", "sentences"})
-    return _scored_reference_id(str(source), (info.st_size, info.st_mtime_ns), lines)
+    sentence_key = tuple(
+        (s.id, s.start_seconds, s.end_seconds, s.source_text, s.enabled) for s in project.sentences
+    )
+    return _scored_reference_id(
+        str(source), (project.source.sha256, info.st_size, info.st_mtime_ns), sentence_key
+    )
 
 
 def reference_picker(
@@ -266,13 +293,18 @@ def select_autoflow_project_reference(
     sentence = next(item for item in project.sentences if item.id == sentence_id)
     start = sentence.start_seconds if start_seconds is None else float(start_seconds)
     end = sentence.end_seconds if end_seconds is None else float(end_seconds)
-    if not (0 <= start < end <= project.source.duration_seconds):
+    if not (0 <= start < end <= project.source.duration_seconds + 0.25):
         raise ProjectError("参考范围必须在源音频内，且结束时间大于开始时间。")
-    if (start, end, source_text) != (sentence.start_seconds, sentence.end_seconds, None):
+    normalized_text = str(source_text).strip() if source_text is not None else sentence.source_text
+    if (start, end, normalized_text) != (
+        sentence.start_seconds,
+        sentence.end_seconds,
+        sentence.source_text,
+    ):
         sentence.start_seconds = start
         sentence.end_seconds = end
         if source_text is not None:
-            sentence.source_text = str(source_text).strip()
+            sentence.source_text = normalized_text
         sentence.tts_file = None
         sentence.tts_cache_key = None
         invalidate_outputs(project)
@@ -307,5 +339,6 @@ def select_autoflow_external_reference(
     project.settings.tts_reference_sentence_id = None
     if project.settings.tts_backend in {"indextts2_5", "indextts2"}:
         project.settings.tts_index_speaker_source = "external"
+    invalidate_outputs(project)
     save_project(project, directory)
     return f"已为当前批量任务导入外部参考音频：{stored.name}", str(stored)

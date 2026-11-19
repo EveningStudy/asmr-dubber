@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
+from ..app_logging import redact_sensitive
 from . import constants, stages
 from .constants import LOG_MAX_BYTES
 
@@ -82,6 +83,7 @@ def append_log(text: str) -> None:
 
     if not text:
         return
+    text = redact_sensitive(text)
     work_log = current_work_log()
     if work_log is not None:
         stages.append_work_log(work_log, text)
@@ -107,10 +109,11 @@ def log_event(message: str) -> None:
 def emit(message: str = "", *, error: bool = False) -> None:
     """Write ``message`` to AutoFlow logs and invoke the context-bound message callback."""
 
-    append_log(message)
+    redacted = redact_sensitive(message) if message else ""
+    append_log(redacted)
     callback = (_ON_ERROR_VAR.get() or _ON_MESSAGE_VAR.get()) if error else _ON_MESSAGE_VAR.get()
     if callback is not None:
-        callback(message)
+        callback(redacted)
 
 
 def emit_stage(stage: str) -> None:

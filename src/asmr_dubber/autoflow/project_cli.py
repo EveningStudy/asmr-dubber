@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import time
@@ -296,7 +297,8 @@ def wait_for_reference(
     runlog.emit(f"  {timeout_seconds} 秒内未选择则使用自动推荐的参考音频。")
 
     deadline = time.monotonic() + timeout_seconds
-    next_notice = time.monotonic() + 60
+    notice_step = 15 if timeout_seconds <= 120 else 30
+    next_notice = time.monotonic() + notice_step
     while True:
         reference_id = project_reference_id(project_json)
         if reference_id:
@@ -314,8 +316,14 @@ def wait_for_reference(
             emit("timeout", source="automatic")
             return True
         if now >= next_notice:
-            runlog.emit(f"  仍在等待参考音频，剩余约 {max(1, int(remaining // 60) + 1)} 分钟……")
-            next_notice = now + 60
+            secs = max(1, math.ceil(remaining))
+            if secs >= 60:
+                mins, rem_s = divmod(secs, 60)
+                span = f"{mins} 分 {rem_s} 秒" if rem_s else f"{mins} 分钟"
+            else:
+                span = f"{secs} 秒"
+            runlog.emit(f"  仍在等待参考音频，剩余约 {span}……")
+            next_notice = now + notice_step
         check_cancelled()
         time.sleep(min(2.0, remaining))
 

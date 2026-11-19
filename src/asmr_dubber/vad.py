@@ -110,24 +110,31 @@ def _speech_segments_from_probabilities(
     triggered = False
     start_frame = 0
     possible_end: int | None = None
+    silence_frames = 0
     for index, probability in enumerate(probabilities):
         if not triggered and probability >= threshold:
             triggered = True
             start_frame = index
             possible_end = None
+            silence_frames = 0
             continue
         if not triggered:
             continue
         if probability < negative_threshold:
             if possible_end is None:
                 possible_end = index
-            if index - possible_end >= min_silence_frames:
+                silence_frames = 1
+            else:
+                silence_frames += 1
+            if silence_frames >= min_silence_frames:
                 if possible_end - start_frame >= min_speech_frames:
                     raw.append((start_frame * frame_samples, possible_end * frame_samples))
                 triggered = False
                 possible_end = None
-        elif probability >= threshold:
+                silence_frames = 0
+        else:
             possible_end = None
+            silence_frames = 0
     if triggered:
         end_frame = len(probabilities)
         if end_frame - start_frame >= min_speech_frames:
@@ -165,6 +172,14 @@ def _whisper_drc_waveform(waveform: np.ndarray, sample_rate: int = _SAMPLE_RATE)
     floor = float(np.percentile(positive, 12))
     peak = float(np.max(positive))
     if peak / max(floor, 1e-7) < 8.0:
+        if 1e-6 < peak < 10.0 ** (-35.0 / 20.0):
+            sample_peak = float(np.max(np.abs(samples)))
+            max_gain = 10.0 ** (18.0 / 20.0)
+            target_peak = 10.0 ** (-12.0 / 20.0)
+            gain = min(max_gain, target_peak / max(sample_peak, peak, 1e-7))
+            if gain > 1.05:
+                boosted = np.tanh(samples * gain * 1.1) / 1.1
+                return boosted.astype(np.float32)
         return waveform
     # Smooth envelope across 3 frames (~120 ms) to avoid pumping on syllables.
     kernel = np.array([0.25, 0.5, 0.25], dtype=np.float64)

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..app_logging import redact_sensitive
 from ..autoflow import engine, runlog
 from ..errors import ProjectError
 from ..platforms import open_directory
@@ -261,4 +262,4 @@ def recent_log_text(max_characters: int = 30_000) -> str:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return f"无法读取自动处理日志：{exc}"
-    return text[-max_characters:]
+    return redact_sensitive(text[-max_characters:])

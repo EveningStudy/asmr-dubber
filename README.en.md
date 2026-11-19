@@ -118,7 +118,7 @@ For developers: [Changelog](CHANGELOG.en.md) · [Architecture](docs/en/ARCHITECT
 - **Your data lives in the program folder.** Projects, models and settings are under `.asmr-dubber`. Copy the whole folder to back up or move.
 - **API keys are stored in plain text** at `.asmr-dubber/config/secrets.json`. Do not share that folder.
 - **Cloud services receive your content.** Translation sends the script text. Cloud dubbing sends the translation and the reference audio. Nothing is uploaded when you use local models only.
-- **Vocal separation and the fully dubbed mix are experimental.** They can leave traces of the original voice, keep the original where a whisper was not recognized, and can damage sound effects.
+- **The fully dubbed mix relies on vocal separation.** It can leave traces of the original voice, keep the original where a quiet whisper was not recognized, and can slightly affect sound effects.
 
 ## License
 

@@ -129,5 +129,4 @@ For custom deployments. Most people never need these.
 | `ASMR_DUBBER_FFMPEG` | Use a specific FFmpeg |
 | `ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS=1` | Allow international download sources for this run |
 | `ASMR_DUBBER_UI_USERNAME`, `ASMR_DUBBER_UI_PASSWORD` | Username and password for remote access |
-| `ASMR_DUBBER_MAX_UPLOAD_SIZE` | Upload size limit, 20gb by default |
 | `MODELSCOPE_API_TOKEN` | Token for private model repositories |

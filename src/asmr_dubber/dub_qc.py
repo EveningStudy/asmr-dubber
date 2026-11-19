@@ -100,6 +100,15 @@ def _read_16k_mono(path: Path) -> np.ndarray:
     return arr
 
 
+_FASTER_WHISPER_CANDIDATES = (
+    "Systran/faster-whisper-large-v3",
+    "Systran/faster-whisper-large-v2",
+    "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "Systran/faster-whisper-medium",
+    "Systran/faster-whisper-small",
+)
+
+
 def transcribe_dub_clip(
     audio_path: Path,
     language: str,
@@ -146,17 +155,31 @@ def transcribe_dub_clip(
                 return_time_stamps=False,
             )
             return str(res[0].text or "").strip() if res else ""
-        except Exception:
-            logger.debug("Qwen3-ASR dub QC skipped; trying faster-whisper.", exc_info=True)
+        except Exception as exc:
+            logger.warning("Qwen3-ASR 配音回听不可用，尝试 Faster-Whisper：%s", exc)
 
-    # 2. Fallback to faster-whisper large-v2 if installed locally.
-    fw_id = "Systran/faster-whisper-large-v2"
-    fw_path = cached_model_path(fw_id)
+    # 2. Fallback to any locally installed Faster-Whisper model.
+    fw_path = next(
+        (
+            path
+            for fw_id in _FASTER_WHISPER_CANDIDATES
+            if (path := cached_model_path(fw_id)) is not None
+        ),
+        None,
+    )
     if fw_path is not None:
         try:
             from faster_whisper import WhisperModel
 
-            device = "cuda" if settings.asr_device.startswith("cuda") else "cpu"
+            use_cuda = False
+            if settings.asr_device.startswith("cuda"):
+                try:
+                    import torch
+
+                    use_cuda = torch.cuda.is_available()
+                except ImportError:
+                    use_cuda = False
+            device = "cuda" if use_cuda else "cpu"
             compute = "float16" if device == "cuda" else "int8"
             model = _session_model(
                 f"dub-qc-fw:{fw_path}:{device}",
@@ -170,8 +193,12 @@ def transcribe_dub_clip(
                 condition_on_previous_text=False,
             )
             return "".join(seg.text for seg in segments).strip()
-        except Exception:
-            logger.debug("faster-whisper dub QC unavailable.", exc_info=True)
+        except Exception as exc:
+            logger.warning("Faster-Whisper 配音回听失败，已跳过：%s", exc)
+    else:
+        logger.warning(
+            "未找到可用的本地 ASR 模型（Qwen3-ASR / Faster-Whisper），已跳过配音回听检查。"
+        )
 
     return None
 

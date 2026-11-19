@@ -44,6 +44,10 @@ from .audio_dsp import (
     active_rms_dbfs as active_rms_dbfs,
 )
 from .audio_dsp import (
+    apply_edge_fade,
+    apply_peak_ceiling,
+)
+from .audio_dsp import (
     dominant_channel_mono as dominant_channel_mono,
 )
 from .audio_dsp import (
@@ -519,12 +523,9 @@ def build_chinese_stem(
         clip_info = sf.info(event.audio_path)
         if clip_info.samplerate <= 0 or clip_info.frames <= 0:
             raise ProjectError(f"中文句子 {event.sentence_id} 的音频参数无效。")
-        resampled_frames = (
-            math.ceil(
-                clip_info.frames / max(event.speed_factor, 0.70) * rate / clip_info.samplerate
-            )
-            + 64
-        )
+        resampled_frames = math.ceil(
+            clip_info.frames / max(event.speed_factor, 0.70) * rate / clip_info.samplerate
+        ) + max(4096, round(rate * 0.25))
         start_frame = round(event.start_seconds * rate)
         prepared.append((event, start_frame))
         total_frames = max(total_frames, start_frame + resampled_frames)
@@ -610,18 +611,17 @@ def build_chinese_stem(
                             target_active_rms_dbfs,
                             max(minimum_active_rms_dbfs, target_level),
                         )
-                    clip = prepare_chinese_clip(
-                        clip,
-                        rate,
-                        target_active_rms_dbfs=target_level,
-                        max_loudness_boost_db=max_loudness_boost_db,
-                        peak_dbfs=line_peak_dbfs,
-                        fade_ms=fade_ms,
-                    )
+                    level = active_rms_dbfs(clip, rate)
+                    if math.isfinite(level):
+                        gain_db = min(target_level - level, max_loudness_boost_db)
+                        clip = (clip * np.float32(10.0 ** (gain_db / 20.0))).astype(np.float32)
                 if voice_matcher is not None:
                     clip = voice_matcher.apply(
                         clip, event, voice_match_strength, bandwidth_extension, whisper_match
                     )
+                clip = apply_edge_fade(clip, rate, fade_ms)
+                if normalize_loudness:
+                    clip = apply_peak_ceiling(clip, line_peak_dbfs)
                 clip *= gain
                 clip_offset = 0
                 if start_frame < 0:
@@ -631,9 +631,16 @@ def build_chinese_stem(
                 if len(usable):
                     end_frame = start_frame + len(usable)
                     if end_frame > total_frames:
-                        raise ProjectError(
-                            f"中文句子 {event.sentence_id} 重采样长度超出预估；已停止以避免截断。"
-                        )
+                        extra = end_frame - total_frames
+                        require_disk_space(destination.parent, extra * channels * 8)
+                        stem.seek(total_frames)
+                        written = 0
+                        while written < extra:
+                            check_cancelled()
+                            chunk = min(block_frames, extra - written)
+                            stem.write(zeros[:chunk])
+                            written += chunk
+                        total_frames = end_frame
                     stem.seek(start_frame)
                     current = stem.read(len(usable), dtype="float32", always_2d=True)
                     if spatial_reference_path is not None:

@@ -25,6 +25,7 @@ class ScriptQuote(BaseModel):
     id: str
     quote: str = Field(min_length=1)
     skip_before: str = ""
+    skip_after: str = ""
 
 
 class ScriptCorrection(BaseModel):
@@ -140,6 +141,7 @@ def _validated_script_spans(
     for item, sentence in zip(envelope.corrections, recognized, strict=True):
         spans = item.script_spans
         skipped: list[dict[str, object]] = []
+        skipped_after: list[dict[str, object]] = []
         if item.script_quotes:
             if spans or item.script_ids:
                 raise TranslationError(f"{item.id} 不得混用 script_quotes 与旧范围字段。")
@@ -159,7 +161,7 @@ def _validated_script_spans(
                         raise TranslationError(f"台本 {previous_key} 尚有未分配的文字。")
                 start = quote_ends.get(selection.id, 0)
                 # An explicit literal skip is auditable and avoids ambiguous find().
-                literal = selection.skip_before + selection.quote
+                literal = selection.skip_before + selection.quote + selection.skip_after
                 if not text.startswith(literal, start):
                     raise TranslationError(
                         f"{item.id} 的 {selection.id} 引文不是剩余台本的原文前缀；"
@@ -176,8 +178,18 @@ def _validated_script_spans(
                     )
                 quote_start = start + len(selection.skip_before)
                 quote_end = quote_start + len(selection.quote)
+                after_end = quote_end + len(selection.skip_after)
+                if selection.skip_after:
+                    skipped_after.append(
+                        {
+                            "id": selection.id,
+                            "start": quote_end,
+                            "end": after_end,
+                            "text": selection.skip_after,
+                        }
+                    )
                 spans.append(ScriptSpan(id=selection.id, start=quote_start, end=quote_end))
-                quote_ends[selection.id] = quote_end
+                quote_ends[selection.id] = after_end
                 quote_position = position
         if spans and item.script_ids:
             raise TranslationError(
@@ -253,12 +265,24 @@ def _validated_script_spans(
             else:
                 parts.append(text[span.start : span.end])
             previous_part_id = span.id
-            ends[span.id] = span.end
+            explicit_after = next(
+                (
+                    entry
+                    for entry in skipped_after
+                    if entry["id"] == span.id and entry["start"] == span.end
+                ),
+                None,
+            )
+            ends[span.id] = (
+                int(str(explicit_after["end"])) if explicit_after is not None else span.end
+            )
             owners[span.id] = context
             last_position = position
             allocation: dict[str, object] = {"sentence_id": item.id, **span.model_dump()}
             if explicit_skip is not None:
                 allocation["skipped_before"] = explicit_skip
+            if explicit_after is not None:
+                allocation["skipped_after"] = explicit_after
             allocations.append(allocation)
         separator = "" if any(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", p) for p in parts) else " "
         result[item.id] = separator.join(parts).strip()

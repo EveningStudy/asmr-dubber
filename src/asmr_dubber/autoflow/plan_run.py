@@ -22,6 +22,7 @@ from .domain import (
 from .errors import VideoPreparerError
 from .fileio import atomic_write_text
 from .merged_output_files import _timeline_from_states, build_merged_outputs, write_smart_summary
+from .output_policy import variant_output_dir
 from .plan_files import (
     cleanup_completed_workspace,
     output_mapping_complete,
@@ -135,19 +136,29 @@ def _finish_merged_from_tracks(
         runlog.emit("\n合并成品已经完整，跳过重复生成。")
         merged_descriptor["outputs"] = dict(previous_merged["outputs"])
         merged_descriptor["status"] = "completed"
-        output_files.write_timestamp_document(
-            {
-                "source_folder": str(plan.folder),
-                "mode": plan.mode,
-                "folder_name_translation": folder_translation,
-                "title_translations": title_translations,
-                "timeline": _timeline_from_states(states),
-                "timestamp_footer": config.timestamp_footer,
-                "timestamp_footer_position": config.timestamp_footer_position,
-                "harmonized_delay_seconds": config.harmonized_delay_seconds,
-            },
-            Path(str(merged_descriptor["output"])),
+        merged_root = Path(str(merged_descriptor["output"]))
+        variants = (
+            list(config.output_policy.get("variants") or []) if not plan.subtitles_only else []
         )
+        timestamp_dirs = (
+            [variant_output_dir(merged_root, variant) for variant in variants]
+            if variants
+            else [merged_root]
+        )
+        timestamp_state = {
+            "source_folder": str(plan.folder),
+            "mode": plan.mode,
+            "folder_name_translation": folder_translation,
+            "title_translations": title_translations,
+            "timeline": _timeline_from_states(states),
+            "timestamp_footer": config.timestamp_footer,
+            "timestamp_footer_position": config.timestamp_footer_position,
+            "harmonized_delay_seconds": config.harmonized_delay_seconds,
+        }
+        for target_dir in timestamp_dirs:
+            output_files.write_timestamp_document(timestamp_state, target_dir)
+        if variants:
+            (merged_root / "时间戳.txt").unlink(missing_ok=True)
     else:
         runlog.emit("\n分轨项目已完成，正在从分轨结果生成合并成品（不会再次 ASR/TTS）……")
         merged_outputs = build_merged_outputs(
@@ -267,8 +278,9 @@ def execute_prepared_smart_plan(
     if plan.source_subtitles_only:
         from .source_subtitles import execute_source_subtitles
 
-        execute_source_subtitles(paths, config, plan)
-        return []
+        return execute_source_subtitles(
+            paths, config, plan, reference_event_callback=reference_event_callback
+        )
 
     folder = plan.folder
     output_root = plan.output_root
@@ -282,6 +294,8 @@ def execute_prepared_smart_plan(
     prepare_smart_output_root(
         output_root, plan_id=plan.plan_id, force=plan.force, rebuild=plan.rebuild
     )
+    if (plan.rebuild or plan.force) and reference_event_callback is not None:
+        reference_event_callback({"kind": "plan_rebuild_started", "plan_id": plan.plan_id})
 
     _announce_plan(plan)
 

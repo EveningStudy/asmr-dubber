@@ -312,3 +312,101 @@ def test_models_catalog_and_recommended_bundle_align_with_onboarding(tmp_path, m
         assert len(source.splitlines()) < 500, name
         for text in re.findall(r"\bt\('([^'$]*[一-鿿][^']*)'", source):
             assert text in translations, f"{name}: {text}"
+
+
+def test_asr_upgrade_prompt_targets_upgraded_legacy_japanese_gpu_users(tmp_path, monkeypatch):
+    from asmr_dubber.services.application import Application
+
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
+    monkeypatch.setattr(runtime, "detect_hardware", lambda: GPU)
+    monkeypatch.setattr(
+        runtime,
+        "backend_status",
+        lambda spec, **_kw: runtime.BackendStatus("missing", "未安装"),
+    )
+    settings.update({"asr_backend": "faster_whisper", "onboarding_completed": True})
+
+    boot = Application(tmp_path / "tasks.json").bootstrap()
+    prompt = boot["asr_upgrade_prompt"]
+    assert prompt is not None
+    assert prompt["current_backend"] == "faster_whisper"
+    assert prompt["recommended_backend"] == "anime_whisper"
+    assert prompt["recommended_ready"] is False
+
+    # Already-installed anime-whisper reports recommended_ready=True.
+    ready_prompt = onboarding.asr_upgrade_prompt(
+        settings.current(),
+        onboarding_needed=False,
+        model_items=[{"id": "anime_whisper", "state": "ready"}],
+    )
+    assert ready_prompt is not None and ready_prompt["recommended_ready"] is True
+
+    # Fresh install with no saved settings.json and no installed legacy ASR is not nagged
+    # (even if an env API key makes onboarding_needed=False and load_user_settings falls back).
+    fresh_home = tmp_path / "fresh"
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(fresh_home))
+    assert (
+        onboarding.asr_upgrade_prompt(
+            settings.Settings(asr_backend="parakeet_nemo"),
+            onboarding_needed=False,
+            model_items=[{"id": "parakeet_nemo", "state": "missing"}],
+        )
+        is None
+    )
+    # If the user actually installed Parakeet without saving settings.json, prompt them.
+    installed_legacy = onboarding.asr_upgrade_prompt(
+        settings.Settings(asr_backend="parakeet_nemo"),
+        onboarding_needed=False,
+        model_items=[{"id": "parakeet_nemo", "state": "ready"}],
+    )
+    assert installed_legacy is not None and installed_legacy["current_backend"] == "parakeet_nemo"
+    monkeypatch.setenv("ASMR_DUBBER_HOME", str(tmp_path))
+
+    # Never nag when onboarding is required, language is non-Japanese, hardware is CPU-only,
+    # or the user picked a non-legacy recognizer such as Qwen3-ASR.
+    assert onboarding.asr_upgrade_prompt(settings.current(), onboarding_needed=True) is None
+    assert (
+        onboarding.asr_upgrade_prompt(
+            settings.current().model_copy(update={"default_source_language": "en"}),
+            onboarding_needed=False,
+        )
+        is None
+    )
+    assert (
+        onboarding.asr_upgrade_prompt(
+            settings.current().model_copy(update={"asr_backend": "qwen3_asr"}),
+            onboarding_needed=False,
+        )
+        is None
+    )
+    cpu_profile = replace(GPU, gpu=None, vram_gb=None, cuda_available=False)
+    monkeypatch.setattr(runtime, "detect_hardware", lambda: cpu_profile)
+    assert onboarding.asr_upgrade_prompt(settings.current(), onboarding_needed=False) is None
+
+    # Dismissing persists in interface.json, hides the prompt, and stays hidden in parameters.
+    monkeypatch.setattr(runtime, "detect_hardware", lambda: GPU)
+    settings.update({"asr_upgrade_prompt_dismissed": True})
+    assert settings.current().asr_upgrade_prompt_dismissed is True
+    assert "asr_upgrade_prompt_dismissed" in (tmp_path / "config" / "interface.json").read_text(
+        encoding="utf-8"
+    )
+    assert Application(tmp_path / "tasks.json").bootstrap()["asr_upgrade_prompt"] is None
+    assert not any(
+        item["key"] == "asr_upgrade_prompt_dismissed" and not item.get("hidden")
+        for item in __import__("asmr_dubber.services.parameters", fromlist=["x"]).catalog()
+    )
+
+    # All new upgrade prompt strings have English translations.
+    translations = locale_catalog()
+    for text in ("推荐切换到 anime-whisper", "立即切换", "切换并下载"):
+        assert text in translations
+
+
+def test_full_dub_labels_no_longer_marked_experimental():
+    from asmr_dubber.services.parameters import catalog as parameter_catalog
+
+    mix_mode = next(item for item in parameter_catalog() if item["key"] == "separation_mix_mode")
+    replace_label = next(label for label, value in mix_mode["options"] if value == "replace")
+    assert replace_label == "完全配音版"
+    assert locale_catalog("zh")["replacement"] == "完全配音版"
+    assert locale_catalog("en")["完全配音版"] == "Fully dubbed"

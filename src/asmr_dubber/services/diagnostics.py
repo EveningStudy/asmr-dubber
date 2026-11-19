@@ -9,6 +9,7 @@ out; only ids, times and the failure reason are included.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import subprocess
@@ -41,7 +42,13 @@ def known_secret_values() -> list[str]:
         values += [saved_service_key(name) for name in key_statuses()["services"]]
     except Exception:
         pass
-    return [value for value in values if value and len(value) >= 6]
+    for preset in PROVIDER_PRESETS.values():
+        env_name = str(preset.get("env") or "")
+        if env_name:
+            values.append(os.environ.get(env_name, "").strip())
+    for extra in ("REPLICATE_API_TOKEN", "HF_TOKEN", "HUGGINGFACE_HUB_TOKEN"):
+        values.append(os.environ.get(extra, "").strip())
+    return sorted({value for value in values if value and len(value) >= 6}, key=len, reverse=True)
 
 
 def scrub_text(text: str, secrets: list[str]) -> str:
@@ -179,9 +186,16 @@ def build_bundle(
     files["settings.json"] = json.dumps(
         scrub_value(settings_values, secrets), ensure_ascii=False, indent=2
     )
-    files["logs/application.log"] = scrub_text(_tail(application_log_path()), secrets)
+    app_log = application_log_path()
+    files["logs/application.log"] = scrub_text(_tail(app_log), secrets)
+    app_log_backup = app_log.with_suffix(".log.1")
+    if app_log_backup.is_file():
+        files["logs/application.log.1"] = scrub_text(_tail(app_log_backup), secrets)
     if engine.LOG_FILE.is_file():
         files["logs/autoflow.log"] = scrub_text(_tail(engine.LOG_FILE), secrets)
+    autoflow_backup = engine.LOG_FILE.with_suffix(".log.1")
+    if autoflow_backup.is_file():
+        files["logs/autoflow.log.1"] = scrub_text(_tail(autoflow_backup), secrets)
     failures: list[dict[str, Any]] = []
     plan_notes: list[dict[str, Any]] = []
     for plan in plans:
@@ -189,6 +203,9 @@ def build_bundle(
         log = stages.work_log_path(engine.STATE_ROOT, str(plan.plan_id), work)
         if log.is_file():
             files[f"logs/work-{log.stem}.log"] = scrub_text(_tail(log), secrets)
+        work_backup = log.with_suffix(".log.1")
+        if work_backup.is_file():
+            files[f"logs/work-{log.stem}.log.1"] = scrub_text(_tail(work_backup), secrets)
         failures += failed_sentences(plan)
         plan_notes.append(
             {

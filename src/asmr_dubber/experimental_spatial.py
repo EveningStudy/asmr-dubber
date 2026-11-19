@@ -24,9 +24,10 @@ def _short_reference_fallback(mono, reference, settings, sentence_id):
     if reference.size and rms(reference) >= 1e-7:
         levels = np.sqrt(np.mean(reference.astype(np.float64) ** 2, axis=0))
         ratio = float(np.clip(levels[1] / max(levels[0], 1e-8), 1 / 16, 16))
-    gains = np.array([1, ratio]) * np.sqrt(2 / (1 + ratio**2))
-    strength = settings.spatial_rtf_strength
-    result = mono[:, None] * (gains * strength + (1 - strength))
+    strength = float(settings.spatial_rtf_strength)
+    ratio = ratio**strength
+    gains = np.array([1.0, ratio]) * np.sqrt(2.0 / (1.0 + ratio**2))
+    result = mono[:, None] * gains
     peak = float(np.max(np.abs(result), initial=0))
     ceiling = 10 ** (settings.chinese_line_peak_dbfs / 20)
     if peak > ceiling:
@@ -41,10 +42,18 @@ def _short_reference_fallback(mono, reference, settings, sentence_id):
 
 def stereo_reference(source: Path, directory: Path) -> Path:
     from . import experimental_mix
+    from .audio import probe_audio
 
     destination = directory / "analysis/spatial-reference.wav"
     if not destination.is_file():
         destination.parent.mkdir(parents=True, exist_ok=True)
+        target_rate = 48000
+        try:
+            src_rate = probe_audio(source).sample_rate
+            if src_rate > 0:
+                target_rate = min(src_rate, 48000)
+        except Exception:
+            target_rate = 48000
         temporary = destination.with_name(f".{uuid.uuid4().hex}.wav")
         try:
             experimental_mix._run_ffmpeg(
@@ -58,7 +67,7 @@ def stereo_reference(source: Path, directory: Path) -> Path:
                     "-ac",
                     "2",
                     "-ar",
-                    "48000",
+                    str(target_rate),
                     "-c:a",
                     "pcm_f32le",
                     "-rf64",
@@ -84,11 +93,11 @@ def vocal_weighted_reference(source: Path, vocals: Path, directory: Path) -> Pat
     other, which a mask shared by both ears cannot tell apart.
     """
     from . import experimental_mix
-    from .audio import sha256_file
+    from .hashing import cached_sha256_file
     from .spatial_rtf import istft, stft
 
     base = experimental_mix.stereo_reference(source, directory)
-    key = f"vocal-weighted-v2|{sha256_file(base)}|{sha256_file(vocals)}"
+    key = f"vocal-weighted-v2|{cached_sha256_file(base)}|{cached_sha256_file(vocals)}"
     destination = directory / "analysis/spatial-reference-vocal.wav"
     receipt = destination.with_suffix(".key")
     if destination.is_file() and receipt.is_file() and receipt.read_text("utf-8") == key:
@@ -184,7 +193,7 @@ def spatialize_clip(
                     audio = experimental_mix._short_reference_fallback(
                         mono[a:b],
                         ref,
-                        settings.model_copy(update={"spatial_rtf_strength": 1.0}),
+                        settings,
                         event.sentence_id,
                     )
                 elif rms(mono[a:b]) < 1e-8:
@@ -194,6 +203,7 @@ def spatialize_clip(
                         mono[a:b],
                         ref,
                         rate,
+                        strength=settings.spatial_rtf_strength,
                         level_strength=settings.spatial_rtf_level_strength,
                         color_strength=settings.spatial_rtf_color_strength,
                         fft_size=settings.spatial_rtf_fft_size,
@@ -204,7 +214,7 @@ def spatialize_clip(
                     audio = experimental_mix._short_reference_fallback(
                         mono[a:b],
                         ref,
-                        settings.model_copy(update={"spatial_rtf_strength": 1.0}),
+                        settings,
                         event.sentence_id,
                     )
                 else:
@@ -231,8 +241,6 @@ def spatialize_clip(
         result /= np.maximum(weights[:, None], 1e-8)
         if not single_chunk and rms(result) > 1e-8:
             result *= rms(mono) / rms(result)
-    strength = settings.spatial_rtf_strength
-    result = result * strength + mono[:, None] * (1 - strength)
     peak = float(np.max(np.abs(result)))
     ceiling = 10 ** (settings.chinese_line_peak_dbfs / 20)
     if peak > ceiling:

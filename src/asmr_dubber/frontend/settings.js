@@ -39,7 +39,10 @@ export function renderKeys() {
   );
 }
 function keyRow(kind, id, label, status) {
-  const available = kind === 'translation' ? state.boot.keys.translation_available?.[id] : status.startsWith('已');
+  const available =
+    kind === 'translation'
+      ? state.boot.keys.translation_available?.[id]
+      : status.includes('以便携式明文保存');
   return `<div class="row"><div class="grow"><div class="t">${esc(t(label))}</div><div class="d">${esc(t(status))}</div></div><button class="btn" data-key-kind="${kind}" data-key-name="${id}">${t(available ? '更换' : '填写')}</button><button class="btn plain small" data-clear-key="${id}" data-key-kind="${kind}">${t('清除')}</button></div>`;
 }
 export async function refreshStorage() {
@@ -81,19 +84,25 @@ async function cleanDialog(root, category) {
     },
   );
 }
+export function renderDiagnosticTasks() {
+  const box = $('#diagnosticTasks');
+  if (!box) return;
+  box.innerHTML = state.tasks
+    .filter((task) => ['health', 'repair', 'diagnostic', 'preview_edge'].includes(task.kind))
+    .map(
+      (task) =>
+        `${taskHTML(task)}${task.result?.message ? `<pre class="log">${esc(task.result.message)}</pre>` : ''}${task.result?.url ? `<audio controls src="${esc(task.result.url)}"></audio>` : ''}`,
+    )
+    .join('');
+}
 export async function refreshLogs() {
   const result = await api('logs/get');
   $('#logsView').innerHTML =
     `<div class="card"><div class="row"><div class="grow"><div class="t">${t('检查运行环境')}</div><div class="d">${t('显卡驱动、模型文件、运行库。出问题时先点这个。')}</div></div><button class="btn" id="checkHealth">${t('开始检查')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复微软 VC++ 运行库')}</div><div class="d">${t('从微软官网下载，可能会请求管理员权限。')}</div></div><button class="btn" data-repair="vc">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复某个模型的运行环境')}</div></div><select id="healthBackend">${options(
       Object.entries(state.boot.health_backends).map(([id, label]) => [label, id]),
       Object.keys(state.boot.health_backends)[0],
-    )}</select><button class="btn" data-repair="backend">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('导出日志')}</div><div class="d">${t('Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。')}</div></div><a class="btn" download="ASMR-Dubber.log.txt" href="${esc(result.url)}">${t('导出')}</a></div></div><div class="label"><b>${t('最近日志')}</b></div><div class="card"><pre class="log">${esc(result.text)}</pre></div><div id="diagnosticTasks">${state.tasks
-      .filter((task) => ['health', 'repair', 'diagnostic', 'preview_edge'].includes(task.kind))
-      .map(
-        (task) =>
-          `${taskHTML(task)}${task.result?.message ? `<pre class="log">${esc(task.result.message)}</pre>` : ''}${task.result?.url ? `<audio controls src="${esc(task.result.url)}"></audio>` : ''}`,
-      )
-      .join('')}</div>`;
+    )}</select><button class="btn" data-repair="backend">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('导出日志')}</div><div class="d">${t('Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。')}</div></div><a class="btn" download="ASMR-Dubber.log.txt" href="${esc(result.url)}">${t('导出')}</a></div></div><div class="label"><b>${t('最近日志')}</b></div><div class="card"><pre class="log">${esc(result.text)}</pre></div><div id="diagnosticTasks"></div>`;
+  renderDiagnosticTasks();
   $('#checkHealth').onclick = guard(() => startTask('health', { backend: $('#healthBackend').value }, false));
 }
 export function initializeSettings() {

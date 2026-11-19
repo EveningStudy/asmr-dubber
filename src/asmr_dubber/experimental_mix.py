@@ -61,7 +61,9 @@ def compose_replacement_bed(
             )
         )
     ]
-    rate = sf.info(background).samplerate
+    bed_info = sf.info(background)
+    bed_rate = bed_info.samplerate
+    rate = project.source.sample_rate if project.source.sample_rate > 0 else bed_rate
     padding = settings.separation_keep_padding_ms / 1000
     ranges = sorted(
         (max(0, round((s.start_seconds - padding) * rate)), round((s.end_seconds + padding) * rate))
@@ -75,7 +77,10 @@ def compose_replacement_bed(
             merged.append([lo, hi])
     target = directory / "mix/replacement-background.wav"
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{uuid.uuid4().hex}.wav")
+    token = uuid.uuid4().hex
+    temporary = target.with_name(f".{token}.wav")
+    bed_resampled = target.with_name(f".{token}.bed.wav")
+    voice_resampled = target.with_name(f".{token}.voice.wav")
     fade = max(1, round(rate * 0.01))
     selected_ids = {s.id for s in selected}
     overrides = sorted(
@@ -87,9 +92,23 @@ def compose_replacement_bed(
         key=lambda s: (s.original_audio_enabled is False, s.start_seconds, s.id),
     )
     try:
+        with sf.SoundFile(background) as bed_check, sf.SoundFile(vocals) as voice_check:
+            if (
+                voice_check.frames != bed_check.frames
+                or voice_check.channels != bed_check.channels
+                or voice_check.samplerate != bed_rate
+            ):
+                raise ProjectError("分离人声与背景时间轴不一致。")
+            source_frames = bed_check.frames
+        bed_path = background
+        voice_path = vocals
+        if bed_rate != rate:
+            target_frames = max(1, round(source_frames * rate / bed_rate))
+            bed_path = _resample_file(background, bed_resampled, rate, target_frames)
+            voice_path = _resample_file(vocals, voice_resampled, rate, target_frames)
         with (
-            sf.SoundFile(background) as bed,
-            sf.SoundFile(vocals) as voice,
+            sf.SoundFile(bed_path) as bed,
+            sf.SoundFile(voice_path) as voice,
             sf.SoundFile(
                 temporary,
                 "w",
@@ -99,12 +118,6 @@ def compose_replacement_bed(
                 subtype="FLOAT",
             ) as out,
         ):
-            if (
-                voice.frames != bed.frames
-                or voice.channels != bed.channels
-                or voice.samplerate != rate
-            ):
-                raise ProjectError("分离人声与背景时间轴不一致。")
             for offset in range(0, bed.frames, rate * 10):
                 check_cancelled()
                 base = bed.read(rate * 10, dtype="float32", always_2d=True)
@@ -136,7 +149,8 @@ def compose_replacement_bed(
                 out.write(base + original_voice * mask[:, None])
         temporary.replace(target)
     finally:
-        temporary.unlink(missing_ok=True)
+        for path in (temporary, bed_resampled, voice_resampled):
+            path.unlink(missing_ok=True)
     atomic_write_text(
         directory / "mix/experimental-report.json",
         json.dumps(
@@ -326,9 +340,14 @@ def replacement_windows(
             upper,
         )
         raw.append((max(0.0, start), max(start, end)))
+    kept_spans = [(s.start_seconds, s.end_seconds) for s in ordered if not sentence_is_replaced(s)]
     merged: list[list[float]] = []
     for lo, hi in sorted(raw):
-        if merged and lo - merged[-1][1] < _WINDOW_MERGE_GAP_SECONDS:
+        has_kept_between = bool(
+            merged
+            and any(max(k_lo, merged[-1][1]) < min(k_hi, lo) - 1e-6 for k_lo, k_hi in kept_spans)
+        )
+        if merged and not has_kept_between and lo - merged[-1][1] < _WINDOW_MERGE_GAP_SECONDS:
             merged[-1][1] = max(merged[-1][1], hi)
         else:
             merged.append([lo, hi])
@@ -568,9 +587,14 @@ def compose_speech_replacement(
             with sf.SoundFile(decoded) as probe:
                 sample = probe.read(min(frames, rate * 180), dtype="float32", always_2d=True)
             floor = noise_floor(sample)
-            floor_noise = synthesize_floor(floor, rate * 10 + 1)
+            loop_len = max(rate * 10, 4096)
+            xfade = min(rate // 2, loop_len // 4)
+            raw_floor = synthesize_floor(floor, loop_len + xfade)
+            t = np.linspace(0.0, np.pi / 2.0, xfade, dtype=np.float32)[:, None]
+            floor_noise = raw_floor[:loop_len].copy()
+            floor_noise[:xfade] = raw_floor[:xfade] * np.sin(t) + raw_floor[loop_len:] * np.cos(t)
             floor_level = float(np.sqrt(np.mean(floor_noise.astype(np.float64) ** 2)))
-            del sample
+            del sample, raw_floor
         with (
             sf.SoundFile(decoded) as original,
             sf.SoundFile(voice_file) as voice,
@@ -581,9 +605,15 @@ def compose_speech_replacement(
             if voice.channels != channels:
                 raise ProjectError("分离人声与原音频声道数不一致。")
             block = rate * 10
-            for offset in range(0, frames, block):
+            overlap = min(rate // 2, block // 2)
+            step = max(1, block - overlap) if frames > block else block
+            previous_tail: np.ndarray | None = None
+            for offset in range(0, frames, step):
                 check_cancelled()
+                original.seek(offset)
+                voice.seek(offset)
                 raw = original.read(block, dtype="float32", always_2d=True)
+                raw_orig = raw
                 estimate = voice.read(len(raw), dtype="float32", always_2d=True)
                 lo_time, hi_time = offset / rate, (offset + len(raw)) / rate
                 times = (offset + np.arange(len(raw))) / rate
@@ -591,13 +621,20 @@ def compose_speech_replacement(
                 for lo, hi in windows:
                     if lo - fade <= hi_time and hi + fade >= lo_time:
                         removal = np.maximum(removal, _ramp(times, lo, hi, fade))
+                removal = np.clip(removal, 0.0, 1.0)
+                vocal_delta = -removal
                 for lo, hi, gain in gains:
                     if lo - fade <= hi_time and hi + fade >= lo_time:
-                        removal += (1 - removal) * (1 - gain) * _ramp(times, lo, hi, fade)
-                active = removal != 0
-                if active.any():
+                        vocal_delta += (1.0 - removal) * (gain - 1.0) * _ramp(times, lo, hi, fade)
+                if np.any(vocal_delta != 0):
                     raw = raw.copy()
-                    raw[active] -= estimate[active] * removal[active, None].astype(np.float32)
+                    active_v = vocal_delta != 0
+                    raw[active_v] += estimate[active_v] * vocal_delta[active_v, None].astype(
+                        np.float32
+                    )
+                if np.any(removal > 1e-4):
+                    if raw is raw_orig:
+                        raw = raw.copy()
                     if settings.replacement_residual_suppression > 0.0:
                         raw = _suppress_vocal_residual(
                             raw,
@@ -622,10 +659,24 @@ def compose_speech_replacement(
                         left = float(np.percentile(levels, 10)) if count else 0.0
                         missing = math.sqrt(max(0.0, 1.0 - (left / floor_level) ** 2))
                         if missing > 0.05:
-                            shift = offset % max(1, len(floor_noise) - len(raw))
-                            noise = floor_noise[shift : shift + len(raw)]
+                            idx = (offset + np.arange(len(raw))) % len(floor_noise)
+                            noise = floor_noise[idx]
                             raw += noise * (removal * missing)[:, None].astype(np.float32)
-                out.write(raw)
+                if previous_tail is not None and len(previous_tail):
+                    ov = min(len(previous_tail), len(raw))
+                    if raw is raw_orig:
+                        raw = raw.copy()
+                    ramp = np.linspace(0.0, 1.0, ov, dtype=np.float32)[:, None]
+                    raw[:ov] = previous_tail[:ov] * (1.0 - ramp) + raw[:ov] * ramp
+                is_last = offset + len(raw) >= frames
+                if is_last or overlap <= 0 or len(raw) <= overlap:
+                    out.write(raw)
+                    previous_tail = None
+                    if is_last:
+                        break
+                else:
+                    out.write(raw[:-overlap])
+                    previous_tail = raw[-overlap:].copy()
         temporary.replace(target)
         _write_residual_report(
             project,

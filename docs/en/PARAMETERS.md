@@ -4,7 +4,7 @@ English | [中文](../PARAMETERS.md)
 
 # Complete parameter reference
 
-Generated from `services/parameters.py`: **247 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
+Generated from `services/parameters.py`: **248 fields**. Schema defaults differ from saved values. Backend/language choices can set effective models, prompts, devices and voices; see the feature chapters.
 
 Project fields appear in project panels/new defaults; global fields affect future projects/queue entries. Always means no static visibility condition; expand advanced groups. Options can depend on backend. Validation also checks cross-field dependencies, language and JSON contracts.
 
@@ -49,10 +49,10 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `asr_vad_filter`<br>Use native VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_vad_mode`<br>Mode | string<br>project | `off` | off, backend, asmr | Always |
 | `asr_vad_min_silence_ms`<br>VAD minimum silence | integer<br>project | `500` | ≥50; ≤10000 | asr_vad_mode in ["backend"] |
-| `asr_asmr_vad_threshold`<br>ASMR VAD speech threshold | number<br>project | `0.35` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD minimum speech | integer<br>project | `150` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_silence_ms`<br>ASMR VAD minimum silence | integer<br>project | `100` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD boundary padding | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_threshold`<br>ASMR VAD speech threshold | number<br>project | `0.35` | ≥0.05; ≤0.95 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD minimum speech | integer<br>project | `150` | ≥20; ≤10000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_min_silence_ms`<br>ASMR VAD minimum silence | integer<br>project | `100` | ≥20; ≤10000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD boundary padding | integer<br>project | `200` | ≥0; ≤5000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
 | `aligner_model`<br>Alignment model | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
 | `asr_forced_alignment_enabled`<br>Qwen3 alignment | boolean<br>project | `false` | — | Always |
 | `asr_diarize_speakers`<br>Automatically separate speakers | boolean<br>project | `false` | — | Always |
@@ -224,10 +224,10 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `chinese_line_peak_dbfs`<br>Sentence peak ceiling | number<br>project | `-9.0` | ≥-20.0; ≤-1.0 | Always |
 | `chinese_stem_peak_dbfs`<br>Dubbing track peak ceiling | number<br>project | `-3.0` | ≥-12.0; ≤-0.1 | Always |
 | `chinese_fade_ms`<br>Sentence fade in and out | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
-| `replacement_chinese_gain_db`<br>Fully dubbed additional gain | number<br>project | `0.0` | ≥-40.0; ≤20.0 | Always |
-| `replacement_normalize_chinese_loudness`<br>Fully dubbed loudness mode | boolean<br>project | `true` | — | Always |
+| `replacement_chinese_gain_db`<br>Fully dubbed additional gain | number<br>project | `0.0` | ≥-40.0; ≤20.0 | separation_mix_mode in ["replace"] |
+| `replacement_normalize_chinese_loudness`<br>Fully dubbed loudness mode | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
 | `replacement_match_source_loudness`<br>Match corresponding original | boolean<br>project | `true` | — | Always |
-| `replacement_chinese_relative_loudness_db`<br>Fully dubbed relative to source | number<br>project | `0.0` | ≥-24.0; ≤24.0 | Always |
+| `replacement_chinese_relative_loudness_db`<br>Fully dubbed relative to source | number<br>project | `0.0` | ≥-24.0; ≤24.0 | separation_mix_mode in ["replace"] |
 | `replacement_chinese_min_active_rms_dbfs`<br>Minimum loudness | number<br>project | `-42.0` | ≥-60.0; ≤-20.0 | Always |
 | `replacement_chinese_target_active_rms_dbfs`<br>Maximum loudness / uniform target | number<br>project | `-20.0` | ≥-50.0; ≤-16.0 | Always |
 | `replacement_chinese_max_loudness_boost_db`<br>Maximum boost per sentence | number<br>project | `12.0` | ≥0.0; ≤30.0 | Always |
@@ -269,6 +269,7 @@ Paths use `<program>` instead of this checkout. Empty prompts use built-in langu
 | `open_browser`<br>Open browser on startup | boolean<br>global | `true` | — | Always |
 | `download_source`<br>Download source | string<br>global | `modelscope` | ^(modelscope&#124;original)$; modelscope, original | Always |
 | `onboarding_completed`<br>onboarding_completed | boolean<br>global | `false` | — | Always |
+| `asr_upgrade_prompt_dismissed`<br>asr_upgrade_prompt_dismissed | boolean<br>global | `false` | — | Always |
 
 ## Batch
 

@@ -169,9 +169,14 @@ def _mix_project_impl(
             loudness_reference = pipeline.make_analysis_copy(reference_source, reference_audio)
             pipeline.atomic_write_text(receipt, reference_key)
     else:
-        loudness_reference = pipeline.make_analysis_copy(
-            source, project_dir / "analysis" / "asr_16k_mono.wav"
-        )
+        if project.source.channels >= 2:
+            from .experimental_mix import stereo_reference
+
+            loudness_reference = stereo_reference(source, project_dir)
+        else:
+            loudness_reference = pipeline.make_analysis_copy(
+                source, project_dir / "analysis" / "asr_16k_mono.wav"
+            )
     if progress:
         progress("按对应源语言句子校准中文响度（不移动或修改原音频）", 0, max(1, len(events)))
     spatial_kwargs = {}
@@ -275,7 +280,7 @@ def _mix_project_impl(
             )
         pipeline.check_cancelled(cancel_event)
     if keep_stem:
-        project.chinese_stem_file = str(stem.relative_to(project_dir))
+        project.chinese_stem_file = stem.relative_to(project_dir).as_posix()
     elif effective_rtf:
         # Each mix keeps a separate validated intermediate for its own loudness settings.
         project.chinese_stem_file = None
@@ -286,11 +291,11 @@ def _mix_project_impl(
         except OSError:
             # The final output is already complete.  Retain the path when an
             # antivirus/player still holds the intermediate file on Windows.
-            project.chinese_stem_file = str(stem.relative_to(project_dir))
+            project.chinese_stem_file = stem.relative_to(project_dir).as_posix()
             if progress:
                 progress("最终音频已完成；中文中间轨暂时被占用，未能自动删除", 1, 1)
     project.output_file = (
-        str(mixed_output.relative_to(project_dir)) if mixed_output is not None else None
+        mixed_output.relative_to(project_dir).as_posix() if mixed_output is not None else None
     )
     project.output_video_file = None
     project.subtitle_video_file = None

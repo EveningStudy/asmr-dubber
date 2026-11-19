@@ -10,7 +10,7 @@ ASMR Dubber 各版本的重要变更记录在此文件中。
 - **完全配音版推荐 IndexTTS-2.5，自有 IndexTTS2 Worker**：“完全配音版”预设在已安装 IndexTTS-2.5 时自动切换到它（未安装则提示）。新增独立 `indextts2_worker.py` 并升级 `indextts25_worker.py`，支持原生 S2Mel 目标时长控制（`tts_fit_source_duration`）、`--daemon` 常驻 JSONL 协议与多候选可复现种子。在 7 段评测素材上，起点偏差中位数降至 `38.0 ms`（`p95 = 107.6 ms`），需加速超过 `1.1×` 的句子降至 `8%`。
 - **变速仍用 FFmpeg `atempo`，并支持放慢**：生成时贴合原句时长后，需要变速的句子已很少；剩下的用 `atempo` 处理（`0.90×` 放慢至 `1.25×` 加速）。盲听中它比内置相位锁定声码器更干净。
 - **正常/耳语双音色锚点与声学贴合**：项目自动分别挑选正常发声和耳语参考锚点（`tts_dual_voice_anchor`）；音色匹配（`voice_match.py`）合并为单次 STFT 处理，含仅针对有声谐波的气声化转换（`replacement_whisper_match = 0.65`）与 `60–260 Hz` 近讲低频贴合。
-- **读音复听与残留识别质检闭环**：新增可选的目标语语音识别复听检查（`tts_asr_quality_check`，含普通话音节近似容错与自动重做退避），以及混音后替换窗口内的日语残留识别（`replacement_residual_asr_check`）与人声频段维纳残差抑制（`replacement_residual_suppression`）。
+- **读音复听与残留识别质检闭环**：新增可选的目标语语音识别复听检查（`tts_asr_quality_check`，含普通话音节近似容错与自动重做退避；两次重试仍不达标时保留字错率最低的一版），以及混音后替换窗口内的日语残留识别（`replacement_residual_asr_check`）与人声频段维纳残差抑制（`replacement_residual_suppression`）。
 - **双语版空间一致性提升**：多片段空间参考估计与双耳功率响度对齐使双语版耳间声级误差（`ild_error_db`）从 `15.53 dB` 降至 `3.39 dB`，双耳时间差误差从 `0.72 ms` 降至 `0.22 ms`。
 - **音色克隆参考改回 16 kHz，消除破音**：全带宽参考会把原声里的气声和口水音带进 IndexTTS，盲听中出现破音、电音；新项目默认 `reference_audio_mode = "legacy"`（16 kHz 单声道）。这样合成的配音 8 kHz 以上是空的，“补全高频”的重建增益提高 2 dB（抵消双耳渲染削掉的高频），评测中 8–12 kHz 与原声相差从 −2.1 dB 缩小到 −0.1 dB。已有项目保留原设置。
 - **完全配音版响度按单声道功率对齐**：此前按左右声道功率之和计算原句响度，替换后的配音整体比原声响约 3 dB；现在逐句与原声持平。
@@ -25,8 +25,9 @@ ASMR Dubber 各版本的重要变更记录在此文件中。
 - **本机大文件免复制与程序生命周期**：新增仅限本机访问的原生文件选择（`files/media`）与同盘视频文件的硬链接建项（音频仍复制一份，原文件被标签软件改动也不影响项目）、增量任务轮询（`tasks/poll`）、单行保存 I/O 加速、首次启动向导、质量与成品类型预设、全局任务面板，以及左下角“退出程序”按钮。
 
 ### 批量引擎、数据模型 v4 与国内镜像
-- **批量进程内执行与常驻模型池**：AutoFlow 批量队列在进程内直接调用流水线函数（`inprocess_pipeline.py`），配合常驻识别会话与常驻 IndexTTS 守护进程池（`tts_daemon.py`），识别和配音模型在整个队列只加载一次（实测 10 个作品时加载约占总时长 10%–14%）；移除 `autoflow/` 中所有交互式 `input()` 与裸 `print()`。
+- **批量进程内执行与常驻模型池**：AutoFlow 批量队列在进程内直接调用流水线函数（`inprocess_pipeline.py`），配合常驻识别会话与常驻 IndexTTS 守护进程池（`tts_daemon.py`），识别和配音模型在整个队列只加载一次（实测 10 个作品时加载约占总时长 10%–14%）；移除 `autoflow/` 中所有交互式 `input()` 与裸 `print()`。批量输出文件夹统一命名为 `完全配音版`（已有的旧 `替换配音版` 成品仍兼容续跑与复用）。
 - **项目文件 Schema v4 与代码模块化**：项目清单升级为 `PROJECT_SCHEMA_VERSION = 4`（`Sentence.target_text` 保留 `zh_text` 兼容属性、`SentenceStatus` 枚举、结构化 `error_code` 与解决提示、`ProjectSettings` 分组子模型）；全部源码文件拆分至 `<= 800` 行（`frontend/*.js` 与 `services/*.py` `<= 500` 行）。
+- **升级识别模型提醒**：从 2.x 升级且全局日语识别模型仍为 Faster-Whisper / Parakeet / Kotoba-Whisper 时，启动会弹出一次提示，可一键切换到 `anime-whisper`（未安装时自动跳转下载）或保持原设置不再提示。
 - **ModelScope 国内镜像扩充**：新增 `anime-whisper`、`qwen3-asr-1.7b` 与 `qwen3-asr-1.7b-ja-anime-galgame` 离线模型包国内镜像。
 
 ### 处理速度参考（RTX 5070 Ti Laptop GPU，12 GB 显存）

@@ -16,6 +16,7 @@ other backend (including the onomatopoeia split in ``segmentation``).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
@@ -27,12 +28,13 @@ import soundfile as sf
 from .asr_token_timing import active_frames, group_tokens
 from .constants import DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, require_cuda, resolve_transformers_model_source
-from .errors import AsmrDubberError
+from .errors import AsmrDubberError, OperationCancelledError
 from .languages import SpeechSourceLanguage
 from .models import ProjectSettings, Sentence
-from .segmentation import TimedToken
+from .segmentation import TimedToken, restore_punctuation
 from .task_control import CancellationSignal, check_cancelled
 
+logger = logging.getLogger(__name__)
 Progress = Callable[[str, int, int], None]
 
 QWEN3_ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
@@ -100,6 +102,10 @@ def _vad_clips(
     sample_rate = sf.info(analysis_audio).samplerate
     groups = _speech_groups(segments, sample_rate)
     if not groups:
+        from .asr import _REVIEW_MODELS
+
+        if _REVIEW_MODELS.get() is not None:
+            return sample_rate, [], []
         raise AsmrDubberError("日语 ASMR 专用 VAD 没有检测到语音；请降低 VAD 阈值后重试。")
     pieces: list[tuple[int, int]] = []
     clips = []
@@ -218,16 +224,17 @@ def transcribe_qwen3_asr(
                     if not text:
                         continue
                     texts.append(text)
-                    tokens.extend(
-                        group_tokens(
-                            text,
-                            getattr(result.time_stamps, "items", None),
-                            groups[i],
-                            sample_rate,
-                            clips[i],
-                        )
+                    clip_tokens = group_tokens(
+                        text,
+                        getattr(result.time_stamps, "items", None),
+                        groups[i],
+                        sample_rate,
+                        clips[i],
                     )
-            return _finish_tokens(tokens, "".join(texts), language, settings, source_language)
+                    tokens.extend(restore_punctuation(clip_tokens, text))
+            return _finish_tokens(
+                tokens, "".join(texts), language, settings, source_language, restore=False
+            )
         sample_rate, ranges = _audio_file_chunk_ranges(analysis_audio, _QWEN_WINDOW_SECONDS)
         with sf.SoundFile(analysis_audio) as audio:
             for index, (start, end) in enumerate(ranges, start=1):
@@ -250,12 +257,14 @@ def transcribe_qwen3_asr(
                 if not text:
                     continue
                 texts.append(text)
-                tokens.extend(
-                    group_tokens(
-                        text, getattr(result.time_stamps, "items", None), (start, end), sample_rate
-                    )
+                window_tokens = group_tokens(
+                    text, getattr(result.time_stamps, "items", None), (start, end), sample_rate
                 )
-        return _finish_tokens(tokens, "".join(texts), language, settings, source_language)
+                tokens.extend(restore_punctuation(window_tokens, text))
+        joiner = " " if source_language == "en" else ""
+        return _finish_tokens(
+            tokens, joiner.join(texts), language, settings, source_language, restore=False
+        )
     finally:
         del model
         _cleanup_cuda()
@@ -272,6 +281,10 @@ def _speech_groups(segments: list[Any], sample_rate: int) -> list[tuple[int, int
         else:
             groups.append([start, end])
     return [(start, end) for start, end in groups if end > start]
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).casefold()
 
 
 def transcribe_anime_whisper(
@@ -302,6 +315,8 @@ def transcribe_anime_whisper(
     if use_cuda:
         require_cuda()
     sample_rate, groups, clips = _vad_clips(analysis_audio, settings, progress, cancel_event)
+    if not clips:
+        return [], "Japanese"
 
     # 1. Recognise every speech group on its own (no timestamps; not what it was trained for).
     source, revision = resolve_transformers_model_source(settings.asr_model)
@@ -382,23 +397,47 @@ def transcribe_anime_whisper(
                     text=[texts[i] for i in chunk],
                     language=["Japanese"] * len(chunk),
                 )
-            except Exception:  # one bad clip must not lose the whole batch
-                results = [None] * len(chunk)
+            except (OperationCancelledError, KeyboardInterrupt):
+                raise
+            except Exception as exc:
+                if _is_cuda_oom(exc):
+                    _cleanup_cuda(force=True)
+                    raise
+                logger.warning("批量对齐失败（%d 段），降级为逐段对齐：%s", len(chunk), exc)
+                results = []
+                for item in chunk:
+                    check_cancelled(cancel_event)
+                    try:
+                        single = aligner_model.align(
+                            audio=[(clips[item], sample_rate)],
+                            text=[texts[item]],
+                            language=["Japanese"],
+                        )
+                        results.append(single[0] if single else None)
+                    except (OperationCancelledError, KeyboardInterrupt):
+                        raise
+                    except Exception as single_exc:
+                        if _is_cuda_oom(single_exc):
+                            _cleanup_cuda(force=True)
+                            raise
+                        logger.warning(
+                            "单段对齐失败（第 %d 段），按语音区间均匀分布：%s", item, single_exc
+                        )
+                        results.append(None)
             for i, result in zip(chunk, results, strict=True):
-                tokens.extend(
-                    group_tokens(
-                        texts[i],
-                        getattr(result, "items", None),
-                        groups[i],
-                        sample_rate,
-                        clips[i],
-                    )
+                clip_tokens = group_tokens(
+                    texts[i],
+                    getattr(result, "items", None),
+                    groups[i],
+                    sample_rate,
+                    clips[i],
                 )
+                tokens.extend(restore_punctuation(clip_tokens, texts[i]))
     finally:
         del aligner_model
         _cleanup_cuda()
     finished, detected_lang = _finish_tokens(
-        tokens, "".join(texts[i] for i in pending), "Japanese", settings, "ja"
+        tokens, "".join(texts[i] for i in pending), "Japanese", settings, "ja", restore=False
     )
     return (
         _preserve_nonverbal_vad_groups(finished, texts, groups, clips, sample_rate),

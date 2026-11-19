@@ -209,8 +209,31 @@ def _require_reference_text(project: DubProject, reference: VoiceReference) -> N
 
 def _uses_reference_audio(project: DubProject) -> bool:
     if project.settings.tts_backend == "mimo_tts":
-        return project.settings.tts_model == "mimo-v2.5-tts-voiceclone"
+        model = project.settings.tts_model.strip() or TTS_BACKENDS["mimo_tts"].default_model
+        return model == "mimo-v2.5-tts-voiceclone"
     return TTS_BACKENDS[project.settings.tts_backend].reference_audio
+
+
+def prepare_index_voice_and_emotion_references(
+    project: DubProject,
+    project_dir: Path,
+    source: Path,
+    sentence: Sentence,
+) -> VoiceReference:
+    """Prepare IndexTTS speaker reference and optional emotion audio reference."""
+    reference = prepare_index_speaker_reference(project, project_dir, source, sentence)
+    emotion = prepare_index_emotion_reference(project, project_dir, source, sentence, reference)
+    if emotion is not None:
+        return VoiceReference(
+            path=reference.path,
+            text=reference.text,
+            identity=reference.identity,
+            language=reference.language,
+            sentence=reference.sentence,
+            emotion_path=emotion.path,
+            emotion_identity=emotion.identity,
+        )
+    return reference
 
 
 def _empty_reference() -> VoiceReference:
@@ -421,11 +444,16 @@ def synthesize_with_selected_backend(
                         if sentence is None:
                             break
                         try:
-                            reference = (
-                                prepare_voice_reference(project, project_dir, source, sentence)
-                                if _uses_reference_audio(project)
-                                else _empty_reference()
-                            )
+                            if project.settings.tts_backend == "indextts2_api":
+                                reference = prepare_index_voice_and_emotion_references(
+                                    project, project_dir, source, sentence
+                                )
+                            elif _uses_reference_audio(project):
+                                reference = prepare_voice_reference(
+                                    project, project_dir, source, sentence
+                                )
+                            else:
+                                reference = _empty_reference()
                             _require_reference_text(project, reference)
                             output = _cache_output(project, sentence, project_dir)
                             future = executor.submit(
@@ -486,29 +514,12 @@ def synthesize_with_selected_backend(
             output = _cache_output(project, sentence, project_dir)
             try:
                 if project.settings.tts_backend in {"indextts2_5", "indextts2"}:
-                    reference = prepare_index_speaker_reference(
+                    reference = prepare_index_voice_and_emotion_references(
                         project,
                         project_dir,
                         source,
                         sentence,
                     )
-                    emotion = prepare_index_emotion_reference(
-                        project,
-                        project_dir,
-                        source,
-                        sentence,
-                        reference,
-                    )
-                    if emotion is not None:
-                        reference = VoiceReference(
-                            path=reference.path,
-                            text=reference.text,
-                            identity=reference.identity,
-                            language=reference.language,
-                            sentence=reference.sentence,
-                            emotion_path=emotion.path,
-                            emotion_identity=emotion.identity,
-                        )
                 else:
                     reference = prepare_voice_reference(project, project_dir, source, sentence)
                 _require_reference_text(project, reference)

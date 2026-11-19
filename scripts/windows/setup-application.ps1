@@ -12,7 +12,41 @@ $BundledCoreWheelsReady = (
         Select-Object -First 1)
 )
 
+function Test-ASMRDubberExtraModulesReady {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonPath,
+        [Parameter(Mandatory = $true)][string]$ExtraSpec,
+        [Parameter(Mandatory = $true)][string]$WorkingRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { return $false }
+    $Modules = New-Object System.Collections.Generic.List[string]
+    if ($ExtraSpec -match "asr-faster-whisper") { [void]$Modules.Add("faster_whisper") }
+    if ($ExtraSpec -match "asr-kotoba-whisper") { [void]$Modules.Add("transformers") }
+    if ($ExtraSpec -match "asr-forced-aligner") { [void]$Modules.Add("qwen_asr") }
+    if ($ExtraSpec -match "asr-asmr-vad") {
+        [void]$Modules.Add("onnxruntime")
+        [void]$Modules.Add("transformers")
+    }
+    if ($Modules.Count -eq 0) { return $true }
+    $ModuleList = ($Modules | Select-Object -Unique) -join ", "
+    $Code = @"
+import sys
+try:
+    import $ModuleList
+except Exception:
+    sys.exit(1)
+"@
+    $ExitCode = Invoke-ASMRDubberProcess -FilePath $PythonPath `
+        -ArgumentList @("-c", $Code) -WorkingDirectory $WorkingRoot
+    return $ExitCode -eq 0
+}
+
 $ApplicationDependenciesReady = Test-ASMRDubberApplicationRuntime -PortableRoot $DataRoot
+if ($ApplicationDependenciesReady) {
+    $ApplicationDependenciesReady = Test-ASMRDubberExtraModulesReady `
+        -PythonPath $Python -ExtraSpec $Extra -WorkingRoot $Root
+}
 if (-not $ApplicationDependenciesReady) {
     Write-SetupHost "正在安装应用依赖：$Extra" -ForegroundColor Cyan
     $ApplicationArguments = @(
@@ -102,8 +136,9 @@ if (-not $ApiClientsReady) {
         throw "在线/API 客户端安装后仍不完整。"
     }
 }
-if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot)) {
-    throw "基础应用或在线/API 客户端安装后仍不完整。"
+if (-not (Test-ASMRDubberCoreRuntime -PortableRoot $DataRoot) -or `
+    -not (Test-ASMRDubberExtraModulesReady -PythonPath $Python -ExtraSpec $Extra -WorkingRoot $Root)) {
+    throw "基础应用或可选运行依赖安装后仍不完整。"
 }
 Invoke-Checked -FilePath $Python `
     -ArgumentList @("-m", "compileall", "-q", "-f", (Join-Path $Root "src\asmr_dubber")) `

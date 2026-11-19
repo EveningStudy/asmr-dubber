@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import soundfile as sf
 import soxr
@@ -74,6 +78,8 @@ def _extract_fullband_reference(source: Path, destination: Path, start: float, e
                 "-map",
                 "0:a:0",
                 "-vn",
+                "-ac",
+                "2",
                 "-c:a",
                 "pcm_f32le",
                 str(temporary),
@@ -82,7 +88,7 @@ def _extract_fullband_reference(source: Path, destination: Path, start: float, e
         samples, rate = sf.read(temporary, dtype="float32", always_2d=True)
     finally:
         temporary.unlink(missing_ok=True)
-    mono = dominant_channel_mono(samples[:, :2], rate)
+    mono = dominant_channel_mono(samples, rate)
     if rate > 48_000:
         mono = soxr.resample(mono, rate, 48_000, quality="VHQ")
         rate = 48_000
@@ -119,6 +125,8 @@ def make_asr_analysis_copy(source: Path, destination: Path) -> Path:
                 "-map",
                 "0:a:0",
                 "-vn",
+                "-ac",
+                "2",
                 "-ar",
                 "16000",
                 "-c:a",
@@ -343,13 +351,23 @@ def render_subtitled_video(
     failures: list[str] = []
     input_arguments = ["-i", str(source_video)]
     audio_maps = ["-map", "0:a?"]
+    audio_disposition: list[str] = []
     if replacement_audio is not None:
         input_arguments.extend(["-i", str(replacement_audio)])
         audio_maps = ["-map", "1:a:0", "-map", "0:a?"]
+        audio_disposition = [
+            "-disposition:a",
+            "0",
+            "-disposition:a:0",
+            "default",
+            "-disposition:a:1",
+            "0",
+        ]
 
     video_encoders = [
         ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"],
         ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"],
+        ["-c:v", "libopenh264", "-b:v", "6M", "-pix_fmt", "yuv420p"],
         ["-c:v", "mpeg4", "-q:v", "2", "-pix_fmt", "yuv420p"],
     ]
     audio_variants = (
@@ -380,6 +398,7 @@ def render_subtitled_video(
                             "0",
                             *video_arguments,
                             *audio_arguments,
+                            *audio_disposition,
                             "-movflags",
                             "+faststart",
                             str(temporary),
@@ -440,6 +459,7 @@ def render_subtitled_video(
                             "-c:v",
                             "copy",
                             *audio_arguments,
+                            *audio_disposition,
                             *subtitle_arguments,
                             "-metadata:s:s:0",
                             "language="
@@ -466,3 +486,95 @@ def render_subtitled_video(
     finally:
         shutil.rmtree(render_dir, ignore_errors=True)
     raise AsmrDubberError("生成带字幕视频失败：" + "；".join(failures[-3:]))
+
+
+@contextmanager
+def open_audio_for_analysis(source: Path) -> Iterator[sf.SoundFile]:
+    """Open ``source`` via soundfile, falling back to FFmpeg float WAV for video/m4a containers."""
+    from . import audio
+
+    try:
+        with sf.SoundFile(source) as handle:
+            yield handle
+            return
+    except (OSError, RuntimeError, ValueError):
+        pass
+    with tempfile.TemporaryDirectory(prefix="asmr-probe-") as tmpdir:
+        decoded = Path(tmpdir) / "decoded.wav"
+        audio._run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-c:a",
+                "pcm_f32le",
+                "-rf64",
+                "auto",
+                str(decoded),
+            ]
+        )
+        with sf.SoundFile(decoded) as handle:
+            yield handle
+
+
+def read_clip_for_window(
+    audio: sf.SoundFile, rate: int, start_seconds: float, end_seconds: float
+) -> Any:
+    import numpy as np
+
+    lo = max(0, min(audio.frames, round(start_seconds * rate)))
+    hi = max(lo, min(audio.frames, round(end_seconds * rate)))
+    if hi <= lo:
+        return np.zeros((0, audio.channels), dtype=np.float32)
+    audio.seek(lo)
+    return audio.read(hi - lo, dtype="float32", always_2d=True)
+
+
+def louder_ear_frame_levels(audio_data: Any, rate: int, frame_seconds: float = 0.02) -> Any:
+    import numpy as np
+
+    hop = max(1, round(rate * frame_seconds))
+    arr = np.asarray(audio_data, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    count = len(arr) // hop
+    if count == 0:
+        return np.zeros(0)
+    frames = arr[: count * hop].reshape(count, hop, arr.shape[1])
+    return np.max(np.sqrt(np.mean(frames**2, axis=1)), axis=1)
+
+
+def source_noise_floor(audio: sf.SoundFile, rate: int, frame_seconds: float = 0.02) -> float:
+    import numpy as np
+
+    levels = np.concatenate(
+        [
+            louder_ear_frame_levels(block, rate, frame_seconds)
+            for block in audio.blocks(blocksize=rate * 30, dtype="float32", always_2d=True)
+        ]
+    )
+    return float(np.percentile(levels[levels > 0], 10)) if np.any(levels > 0) else 1e-9
+
+
+def louder_ear_mono(clip: Any) -> Any:
+    import numpy as np
+
+    if clip.ndim == 1 or clip.shape[1] == 1:
+        return clip.reshape(-1)
+    ear_rms = np.sqrt(np.mean(clip.astype(np.float64) ** 2, axis=0))
+    return clip[:, int(np.argmax(ear_rms))]
+
+
+def clip_snr_db(clip: Any, rate: int, floor: float) -> float | None:
+    import math
+
+    import numpy as np
+
+    levels = louder_ear_frame_levels(clip, rate)
+    if not len(levels) or levels.max() <= 0:
+        return None
+    active = levels[levels >= levels.max() * 0.1]
+    return 20.0 * math.log10(max(float(np.mean(active)), 1e-9) / max(floor, 1e-9))

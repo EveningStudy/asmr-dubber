@@ -28,16 +28,46 @@ class StemEvent:
     trim_end_seconds: float | None = None
 
 
-def dominant_channel_mono(audio: np.ndarray, rate: int) -> np.ndarray:
-    """Fold a binaural clip to mono without the comb filtering of a plain L+R sum.
+def downmix_to_stereo(audio: np.ndarray) -> np.ndarray:
+    """Downmix >2 channel surround audio to stereo while preserving Center (ITU-R BS.775)."""
+    data = np.asarray(audio, dtype=np.float32)
+    if data.ndim == 1:
+        return data[:, None]
+    channels = data.shape[1]
+    if channels <= 2:
+        return data
+    inv_sqrt2 = math.sqrt(0.5)
+    left = data[:, 0].astype(np.float64)
+    right = data[:, 1].astype(np.float64)
+    if channels == 3:
+        center = data[:, 2].astype(np.float64) * inv_sqrt2
+        left += center
+        right += center
+    elif channels == 4:
+        left += data[:, 2].astype(np.float64) * inv_sqrt2
+        right += data[:, 3].astype(np.float64) * inv_sqrt2
+    elif channels == 5:
+        center = data[:, 2].astype(np.float64) * inv_sqrt2
+        left += center + data[:, 3].astype(np.float64) * inv_sqrt2
+        right += center + data[:, 4].astype(np.float64) * inv_sqrt2
+    else:
+        # Standard 5.1 / 7.1 WAV layout: FL(0), FR(1), FC(2), LFE(3), Ls(4), Rs(5), [Lb(6), Rb(7)].
+        center = data[:, 2].astype(np.float64) * inv_sqrt2
+        left += center + data[:, 4].astype(np.float64) * inv_sqrt2
+        right += center + data[:, 5].astype(np.float64) * inv_sqrt2
+        if channels >= 8:
+            left += data[:, 6].astype(np.float64) * inv_sqrt2
+            right += data[:, 7].astype(np.float64) * inv_sqrt2
+    return np.column_stack((left, right)).astype(np.float32)
 
-    A voice at one ear arrives louder and earlier on that side.  When one channel
-    clearly dominates it is used alone; otherwise the channels are time-aligned by
-    cross-correlation (up to 1 ms, the largest interaural delay) before averaging.
-    """
+
+def dominant_channel_mono(audio: np.ndarray, rate: int) -> np.ndarray:
+    """Fold a binaural or surround clip to mono without comb loss or dropping Center."""
     data = np.asarray(audio, dtype=np.float32)
     if data.ndim == 1 or data.shape[1] == 1:
         return data.reshape(-1)
+    if data.shape[1] > 2:
+        data = downmix_to_stereo(data)
     left, right = data[:, 0].astype(np.float64), data[:, 1].astype(np.float64)
     power_left, power_right = float(np.mean(left**2)), float(np.mean(right**2))
     if min(power_left, power_right) <= 1e-14:
@@ -62,20 +92,29 @@ def dominant_channel_mono(audio: np.ndarray, rate: int) -> np.ndarray:
     return ((left + shifted) * 0.5).astype(np.float32)
 
 
-def _fold_by_energy(block: np.ndarray, frame: int) -> np.ndarray:
+def _fold_by_energy(block: np.ndarray, frame: int, rate: int = 16_000) -> np.ndarray:
     if block.shape[1] == 1:
         return block[:, 0]
+    if block.shape[1] > 2:
+        block = downmix_to_stereo(block)
     left, right = block[:, 0].astype(np.float64), block[:, 1].astype(np.float64)
     count = max(1, int(np.ceil(len(block) / frame)))
     padded = count * frame - len(block)
-    energy_left = np.pad(left**2, (0, padded)).reshape(count, frame).mean(axis=1)
-    energy_right = np.pad(right**2, (0, padded)).reshape(count, frame).mean(axis=1)
-    weight = (energy_left + 1e-12) / (energy_left + energy_right + 2e-12)
+    frames_l = np.pad(left, (0, padded)).reshape(count, frame)
+    frames_r = np.pad(right, (0, padded)).reshape(count, frame)
+    freqs = np.fft.rfftfreq(frame, 1.0 / rate)
+    vocal_band = (freqs >= 300.0) & (freqs <= 4000.0)
+    if not np.any(vocal_band):
+        vocal_band = slice(None)
+    spec_l = np.fft.rfft(frames_l, axis=1)[:, vocal_band]
+    spec_r = np.fft.rfft(frames_r, axis=1)[:, vocal_band]
+    amp_left = np.sqrt(np.mean(np.abs(spec_l) ** 2, axis=1))
+    amp_right = np.sqrt(np.mean(np.abs(spec_r) ** 2, axis=1))
+    weight = np.clip((amp_left + 1e-12) / (amp_left + amp_right + 2e-12), 0.2, 0.8)
     if count >= 3:
         weight = np.convolve(np.pad(weight, 1, mode="edge"), np.ones(3) / 3, mode="valid")
     positions = (np.arange(len(block)) + 0.5) / frame - 0.5
     weight_left = np.interp(positions, np.arange(count), weight)
-    # Equal energy gives 0.5/0.5 (the usual average); one silent ear gives the other in full.
     return (left * weight_left + right * (1.0 - weight_left)).astype(np.float32)
 
 
@@ -222,6 +261,28 @@ def active_rms_dbfs(waveform: np.ndarray, sample_rate: int, frame_ms: float = 50
     return 20.0 * math.log10(max(rms, 1e-12))
 
 
+def apply_edge_fade(waveform: np.ndarray, sample_rate: int, fade_ms: float) -> np.ndarray:
+    """Apply short linear fade-in/out ramps to avoid boundary clicks."""
+    clip = np.asarray(waveform, dtype=np.float32).reshape(-1).copy()
+    fade_frames = min(round(sample_rate * fade_ms / 1000.0), clip.size // 2)
+    if fade_frames > 0:
+        fade_in = np.linspace(0.0, 1.0, fade_frames, endpoint=False, dtype=np.float32)
+        fade_out = np.linspace(1.0, 0.0, fade_frames, endpoint=False, dtype=np.float32)
+        clip[:fade_frames] *= fade_in
+        clip[-fade_frames:] *= fade_out
+    return clip
+
+
+def apply_peak_ceiling(waveform: np.ndarray, peak_dbfs: float) -> np.ndarray:
+    """Scale down a clip if its sample peak exceeds ``peak_dbfs``."""
+    clip = np.asarray(waveform, dtype=np.float32).reshape(-1)
+    peak = float(np.max(np.abs(clip), initial=0.0))
+    ceiling = 10.0 ** (peak_dbfs / 20.0)
+    if peak > ceiling:
+        return (clip * np.float32(ceiling / peak)).astype(np.float32)
+    return clip
+
+
 def prepare_chinese_clip(
     waveform: np.ndarray,
     sample_rate: int,
@@ -238,18 +299,8 @@ def prepare_chinese_clip(
         gain_db = min(target_active_rms_dbfs - level, max_loudness_boost_db)
         clip *= np.float32(10.0 ** (gain_db / 20.0))
 
-    fade_frames = min(round(sample_rate * fade_ms / 1000.0), clip.size // 2)
-    if fade_frames > 0:
-        fade_in = np.linspace(0.0, 1.0, fade_frames, endpoint=False, dtype=np.float32)
-        fade_out = np.linspace(1.0, 0.0, fade_frames, endpoint=False, dtype=np.float32)
-        clip[:fade_frames] *= fade_in
-        clip[-fade_frames:] *= fade_out
-
-    peak = float(np.max(np.abs(clip), initial=0.0))
-    ceiling = 10.0 ** (peak_dbfs / 20.0)
-    if peak > ceiling:
-        clip *= np.float32(ceiling / peak)
-    return clip
+    clip = apply_edge_fade(clip, sample_rate, fade_ms)
+    return apply_peak_ceiling(clip, peak_dbfs)
 
 
 def _limiter_envelope(target: np.ndarray, release: float) -> np.ndarray:
@@ -358,7 +409,7 @@ class _VoiceMatcher:
         audio = self.handle.read(end - start, dtype="float32", always_2d=True)
         if not len(audio):
             return np.zeros(0, dtype=np.float32)
-        mono = dominant_channel_mono(audio[:, :2], source_rate)
+        mono = dominant_channel_mono(audio, source_rate)
         if source_rate != self.rate:
             mono = soxr.resample(mono, source_rate, self.rate, quality="HQ")
         return np.asarray(mono, dtype=np.float32)

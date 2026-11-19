@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from .errors import OperationCancelledError, SynthesisError
+from .errors import SynthesisError
 from .task_control import (
     CancellationSignal,
     check_cancelled,
@@ -183,6 +183,7 @@ class _ResidentWorker:
         started = time.monotonic()
         last_hb = started
         deadline = started + timeout_seconds
+        batch_finished = False
         try:
             try:
                 stdin.write(
@@ -230,6 +231,7 @@ class _ResidentWorker:
                     try:
                         done = json.loads(stripped)
                         if done.get("event") == "batch_done":
+                            batch_finished = True
                             return int(done.get("exit_code", 0))
                     except (json.JSONDecodeError, TypeError, ValueError):
                         pass
@@ -243,10 +245,9 @@ class _ResidentWorker:
                             generated_count,
                             total_items,
                         )
-        except (OperationCancelledError, KeyboardInterrupt):
-            self.close()
-            raise
         finally:
+            if not batch_finished:
+                self.close()
             unregister_process(proc, cancel_event)
 
 

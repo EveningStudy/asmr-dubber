@@ -1,4 +1,4 @@
-import { $, $$, state, esc, t, time, field, guard, projectBusy } from './session.js';
+import { $, $$, state, esc, t, time, field, guard, projectBusy, registerAudioStopper, stopAllAudio } from './session.js';
 import { dubCell, originalCell, flagsCell } from './project_review.js';
 import { refreshWaveform, initializeWaveform, clearWaveformCache } from './waveform_bar.js';
 
@@ -10,11 +10,19 @@ let undoStack = [];
 let redoStack = [];
 let sliceEndAt = null;
 let hooks = null;
+let rowHeights = new Map();
+let lastWindowKey = '';
+let pendingRenderAfterBlur = false;
+let detailsOpen = false;
 
 export function resetEditorHistory() {
   undoStack = [];
   redoStack = [];
   sliceEndAt = null;
+  rowHeights.clear();
+  lastWindowKey = '';
+  pendingRenderAfterBlur = false;
+  detailsOpen = false;
   clearWaveformCache();
 }
 
@@ -86,11 +94,63 @@ export async function redoEdit() {
   syncUndoButtons();
 }
 
+export function refreshRowUI(sentenceId) {
+  const sentence = state.project?.sentences.find((s) => s.id === sentenceId);
+  if (!sentence) return;
+  const tr = $(`#rows tr[data-sentence="${CSS.escape(sentenceId)}"]`);
+  if (tr) {
+    const dub = tr.querySelector('.dub');
+    const orig = tr.querySelector('.orig');
+    if (dub) dub.innerHTML = dubCell(sentence);
+    if (orig) orig.innerHTML = `${originalCell(sentence)}${flagsCell(sentence)}`;
+  }
+  hooks?.refreshStats?.();
+  if (sentenceId === hooks?.getSelected?.()) refreshWaveform(sentence);
+}
+
+export async function commitSentenceEdit(
+  sentence,
+  beforePatch,
+  patch,
+  { refresh = false, prevCandidates = null } = {},
+) {
+  const prevMeta = {
+    target_text: sentence.target_text,
+    tts_file: sentence.tts_file,
+    tts_url: sentence.tts_url,
+    tts_candidates: prevCandidates ?? sentence.tts_candidates,
+    status: sentence.status,
+    review_locked: sentence.review_locked,
+    translation_warning: sentence.translation_warning,
+  };
+  recordFieldUndo(sentence.id, beforePatch, patch);
+  Object.assign(sentence, patch);
+  if ('zh_text' in patch) sentence.target_text = patch.zh_text;
+  const material = ['source_text', 'zh_text', 'target_text', 'start_seconds', 'end_seconds', 'speaker_id'].some(
+    (k) => k in patch,
+  );
+  if (material) {
+    sentence.tts_file = null;
+    sentence.tts_url = null;
+    sentence.tts_candidates = [];
+  }
+  try {
+    await hooks.saveRows(sentence.id);
+    if (refresh) hooks.renderProject();
+    else refreshRowUI(sentence.id);
+  } catch (error) {
+    Object.assign(sentence, beforePatch, prevMeta);
+    if (undoStack.length) undoStack.pop();
+    syncUndoButtons();
+    hooks.renderProject();
+    throw error;
+  }
+}
+
 export async function playSourceSlice(sentence) {
   if (!sentence) return;
-  const source = $('#sourcePlayer'),
-    dub = $('#dubPlayer');
-  dub.pause();
+  stopAllAudio('source');
+  const source = $('#sourcePlayer');
   source.currentTime = sentence.start_seconds;
   sliceEndAt = sentence.end_seconds;
   $('#playSource').textContent = 'Ⅱ';
@@ -99,10 +159,9 @@ export async function playSourceSlice(sentence) {
 
 export async function playDubClip(sentence) {
   if (!sentence?.tts_url) return;
-  const source = $('#sourcePlayer'),
-    dub = $('#dubPlayer');
+  stopAllAudio('dub');
   sliceEndAt = null;
-  source.pause();
+  const dub = $('#dubPlayer');
   $('#playSource').textContent = '▶';
   dub.src = sentence.tts_url;
   dub.currentTime = 0;
@@ -121,18 +180,50 @@ export function clearSourceSliceStop() {
   sliceEndAt = null;
 }
 
-export function renderVirtualRows(sentences, selectedId) {
+function computeOffsets(sentences) {
+  const total = sentences.length;
+  const offsets = new Float64Array(total + 1);
+  let y = 0;
+  for (let i = 0; i < total; i += 1) {
+    offsets[i] = y;
+    y += rowHeights.get(sentences[i].id) || ROW_HEIGHT;
+  }
+  offsets[total] = y;
+  return offsets;
+}
+
+export function renderVirtualRows(sentences, selectedId, { force = false } = {}) {
   if (!state.project) return;
+  const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+  if (!force && activeEl?.closest?.('#rows [contenteditable="true"]')) {
+    pendingRenderAfterBlur = true;
+    return;
+  }
   const box = $('.tablebox');
   const busy = projectBusy();
   const total = sentences.length;
   const scrollTop = box ? box.scrollTop : 0;
   const viewHeight = box && box.clientHeight > 0 ? box.clientHeight : 560;
-  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const visibleCount = Math.ceil(viewHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const endIdx = Math.min(total, startIdx + Math.max(40, visibleCount));
-  const topPad = startIdx * ROW_HEIGHT;
-  const bottomPad = Math.max(0, (total - endIdx) * ROW_HEIGHT);
+  const offsets = computeOffsets(sentences);
+  let lo = 0, hi = total;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid + 1] <= scrollTop) lo = mid + 1;
+    else hi = mid;
+  }
+  const startIdx = Math.max(0, lo - OVERSCAN);
+  let endLo = lo, endHi = total;
+  while (endLo < endHi) {
+    const mid = (endLo + endHi) >> 1;
+    if (offsets[mid] < scrollTop + viewHeight) endLo = mid + 1;
+    else endHi = mid;
+  }
+  const endIdx = Math.min(total, Math.max(startIdx + 40, endLo + OVERSCAN));
+  const windowKey = `${startIdx}:${endIdx}:${total}:${selectedId}:${busy}`;
+  if (!force && windowKey === lastWindowKey) return;
+  lastWindowKey = windowKey;
+  const topPad = offsets[startIdx];
+  const bottomPad = Math.max(0, offsets[total] - offsets[endIdx]);
   const srcLang = state.project.source_language || 'ja';
 
   const sliceHTML = sentences
@@ -145,13 +236,20 @@ export function renderVirtualRows(sentences, selectedId) {
 
   const topSpacer = topPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="7" style="height:${topPad}px"></td></tr>` : '';
   const botSpacer = bottomPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="7" style="height:${bottomPad}px"></td></tr>` : '';
-  $('#rows').innerHTML = `${topSpacer}${sliceHTML}${botSpacer}`;
+  const tbody = $('#rows');
+  tbody.innerHTML = `${topSpacer}${sliceHTML}${botSpacer}`;
+  if (typeof tbody.querySelectorAll === 'function') {
+    for (const tr of tbody.querySelectorAll('tr[data-sentence]')) {
+      if (tr.offsetHeight > 0) rowHeights.set(tr.dataset.sentence, tr.offsetHeight);
+    }
+  }
 }
 
 export function scrollToSentenceIndex(index) {
   const box = $('.tablebox');
   if (!box || index < 0) return;
-  const targetTop = index * ROW_HEIGHT;
+  const list = hooks?.filteredSentences?.() || [];
+  const targetTop = list.length > index ? computeOffsets(list)[index] : index * ROW_HEIGHT;
   const viewH = box.clientHeight || 480;
   if (targetTop < box.scrollTop + ROW_HEIGHT || targetTop > box.scrollTop + viewH - ROW_HEIGHT * 2) {
     box.scrollTop = Math.max(0, targetTop - Math.floor(viewH * 0.35));
@@ -159,19 +257,25 @@ export function scrollToSentenceIndex(index) {
 }
 
 export function renderSentenceControls(selectedId, totalCount, syncBusy) {
+  const existing = $('#sentenceControls details');
+  if (existing) detailsOpen = Boolean(existing.open);
   const sentence = state.project?.sentences.find((s) => s.id === selectedId);
   $('#sentenceControls').innerHTML =
     `<div class="tools"><button class="btn" id="addSentence">${t('新增句子')}</button>${sentence ? `<button class="btn" id="deleteSentence">${t('删除句子')}</button><button class="btn plain" id="sentenceReference">${t('设为项目音色参考')}</button>` : ''}<button class="btn plain small" id="undoSentence" title="Ctrl+Z">${t('撤销')}</button><button class="btn plain small" id="redoSentence" title="Ctrl+Y">${t('重做')}</button><span class="saved kbd-hint">${t('共 {count} 句 · ↑↓ 选句 · 空格试听 · 回车编辑', { count: totalCount })}</span></div>` +
     (sentence
-      ? `<div class="waveform-wrap"><canvas id="sentenceWaveform" height="56" aria-label="${t('句子波形与起止点拖动')}"></canvas><span class="waveform-meta" id="waveformLabel"></span></div><details><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${field('说话人', `<input type="text" data-detail="speaker_id" value="${esc(sentence.speaker_id || '')}" placeholder="S01">`)}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || (sentence.error_code ? `[${sentence.error_code}] ${sentence.error}` : sentence.error) || '')}</p></details>`
+      ? `<div class="waveform-wrap"><canvas id="sentenceWaveform" height="56" aria-label="${t('句子波形与起止点拖动')}"></canvas><span class="waveform-meta" id="waveformLabel"></span></div><details${detailsOpen ? ' open' : ''}><summary>${t('所选句子')} · ${esc(sentence.id)}</summary><div class="card group">${field('说话人', `<input type="text" data-detail="speaker_id" value="${esc(sentence.speaker_id || '')}" placeholder="S01">`)}${field('开始（秒）', `<input type="number" step="any" data-detail="start_seconds" value="${sentence.start_seconds}">`)}${field('结束（秒）', `<input type="number" step="any" data-detail="end_seconds" value="${sentence.end_seconds}">`)}${field('原声音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="original_audio_gain_db" value="${sentence.original_audio_gain_db}">`)}${field('播放配音', `<input type="checkbox" data-detail="chinese_audio_enabled"${sentence.chinese_audio_enabled ? ' checked' : ''}>`)}${field('配音音量微调（dB）', `<input type="number" step="any" min="-60" max="12" data-detail="chinese_audio_gain_db" value="${sentence.chinese_audio_gain_db}">`)}</div><p class="stat">${esc(sentence.script_review_note || (sentence.error_code ? `[${sentence.error_code}] ${sentence.error}` : sentence.error) || '')}</p></details>`
       : '');
   syncBusy();
   syncUndoButtons();
   if (sentence) refreshWaveform(sentence);
+  if (typeof window?.dispatchEvent === 'function' && typeof Event === 'function') {
+    window.dispatchEvent(new Event('sentence-selected'));
+  }
 }
 
 export function initializeSentenceEditor(editorHooks) {
   hooks = editorHooks;
+  registerAudioStopper('slice', clearSourceSliceStop);
   let rafPending = false;
   const box = $('.tablebox');
   if (box) {
@@ -189,10 +293,28 @@ export function initializeSentenceEditor(editorHooks) {
       { passive: true },
     );
   }
+  document.addEventListener('focusout', () => {
+    if (!pendingRenderAfterBlur || !state.project) return;
+    setTimeout(() => {
+      if (!pendingRenderAfterBlur || !state.project) return;
+      if (document.activeElement?.closest?.('#rows [contenteditable="true"]')) return;
+      pendingRenderAfterBlur = false;
+      renderVirtualRows(hooks.filteredSentences(), hooks.getSelected(), { force: true });
+      hooks.syncBusy();
+    }, 0);
+  });
 
   initializeWaveform({
     getSelectedSentence: () => state.project?.sentences.find((s) => s.id === hooks.getSelected()),
     onBoundaryCommit: async (sentence, beforeStart, beforeEnd) => {
+      const prevMeta = {
+        tts_file: sentence.tts_file,
+        tts_url: sentence.tts_url,
+        tts_candidates: sentence.tts_candidates,
+        status: sentence.status,
+        review_locked: sentence.review_locked,
+        translation_warning: sentence.translation_warning,
+      };
       recordFieldUndo(
         sentence.id,
         { start_seconds: beforeStart, end_seconds: beforeEnd },
@@ -201,7 +323,18 @@ export function initializeSentenceEditor(editorHooks) {
       sentence.tts_file = null;
       sentence.tts_url = null;
       sentence.tts_candidates = [];
-      await hooks.saveRows(sentence.id);
+      try {
+        await hooks.saveRows(sentence.id);
+        hooks.renderProject();
+      } catch (error) {
+        sentence.start_seconds = beforeStart;
+        sentence.end_seconds = beforeEnd;
+        Object.assign(sentence, prevMeta);
+        if (undoStack.length) undoStack.pop();
+        syncUndoButtons();
+        hooks.renderProject();
+        throw error;
+      }
     },
     onAuditionSlice: (sentence) => playSourceSlice(sentence),
   });
@@ -247,7 +380,7 @@ export function initializeSentenceEditor(editorHooks) {
         hooks.setSelected(target.id);
         $('#sourcePlayer').currentTime = target.start_seconds;
         scrollToSentenceIndex(nextIdx);
-        renderVirtualRows(list, target.id);
+        renderVirtualRows(list, target.id, { force: true });
         renderSentenceControls(target.id, list.length, hooks.syncBusy);
       } else if (event.key === ' ') {
         event.preventDefault();
@@ -255,10 +388,7 @@ export function initializeSentenceEditor(editorHooks) {
         const source = $('#sourcePlayer'),
           dub = $('#dubPlayer');
         if (!source.paused || !dub.paused) {
-          source.pause();
-          dub.pause();
-          clearSourceSliceStop();
-          $('#playSource').textContent = '▶';
+          stopAllAudio();
         } else if (hooks.getListenMode() === 'dub' && current.tts_url) {
           await playDubClip(current);
         } else {
@@ -267,7 +397,7 @@ export function initializeSentenceEditor(editorHooks) {
       } else if (event.key === 'Enter' && !projectBusy()) {
         event.preventDefault();
         scrollToSentenceIndex(curIdx);
-        renderVirtualRows(list, list[curIdx].id);
+        renderVirtualRows(list, list[curIdx].id, { force: true });
         const cell = $(`#rows tr[data-sentence="${CSS.escape(list[curIdx].id)}"] [data-row-field="zh_text"]`);
         if (cell) {
           cell.focus();

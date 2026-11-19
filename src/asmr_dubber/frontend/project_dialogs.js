@@ -3,6 +3,7 @@ import {
   $$,
   state,
   api,
+  esc,
   t,
   options,
   field,
@@ -209,4 +210,19 @@ export async function reviewDialog() {
     `<p class="stat">${t('实验性，效果可能不如单模型')} · ${t('普通单模型识别不需要使用')}</p>`,
   );
   await details();
+}
+export function openProjectDialog(onOpen) {
+  dialog(
+    '打开项目',
+    field(
+      '项目路径',
+      `<span class="control"><input type="text" id="existingManifest"><button type="button" class="btn small" id="browseProjectFolder">${t('选择文件夹')}</button></span>`,
+    ),
+    '打开项目',
+    async () => onOpen($('#existingManifest').value),
+  );
+  $('#browseProjectFolder').onclick = guard(async () => {
+    const picked = await api('files/folder');
+    if (picked.path) $('#existingManifest').value = picked.path;
+  });
 }

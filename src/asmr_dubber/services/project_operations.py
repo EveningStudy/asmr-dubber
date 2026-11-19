@@ -8,11 +8,7 @@ from ..errors import ProjectError
 from ..filtering import has_speakable_text
 from ..languages import SourceLanguage, SpeechSourceLanguage, source_language_label
 from ..lifecycle import invalidate_outputs
-from ..models import (
-    ProjectSettings,
-    save_project,
-    settings_for_source_language,
-)
+from ..models import ProjectSettings, save_project, settings_for_source_language
 from ..subtitles import SubtitleLanguage
 from ..task_control import CancellationSignal
 from ..user_settings import UserSettings, load_user_settings, resolve_api_key
@@ -21,9 +17,17 @@ from .project_records import ProjectView, apply_table, view
 _ASR_AFFECTING_SETTINGS = frozenset(
     name
     for name in ProjectSettings.model_fields
-    if name.startswith(("asr_", "translation_", "separation_"))
+    if name.startswith("asr_")
     or name in {"pause_split_seconds", "max_sentence_seconds", "skip_japanese_fillers"}
 )
+
+
+def _translation_api_key(project: Any) -> str:
+    return (
+        ""
+        if project.source_language == project.settings.tts_target_language
+        else resolve_api_key(project.settings.translation_provider)
+    )
 
 
 def create_project(
@@ -150,11 +154,10 @@ def translate(
 ) -> ProjectView:
     project, directory = pipeline.reload_project(project_path)
     apply_table(project, table)
-    key = resolve_api_key(project.settings.translation_provider)
     pipeline.translate_project(
         project,
         directory,
-        api_key=key,
+        api_key=_translation_api_key(project),
         progress=progress,
         cancel_event=cancel_event,
     )
@@ -180,7 +183,7 @@ def retranslate(
     pipeline.translate_project(
         project,
         directory,
-        api_key=resolve_api_key(project.settings.translation_provider),
+        api_key=_translation_api_key(project),
         progress=progress,
         cancel_event=cancel_event,
         overwrite_edited=True,
@@ -213,7 +216,7 @@ def compress_translations(
     pipeline.translate_project(
         project,
         directory,
-        api_key=resolve_api_key(project.settings.translation_provider),
+        api_key=_translation_api_key(project),
         progress=progress,
         cancel_event=cancel_event,
         compress=True,
@@ -415,10 +418,7 @@ def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectV
     project, directory = pipeline.reload_project(project_path)
     previous = project.settings.model_dump()
     project.settings = settings_for_source_language(
-        settings.to_project_settings(
-            project.settings,
-            source_language=project.source_language,
-        ),
+        settings.to_project_settings(project.settings, source_language=project.source_language),
         project.source_language,
     )
     current = project.settings.model_dump()
@@ -436,7 +436,12 @@ def apply_global_settings(project_path: str, settings: UserSettings) -> ProjectV
             sentence.tts_file = None
             sentence.tts_cache_key = None
             sentence.tts_duration_seconds = None
-            sentence.status = "pending"
+            sentence.tts_candidates = []
+            sentence.review_locked = False
+            sentence.translation_warning = None
+            if sentence.status != "skipped_sound":
+                sentence.status = "pending"
+        project.translation_proposals = []
         project.translation_language = project.settings.tts_target_language
     changed_fields = sorted(
         name for name in ProjectSettings.model_fields if previous.get(name) != current.get(name)

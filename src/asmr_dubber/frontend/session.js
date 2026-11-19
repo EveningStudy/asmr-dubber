@@ -12,8 +12,42 @@ export const state = {
   saveChain: Promise.resolve(),
   saveError: null,
   seenTasks: new Set(),
-  paramQuery: '',
+  paramQuery: { def: '', proj: '' },
 };
+const audioStoppers = new Map();
+export function registerAudioStopper(key, fn) {
+  audioStoppers.set(key, fn);
+}
+export function stopAllAudio(except = null) {
+  const source = typeof document !== 'undefined' ? $('#sourcePlayer') : null;
+  const dub = typeof document !== 'undefined' ? $('#dubPlayer') : null;
+  if (except !== 'source' && except !== 'transport') source?.pause?.();
+  if (except !== 'dub' && except !== 'transport') dub?.pause?.();
+  if (typeof document !== 'undefined') {
+    for (const audio of $$('audio')) {
+      if (audio === except) continue;
+      if ((except === 'source' || except === 'transport') && audio === source) continue;
+      if ((except === 'dub' || except === 'transport') && audio === dub) continue;
+      if (typeof audio.pause === 'function') audio.pause();
+    }
+    const playBtn = $('#playSource');
+    if (playBtn && except !== 'source' && except !== 'transport') playBtn.textContent = '▶';
+  }
+  for (const [key, fn] of audioStoppers) {
+    if (key !== except) fn();
+  }
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener(
+    'play',
+    (event) => {
+      const target = event.target;
+      if (target?.tagName !== 'AUDIO' || target.id === 'sourcePlayer' || target.id === 'dubPlayer') return;
+      stopAllAudio(target);
+    },
+    true,
+  );
+}
 export const esc = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -167,7 +201,7 @@ export function field(label, control, hint = '') {
 }
 export function dialog(title, body, submitLabel, submit, description = '') {
   $('#dialogTitle').textContent = t(title);
-  $('#dialogDescription').textContent = description;
+  $('#dialogDescription').textContent = description ? t(description) : '';
   $('#dialogBody').innerHTML = body;
   $('#dialogSubmit').textContent = t(submitLabel);
   $('#dialogSubmit').hidden = !submit;

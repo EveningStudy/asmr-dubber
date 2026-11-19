@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -15,7 +16,7 @@ from .errors import SynthesisError
 from .filtering import has_speakable_text
 from .hashing import cached_sha256_file
 from .models import DubProject, ProjectSettings, Sentence
-from .task_control import CancellationSignal
+from .task_control import CancellationSignal, check_cancelled
 from .voice_reference import (
     STABLE_CLONE_MODES,
     effective_index_emotion_weight,
@@ -104,14 +105,22 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
 _ELLIPSIS = re.compile(r"[…⋯]+|\.{3,}|・{2,}|[—―]{2,}|[～〜~]{2,}")
 _COMMA_RUN = re.compile(r"[，,、\s]*[，,、][，,、\s]*")
 _COMMA_BEFORE_END = re.compile(r"[，,、\s]+([。！？!?」』）)])")
+_EN_COMMA_RUN = re.compile(r"\s*(?:,\s*){2,}")
+_EN_COMMA_BEFORE_END = re.compile(r",\s+([.!?\"')\]])")
 
 
-def normalize_pauses(text: str) -> str:
+def normalize_pauses(text: str, target_language: str = "zh") -> str:
     """Turn long-pause punctuation into ordinary commas before synthesis.
 
     Zero-shot TTS renders 「……」 as a second or more of silence, so a line full of
     ellipses runs far longer than the source it replaces.  Idempotent.
     """
+    if target_language == "en":
+        value = _ELLIPSIS.sub(", ", text)
+        value = _EN_COMMA_RUN.sub(", ", value)
+        value = _EN_COMMA_BEFORE_END.sub(r"\1", value)
+        value = re.sub(r"\s{2,}", " ", value).strip().strip(",").strip()
+        return value or text
     value = _ELLIPSIS.sub("，", text)
     value = _COMMA_RUN.sub("，", value)
     value = _COMMA_BEFORE_END.sub(r"\1", value)
@@ -123,7 +132,11 @@ def spoken_text(settings: ProjectSettings, text: str) -> str:
     """The exact text sent to a TTS backend for a translated line."""
     from .zh_phonetics import apply_spoken_normalization
 
-    value = normalize_pauses(text) if settings.tts_normalize_pauses else text
+    value = (
+        normalize_pauses(text, target_language=settings.tts_target_language)
+        if settings.tts_normalize_pauses
+        else text
+    )
     if settings.tts_pronunciation_glossary or settings.tts_spoken_normalization:
         value = apply_spoken_normalization(
             value,
@@ -229,6 +242,25 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
             payload["target_duration_100ms"] = round(target_dur * 10)
         if settings.tts_index_emotion_source == "vector":
             payload["emotion_vector"] = settings.tts_index25_emotion_vector
+        if settings.tts_backend == "indextts2":
+            defaults = ProjectSettings()
+            index2_overrides = {
+                key: getattr(settings, field_name)
+                for key, field_name in (
+                    ("seed", "random_seed"),
+                    ("num_beams", "tts_index25_num_beams"),
+                    ("do_sample", "tts_index25_do_sample"),
+                    ("top_k", "tts_index25_top_k"),
+                    ("repetition_penalty", "tts_index25_repetition_penalty"),
+                    ("length_penalty", "tts_index25_length_penalty"),
+                    ("max_mel_tokens", "tts_index25_max_mel_tokens"),
+                    ("interval_silence_ms", "tts_index25_interval_silence_ms"),
+                    ("max_text_tokens", "tts_index25_max_text_tokens"),
+                )
+                if getattr(settings, field_name) != getattr(defaults, field_name)
+            }
+            if index2_overrides:
+                payload["index2_generation"] = index2_overrides
         if settings.tts_backend == "indextts2_5":
             payload["index25"] = {
                 "model_path": settings.tts_index25_model_path,
@@ -256,7 +288,8 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
                 "seed": settings.random_seed,
             }
     elif settings.tts_backend in {"edge_tts", "minimax", "generic_tts_api"} or (
-        settings.tts_backend == "mimo_tts" and settings.tts_model != "mimo-v2.5-tts-voiceclone"
+        settings.tts_backend == "mimo_tts"
+        and (settings.tts_model.strip() or "mimo-v2.5-tts-voiceclone") != "mimo-v2.5-tts-voiceclone"
     ):
         payload["reference_plan"] = "unused"
     elif (
@@ -334,6 +367,7 @@ def valid_tts_cache(project: DubProject, sentence: Sentence, directory: Path) ->
 
 _QC_RETRIES = 2
 _SPOKEN_UNITS = re.compile(r"[\w\u3040-\u30ff\u3400-\u9fff]", re.UNICODE)
+_EN_WORD_UNITS = re.compile(r"[A-Za-z0-9']+")
 
 
 @dataclass(frozen=True)
@@ -392,7 +426,7 @@ def _keep_best_take(directory: Path, sentence: Sentence, history: list[_Inspecte
     sentence.error = None
 
 
-def dub_problem(path: Path, text: str) -> str | None:
+def dub_problem(path: Path, text: str, target_language: str = "zh") -> str | None:
     """Return why a synthesized line looks broken, or None when it looks usable.
 
     Only gross failures are caught: no sound, far too short for the text (words
@@ -404,7 +438,11 @@ def dub_problem(path: Path, text: str) -> str | None:
         data, _rate = sf.read(path, dtype="float32", always_2d=True)
     except (OSError, RuntimeError):
         return "无法读取配音文件"
-    units = len(_SPOKEN_UNITS.findall(text))
+    units = (
+        len(_EN_WORD_UNITS.findall(text))
+        if target_language == "en"
+        else len(_SPOKEN_UNITS.findall(text))
+    )
     level = float(np.sqrt(np.mean(np.square(data, dtype=np.float64)))) if data.size else 0.0
     if level < 10 ** (-60 / 20):
         return "配音几乎没有声音"
@@ -412,13 +450,32 @@ def dub_problem(path: Path, text: str) -> str | None:
     seconds = end - start
     if units >= 2 and seconds < 0.2:
         return "配音几乎没有声音"
-    if units >= 3 and seconds < units * 0.06:
+    min_per_unit = 0.10 if target_language == "en" else 0.06
+    max_per_unit = 1.2 if target_language == "en" else 0.6
+    if units >= 3 and seconds < units * min_per_unit:
         return f"配音只有 {seconds:.1f} 秒，比文字短太多，可能漏字"
-    if seconds > max(3.0, units * 0.6):
+    if seconds > max(3.0, units * max_per_unit):
         return f"配音长达 {seconds:.1f} 秒，比文字长太多，可能有多余内容"
     if float(np.mean(np.abs(data) >= 0.999)) > 0.001:
         return "配音有削波失真"
     return None
+
+
+def _evict_tts_daemons_if_low_vram(min_free_gb: float = 4.5) -> None:
+    from .tts_daemon import daemon_pool_active, evict_tts_daemons
+
+    if not daemon_pool_active():
+        return
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free_bytes, _total_bytes = torch.cuda.mem_get_info()
+            if free_bytes >= min_free_gb * (1024**3):
+                return
+    except Exception:
+        return
+    evict_tts_daemons()
 
 
 def synthesize_sentences(
@@ -467,18 +524,23 @@ def synthesize_sentences(
 
     first_attempt = {sentence.id: sentence.tts_attempt for sentence in project.sentences}
     takes: dict[str, list[_InspectedTake]] = {}
+    inspect_ids: set[str] | None = requested
     for _round in range(_QC_RETRIES + 1):
+        check_cancelled(cancel_event)
+        if settings.tts_asr_quality_check:
+            _evict_tts_daemons_if_low_vram(4.5)
         retry: list[Sentence] = []
         # Scope ASR QC models strictly to this inspection pass so GPU VRAM is freed
         # before any IndexTTS child process spawns for retries.
         with recognition_session():
             for sentence in project.sentences:
+                check_cancelled(cancel_event)
                 if not (
                     sentence.enabled
                     and sentence.chinese_audio_enabled
                     and sentence.tts_file
                     and has_speakable_text(sentence.zh_text)
-                    and (requested is None or sentence.id in requested)
+                    and (inspect_ids is None or sentence.id in inspect_ids)
                 ):
                     continue
                 try:
@@ -487,7 +549,11 @@ def synthesize_sentences(
                     continue
                 expected = spoken_text(settings, sentence.zh_text)
                 used = sentence.tts_attempt - first_attempt.get(sentence.id, 0)
-                warning = dub_problem(path, expected) if settings.tts_quality_check else None
+                warning = (
+                    dub_problem(path, expected, settings.tts_target_language)
+                    if settings.tts_quality_check
+                    else None
+                )
                 broken = warning is not None
                 cer = None
                 if warning is None and settings.tts_asr_quality_check:
@@ -498,7 +564,24 @@ def synthesize_sentences(
                     retry.append(sentence)
         if not retry:
             break
+        check_cancelled(cancel_event)
+        snapshots: dict[
+            str,
+            tuple[
+                int, str | None, float | None, str | None, str | None, str | None, Any, str | None
+            ],
+        ] = {}
         for sentence in retry:
+            snapshots[sentence.id] = (
+                sentence.tts_attempt,
+                sentence.tts_file,
+                sentence.tts_duration_seconds,
+                sentence.tts_cache_key,
+                sentence.reference_file,
+                sentence.tts_warning,
+                sentence.status,
+                sentence.error,
+            )
             sentence.tts_attempt += 1
         if progress:
             progress(f"配音自动检查：{len(retry)} 句不合格，换随机种子重新生成", 0, len(retry))
@@ -511,6 +594,32 @@ def synthesize_sentences(
             **options,
         )
         failures = list(dict.fromkeys([*failures, *again]))
+        next_inspect_ids: set[str] = set()
+        for sentence in retry:
+            valid_new = False
+            if sentence.status != "error" and sentence.tts_file:
+                try:
+                    valid_new = resolve_project_path(
+                        project_dir, sentence.tts_file, sentence.id
+                    ).is_file()
+                except Exception:
+                    valid_new = False
+            if valid_new:
+                next_inspect_ids.add(sentence.id)
+            else:
+                (
+                    sentence.tts_attempt,
+                    sentence.tts_file,
+                    sentence.tts_duration_seconds,
+                    sentence.tts_cache_key,
+                    sentence.reference_file,
+                    sentence.tts_warning,
+                    sentence.status,
+                    sentence.error,
+                ) = snapshots[sentence.id]
+        if not next_inspect_ids:
+            break
+        inspect_ids = next_inspect_ids
     for sentence in project.sentences:
         history = takes.get(sentence.id, [])
         if sentence.tts_warning and len(history) > 1:

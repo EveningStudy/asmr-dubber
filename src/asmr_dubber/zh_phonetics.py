@@ -158,6 +158,13 @@ def normalize_chinese_spoken_numbers(text: str) -> str:
     return out
 
 
+def _glossary_pattern(src: str) -> str:
+    escaped = re.escape(src)
+    if src.isascii() and any(ch.isalnum() for ch in src):
+        return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
+    return escaped
+
+
 def apply_spoken_normalization(
     text: str,
     *,
@@ -169,7 +176,7 @@ def apply_spoken_normalization(
     result = text
     rules = parse_pronunciation_glossary(glossary)
     if rules:
-        pattern = re.compile("|".join(re.escape(src) for src, _ in rules))
+        pattern = re.compile("|".join(_glossary_pattern(src) for src, _ in rules))
         lookup = dict(rules)
         result = pattern.sub(lambda m: lookup[m.group(0)], result)
     if normalize_numbers and target_language == "zh":

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
-from ..errors import OperationCancelledError
-from . import constants, failed_tasks, runlog, stages
+from ..errors import OperationCancelledError, classify_error
+from . import constants, failed_tasks, plan_files, runlog, stages, work_state
 from .constants import ReferenceEventCallback
 from .domain import (
     AppConfig,
@@ -17,6 +18,50 @@ from .domain import (
 from .errors import VideoPreparerError
 from .plan_run import execute_prepared_smart_plan
 from .runlog import append_log
+
+
+def _find_plan_project_json(plan: SmartTaskPlan) -> str:
+    try:
+        jobs = plan_files.load_plan_metadata(plan.plan_id).get("jobs") or []
+    except Exception:
+        jobs = []
+    candidates: list[str] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        pj = str(job.get("project_json") or "").strip()
+        if pj and Path(pj).is_file():
+            if job.get("status") != "completed" or job.get("partial"):
+                return pj
+            candidates.append(pj)
+    if candidates:
+        return candidates[0]
+    sources = getattr(plan, "sources", ()) or ()
+    layout = getattr(plan, "layout", "")
+    job_ids = (
+        [f"source-{i:04d}" for i in range(1, len(sources) + 1)]
+        if getattr(plan, "source_subtitles_only", False)
+        else (
+            ["merged"]
+            if layout == constants.LAYOUT_MERGED
+            else [f"track-{i:04d}" for i in range(1, len(sources) + 1)]
+        )
+    )
+    for job_id in job_ids:
+        try:
+            state = work_state.load_state(
+                work_state.planned_state_path(plan.folder, plan.plan_id, job_id)
+            )
+        except Exception:
+            state = None
+        if not state:
+            continue
+        pj = str(state.get("project_json") or "").strip()
+        if pj and Path(pj).is_file():
+            if state.get("status") != "completed" or state.get("partial"):
+                return pj
+            candidates.append(pj)
+    return candidates[0] if candidates else ""
 
 
 def execute_smart_queue(
@@ -38,7 +83,7 @@ def execute_smart_queue(
     with batch_worker_session():
         for index, plan in enumerate(plans, start=1):
             work_log = stages.work_log_path(constants.STATE_ROOT, plan.plan_id, plan.folder.name)
-            outcome, failure_message = "completed", ""
+            outcome, failure_message, error_code, error_hint = "completed", "", None, None
             warnings: list[dict[str, Any]] = []
             with runlog.bind_autoflow_callbacks(work_log=work_log):
                 runlog.emit("\n" + "=" * 68)
@@ -78,6 +123,7 @@ def execute_smart_queue(
                 except VideoPreparerError as exc:
                     message = str(exc)
                     outcome, failure_message = "failed", message
+                    error_code, error_hint = classify_error(exc)
                     failures.append((plan, message))
                     failed_tasks.save_failed_task(plan, error=message)
                     if plan.retry_of and plan.retry_of != plan.plan_id:
@@ -90,6 +136,7 @@ def execute_smart_queue(
                 except Exception as exc:
                     message = f"{type(exc).__name__}: {exc}"
                     outcome, failure_message = "failed", message
+                    error_code, error_hint = classify_error(exc)
                     failures.append((plan, message))
                     failed_tasks.save_failed_task(plan, error=message)
                     if plan.retry_of and plan.retry_of != plan.plan_id:
@@ -102,18 +149,28 @@ def execute_smart_queue(
                     runlog.emit("已有状态和成品已保留，继续处理下一个作品。", error=True)
                 finally:
                     if reference_event_callback is not None:
-                        reference_event_callback(
-                            {
-                                "kind": "plan_finished",
-                                "plan_id": plan.plan_id,
-                                "status": outcome,
-                                "error": failure_message,
-                                "warnings": warnings,
-                                "log": str(work_log),
-                                "work": plan.folder.name,
-                                "output": str(plan.output_root),
-                            }
+                        project_json = (
+                            _find_plan_project_json(plan)
+                            if outcome in {"failed", "partial"}
+                            else ""
                         )
+                        payload: dict[str, Any] = {
+                            "kind": "plan_finished",
+                            "plan_id": plan.plan_id,
+                            "status": outcome,
+                            "error": failure_message,
+                            "warnings": warnings,
+                            "log": str(work_log),
+                            "work": plan.folder.name,
+                            "output": str(plan.output_root),
+                        }
+                        if error_code:
+                            payload["error_code"] = error_code
+                        if error_hint:
+                            payload["error_hint"] = error_hint
+                        if project_json:
+                            payload["project_json"] = project_json
+                        reference_event_callback(payload)
 
     succeeded = len(plans) - len(failures) - len(partials)
     runlog.emit("\n" + "=" * 68)

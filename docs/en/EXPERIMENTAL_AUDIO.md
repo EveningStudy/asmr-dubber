@@ -11,7 +11,7 @@ Once the dub exists, everything about combining it with the original is set on t
 | Result | Contains | Good for |
 |---|---|---|
 | Bilingual mix | The complete original plus the dub | Most cases. Nothing of the original is lost and the dub sits on top |
-| Fully dubbed mix (experimental) | Dubbed sentences replaced by the dub, everything else as recorded | When you do not want to hear the original language |
+| Fully dubbed mix | Dubbed sentences replaced by the dub, everything else as recorded | When you do not want to hear the original language |
 | Dub track only | Only the dub, no original and no background | Mixing it yourself in other software |
 | Subtitles only | No audio | When you just want translated subtitles |
 
@@ -73,7 +73,7 @@ To change the volume of one sentence only, see [Changing a single sentence](USER
 
 ## Fully dubbed mix: removing the original voice
 
-The fully dubbed mix replaces the original voice with the dub in every dubbed sentence and leaves the rest of the sound exactly as recorded. On the **Mix mode** choice it is **Fully dubbed (experimental)**, and the batch page calls it **Fully dubbed**. It is still experimental. What follows first describes how it works, then its limits.
+The fully dubbed mix replaces the original voice with the dub in every dubbed sentence and leaves the rest of the sound exactly as recorded. What follows first describes how it works, then its limits.
 
 ### How version 3.0 works
 
@@ -152,7 +152,7 @@ After exporting, **Compare results** on the Export step plays the original, the 
 
 ![Vocal separation settings](../../assets/screenshots/en/separation.png)
 
-**3. Choose the fully dubbed mix when exporting.** On the **Export** step, set **Mix mode** to **Fully dubbed (experimental)** and click **Export**. The first export runs separation and takes a while.
+**3. Choose the fully dubbed mix when exporting.** On the **Export** step, set **Mix mode** to **Fully dubbed** and click **Export**. The first export runs separation and takes a while.
 
 ### Keeping some of the original
 

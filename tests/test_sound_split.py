@@ -165,6 +165,8 @@ def test_asr_copy_follows_the_louder_ear() -> None:
     voice = np.sin(np.arange(rate) * 0.1).astype(np.float32) * 0.2
     one_sided = np.column_stack((voice * 0.01, voice))
     folded = _fold_by_energy(one_sided, 800)
-    assert np.sqrt(np.mean(folded**2)) > 0.95 * np.sqrt(np.mean(voice**2))  # no -6 dB loss
+    assert np.sqrt(np.mean(folded**2)) > 0.78 * np.sqrt(
+        np.mean(voice**2)
+    )  # clamped [0.2, 0.8] beats -6 dB fold while keeping soft opposite-ear whispers audible
     centred = np.column_stack((voice, voice))
     assert np.allclose(_fold_by_energy(centred, 800), voice, atol=1e-6)

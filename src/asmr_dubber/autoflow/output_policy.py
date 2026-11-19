@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from ..models import ProjectSettings, load_project, save_project
+from .constants import MODE_AUDIO, MODE_VIDEO_HARMONIZED
+from .modes import normalize_mode
+
+BILINGUAL_OUTPUT_DIR_NAME = "双语版"
+REPLACEMENT_OUTPUT_DIR_NAME = "完全配音版"
+LEGACY_REPLACEMENT_OUTPUT_DIR_NAME = "替换配音版"
+
+
+def variant_output_dir(folder: Path, variant: str) -> Path:
+    return folder / (
+        BILINGUAL_OUTPUT_DIR_NAME if variant == "bilingual" else REPLACEMENT_OUTPUT_DIR_NAME
+    )
 
 
 def policy_for_settings(settings: ProjectSettings, content: str, subtitle: str) -> dict[str, Any]:
@@ -80,6 +92,11 @@ def render_variants(paths: Any, project_json: Path, folder: Path, state: dict[st
                 variant,
                 *e.stages.mix_arguments(state),
             )
+            normalized_mode = normalize_mode(str(state["mode"]))
+            embed_subtitles = bool(state.get("embed_subtitles", True))
+            skip_sub_video = normalized_mode != MODE_AUDIO and (
+                not embed_subtitles or normalized_mode == MODE_VIDEO_HARMONIZED
+            )
             e.run_asmr_cli(
                 paths,
                 "subtitles",
@@ -88,13 +105,14 @@ def render_variants(paths: Any, project_json: Path, folder: Path, state: dict[st
                 policy["subtitle"],
                 "--output-variant",
                 variant,
+                *(("--no-video",) if skip_sub_video else ()),
             )
             project, directory = load_project(project_json)
             audio = e.project_asset(project_json, project.output_file)
             if audio is None:
                 raise e.VideoPreparerError("混音未生成音频。")
             cached = audio
-            destination = folder / ("双语版" if variant == "bilingual" else "替换配音版")
+            destination = variant_output_dir(folder, variant)
             destination.mkdir(parents=True, exist_ok=True)
             outputs = e.copy_final_outputs(
                 paths,

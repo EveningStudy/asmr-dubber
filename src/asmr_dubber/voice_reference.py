@@ -12,11 +12,17 @@ from dataclasses import dataclass
 from heapq import nlargest
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 
 from .audio import extract_reference, probe_audio
-from .errors import SynthesisError
+from .audio_ffmpeg import (
+    clip_snr_db,
+    louder_ear_mono,
+    open_audio_for_analysis,
+    read_clip_for_window,
+    source_noise_floor,
+)
+from .errors import AsmrDubberError, SynthesisError
 from .hashing import cached_sha256_file
 from .languages import SourceLanguage
 from .models import DubProject, Sentence
@@ -98,18 +104,7 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
     )
 
 
-_PICK_FRAME_SECONDS = 0.02
 _PICK_MAX_CANDIDATES = 24
-
-
-def _frame_levels(audio: np.ndarray, rate: int) -> np.ndarray:
-    hop = max(1, round(rate * _PICK_FRAME_SECONDS))
-    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
-    count = len(mono) // hop
-    if count == 0:
-        return np.zeros(0)
-    frames = mono[: count * hop].astype(np.float64).reshape(count, hop)
-    return np.sqrt(np.mean(frames**2, axis=1))
 
 
 def _duration_score(seconds: float) -> float:
@@ -118,6 +113,12 @@ def _duration_score(seconds: float) -> float:
     if seconds < 5.0:
         return max(0.0, (seconds - 2.0) / 3.0)
     return max(0.0, 1.0 - (seconds - 12.0) / 8.0)
+
+
+def _whisper_duration_score(seconds: float) -> float:
+    if 3.5 <= seconds <= 10.0:
+        return 1.0
+    return max(0.0, 1.0 - abs(seconds - 6.0) / 8.0)
 
 
 def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | None:
@@ -142,35 +143,32 @@ def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | Non
     if not candidates:
         return None
     candidates = sorted(
-        candidates, key=lambda s: (-(s.end_seconds - s.start_seconds), s.start_seconds)
+        candidates,
+        key=lambda s: (
+            -_duration_score(s.end_seconds - s.start_seconds),
+            -(s.end_seconds - s.start_seconds),
+            s.start_seconds,
+        ),
     )[:_PICK_MAX_CANDIDATES]
     try:
-        with sf.SoundFile(source) as audio:
+        with open_audio_for_analysis(source) as audio:
             rate = audio.samplerate
-            levels = np.concatenate(
-                [
-                    _frame_levels(block, rate)
-                    for block in audio.blocks(blocksize=rate * 30, dtype="float32", always_2d=True)
-                ]
-            )
-            floor = float(np.percentile(levels[levels > 0], 10)) if np.any(levels > 0) else 1e-9
+            floor = source_noise_floor(audio, rate)
             scored = []
             for sentence in candidates:
-                audio.seek(max(0, round(sentence.start_seconds * rate)))
-                frames = round((sentence.end_seconds - sentence.start_seconds) * rate)
-                clip = audio.read(frames, dtype="float32", always_2d=True)
-                clip_levels = _frame_levels(clip, rate)
-                if not len(clip_levels) or clip_levels.max() <= 0:
+                clip = read_clip_for_window(
+                    audio, rate, sentence.start_seconds, sentence.end_seconds
+                )
+                snr_db = clip_snr_db(clip, rate, floor)
+                if snr_db is None:
                     continue
-                active = clip_levels[clip_levels >= clip_levels.max() * 0.1]
-                snr_db = 20 * math.log10(max(float(np.mean(active)), 1e-9) / max(floor, 1e-9))
                 score = (
                     _duration_score(sentence.end_seconds - sentence.start_seconds)
                     + 0.5 * min(max(snr_db, 0.0) / 30.0, 1.0)
-                    + 0.5 * voiced_ratio(clip.mean(axis=1), rate)
+                    + 0.5 * voiced_ratio(louder_ear_mono(clip), rate)
                 )
                 scored.append((score, -sentence.start_seconds, sentence))
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError, AsmrDubberError):
         return None
     if not scored:
         return None
@@ -198,39 +196,37 @@ def pick_whisper_reference_sentence(project: DubProject, source: Path) -> Senten
     if not candidates:
         return None
     candidates = sorted(
-        candidates, key=lambda s: (-(s.end_seconds - s.start_seconds), s.start_seconds)
+        candidates,
+        key=lambda s: (
+            -_whisper_duration_score(s.end_seconds - s.start_seconds),
+            -(s.end_seconds - s.start_seconds),
+            s.start_seconds,
+        ),
     )[:_PICK_MAX_CANDIDATES]
     try:
-        with sf.SoundFile(source) as audio:
+        with open_audio_for_analysis(source) as audio:
             rate = audio.samplerate
-            levels = np.concatenate(
-                [
-                    _frame_levels(block, rate)
-                    for block in audio.blocks(blocksize=rate * 30, dtype="float32", always_2d=True)
-                ]
-            )
-            floor = float(np.percentile(levels[levels > 0], 10)) if np.any(levels > 0) else 1e-9
+            floor = source_noise_floor(audio, rate)
             scored = []
             for sentence in candidates:
-                audio.seek(max(0, round(sentence.start_seconds * rate)))
-                frames = round((sentence.end_seconds - sentence.start_seconds) * rate)
-                clip = audio.read(frames, dtype="float32", always_2d=True)
-                clip_levels = _frame_levels(clip, rate)
-                if not len(clip_levels) or clip_levels.max() <= 0:
+                clip = read_clip_for_window(
+                    audio, rate, sentence.start_seconds, sentence.end_seconds
+                )
+                snr_db = clip_snr_db(clip, rate, floor)
+                if snr_db is None or snr_db < 4.5:
                     continue
-                active = clip_levels[clip_levels >= clip_levels.max() * 0.1]
-                snr_db = 20 * math.log10(max(float(np.mean(active)), 1e-9) / max(floor, 1e-9))
-                if snr_db < 4.5:
-                    continue
-                vr = voiced_ratio(clip.mean(axis=1), rate)
+                vr = voiced_ratio(louder_ear_mono(clip), rate)
                 if vr > 0.26:
                     continue
                 dur = sentence.end_seconds - sentence.start_seconds
-                dur_score = 1.0 if 3.5 <= dur <= 10.0 else max(0.0, 1.0 - abs(dur - 6.0) / 8.0)
                 whisper_score = 1.0 - min(vr / 0.28, 1.0)
-                score = dur_score + 0.5 * min(max(snr_db, 0.0) / 25.0, 1.0) + 0.8 * whisper_score
+                score = (
+                    _whisper_duration_score(dur)
+                    + 0.5 * min(max(snr_db, 0.0) / 25.0, 1.0)
+                    + 0.8 * whisper_score
+                )
                 scored.append((score, -sentence.start_seconds, sentence))
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError, AsmrDubberError):
         return None
     if not scored:
         return None
@@ -244,23 +240,21 @@ def annotate_sentence_voice_modes(project: DubProject, source: Path) -> None:
     if not project.sentences or not source.is_file():
         return
     try:
-        with sf.SoundFile(source) as audio:
+        with open_audio_for_analysis(source) as audio:
             rate = audio.samplerate
             for sentence in project.sentences:
                 if sentence.end_seconds - sentence.start_seconds < 0.20:
+                    sentence.voice_mode = "modal"
                     continue
-                lo = max(0, min(audio.frames, round(sentence.start_seconds * rate)))
-                hi = max(lo, min(audio.frames, round(sentence.end_seconds * rate)))
-                if hi - lo < rate // 10:
+                clip = read_clip_for_window(
+                    audio, rate, sentence.start_seconds, sentence.end_seconds
+                )
+                if len(clip) < rate // 10:
+                    sentence.voice_mode = "modal"
                     continue
-                audio.seek(lo)
-                clip = audio.read(hi - lo, dtype="float32", always_2d=True)
-                # Pick whichever stereo ear is louder so single-ear whispers aren't halved.
-                ear_rms = np.sqrt(np.mean(clip.astype(np.float64) ** 2, axis=0))
-                mono = clip[:, int(np.argmax(ear_rms))] if clip.shape[1] >= 2 else clip[:, 0]
-                vr = voiced_ratio(mono, rate)
+                vr = voiced_ratio(louder_ear_mono(clip), rate)
                 sentence.voice_mode = "whisper" if vr < 0.24 else "modal"
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError, AsmrDubberError):
         pass
 
 
@@ -277,8 +271,11 @@ def project_has_multiple_speakers(project: DubProject) -> bool:
 def speaker_reference_sentence(
     project: DubProject,
     sentence: Sentence,
+    source: Path | None = None,
 ) -> tuple[Sentence, bool]:
     """Select the clearest modal or whisper voice anchor for ``sentence.speaker_id``."""
+    from .filtering import is_japanese_filler_only
+
     target_spk = (sentence.speaker_id or "").strip()
     same_speaker = [
         s
@@ -289,6 +286,30 @@ def speaker_reference_sentence(
     ]
     if not same_speaker:
         return shared_reference_sentence(project), False
+
+    non_filler = [
+        s
+        for s in same_speaker
+        if not is_japanese_filler_only(s.source_text)
+        and s.status not in {"skipped_filler", "skipped_sound", "skipped_hallucination"}
+    ]
+    if non_filler:
+        same_speaker = non_filler
+    if source is not None and source.is_file():
+        try:
+            with open_audio_for_analysis(source) as audio:
+                rate = audio.samplerate
+                floor = source_noise_floor(audio, rate)
+                clean = []
+                for s in same_speaker:
+                    clip = read_clip_for_window(audio, rate, s.start_seconds, s.end_seconds)
+                    snr_db = clip_snr_db(clip, rate, floor)
+                    if snr_db is not None and snr_db >= 4.5:
+                        clean.append(s)
+                if clean:
+                    same_speaker = clean
+        except (OSError, RuntimeError, ValueError, AsmrDubberError):
+            pass
 
     if project.settings.tts_dual_voice_anchor and sentence.voice_mode == "whisper":
         whispers = [
@@ -356,10 +377,11 @@ def effective_index_emotion_weight(project: DubProject, sentence: Sentence) -> f
 
 def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sentence | None:
     """Choose a deterministic project reference that is not the rejected sentence."""
-
+    target_spk = (sentence.speaker_id or "").strip()
+    multi_spk = bool(target_spk) and project_has_multiple_speakers(project)
     configured = project.settings.tts_reference_sentence_id
     active = _REFERENCE_SELECTION.get()
-    if active is not None and active[0] is project:
+    if not multi_spk and active is not None and active[0] is project:
         selected = active[1].get(configured)
         if (
             selected is not None
@@ -368,7 +390,7 @@ def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sent
         ):
             return selected
         return next((s for s in active[3] if s.id != sentence.id), None)
-    if configured and configured != sentence.id:
+    if not multi_spk and configured and configured != sentence.id:
         selected = next((item for item in project.sentences if item.id == configured), None)
         if selected is not None and (selected.source_text.strip() or selected.zh_text.strip()):
             return selected
@@ -377,6 +399,10 @@ def fallback_reference_sentence(project: DubProject, sentence: Sentence) -> Sent
         for item in project.sentences
         if item.id != sentence.id and (item.source_text.strip() or item.zh_text.strip())
     ]
+    if multi_spk:
+        same_spk = [item for item in candidates if (item.speaker_id or "").strip() == target_spk]
+        if same_spk:
+            candidates = same_spk
     if not candidates:
         return None
     return max(
@@ -743,7 +769,9 @@ def prepare_index_emotion_reference(
             role="emotion",
         )
     shared = source_id == "project_reference"
-    reference_sentence = shared_reference_sentence(project) if shared else sentence
+    reference_sentence = (
+        effective_project_reference_sentence(project, sentence)[0] if shared else sentence
+    )
     if (
         speaker_reference.sentence is not None
         and speaker_reference.sentence.id == reference_sentence.id

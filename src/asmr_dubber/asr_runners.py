@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from .api_logging import safe_api_url
 from .errors import AsmrDubberError
 from .languages import SpeechSourceLanguage
 from .models import ProjectSettings, Sentence
-from .segmentation import TimedToken
+from .segmentation import TimedToken, restore_punctuation
 from .task_control import (
     CancellationSignal,
     check_cancelled,
@@ -20,6 +21,64 @@ from .task_control import (
 )
 
 Progress = Callable[[str, int, int], None]
+_GENERIC_API_MAX_BYTES = 20 * 1024 * 1024
+_GENERIC_API_CHUNK_TARGET_BYTES = 16 * 1024 * 1024
+
+
+def _prepare_generic_api_uploads(
+    analysis_audio: Path,
+    *,
+    probe_only: bool,
+    temp_dir: Path,
+) -> list[tuple[Path, str, float]]:
+    if analysis_audio.stat().st_size <= _GENERIC_API_MAX_BYTES:
+        return [(analysis_audio, "audio/wav", 0.0)]
+    if probe_only:
+        probe_wav = temp_dir / "probe.wav"
+        with sf.SoundFile(analysis_audio) as audio:
+            frames = min(audio.frames, max(1, audio.samplerate))
+            samples = audio.read(frames, dtype="float32", always_2d=True)
+            sf.write(probe_wav, samples, audio.samplerate, subtype="PCM_16", format="WAV")
+        return [(probe_wav, "audio/wav", 0.0)]
+    try:
+        from . import audio as audio_mod
+
+        compact_mp3 = temp_dir / "analysis.mp3"
+        audio_mod._run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(analysis_audio),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-b:a",
+                "64k",
+                str(compact_mp3),
+            ]
+        )
+        if compact_mp3.is_file() and compact_mp3.stat().st_size <= _GENERIC_API_MAX_BYTES:
+            return [(compact_mp3, "audio/mpeg", 0.0)]
+    except Exception:
+        pass
+
+    from . import asr
+
+    info = sf.info(analysis_audio)
+    bytes_per_second = max(1, info.samplerate * info.channels * 2)
+    chunk_seconds = max(30.0, _GENERIC_API_CHUNK_TARGET_BYTES / bytes_per_second)
+    sample_rate, ranges = asr._audio_file_chunk_ranges(analysis_audio, chunk_seconds)
+    uploads: list[tuple[Path, str, float]] = []
+    with sf.SoundFile(analysis_audio) as audio:
+        for index, (start, end) in enumerate(ranges, start=1):
+            audio.seek(start)
+            samples = audio.read(end - start, dtype="float32", always_2d=True)
+            chunk_path = temp_dir / f"chunk_{index:04d}.wav"
+            sf.write(chunk_path, samples, sample_rate, subtype="PCM_16", format="WAV")
+            uploads.append((chunk_path, "audio/wav", start / sample_rate))
+    return uploads
 
 
 def _transcribe_generic_api(
@@ -40,12 +99,15 @@ def _transcribe_generic_api(
         progress(f"上传音频到通用 ASR API：{settings.asr_model}", 0, 1)
     try:
         url = endpoint_url(settings.asr_api_base_url, "/audio/transcriptions")
+        base_payload: dict[str, object] = {
+            "model": settings.asr_model,
+            "language": source_language,
+            "response_format": "verbose_json",
+        }
+        if settings.asr_initial_prompt and settings.asr_initial_prompt.strip():
+            base_payload["prompt"] = settings.asr_initial_prompt.strip()
         payload = merge_extra_body(
-            {
-                "model": settings.asr_model,
-                "language": source_language,
-                "response_format": "verbose_json",
-            },
+            base_payload,
             settings.asr_api_extra_body,
             label="ASR API 附加请求参数",
             reserved={"file", "model"},
@@ -59,7 +121,8 @@ def _transcribe_generic_api(
         for key, value in payload.items()
         if value is not None
     }
-    form["timestamp_granularities[]"] = "segment"
+    if "timestamp_granularities" not in form:
+        form.setdefault("timestamp_granularities[]", "segment")
     key = (api_key or "").strip() or asr.saved_service_key("asr:generic_asr_api")
     asr.logger.info(
         "ASR 后端开始：后端=generic_asr_api 模型=%s 地址=%s",
@@ -72,47 +135,83 @@ def _transcribe_generic_api(
         timeout=settings.asr_timeout_seconds,
     )
     callback_signal = register_cancel_callback(client.close, cancel_event)
+    results: list[tuple[Mapping[str, object], float]] = []
     try:
-        check_cancelled(cancel_event)
-        with analysis_audio.open("rb") as handle:
-            response = client.post(
-                url,
-                data=form,
-                files={"file": (analysis_audio.name, handle, "audio/wav")},
+        with tempfile.TemporaryDirectory(prefix="asmr-generic-api-") as tmp_name:
+            uploads = _prepare_generic_api_uploads(
+                analysis_audio,
+                probe_only=probe_only,
+                temp_dir=Path(tmp_name),
             )
-        if response.is_error:
-            raise AsmrDubberError(
-                f"通用 ASR API 拒绝请求（HTTP {response.status_code}）：{response.text[:500]}"
-            )
-        try:
-            result = response.json()
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise AsmrDubberError("通用 ASR API 返回的不是有效 JSON。") from exc
+            for upload_path, mime_type, offset in uploads:
+                check_cancelled(cancel_event)
+                with upload_path.open("rb") as handle:
+                    response = client.post(
+                        url,
+                        data=form,
+                        files={"file": (upload_path.name, handle, mime_type)},
+                    )
+                if response.is_error:
+                    detail = response.text[:500]
+                    raise AsmrDubberError(
+                        f"通用 ASR API 拒绝请求（HTTP {response.status_code}）：{detail}"
+                    )
+                try:
+                    result = response.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    raise AsmrDubberError("通用 ASR API 返回的不是有效 JSON。") from exc
+                if not isinstance(result, Mapping):
+                    raise AsmrDubberError("通用 ASR API JSON 顶层必须是对象。")
+                results.append((result, offset))
     except httpx.HTTPError as exc:
+        check_cancelled(cancel_event)
         raise AsmrDubberError(f"通用 ASR API 请求失败：{exc}") from exc
     finally:
         unregister_cancel_callback(client.close, callback_signal)
         client.close()
-    if not isinstance(result, Mapping):
-        raise AsmrDubberError("通用 ASR API JSON 顶层必须是对象。")
-    language = str(result.get("language") or source_language)
+    language = str(results[0][0].get("language") or source_language) if results else source_language
     if probe_only:
         return [], language
     tokens: list[TimedToken] = []
-    for item in result.get("segments") or result.get("words") or []:
-        if not isinstance(item, Mapping):
-            continue
-        token = asr._finite_token(
-            item.get("text") or item.get("word"),
-            item.get("start"),
-            item.get("end"),
+    text_parts: list[str] = []
+    for result, offset in results:
+        chunk_tokens: list[TimedToken] = []
+        raw_items = result.get("segments") or result.get("words") or []
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, Mapping):
+                    continue
+                token = asr._offset_finite_token(
+                    item.get("text") or item.get("word"),
+                    item.get("start"),
+                    item.get("end"),
+                    offset,
+                )
+                if token is not None:
+                    chunk_tokens.append(token)
+        chunk_text = str(result.get("text") or "").strip() or "".join(
+            token.text for token in chunk_tokens
         )
-        if token is not None:
-            tokens.append(token)
-    full_text = str(result.get("text") or "").strip() or "".join(token.text for token in tokens)
+        if chunk_text:
+            text_parts.append(chunk_text)
+        if len(results) > 1 and chunk_tokens and chunk_text:
+            tokens.extend(restore_punctuation(chunk_tokens, chunk_text))
+        else:
+            tokens.extend(chunk_tokens)
+    joiner = " " if source_language == "en" else ""
+    full_text = joiner.join(text_parts)
     if not full_text:
+        if asr._REVIEW_MODELS.get() is not None:
+            return [], language
         raise AsmrDubberError("通用 ASR API 没有返回可用文字。")
-    return asr._finish_tokens(tokens, full_text, language, settings, source_language)
+    return asr._finish_tokens(
+        tokens,
+        full_text,
+        language,
+        settings,
+        source_language,
+        restore=len(results) == 1,
+    )
 
 
 def _transcribe_faster_whisper(

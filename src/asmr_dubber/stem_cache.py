@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .audio import sha256_file
+from .hashing import cached_sha256_file
 from .storage import atomic_write_text
 from .task_control import check_cancelled
 
@@ -36,7 +36,9 @@ def build_cached_stem(builder, **kwargs):
     parameters["events"] = []
     for event in kwargs["events"]:
         check_cancelled()
-        parameters["events"].append({**asdict(event), "audio_path": sha256_file(event.audio_path)})
+        parameters["events"].append(
+            {**asdict(event), "audio_path": cached_sha256_file(event.audio_path)}
+        )
     settings = kwargs.get("spatial_settings")
     parameters["spatial"] = (
         {
@@ -51,14 +53,14 @@ def build_cached_stem(builder, **kwargs):
     # so edits/replacement at the same path cannot return an obsolete stem.
     for key in ("source_reference_path", "spatial_reference_path", "voice_match_path"):
         path = kwargs.get(key)
-        parameters[key] = sha256_file(Path(path)) if path else None
+        parameters[key] = cached_sha256_file(Path(path)) if path else None
     fingerprint = hashlib.sha256(json.dumps(parameters, sort_keys=True).encode()).hexdigest()
     try:
         saved = json.loads(receipt.read_text(encoding="utf-8"))
         if (
             saved["key"] == fingerprint
             and destination.is_file()
-            and sha256_file(destination) == saved["sha256"]
+            and cached_sha256_file(destination) == saved["sha256"]
         ):
             if kwargs.get("progress"):
                 kwargs["progress"]("复用已完成的中文 RTF 音轨", 1, 1)
@@ -67,7 +69,9 @@ def build_cached_stem(builder, **kwargs):
         pass
     result = builder(**kwargs)
     check_cancelled()
-    atomic_write_text(receipt, json.dumps({"key": fingerprint, "sha256": sha256_file(destination)}))
+    atomic_write_text(
+        receipt, json.dumps({"key": fingerprint, "sha256": cached_sha256_file(destination)})
+    )
     return result
 
 

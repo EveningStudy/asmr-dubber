@@ -151,6 +151,7 @@ def _synthesize_indextts25_batch(
     output_tail: deque[str] = deque(maxlen=200)
     return_code = -1
     committed: set[str] = set()
+    line_failures: list[str] = []
     batch_error: SynthesisError | None = None
     process: subprocess.Popen[str] | None = None
     cancelled: OperationCancelledError | None = None
@@ -179,9 +180,15 @@ def _synthesize_indextts25_batch(
                 generated_id = line.partition(":")[2].strip()
                 for sentence, reference, temporary in tasks:
                     if generated_id == sentence.id and sentence.id not in committed:
-                        tts_backends._commit_clip(
-                            project, project_dir, sentence, reference, temporary
-                        )
+                        try:
+                            tts_backends._commit_clip(
+                                project, project_dir, sentence, reference, temporary
+                            )
+                        except SynthesisError as exc:
+                            sentence.status = "error"
+                            sentence.error = str(exc)
+                            line_failures.append(f"{sentence.id}: {exc}")
+                            temporary.unlink(missing_ok=True)
                         committed.add(sentence.id)
                         if on_sentence:
                             on_sentence()
@@ -272,9 +279,15 @@ def _synthesize_indextts25_batch(
                     generated_id = line.partition(":")[2].strip()
                     for sentence, reference, temporary in tasks:
                         if generated_id == sentence.id and sentence.id not in committed:
-                            tts_backends._commit_clip(
-                                project, project_dir, sentence, reference, temporary
-                            )
+                            try:
+                                tts_backends._commit_clip(
+                                    project, project_dir, sentence, reference, temporary
+                                )
+                            except SynthesisError as exc:
+                                sentence.status = "error"
+                                sentence.error = str(exc)
+                                line_failures.append(f"{sentence.id}: {exc}")
+                                temporary.unlink(missing_ok=True)
                             committed.add(sentence.id)
                             if on_sentence:
                                 on_sentence()
@@ -308,7 +321,7 @@ def _synthesize_indextts25_batch(
         manifest.unlink(missing_ok=True)
 
     detail = tts_backends.readable_output_tail(output_tail)
-    failures: list[str] = []
+    failures: list[str] = list(line_failures)
     for index, (sentence, reference, temporary) in enumerate(tasks, start=1):
         output = tts_backends._cache_output(project, sentence, project_dir)
         if sentence.id in committed:

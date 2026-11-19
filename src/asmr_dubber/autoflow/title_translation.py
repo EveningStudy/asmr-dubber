@@ -226,27 +226,49 @@ def translated_plan_titles(
     }
     try:
         translations = translate_titles(state, paths)
-    except VideoPreparerError:
-        plan_files.save_plan_metadata(
-            plan_id,
+    except VideoPreparerError as exc:
+        cause = exc.__cause__
+        msg = str(exc)
+        auth_or_key_error = (
+            "密钥" in msg
+            or "API Key" in msg
+            or "401" in msg
+            or "unauthorized" in msg.casefold()
+            or "api key" in msg.casefold()
+            or (cause is not None and "API Key" in str(cause))
+        )
+        updated = dict(cached)
+        if auth_or_key_error:
+            runlog.emit("未配置翻译 API Key 或认证失败，作品名与音轨标题将保留原名称。")
+            fallback_folder = folder_translation or source_folder.name
+            fallback_titles = {
+                key: str(translations.get(key) or original_titles[key]).strip()
+                for key in expected_keys
+            }
+            if cached:
+                plan_files.save_plan_metadata(plan_id, updated)
+            return fallback_folder, fallback_titles
+        updated.update(
             {
                 "source_folder": str(source_folder),
                 "folder_name_original": source_folder.name,
                 "folder_name_translation": str(state.get("folder_name_translation") or ""),
                 "title_translations": dict(state.get("title_translations") or {}),
                 "title_translation_policy": policy,
-            },
+            }
         )
+        plan_files.save_plan_metadata(plan_id, updated)
         raise
     folder_translation = str(state["folder_name_translation"])
-    plan_files.save_plan_metadata(
-        plan_id,
+    updated = dict(cached)
+    updated.update(
         {
             "source_folder": str(source_folder),
             "folder_name_original": source_folder.name,
             "folder_name_translation": folder_translation,
             "title_translations": translations,
             "title_translation_policy": policy,
-        },
+        }
     )
+    plan_files.save_plan_metadata(plan_id, updated)
     return folder_translation, translations

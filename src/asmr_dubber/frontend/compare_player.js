@@ -1,4 +1,4 @@
-import { $, $$, state, t, time, esc } from './session.js';
+import { $, $$, state, t, time, esc, notice, registerAudioStopper, stopAllAudio } from './session.js';
 
 // Original, bilingual mix and full-replacement mix play together; only the chosen one is
 // audible, so switching never loses the playing position.
@@ -23,7 +23,10 @@ function stop() {
 }
 function teardown() {
   stop();
-  players.forEach((audio) => audio.removeAttribute('src'));
+  players.forEach((audio) => {
+    audio.removeAttribute('src');
+    audio.load?.();
+  });
   players = new Map();
   position = 0;
 }
@@ -74,9 +77,7 @@ function tick() {
 }
 async function play() {
   // The editor's own players would otherwise play over the comparison.
-  $('#sourcePlayer')?.pause();
-  $('#dubPlayer')?.pause();
-  $('#playSource').textContent = '▶';
+  stopAllAudio('compare');
   const sentence = $('#compareLoop').checked ? selectedSentence() : null;
   if (sentence && (position < sentence.start_seconds || position >= sentence.end_seconds))
     seek(sentence.start_seconds);
@@ -112,7 +113,7 @@ export function renderCompare(project) {
     if (!tracks.some((track) => track.key === active)) active = 'source';
     for (const track of usable ? tracks : []) {
       const audio = new Audio();
-      audio.preload = 'auto';
+      audio.preload = 'metadata';
       audio.muted = track.key !== active;
       audio.src = track.url;
       players.set(track.key, audio);
@@ -125,7 +126,15 @@ export function renderCompare(project) {
 }
 
 export function initializeCompare() {
-  $('#comparePlay').onclick = () => (playing ? stop() : play().catch(() => stop()));
+  registerAudioStopper('compare', stop);
+  window.addEventListener('sentence-selected', showLoopInfo);
+  $('#comparePlay').onclick = () =>
+    playing
+      ? stop()
+      : play().catch((error) => {
+          stop();
+          notice(error?.message || t('无法播放对比音频。'), true);
+        });
   $('#compareSeek').oninput = () => seek(Number($('#compareSeek').value));
   $('#compareLoop').onchange = () => {
     loopedId = '';

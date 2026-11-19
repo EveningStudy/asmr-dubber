@@ -254,10 +254,128 @@ asmr_find_local_artifact() {
   return 1
 }
 
+_asmr_is_modelscope_auth_url() {
+  local url="$1"
+  [[ "$url" == https://modelscope.cn/* || "$url" == https://www.modelscope.cn/* ]]
+}
+
+_asmr_is_modelscope_url() {
+  local url="$1"
+  [[ "$url" == https://modelscope.cn/* || \
+    "$url" == https://*.modelscope.cn/* || \
+    "$url" == https://modelscope.ai/* || \
+    "$url" == https://*.modelscope.ai/* ]]
+}
+
+_asmr_curl_download_with_safe_auth() {
+  local candidate="$1" partial="$2"
+  local token="${MODELSCOPE_API_TOKEN:-}"
+  if _asmr_is_modelscope_auth_url "$candidate" && [[ -n "$token" ]]; then
+    (
+      local cfg="" effective="$candidate" hop=0 probe_out status redirect
+      local -a probe_args dl_args
+      trap 'rm -f "${cfg:-}"' EXIT INT TERM
+      cfg="$(umask 077 && mktemp)"
+      local clean_token="${token//$'\r'/}"
+      clean_token="${clean_token//$'\n'/}"
+      clean_token="${clean_token//\\/\\\\}"
+      clean_token="${clean_token//\"/\\\"}"
+      printf 'header = "Authorization: Bearer %s"\nheader = "Cookie: m_session_id=%s"\n' \
+        "$clean_token" "$clean_token" >"$cfg"
+
+      while (( hop < 10 )); do
+        if ! _asmr_is_modelscope_auth_url "$effective"; then
+          break
+        fi
+        probe_args=(
+          -sS -o /dev/null -w '%{http_code}\n%{redirect_url}'
+          -r 0-0 --connect-timeout 20
+          -H "Accept-Encoding: identity"
+          -H "User-Agent: curl/8.0"
+          -H "Referer: https://modelscope.cn/"
+          -K "$cfg"
+        )
+        if ! probe_out="$(curl "${probe_args[@]}" "$effective" 2>/dev/null)"; then
+          break
+        fi
+        status="${probe_out%%$'\n'*}"
+        redirect=""
+        if [[ "$probe_out" == *$'\n'* ]]; then
+          redirect="${probe_out#*$'\n'}"
+        fi
+        case "$status" in
+          301|302|303|307|308)
+            if [[ -z "$redirect" ]]; then
+              break
+            fi
+            if [[ "$redirect" != https://* ]]; then
+              echo "下载源重定向到了非 HTTPS 地址。" >&2
+              exit 1
+            fi
+            effective="$redirect"
+            hop=$((hop + 1))
+            ;;
+          *)
+            break
+            ;;
+        esac
+      done
+
+      dl_args=(
+        -f --retry 4 --retry-delay 1 --connect-timeout 20
+        -H "Accept-Encoding: identity"
+      )
+      if _asmr_is_modelscope_url "$effective"; then
+        dl_args+=(
+          -H "User-Agent: curl/8.0"
+          -H "Referer: https://modelscope.cn/"
+        )
+      fi
+      if _asmr_is_modelscope_auth_url "$effective"; then
+        dl_args+=(-K "$cfg")
+      else
+        dl_args+=(-L)
+      fi
+      if curl "${dl_args[@]}" -C - "$effective" -o "$partial"; then
+        exit 0
+      fi
+      rc=$?
+      if [[ "$rc" == 33 ]]; then
+        rm -f "$partial"
+        curl "${dl_args[@]}" "$effective" -o "$partial"
+        exit $?
+      fi
+      exit "$rc"
+    )
+    return $?
+  fi
+
+  local -a curl_args
+  curl_args=(
+    -fL --retry 4 --retry-delay 1 --connect-timeout 20
+    -H "Accept-Encoding: identity"
+  )
+  if _asmr_is_modelscope_url "$candidate"; then
+    curl_args+=(
+      -H "User-Agent: curl/8.0"
+      -H "Referer: https://modelscope.cn/"
+    )
+  fi
+  if curl "${curl_args[@]}" -C - "$candidate" -o "$partial"; then
+    return 0
+  fi
+  local exit_code=$?
+  if [[ "$exit_code" == 33 ]]; then
+    rm -f "$partial"
+    curl "${curl_args[@]}" "$candidate" -o "$partial"
+    return $?
+  fi
+  return "$exit_code"
+}
+
 asmr_download() {
   local root="$1" url="$2" destination="$3" expected="${4:-}"
   local candidate actual local_artifact exit_code
-  local -a curl_args
   mkdir -p "$(dirname "$destination")"
   local_artifact="$(asmr_find_local_artifact "$url" "$expected" || true)"
   if [[ -n "$local_artifact" ]]; then
@@ -278,37 +396,10 @@ asmr_download() {
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
     echo "尝试下载：$candidate"
-    curl_args=(
-      -fL --retry 4 --retry-delay 1 --connect-timeout 20
-      -H "Accept-Encoding: identity"
-    )
-    if [[ "$candidate" == https://modelscope.cn/* || \
-      "$candidate" == https://*.modelscope.cn/* || \
-      "$candidate" == https://modelscope.ai/* || \
-      "$candidate" == https://*.modelscope.ai/* ]]; then
-      curl_args+=(
-        -H "User-Agent: curl/8.0"
-        -H "Referer: https://modelscope.cn/"
-      )
-      if [[ -n "${MODELSCOPE_API_TOKEN:-}" ]]; then
-        curl_args+=(
-          -H "Authorization: Bearer $MODELSCOPE_API_TOKEN"
-          -H "Cookie: m_session_id=$MODELSCOPE_API_TOKEN"
-        )
-      fi
-    fi
-    if curl "${curl_args[@]}" -C - "$candidate" -o "$destination.partial"; then
+    if _asmr_curl_download_with_safe_auth "$candidate" "$destination.partial"; then
       exit_code=0
     else
       exit_code=$?
-    fi
-    if [[ "$exit_code" == 33 ]]; then
-      rm -f "$destination.partial"
-      if curl "${curl_args[@]}" "$candidate" -o "$destination.partial"; then
-        exit_code=0
-      else
-        exit_code=$?
-      fi
     fi
     if [[ "$exit_code" == 0 ]]; then
       mv -f "$destination.partial" "$destination"

@@ -51,7 +51,7 @@ def _budget_rate_and_key(project: DubProject) -> tuple[float | None, str]:
     return rate, budget_key
 
 
-def _proposal_records(report: RevisionReport, instruction: str) -> list[dict[str, Any]]:
+def _proposal_records_from(proposals: Iterable[Any], instruction: str) -> list[dict[str, Any]]:
     created_at = datetime.now(UTC).isoformat()
     return [
         {
@@ -62,8 +62,12 @@ def _proposal_records(report: RevisionReport, instruction: str) -> list[dict[str
             "instruction": instruction,
             "created_at": created_at,
         }
-        for item in report.proposals
+        for item in proposals
     ]
+
+
+def _proposal_records(report: RevisionReport, instruction: str) -> list[dict[str, Any]]:
+    return _proposal_records_from(report.proposals, instruction)
 
 
 def merge_proposals(
@@ -106,9 +110,16 @@ def revise_project_translations(
         raise ProjectError("现有译文的语言与当前目标语言不一致，请先重新翻译。")
     key = resolve_api_key(provider, api_key)
 
+    saved_count = 0
+
     def checkpoint(report: RevisionReport) -> None:
         # Called after every batch: proposals found so far survive a later failure.
-        records = _proposal_records(report, instruction)
+        nonlocal saved_count
+        if len(report.proposals) <= saved_count:
+            return
+        new_proposals = report.proposals[saved_count:]
+        saved_count = len(report.proposals)
+        records = _proposal_records_from(new_proposals, instruction)
         if records:
             merge_proposals(project, records)
             save_project(project, project_dir)
@@ -183,7 +194,7 @@ def resolve_proposals(
         text = str(record.get("new_zh", ""))
         _clear_audio(sentence)
         if record.get("kind") == "sound":
-            _mark_sound(sentence, text, policy)
+            _mark_sound(sentence, text, policy, explicit=True)
             if policy == "keep_source" and text:
                 sentence.zh_text = text
                 sentence.chinese_audio_enabled = False

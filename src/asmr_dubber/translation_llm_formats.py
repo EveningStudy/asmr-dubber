@@ -2,13 +2,75 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 import httpx
 
-from .api_contracts import APIContractError, merge_extra_body
+from .api_contracts import APIContractError, merge_extra_body, parse_json_object
 from .errors import TranslationError
-from .translation_schema import _NonRetryableTranslationError
+from .translation_schema import _FATAL_HTTP_STATUS, _NonRetryableTranslationError
+
+_RECOVERABLE_400_MODERATION = (
+    "content exists risk",
+    "data_inspection_failed",
+    "content_policy",
+    "inappropriate content",
+    "safety",
+    "sensitive",
+)
+_RECOVERABLE_400_CONTEXT = (
+    "context_length",
+    "maximum context",
+    "too many tokens",
+    "token limit",
+    "input is too long",
+    "prompt is too long",
+)
+_RECOVERABLE_400_TRANSIENT = (
+    "temporary",
+    "try again",
+    "overloaded",
+    "upstream",
+    "busy",
+    "timeout",
+)
+
+
+def _raise_for_translation_status(response: httpx.Response, provider_label: str) -> None:
+    status = response.status_code
+    if status == 400:
+        body_lower = response.text[:1000].casefold()
+        if any(marker in body_lower for marker in _RECOVERABLE_400_MODERATION):
+            raise _NonRetryableTranslationError(
+                f"{provider_label} API 拦截本批内容（HTTP 400）：{response.text[:500]}",
+                status_code=400,
+                fatal=False,
+            )
+        if any(marker in body_lower for marker in _RECOVERABLE_400_CONTEXT):
+            raise TranslationError(
+                f"{provider_label} API 上下文超限（HTTP 400）：{response.text[:500]}"
+            )
+        if any(marker in body_lower for marker in _RECOVERABLE_400_TRANSIENT):
+            response.raise_for_status()
+        raise _NonRetryableTranslationError(
+            f"{provider_label} API 拒绝请求（HTTP 400）：{response.text[:500]}",
+            status_code=400,
+            fatal=True,
+        )
+    if status in _FATAL_HTTP_STATUS:
+        raise _NonRetryableTranslationError(
+            f"{provider_label} API 拒绝请求（HTTP {status}）：{response.text[:500]}",
+            status_code=status,
+            fatal=True,
+        )
+    response.raise_for_status()
+
+
+_OPENAI_REASONING_MODEL = re.compile(
+    r"^(?:o[134](?:-|$)|gpt-5(?:\.\d+)?-pro(?:-|$))",
+    re.IGNORECASE,
+)
 
 OPENAI_COMPATIBLE_PROVIDERS = frozenset(
     {
@@ -84,7 +146,7 @@ def _request_deepseek_chat(
             reserved={"model", "messages", "stream"},
         )
     except APIContractError as exc:
-        raise _NonRetryableTranslationError(str(exc)) from exc
+        raise _NonRetryableTranslationError(str(exc), fatal=True) from exc
     response = client.post(
         f"{base_url}/chat/completions",
         headers={
@@ -93,12 +155,7 @@ def _request_deepseek_chat(
         },
         json=payload,
     )
-    if response.status_code in {401, 402, 403, 422}:
-        raise _NonRetryableTranslationError(
-            f"DeepSeek API 拒绝请求（HTTP {response.status_code}）：{response.text[:500]}",
-            response.status_code,
-        )
-    response.raise_for_status()
+    _raise_for_translation_status(response, "DeepSeek")
     data = response.json()
     choice = data["choices"][0]
     if choice.get("finish_reason") == "length":
@@ -121,18 +178,22 @@ def _request_openai_chat(
     top_p: float,
     extra_body: str,
     raise_for_status: Callable[[httpx.Response], None],
+    include_response_format: bool = True,
+    on_response_format_unsupported: Callable[[], None] | None = None,
 ) -> tuple[str, bool]:
     token_field = "max_completion_tokens" if provider in {"openai", "sensenova"} else "max_tokens"
     payload: dict[str, object] = {
         "model": model,
         "messages": messages,
         token_field: max_output_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-        "response_format": {"type": "json_object"},
         "stream": False,
         "user": job_id,
     }
+    if not _OPENAI_REASONING_MODEL.match(model.strip()):
+        payload["temperature"] = temperature
+        payload["top_p"] = top_p
+    if include_response_format:
+        payload["response_format"] = {"type": "json_object"}
     payload.update(_openai_provider_controls(provider, model, base_url))
     if provider == "sensenova":
         # SenseNova's compatibility gateway uses a strict request schema.
@@ -145,7 +206,7 @@ def _request_openai_chat(
             reserved={"model", "messages", "stream"},
         )
     except APIContractError as exc:
-        raise TranslationError(str(exc)) from exc
+        raise _NonRetryableTranslationError(str(exc), fatal=True) from exc
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -155,7 +216,13 @@ def _request_openai_chat(
         json=payload,
     )
     # Some local OpenAI-compatible servers implement chat but not JSON mode.
-    if provider in {"openai_compatible", "sensenova"} and response.status_code == 400:
+    if (
+        provider in {"openai_compatible", "sensenova"}
+        and include_response_format
+        and response.status_code == 400
+    ):
+        if on_response_format_unsupported is not None:
+            on_response_format_unsupported()
         payload.pop("response_format", None)
         response = client.post(
             f"{base_url}/chat/completions",
@@ -179,19 +246,35 @@ def _request_anthropic_messages(
     max_output_tokens: int,
     temperature: float,
     top_p: float,
+    extra_body: str = "{}",
     raise_for_status: Callable[[httpx.Response], None],
 ) -> tuple[str, bool]:
+    del top_p  # Anthropic rejects sending temperature and top_p together.
     user_messages = [item for item in messages if item["role"] != "system"]
-    payload = {
+    payload: dict[str, object] = {
         "model": model,
         "system": system_prompt,
         "messages": user_messages,
         "max_tokens": max_output_tokens,
         "temperature": temperature,
-        "top_p": top_p,
     }
+    try:
+        extra = parse_json_object(extra_body, label="翻译附加请求参数")
+        payload = merge_extra_body(
+            payload,
+            extra_body,
+            label="翻译附加请求参数",
+            reserved={"model", "messages", "system", "stream"},
+        )
+    except APIContractError as exc:
+        raise _NonRetryableTranslationError(str(exc), fatal=True) from exc
+    if "top_p" in payload and "temperature" not in extra:
+        payload.pop("temperature", None)
+    clean_base = base_url.rstrip("/")
+    if clean_base.endswith("/v1"):
+        clean_base = clean_base[:-3]
     response = client.post(
-        f"{base_url}/v1/messages",
+        f"{clean_base}/v1/messages",
         headers={
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -218,6 +301,7 @@ def _request_gemini_content(
     max_output_tokens: int,
     temperature: float,
     top_p: float,
+    extra_body: str = "{}",
     raise_for_status: Callable[[httpx.Response], None],
 ) -> tuple[str, bool]:
     user_text = "\n\n".join(item["content"] for item in messages if item["role"] != "system")
@@ -234,11 +318,25 @@ def _request_gemini_content(
             temperature=temperature,
             topP=top_p,
         )
-    payload = {
+    payload: dict[str, object] = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": generation_config,
     }
+    try:
+        payload = merge_extra_body(
+            payload,
+            extra_body,
+            label="翻译附加请求参数",
+            reserved={"contents", "systemInstruction"},
+        )
+    except APIContractError as exc:
+        raise _NonRetryableTranslationError(str(exc), fatal=True) from exc
+    extra_config = payload.get("generationConfig")
+    if isinstance(extra_config, dict) and extra_config is not generation_config:
+        merged_config = dict(generation_config)
+        merged_config.update(extra_config)
+        payload["generationConfig"] = merged_config
     response = client.post(
         f"{base_url}/models/{model}:generateContent",
         headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
@@ -246,8 +344,35 @@ def _request_gemini_content(
     )
     raise_for_status(response)
     data = response.json()
-    candidate = data["candidates"][0]
+    prompt_feedback = data.get("promptFeedback")
+    if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
+        raise _NonRetryableTranslationError(
+            f"Gemini 安全策略拦截了翻译请求（blockReason={prompt_feedback['blockReason']}）。",
+            fatal=True,
+        )
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise _NonRetryableTranslationError(
+            "Gemini 未返回候选结果（可能被安全策略拦截）。",
+            fatal=True,
+        )
+    candidate = candidates[0]
+    finish_reason = candidate.get("finishReason")
+    parts = candidate.get("content", {}).get("parts", [])
     content = "".join(
-        part.get("text", "") for part in candidate.get("content", {}).get("parts", [])
+        part.get("text", "")
+        for part in parts
+        if isinstance(part, dict) and part.get("thought") is not True
     )
-    return content, candidate.get("finishReason") in {"MAX_TOKENS", "LENGTH"}
+    if not content.strip() and finish_reason in {
+        "SAFETY",
+        "RECITATION",
+        "PROHIBITED_CONTENT",
+        "BLOCKLIST",
+        "SPII",
+    }:
+        raise _NonRetryableTranslationError(
+            f"Gemini 安全策略拦截了翻译输出（finishReason={finish_reason}）。",
+            fatal=True,
+        )
+    return content, finish_reason in {"MAX_TOKENS", "LENGTH"}

@@ -4,7 +4,7 @@
 
 # 完整参数参考
 
-按当前 `services/parameters.py` 清单生成，**247 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
+按当前 `services/parameters.py` 清单生成，**248 个字段全部列出**。这是 schema 默认值，不是已保存值。后端/语言可能带入不同模型、Prompt、设备或音色；操作讲解见对应功能章节。
 
 项目字段出现在项目/新默认中；全局字段作用于全局/新项目/新队列。Always 表示无静态显示条件，高级分组仍需展开。选项可能随后端变化；校验还包括跨字段依赖、语言能力与 JSON 合同。
 
@@ -49,10 +49,10 @@
 | `asr_vad_filter`<br>使用模型自带 VAD | boolean<br>project | `false` | — | asr_backend in ["parakeet_nemo","kotoba_whisper","faster_whisper","generic_asr_api","qwen3_asr","anime_whisper"] |
 | `asr_vad_mode`<br>方式 | string<br>project | `off` | off, backend, asmr | Always |
 | `asr_vad_min_silence_ms`<br>VAD 最短静音 | integer<br>project | `500` | ≥50; ≤10000 | asr_vad_mode in ["backend"] |
-| `asr_asmr_vad_threshold`<br>ASMR VAD 语音阈值 | number<br>project | `0.35` | ≥0.05; ≤0.95 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD 最短语音 | integer<br>project | `150` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_min_silence_ms`<br>ASMR VAD 最短静音 | integer<br>project | `100` | ≥20; ≤10000 | asr_vad_mode in ["asmr"] |
-| `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD 边界保留 | integer<br>project | `200` | ≥0; ≤5000 | asr_vad_mode in ["asmr"] |
+| `asr_asmr_vad_threshold`<br>ASMR VAD 语音阈值 | number<br>project | `0.35` | ≥0.05; ≤0.95 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_min_speech_ms`<br>ASMR VAD 最短语音 | integer<br>project | `150` | ≥20; ≤10000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_min_silence_ms`<br>ASMR VAD 最短静音 | integer<br>project | `100` | ≥20; ≤10000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
+| `asr_asmr_vad_speech_pad_ms`<br>ASMR VAD 边界保留 | integer<br>project | `200` | ≥0; ≤5000 | Always AND (asr_vad_mode in ["asmr"] OR asr_backend in ["anime_whisper","qwen3_asr"]) |
 | `aligner_model`<br>时间对齐模型 | string<br>project | `Qwen/Qwen3-ForcedAligner-0.6B` | — | Always |
 | `asr_forced_alignment_enabled`<br>Qwen3 时间对齐 | boolean<br>project | `false` | — | Always |
 | `asr_diarize_speakers`<br>自动区分说话人 | boolean<br>project | `false` | — | Always |
@@ -224,10 +224,10 @@
 | `chinese_line_peak_dbfs`<br>单句峰值上限 | number<br>project | `-9.0` | ≥-20.0; ≤-1.0 | Always |
 | `chinese_stem_peak_dbfs`<br>配音轨峰值上限 | number<br>project | `-3.0` | ≥-12.0; ≤-0.1 | Always |
 | `chinese_fade_ms`<br>句首句尾淡入淡出 | number<br>project | `8.0` | ≥0.0; ≤100.0 | Always |
-| `replacement_chinese_gain_db`<br>完全配音版额外增益 | number<br>project | `0.0` | ≥-40.0; ≤20.0 | Always |
-| `replacement_normalize_chinese_loudness`<br>完全配音版音量处理 | boolean<br>project | `true` | — | Always |
+| `replacement_chinese_gain_db`<br>完全配音版额外增益 | number<br>project | `0.0` | ≥-40.0; ≤20.0 | separation_mix_mode in ["replace"] |
+| `replacement_normalize_chinese_loudness`<br>完全配音版音量处理 | boolean<br>project | `true` | — | separation_mix_mode in ["replace"] |
 | `replacement_match_source_loudness`<br>跟随对应原声 | boolean<br>project | `true` | — | Always |
-| `replacement_chinese_relative_loudness_db`<br>完全配音版相对原声 | number<br>project | `0.0` | ≥-24.0; ≤24.0 | Always |
+| `replacement_chinese_relative_loudness_db`<br>完全配音版相对原声 | number<br>project | `0.0` | ≥-24.0; ≤24.0 | separation_mix_mode in ["replace"] |
 | `replacement_chinese_min_active_rms_dbfs`<br>最安静不低于 | number<br>project | `-42.0` | ≥-60.0; ≤-20.0 | Always |
 | `replacement_chinese_target_active_rms_dbfs`<br>最响不超过 / 统一到 | number<br>project | `-20.0` | ≥-50.0; ≤-16.0 | Always |
 | `replacement_chinese_max_loudness_boost_db`<br>每句最多提升 | number<br>project | `12.0` | ≥0.0; ≤30.0 | Always |
@@ -269,6 +269,7 @@
 | `open_browser`<br>启动时自动打开浏览器 | boolean<br>global | `true` | — | Always |
 | `download_source`<br>下载来源 | string<br>global | `modelscope` | ^(modelscope&#124;original)$; modelscope, original | Always |
 | `onboarding_completed`<br>onboarding_completed | boolean<br>global | `false` | — | Always |
+| `asr_upgrade_prompt_dismissed`<br>asr_upgrade_prompt_dismissed | boolean<br>global | `false` | — | Always |
 
 ## 批量
 

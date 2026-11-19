@@ -36,8 +36,31 @@ if [[ ! -x "$ASMR_DUBBER_UV" || ! -x "$APP_PYTHON" ]]; then
 fi
 mkdir -p "$DOWNLOAD_ROOT"
 
+FORCE=0
+for arg in "$@"; do
+  if [[ "$arg" == "--force" ]]; then
+    FORCE=1
+  fi
+done
+
+indextts25_checkpoints_complete() {
+  "$APP_PYTHON" - "$MODEL_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+from asmr_dubber.constants import INDEXTTS25_REQUIRED_DIRS, INDEXTTS25_REQUIRED_FILES
+
+model_dir = Path(sys.argv[1])
+files_ready = all((model_dir / name).is_file() for name in INDEXTTS25_REQUIRED_FILES)
+dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS25_REQUIRED_DIRS)
+raise SystemExit(0 if files_ready and dirs_ready else 1)
+PY
+}
+
 if [[ "${ASMR_DUBBER_MODEL_PACKS_PREPARED:-}" != "1" ]]; then
-  if "$APP_PYTHON" -m asmr_dubber.cli prepare-model-pack indextts2_5-checkpoints; then
+  if [[ "$FORCE" != "1" ]] && indextts25_checkpoints_complete; then
+    echo "IndexTTS-2.5 本地 checkpoints 已完整，跳过模型包下载。"
+  elif "$APP_PYTHON" -m asmr_dubber.cli prepare-model-pack indextts2_5-checkpoints; then
     "$APP_PYTHON" -m asmr_dubber.cli import-model-packs --all \
       --pack-id indextts2_5-checkpoints
   else
@@ -183,20 +206,6 @@ else
     exit 1
   fi
 fi
-
-indextts25_checkpoints_complete() {
-  "$APP_PYTHON" - "$MODEL_DIR" <<'PY'
-import sys
-from pathlib import Path
-
-from asmr_dubber.constants import INDEXTTS25_REQUIRED_DIRS, INDEXTTS25_REQUIRED_FILES
-
-model_dir = Path(sys.argv[1])
-files_ready = all((model_dir / name).is_file() for name in INDEXTTS25_REQUIRED_FILES)
-dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS25_REQUIRED_DIRS)
-raise SystemExit(0 if files_ready and dirs_ready else 1)
-PY
-}
 
 if indextts25_checkpoints_complete; then
   echo "IndexTTS-2.5 本地 checkpoints 已完整，无需联网下载。"

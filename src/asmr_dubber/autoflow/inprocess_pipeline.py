@@ -24,8 +24,10 @@ from .domain import ToolPaths
 from .errors import StageFailedError, VideoPreparerError
 
 
-def can_run_in_process(paths: ToolPaths) -> bool:
+def can_run_in_process(paths: ToolPaths | None) -> bool:
     """Use in-process execution unless a caller/test overrode ``run_process`` or CLI."""
+    if paths is None or not hasattr(paths, "cli_command"):
+        return False
     if not processes.uses_default_process_runners():
         return False
     cmd = tuple(str(part) for part in paths.cli_command)
@@ -169,15 +171,26 @@ def run_stage_in_process(arguments: Sequence[str]) -> dict[str, Any] | None:
         if lang_raw == "ja":
             lang_raw = "source"
         variant = _last_flag(rest[1:], "--output-variant")
+        no_video = "--no-video" in rest[1:]
         try:
             project, directory = pipeline.reload_project(project_path)
-            pipeline.generate_subtitles(
-                project,
-                directory,
-                language=cast(SubtitleLanguage, lang_raw),
-                progress=progress,
-                output_variant=variant,
-            )
+            orig_media_type = project.source.media_type
+            if no_video:
+                project.source.media_type = "audio"
+            try:
+                pipeline.generate_subtitles(
+                    project,
+                    directory,
+                    language=cast(SubtitleLanguage, lang_raw),
+                    progress=progress,
+                    output_variant=variant,
+                )
+            finally:
+                if no_video and orig_media_type != "audio":
+                    saved_project, saved_dir = pipeline.reload_project(project_path)
+                    if saved_project.source.media_type != orig_media_type:
+                        saved_project.source.media_type = orig_media_type
+                        pipeline.save_project(saved_project, saved_dir)
         except OperationCancelledError:
             raise
         except (AsmrDubberError, ValueError) as exc:

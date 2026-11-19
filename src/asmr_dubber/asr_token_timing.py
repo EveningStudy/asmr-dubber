@@ -44,7 +44,14 @@ def active_frames(clip: np.ndarray, sample_rate: int) -> tuple[np.ndarray, float
         return np.zeros(0, dtype=bool), hop / sample_rate
     rms = np.sqrt(np.mean(clip[: count * hop].astype(np.float64).reshape(count, hop) ** 2, axis=1))
     ref = float(np.percentile(rms, 98)) if len(rms) >= 4 else float(rms.max())
-    floor = float(np.percentile(rms, 10)) * 2.2 if len(rms) >= 8 else 1e-6
+    if len(rms) >= 8:
+        floor = min(
+            float(np.percentile(rms, 10)) * 2.2,
+            max(10.0 ** (-42.0 / 20.0), float(np.percentile(rms, 5)) * 1.5),
+            ref * 0.25,
+        )
+    else:
+        floor = 1e-6
     return rms >= max(ref * _ACTIVE_DROP, floor, 1e-6), hop / sample_rate
 
 

@@ -82,7 +82,7 @@ bash scripts/linux/install-parakeet.sh
 
 `litagin/anime-whisper`（MIT）是在动画和游戏语音上微调的 Kotoba-Whisper，现在是新项目的推荐识别模型。日语音频先由 ASMR 专用 VAD 切段（相邻片段并成不超过 8 秒，超长片段在最静处切开），逐段识别，再用 Qwen3 ForcedAligner 补逐字时间戳；某段对不上时退回整段起止。
 
-模型页的“下载”会安装 `asr-kotoba-whisper`、`asr-forced-aligner`、`asr-asmr-vad` 三组依赖，并下载固定版本的 anime-whisper、Qwen3 ForcedAligner 和 ASMR VAD。后两者有 ModelScope 离线包；anime-whisper 暂时只有 Hugging Face，需把“下载来源”切到“海外源”。也可以把自己打好的 `anime-whisper` 离线包放进 `model-packs`（`scripts/create-model-packs.py anime-whisper` 可以从已安装的模型生成）。
+模型页的“下载”会安装 `asr-kotoba-whisper`、`asr-forced-aligner`、`asr-asmr-vad` 三组依赖，并下载固定版本的 anime-whisper、Qwen3 ForcedAligner 和 ASMR VAD（均已有 ModelScope 国内离线包，无需切到海外源）。也可以把离线包直接放进 `model-packs` 目录导入（`scripts/create-model-packs.py anime-whisper` 可从已安装的模型生成）。
 
 **没装时的行为：** 从未保存过设置的新用户，如果 anime-whisper 没装完整，新项目的识别模型自动是 Parakeet，装好后才变回 anime-whisper。已经保存的设置和写明 `parakeet_nemo` 的项目不会被改动。手动选了 anime-whisper 但没装时，识别会明确提示去“设备与模型”页安装，不会在后台下载。
 

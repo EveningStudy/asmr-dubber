@@ -1,5 +1,6 @@
 """Application operations composed from the project, model and batch services."""
 
+import os
 from pathlib import Path
 
 from .. import __version__, app_logging, backend_diagnostics, cache_cleanup, runtime_health
@@ -25,13 +26,17 @@ class Application:
     def bootstrap(self):
         saved = settings.current()
         keys = settings.key_statuses()
+        onboarding_needed = onboarding.required(saved, keys)
         return {
             "version": __version__,
             "parameters": parameters.catalog(),
             "choices": parameters.choices(),
             "settings": saved.model_dump(mode="json"),
             "keys": keys,
-            "onboarding_required": onboarding.required(saved, keys),
+            "onboarding_required": onboarding_needed,
+            "asr_upgrade_prompt": onboarding.asr_upgrade_prompt(
+                saved, onboarding_needed=onboarding_needed
+            ),
             "presets": presets.catalog(),
             "tasks": self.tasks.list(),
             "queue": self.batch.list(),
@@ -131,11 +136,20 @@ class Application:
         if kind == "health":
             return {"message": runtime_health.check_runtime_health(request["backend"])}
         if kind == "repair":
-            return {
-                "message": runtime_health.repair_runtime_health(
-                    request["backend"], request["action"], True
-                )
-            }
+            env_name = "ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS"
+            previous = os.environ.get(env_name)
+            os.environ[env_name] = "1" if settings.current().download_source == "original" else "0"
+            try:
+                return {
+                    "message": runtime_health.repair_runtime_health(
+                        request["backend"], request["action"], True
+                    )
+                }
+            finally:
+                if previous is None:
+                    os.environ.pop(env_name, None)
+                else:
+                    os.environ[env_name] = previous
         if kind == "diagnostic":
             active = settings.current()
             if request.get("project"):
@@ -177,7 +191,20 @@ class Application:
         }
         sizes = {label: models.directory_bytes(path) for label, path in roots.items()}
         sizes["模型"] = model_sizes["total_bytes"]
-        sizes["缓存"] = max(0, sizes["缓存"] - model_sizes["cache_bytes"])
+        diag_zips = (
+            sum(
+                p.stat().st_size
+                for p in (home / "temp").glob("ASMR-Dubber-diagnostics-*.zip")
+                if p.is_file()
+            )
+            if (home / "temp").is_dir()
+            else 0
+        )
+        sizes["缓存"] = (
+            max(0, sizes["缓存"] - model_sizes["cache_bytes"])
+            + models.directory_bytes(home / "autoflow" / ".work")
+            + diag_zips
+        )
         return {
             "sizes": sizes,
             "root": str(roots["项目"]),
@@ -185,7 +212,7 @@ class Application:
         }
 
     def scan_storage(self, root, categories):
-        return cache_cleanup.scan_caches(root, categories)
+        return cache_cleanup.scan_caches(root, categories, app_home=portable_home())
 
     def clean_storage(self, plan, selected, confirmed):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
@@ -196,12 +223,18 @@ class Application:
     def diagnostics(self, identifier=""):
         """Bundle for a bug report; ``identifier`` limits it to one queued work."""
 
-        latest = max(
-            (task for task in self.tasks.list() if task["kind"] == "batch"),
-            key=lambda task: task["started_at"],
-            default=None,
-        )
-        outcomes = (latest or {}).get("plans")
+        outcomes = {}
+        for task in sorted(
+            (item for item in self.tasks.list() if item["kind"] == "batch"),
+            key=lambda item: item.get("started_at", 0),
+            reverse=True,
+        ):
+            plans = task.get("plans") or (task.get("result") or {}).get("outcomes") or {}
+            for plan_id, entry in plans.items():
+                if identifier and plan_id != identifier:
+                    continue
+                if plan_id not in outcomes:
+                    outcomes[plan_id] = entry
         return self.batch.diagnostics(identifier, outcomes)
 
     def logs(self):
@@ -212,6 +245,6 @@ class Application:
         contents = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
         atomic_write_text(target, app_logging.redact_sensitive(contents))
         return {
-            "text": app_logging.recent_log_text(),
+            "text": app_logging.redact_sensitive(app_logging.recent_log_text()),
             "url": self.media.register(target),
         }

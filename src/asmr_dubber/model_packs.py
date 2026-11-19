@@ -23,7 +23,15 @@ MODEL_PACK_SCHEMA_VERSION = 1
 MODEL_PACK_MANIFEST = "model-pack.json"
 MODEL_PACK_PAYLOAD_PREFIX = "payload/"
 MODEL_PACK_DIRECTORY_NAME = "model-packs"
-WINDOWS_DEPENDENCY_PACK_PREFIXES = ("asmr-dubber-windows-recommended-dependencies-v",)
+WINDOWS_DEPENDENCY_PACK_PREFIXES = (
+    "asmr-dubber-windows-recommended-dependencies-v",
+    "asmr-dubber-windows-advanced-dependencies-v",
+    "asmr-dubber-windows-wheelhouse-",
+    "asmr-dubber-windows-cuda130-wheelhouse-",
+    "asmr-dubber-indextts2-wheelhouse-",
+    "asmr-dubber-indextts25-wheelhouse-",
+    "wheelhouse-",
+)
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_FILE_COUNT = 100_000
 MAX_UNCOMPRESSED_BYTES = 100 * 1024**3

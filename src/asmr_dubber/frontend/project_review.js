@@ -1,4 +1,4 @@
-import { $, state, api, esc, t, options, flushSaves, startTask, guard, projectBusy, notice } from './session.js';
+import { $, state, api, esc, t, options, flushSaves, startTask, guard, projectBusy, notice, stopAllAudio } from './session.js';
 
 // Original-voice handling per sentence: Sentence.original_audio_enabled is null (auto),
 // true (keep the original) or false (replace / mute it).
@@ -37,13 +37,19 @@ function flagsHTML(sentence) {
     html += `<div class="flag bad" title="${esc(t(warning))}"><b>⚠ ${t('配音质检未通过')}</b><small>${esc(t(warning))}</small></div>`;
   if (flag) {
     const reasons = flag.reasons
-      .map((reason) =>
-        reason === 'residual_voice'
-          ? t('替换后残留的声音偏大（{db} dB）', { db: Number(flag.residual_db).toFixed(1) })
-          : t('区间外紧邻处有未被句子覆盖的人声（约 {seconds} 秒）', {
-              seconds: Math.max(flag.uncovered_before_seconds, flag.uncovered_after_seconds).toFixed(1),
-            }),
-      )
+      .map((reason) => {
+        if (reason === 'residual_voice') {
+          return t('替换后残留的声音偏大（{db} dB）', { db: Number(flag.residual_db).toFixed(1) });
+        }
+        if (reason === 'residual_speech') {
+          return flag.recognized_residual
+            ? t('检测到残留原声语音：{text}', { text: flag.recognized_residual })
+            : t('检测到残留原声语音');
+        }
+        return t('区间外紧邻处有未被句子覆盖的人声（约 {seconds} 秒）', {
+          seconds: Math.max(flag.uncovered_before_seconds, flag.uncovered_after_seconds).toFixed(1),
+        });
+      })
       .join('；');
     html += `<div class="flag warn" title="${esc(reasons)}"><b>⚠ ${t('疑似残留原声')}</b><small>${esc(reasons)}</small><button class="btn plain small" data-keep-original="${esc(sentence.id)}"${busy}>${t('这一句改为保留原声')}</button></div>`;
   }
@@ -159,6 +165,7 @@ export function initializeReview({ save, render, getSelected }) {
       }
       const playUrl = event.target.closest('[data-play-url]');
       if (playUrl) {
+        stopAllAudio('dub');
         $('#dubPlayer').src = playUrl.dataset.playUrl;
         await $('#dubPlayer').play();
         return;

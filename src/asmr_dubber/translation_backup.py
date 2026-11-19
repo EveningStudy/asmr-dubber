@@ -84,12 +84,20 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
     if path is None:
         raise ProjectError("没有可恢复的译文备份。")
     try:
-        saved = {
-            str(item["id"]): item
-            for item in json.loads(path.read_text(encoding="utf-8"))["sentences"]
-        }
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        saved = {str(item["id"]): item for item in payload["sentences"]}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ProjectError(f"译文备份无法读取：{exc}") from exc
+    backup_lang = payload.get("language")
+    settings = getattr(project, "settings", None)
+    target_lang = getattr(settings, "tts_target_language", None) or getattr(
+        project, "translation_language", None
+    )
+    if backup_lang and target_lang and backup_lang != target_lang:
+        raise ProjectError(
+            f"译文备份的目标语言为 {backup_lang}，与当前项目目标语言 {target_lang} 不一致，"
+            "无法恢复。"
+        )
     restored = 0
     for sentence in project.sentences:
         item = saved.get(sentence.id)
@@ -116,6 +124,8 @@ def restore_translation_backup(project: DubProject, project_dir: Path) -> int:
             sentence.error_code = None
         restored += 1
     if restored:
+        if backup_lang:
+            project.translation_language = backup_lang
         project.chinese_stem_file = None
         project.output_file = None
         project.output_video_file = None

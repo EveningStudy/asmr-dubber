@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateSet("Auto", "CPU", "CUDA")]
-    [string]$Variant = "Auto"
+    [string]$Variant = "Auto",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,18 +33,44 @@ if (-not (Test-Path $Python)) {
     throw "缺少 Python 运行环境；请运行项目根目录的 ASMR-Dubber.exe 准备基础环境。"
 }
 
+$InstalledExecutable = Join-Path $RuntimeBin "crispasr.exe"
+$Installed11B = Join-Path $ModelRoot "parakeet-ctc-1.1b-ja-f16.gguf"
+$Installed06B = Join-Path $ModelRoot "parakeet-tdt-0.6b-ja.gguf"
+$Expected11B = "34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7"
+$Expected06B = "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
+$ParakeetModelsReady = (
+    (Test-Path $Installed11B) -and
+    (Test-Path $Installed06B) -and
+    ((Get-ASMRDubberFileSha256 -Path $Installed11B) -eq $Expected11B) -and
+    ((Get-ASMRDubberFileSha256 -Path $Installed06B) -eq $Expected06B)
+)
+if (-not $Force -and $ParakeetModelsReady -and (Test-Path $InstalledExecutable)) {
+    $ReadyCheck = Invoke-ASMRDubberProcess -FilePath $InstalledExecutable `
+        -ArgumentList @("--version") -WorkingDirectory $Root
+    if ($ReadyCheck -eq 0) {
+        Write-Host "Parakeet 本地运行时和两款模型已完整，无需联网下载。" `
+            -ForegroundColor Green
+        return
+    }
+}
+
 if ($env:ASMR_DUBBER_MODEL_PACKS_PREPARED -ne "1") {
-    & $Python -m asmr_dubber.cli prepare-model-pack parakeet-ja-windows
-    if ($LASTEXITCODE -eq 0) {
-        & $Python -m asmr_dubber.cli import-model-packs --all --pack-id parakeet-ja-windows
-        if ($LASTEXITCODE -ne 0) {
-            throw "Parakeet ModelScope 模型包已下载，但导入失败。"
-        }
+    if (-not $Force -and $ParakeetModelsReady) {
+        Write-Host "Parakeet 本地模型已完整且校验通过，跳过模型包下载。" `
+            -ForegroundColor Green
     } else {
-        throw (
-            "Parakeet ModelScope 模型包下载未完成。断点文件已保留；" +
-            "请重新运行安装继续，不会另起一条大型模型下载。"
-        )
+        & $Python -m asmr_dubber.cli prepare-model-pack parakeet-ja-windows
+        if ($LASTEXITCODE -eq 0) {
+            & $Python -m asmr_dubber.cli import-model-packs --all --pack-id parakeet-ja-windows
+            if ($LASTEXITCODE -ne 0) {
+                throw "Parakeet ModelScope 模型包已下载，但导入失败。"
+            }
+        } else {
+            throw (
+                "Parakeet ModelScope 模型包下载未完成。断点文件已保留；" +
+                "请重新运行安装继续，不会另起一条大型模型下载。"
+            )
+        }
     }
 }
 
@@ -52,12 +79,8 @@ if ($Variant -eq "Auto") {
     $Variant = if (Test-Path $NvidiaSmi) { "CUDA" } else { "CPU" }
 }
 
-$InstalledExecutable = Join-Path $RuntimeBin "crispasr.exe"
-$Installed11B = Join-Path $ModelRoot "parakeet-ctc-1.1b-ja-f16.gguf"
-$Installed06B = Join-Path $ModelRoot "parakeet-tdt-0.6b-ja.gguf"
-$Expected11B = "34dd3128275c9bca2b4296f53c5f831feb258fcf3fdd28c29c0dc2d2f7d5ede7"
-$Expected06B = "374eb0132eebaec4df77a9631cbbeb03790be48a4a517f6cc8e8bdb38fe9a584"
 if (
+    -not $Force -and
     (Test-Path $InstalledExecutable) -and
     (Test-Path $Installed11B) -and
     (Test-Path $Installed06B) -and

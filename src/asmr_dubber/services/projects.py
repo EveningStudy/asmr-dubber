@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from .. import pipeline
-from ..audio import verify_source
+from ..audio import probe_audio, verify_source
 from ..lifecycle import browser_revision_scope
 from ..models import load_project
 from . import project_audio, project_operations, project_records, project_review, review
@@ -22,23 +22,18 @@ class Projects:
         active, directory = load_project(project)
         return self._serialize(active, directory, project)
 
-    def _serialize(self, active, directory, project_ref=None):
-        result = active.model_dump(mode="json")
-        manifest_str = str(directory / "project.json")
-        result.update(
-            manifest=manifest_str,
-            title=pipeline._PROJECT_STAMP.sub("", directory.name),
-            rows=project_records.project_rows(active),
-        )
-        result["source_url"] = self.media.register(verify_source(directory, active.source))
-        external_reference = Path(active.settings.tts_external_reference_audio)
-        result["external_reference_url"] = (
-            self.media.register(external_reference) if external_reference.is_file() else None
-        )
-        result["reference_external"] = active.settings.tts_reference_source == "external" or (
-            active.settings.tts_backend in {"indextts2", "indextts2_5"}
-            and active.settings.tts_index_speaker_source == "external"
-        )
+    def _register_project_file(self, root: Path, stored: str | None) -> str | None:
+        if not stored:
+            return None
+        candidate = (root / stored).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            logger.warning("Skipping path outside project directory: %s", stored)
+            return None
+        return self.media.register(candidate) if candidate.is_file() else None
+
+    def _collect_outputs(self, active, root: Path) -> dict:
         outputs = {}
         for name in (
             "output_file",
@@ -50,21 +45,49 @@ class Projects:
         ):
             stored = getattr(active, name)
             if stored:
-                candidate = (directory / stored).resolve()
-                candidate.relative_to(directory.resolve())
+                candidate = (root / stored).resolve()
+                candidate.relative_to(root)
                 outputs[name] = {"name": candidate.name, "url": self.media.register(candidate)}
-        result["outputs"] = outputs
+        return outputs
+
+    def _serialize(self, active, directory, project_ref=None):
+        result = active.model_dump(mode="json")
+        manifest_str = str(directory / "project.json")
+        project_root = directory.resolve()
+        result.update(
+            manifest=manifest_str,
+            title=pipeline._PROJECT_STAMP.sub("", directory.name),
+            rows=project_records.project_rows(active),
+        )
+        result["source_url"] = self.media.register(verify_source(directory, active.source))
+        external_reference_url = None
+        raw_external = (active.settings.tts_external_reference_audio or "").strip()
+        if raw_external:
+            external_reference = Path(raw_external).expanduser().resolve()
+            if external_reference.is_file():
+                try:
+                    probe_audio(external_reference)
+                except Exception:
+                    external_reference_url = None
+                else:
+                    external_reference_url = self.media.register(external_reference)
+        result["external_reference_url"] = external_reference_url
+        result["reference_external"] = active.settings.tts_reference_source == "external" or (
+            active.settings.tts_backend in {"indextts2", "indextts2_5"}
+            and active.settings.tts_index_speaker_source == "external"
+        )
+        result["outputs"] = self._collect_outputs(active, project_root)
         result["replacement_report"] = project_review.replacement_flags(active, directory)
         result["compare_tracks"] = project_review.compare_tracks(
             active, directory, result["source_url"], self.media.register
         )
         for sentence in result["sentences"]:
             sentence.setdefault("zh_text", sentence.get("target_text", ""))
-            stored = sentence.get("tts_file")
-            sentence["tts_url"] = self.media.register(directory / stored) if stored else None
+            sentence["tts_url"] = self._register_project_file(
+                project_root, sentence.get("tts_file")
+            )
             for take in sentence.get("tts_candidates") or []:
-                path = directory / take["file"] if take.get("file") else None
-                take["url"] = self.media.register(path) if path and path.is_file() else None
+                take["url"] = self._register_project_file(project_root, take.get("file"))
         result["diagnostics"] = project_records.diagnostics(active)
         from ..translation import empty_translation_is_expected
         from ..translation_backup import backup_summary
@@ -118,13 +141,39 @@ class Projects:
     def sentence(self, project, row, revision):
         from ..models import save_project
 
+        target_id = str(row[0] or "").strip() if row else ""
         with browser_revision_scope(project, revision):
             active, directory = load_project(project)
+            before_count = len(active.sentences)
             changed = project_records.apply_single_row(active, row)
+            deleted = len(active.sentences) < before_count
             save_project(active, directory)
             if changed:
                 pipeline.export_transcript(active, directory)
-        return self._serialize(active, directory, project)
+        project_root = directory.resolve()
+        sentences_payload = active.model_dump(mode="json")["sentences"]
+        for sentence in sentences_payload:
+            sentence.setdefault("zh_text", sentence.get("target_text", ""))
+            sentence["tts_url"] = self._register_project_file(
+                project_root, sentence.get("tts_file")
+            )
+            for take in sentence.get("tts_candidates") or []:
+                take["url"] = self._register_project_file(project_root, take.get("file"))
+        updated_row = (
+            None
+            if deleted
+            else next((item for item in sentences_payload if item["id"] == target_id), None)
+        )
+        return {
+            "manifest": str(directory / "project.json"),
+            "revision": active.revision,
+            "settings": active.settings.model_dump(mode="json"),
+            "outputs": self._collect_outputs(active, project_root),
+            "deleted": deleted,
+            "row": updated_row,
+            "rows": project_records.project_rows(active),
+            "sentences": sentences_payload,
+        }
 
     def waveform(self, project, start, end, bins=160):
         from ..audio import extract_waveform_peaks
@@ -265,7 +314,9 @@ class Projects:
                     pipeline.translate_project(
                         active,
                         directory,
-                        api_key=resolve_api_key(active.settings.translation_provider),
+                        api_key=""
+                        if active.source_language == active.settings.tts_target_language
+                        else resolve_api_key(active.settings.translation_provider),
                         force=True,
                         progress=report,
                         cancel_event=token,

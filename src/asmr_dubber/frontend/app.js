@@ -1,4 +1,4 @@
-import { $, $$, state, api, t, localize, notice, guard, taskHTML, flushSaves } from './session.js';
+import { $, $$, state, api, t, localize, notice, guard, taskHTML, flushSaves, stopAllAudio } from './session.js';
 import { initializeForms, renderForms, saveParameters } from './forms.js';
 import {
   initializeProjects,
@@ -8,9 +8,10 @@ import {
   finishCreation,
   syncProjectControls,
 } from './projects.js';
+import { resetEditorHistory } from './sentence_editor.js';
 import { initializeBatch, refreshBatch, renderBatch } from './batch.js';
 import { initializeModels, refreshModels, renderModels } from './models.js';
-import { initializeSettings, renderKeys, refreshLogs, refreshStorage } from './settings.js';
+import { initializeSettings, renderKeys, refreshLogs, refreshStorage, renderDiagnosticTasks } from './settings.js';
 import { initializeUpdates, renderUpdate, updateFinished } from './updates.js';
 import { initializeWizard, wizardTick } from './wizard.js';
 import { initializePresets } from './presets.js';
@@ -19,6 +20,7 @@ import { notifyBatchFinished } from './notify.js';
 
 async function navigate(page, setTab) {
   if (page === 'project' && !state.project) return;
+  stopAllAudio();
   await flushSaves({ ignoreError: true });
   state.page = page;
   $$('.page').forEach((section) => section.classList.toggle('on', section.id === page));
@@ -54,6 +56,7 @@ function refreshTaskViews() {
   renderUpdate();
   renderBatch();
   renderModels();
+  renderDiagnosticTasks();
   syncProjectControls();
 }
 let polling = false, pollingError = '', taskPollVersion = 0, appStopped = false;
@@ -74,6 +77,7 @@ async function pollTasks() {
         continue;
       if (task.status === 'completed') {
         if (task.kind === 'preview_edge' && task.result?.url) {
+          stopAllAudio('dub');
           $('#dubPlayer').src = task.result.url;
           await $('#dubPlayer').play().catch(() => {});
         }
@@ -81,6 +85,7 @@ async function pollTasks() {
         else if (task.request.project === state.project?.manifest) {
           await flushSaves({ ignoreError: true });
           state.project = await api('projects/get', { project: state.project.manifest });
+          if (!['preview_reference', 'preview_edge'].includes(task.kind)) resetEditorHistory();
           $('#saveState').textContent = t('修改会自动保存');
           renderProject();
         }
@@ -172,6 +177,14 @@ window.addEventListener(
   'navigate',
   guard((event) => navigate(event.detail.page, event.detail.tab)),
 );
+window.addEventListener('set-step', (event) => setStep(event.detail));
+window.addEventListener(
+  'tasks-resumed',
+  guard(async () => {
+    taskPollVersion = 0;
+    await pollTasks();
+  }),
+);
 window.addEventListener('tasks-changed', refreshTaskViews);
 window.addEventListener('settings-changed', () => {
   state.language = state.boot.settings.ui_language;
@@ -189,7 +202,13 @@ window.addEventListener('beforeunload', (event) => {
   }
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') $('#dialog').classList.remove('on');
+  if (
+    event.key === 'Escape' &&
+    $('#dialog').classList.contains('on') &&
+    !$('#dialogSubmit')?.disabled
+  ) {
+    $('#dialog').classList.remove('on');
+  }
 });
 async function boot() {
   state.boot = await api('bootstrap');

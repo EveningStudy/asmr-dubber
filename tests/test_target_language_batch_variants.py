@@ -142,12 +142,67 @@ def test_two_variants_reuse_synthesis_and_preserve_outputs(tmp_path, monkeypatch
     assert calls == ["mix", "subtitles", "mix", "subtitles"]
     assert Path(state["mix_variants"]["bilingual"]["audio"]).read_bytes() == b"bilingual"
     assert Path(state["mix_variants"]["replace"]["audio"]).read_bytes() == b"replace"
+    assert (tmp_path / "products" / "双语版" / "双语版.wav").is_file()
+    assert (tmp_path / "products" / "完全配音版" / "配音版.wav").is_file()
+    assert not (tmp_path / "products" / "替换配音版").exists()
     assert all(Path(value).is_file() for value in state["variant_outputs"].values())
     restored, _ = load_project(path)
     assert restored.settings.separation_mix_mode == "bilingual"
     assert Path(restored.output_file).read_bytes() == b"bilingual"
     assert (tmp_path / restored.subtitle_srt_file).read_text() == "bilingual"
     assert not list((tmp_path / "output").glob("batch-*"))
+
+
+def test_batch_full_dub_folder_rename_preserves_legacy_resume_and_scan_skip(tmp_path):
+    from asmr_dubber.autoflow.catalog import scan_work
+    from asmr_dubber.autoflow.output_policy import (
+        LEGACY_REPLACEMENT_OUTPUT_DIR_NAME,
+        REPLACEMENT_OUTPUT_DIR_NAME,
+        variant_output_dir,
+    )
+    from asmr_dubber.autoflow.plan_files import output_mapping_complete
+    from asmr_dubber.autoflow.work_state import missing_resume_artifacts
+
+    assert variant_output_dir(tmp_path, "replace") == tmp_path / REPLACEMENT_OUTPUT_DIR_NAME
+    assert REPLACEMENT_OUTPUT_DIR_NAME == "完全配音版"
+
+    # Legacy completed batch states pointing to 替换配音版 stay resumable without rebuild.
+    legacy_dir = tmp_path / LEGACY_REPLACEMENT_OUTPUT_DIR_NAME
+    legacy_dir.mkdir(parents=True)
+    orig = tmp_path / "原声.flac"
+    dub = legacy_dir / "配音版.flac"
+    srt = legacy_dir / "配音版.srt"
+    lrc = legacy_dir / "配音版.lrc"
+    ts = tmp_path / "时间戳.txt"
+    for f in (orig, dub, srt, lrc, ts):
+        f.write_bytes(b"ok")
+    outputs = {
+        "original": str(orig),
+        "audio": str(dub),
+        "srt": str(srt),
+        "lrc": str(lrc),
+        "timestamps": str(ts),
+        "replace_audio": str(dub),
+        "replace_srt": str(srt),
+        "replace_lrc": str(lrc),
+    }
+    state = {
+        "status": "completed",
+        "mode": "audio",
+        "original_media": str(orig),
+        "outputs": outputs,
+    }
+    assert missing_resume_artifacts(state, tmp_path) == []
+    assert output_mapping_complete(outputs, mode="audio") is True
+
+    # Scanning a folder containing prior 配音版.wav outputs skips them as generated artifacts.
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "01_track.wav").write_bytes(b"real")
+    (work / "配音版.wav").write_bytes(b"generated")
+    scanned = scan_work(work)
+    assert scanned.audio_count == 1
+    assert [t.path.name for t in scanned.editions[0].tracks] == ["01_track.wav"]
 
 
 def test_mix_failure_restores_settings_and_keeps_tts(tmp_path, monkeypatch):

@@ -12,10 +12,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import Any, BinaryIO, Protocol
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .errors import ProjectError
 from .mirrors import (
     MIRROR_CONFIG_PATH,
     download_url_allowed,
@@ -23,6 +24,7 @@ from .mirrors import (
     load_mirror_config,
 )
 from .model_packs import inspect_model_pack, model_pack_directory
+from .storage import require_disk_space
 
 _BLOCK_SIZE = 4 * 1024 * 1024
 _PROBE_SIZE = 64 * 1024
@@ -176,6 +178,55 @@ def _valid_https_url(value: str) -> bool:
     return parsed.scheme == "https" and bool(parsed.netloc)
 
 
+def _origin(value: str) -> tuple[str, str]:
+    parsed = urlparse(value)
+    return parsed.scheme.lower(), parsed.netloc.lower()
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    """Never forward Authorization or Cookie headers across origins on redirect."""
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Request | None:
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        if _origin(req.full_url) != _origin(redirected.full_url):
+            for mapping in (redirected.headers, redirected.unredirected_hdrs):
+                for key in list(mapping):
+                    if key.lower() in {"authorization", "cookie"}:
+                        mapping.pop(key, None)
+        else:
+            for key in ("Authorization", "Cookie"):
+                value = req.get_header(key)
+                if value is not None:
+                    redirected.add_unredirected_header(key, value)
+        return redirected
+
+
+_SAFE_OPENER = build_opener(_SafeRedirectHandler())
+
+
+def _default_open(request: Request, *, timeout: float) -> _Response:
+    return _SAFE_OPENER.open(request, timeout=timeout)
+
+
+def _check_disk_space(directory: Path, required_bytes: int) -> None:
+    if required_bytes <= 0:
+        return
+    try:
+        require_disk_space(directory, required_bytes)
+    except ProjectError as exc:
+        raise ModelPackDownloadError(str(exc)) from exc
+
+
 def _request(url: str, *, headers: dict[str, str] | None = None) -> Request:
     """Build a CDN-friendly request without ever putting secrets in logs."""
 
@@ -189,8 +240,8 @@ def _request(url: str, *, headers: dict[str, str] | None = None) -> Request:
         request.add_header("Referer", "https://modelscope.cn/")
         token = os.getenv("MODELSCOPE_API_TOKEN", "").strip()
         if token:
-            request.add_header("Authorization", f"Bearer {token}")
-            request.add_header("Cookie", f"m_session_id={token}")
+            request.add_unredirected_header("Authorization", f"Bearer {token}")
+            request.add_unredirected_header("Cookie", f"m_session_id={token}")
     else:
         request.add_header("User-Agent", "ASMR-Dubber/0.4")
     return request
@@ -288,7 +339,7 @@ def probe_model_pack_sources(
     urls: Iterable[str],
     *,
     expected_size: int,
-    opener: OpenUrl = urlopen,
+    opener: OpenUrl = _default_open,
     timeout: float = 12.0,
 ) -> tuple[SourceProbe, ...]:
     candidates = tuple(dict.fromkeys(urls))
@@ -612,7 +663,7 @@ def prepare_remote_model_pack(
     mirror_path: Path = MIRROR_CONFIG_PATH,
     log: LogCallback | None = None,
     cancelled: CancelledCallback | None = None,
-    opener: OpenUrl = urlopen,
+    opener: OpenUrl = _default_open,
     timeout: float = 60.0,
     segments: int = _DEFAULT_SEGMENTS,
 ) -> Path | None:
@@ -633,6 +684,7 @@ def prepare_remote_model_pack(
     if local_archive is not None:
         staging = destination.with_suffix(destination.suffix + ".partial")
         if local_archive != destination.resolve():
+            _check_disk_space(destination_dir, spec.size)
             shutil.copy2(local_archive, staging)
             os.replace(staging, destination)
         if log:
@@ -648,6 +700,9 @@ def prepare_remote_model_pack(
             "ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS=1。"
         )
     _raise_if_cancelled(cancelled)
+    staging = destination.with_suffix(destination.suffix + ".partial")
+    existing_staging = staging.stat().st_size if staging.is_file() else 0
+    _check_disk_space(destination_dir, max(0, spec.size - existing_staging))
     if log:
         log(f"正在测速 {len(urls)} 个模型包下载源：{pack_id}")
     probes = probe_model_pack_sources(
@@ -658,7 +713,6 @@ def prepare_remote_model_pack(
     )
     if not probes:
         raise ModelPackDownloadError("所有模型包下载源均不可用。")
-    staging = destination.with_suffix(destination.suffix + ".partial")
     failures: list[str] = []
     for probe in probes:
         _raise_if_cancelled(cancelled)

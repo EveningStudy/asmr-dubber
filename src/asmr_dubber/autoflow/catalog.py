@@ -452,7 +452,7 @@ def scan_work(
             # Do not feed previous AutoFlow products or common temporary
             # renders back into a later scan of the same source folder.
             stem = normalized_text(path.stem)
-            if stem in {"原声", "双语版", "mixed", "chinese", "shared-reference"}:
+            if stem in {"原声", "双语版", "配音版", "mixed", "chinese", "shared-reference"}:
                 continue
             if stem.endswith("_batch") or stem.startswith(".autoflow"):
                 continue

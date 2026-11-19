@@ -154,7 +154,7 @@ def _guard_output_replacement(plan: engine.SmartTaskPlan) -> None:
     if generated_exists and previous_plan != plan.plan_id and not plan.rebuild:
         raise ProjectError(
             f"输出目录已有其他选项生成的结果：{output_root}。"
-            "如需替换，请先备份，再勾选按钮上方的“重做并替换本工具生成的旧结果”，重新加入队列。"
+            "如需替换，请先备份，再勾选“重新处理”以重做并替换旧结果，然后重新加入队列。"
             "如需保留旧结果，请在“设置 → 自动处理”更改成品输出文件夹名称并保存后再加入。"
         )
 

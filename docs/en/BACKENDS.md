@@ -66,7 +66,7 @@ Built-in endpoints/model names are presets; use IDs available to your account. B
 
 ## Separation and RTF
 
-Local audio-separator plus Replicate/custom HTTP adapters are optional. Separation and Chinese replacement are experimental, not recommended. Download/upload is explicit. RTF is local mix-time stereo processing, not another cloud service. [Parameters, contracts and limitations](EXPERIMENTAL_AUDIO.md).
+Local audio-separator plus Replicate/custom HTTP adapters are optional and power the fully dubbed mix. Download/upload is explicit. RTF is local mix-time stereo processing, not another cloud service. [Parameters, contracts and limitations](EXPERIMENTAL_AUDIO.md).
 
 Project parameters autosave; new-project defaults are separate. Save keys in Settings → Cloud services. [All 201 fields](PARAMETERS.md) · [Configuration](CONFIGURATION.md).
 

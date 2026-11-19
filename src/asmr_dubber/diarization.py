@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,9 @@ import soxr
 
 from .campplus import extract_campplus_embeddings, kaldi_fbank_80
 from .models import Sentence
+from .task_control import CancellationSignal, check_cancelled
 
+Progress = Callable[[str, int, int], None]
 _MOSS_CHUNK_SPEAKER = re.compile(r"^c\d{4}:S\d+$")
 
 
@@ -85,31 +88,83 @@ def _cosine_distance_matrix(embeddings: np.ndarray) -> np.ndarray:
     return dist
 
 
+def _average_linkage_merges(dist: np.ndarray) -> list[tuple[int, int]]:
+    """Build an O(N^2) Lance-Williams average-linkage merge tree, respecting +inf cannot-links."""
+    n = dist.shape[0]
+    if n <= 1:
+        return []
+    d = np.array(dist, dtype=np.float64, copy=True)
+    np.fill_diagonal(d, np.inf)
+    active = np.ones(n, dtype=bool)
+    sizes = np.ones(n, dtype=np.float64)
+    row_min_idx = np.argmin(d, axis=1)
+    row_min_val = d[np.arange(n), row_min_idx]
+    merges: list[tuple[int, int]] = []
+    for _ in range(n - 1):
+        a = int(np.argmin(row_min_val))
+        best_val = float(row_min_val[a])
+        if not math.isfinite(best_val):
+            break
+        b = int(row_min_idx[a])
+        if a == b:
+            break
+        if a > b:
+            a, b = b, a
+        merges.append((a, b))
+        na, nb = sizes[a], sizes[b]
+        new_row = (na * d[a] + nb * d[b]) / (na + nb)
+        new_row[a] = np.inf
+        new_row[b] = np.inf
+        new_row[~active] = np.inf
+        d[a, :] = new_row
+        d[:, a] = new_row
+        sizes[a] = na + nb
+        active[b] = False
+        d[b, :] = np.inf
+        d[:, b] = np.inf
+        row_min_val[b] = np.inf
+
+        idx_a = int(np.argmin(d[a]))
+        row_min_idx[a] = idx_a
+        row_min_val[a] = d[a, idx_a]
+
+        better = active & (d[:, a] < row_min_val)
+        row_min_val[better] = d[better, a]
+        row_min_idx[better] = a
+
+        stale = active & ((row_min_idx == a) | (row_min_idx == b))
+        stale[a] = False
+        for i in np.flatnonzero(stale):
+            idx = int(np.argmin(d[i]))
+            row_min_idx[i] = idx
+            row_min_val[i] = d[i, idx]
+    return merges
+
+
+def _labels_from_merges(n: int, merges: list[tuple[int, int]], k: int) -> list[int]:
+    if n <= 0:
+        return []
+    k = max(1, min(k, n))
+    limit = min(len(merges), n - k)
+    parent = list(range(n))
+    for a, b in merges[:limit]:
+        parent[b] = a
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    return [find(i) for i in range(n)]
+
+
 def _agglomerative_average_cosine(dist: np.ndarray, k: int) -> list[int]:
     n = dist.shape[0]
     if k <= 1 or n <= 1:
         return [0] * n
-    k = min(k, n)
-    clusters: list[list[int]] = [[i] for i in range(n)]
-    while len(clusters) > k:
-        best_pair = (0, 1)
-        best_d = math.inf
-        for i in range(len(clusters)):
-            idx_i = clusters[i]
-            for j in range(i + 1, len(clusters)):
-                idx_j = clusters[j]
-                d = float(np.mean(dist[np.ix_(idx_i, idx_j)]))
-                if d < best_d:
-                    best_d = d
-                    best_pair = (i, j)
-        a, b = best_pair
-        clusters[a].extend(clusters[b])
-        del clusters[b]
-    labels = [0] * n
-    for cid, members in enumerate(clusters):
-        for m in members:
-            labels[m] = cid
-    return labels
+    merges = _average_linkage_merges(dist)
+    return _labels_from_merges(n, merges, min(k, n))
 
 
 def _silhouette_and_min_sep(
@@ -118,29 +173,28 @@ def _silhouette_and_min_sep(
     unique = sorted(set(labels))
     if len(unique) < 2:
         return -1.0, 0.0
-    arr = np.asarray(labels, dtype=np.int32)
-    sil_scores: list[float] = []
-    for idx in range(len(labels)):
-        own = arr == arr[idx]
-        own[idx] = False
-        if not np.any(own):
-            # By definition (Rousseeuw 1987 / sklearn), singleton clusters have silhouette 0.0.
-            sil_scores.append(0.0)
-            continue
-        a = float(np.mean(dist[idx, own]))
-        b = min(
-            float(np.mean(dist[idx, arr == other]))
-            for other in unique
-            if other != arr[idx] and np.any(arr == other)
-        )
-        denom = max(a, b, 1e-9)
-        sil_scores.append((b - a) / denom)
+    label_map = {cid: idx for idx, cid in enumerate(unique)}
+    n = len(labels)
+    arr = np.fromiter((label_map[lbl] for lbl in labels), dtype=np.int32, count=n)
+    k = len(unique)
+    counts = np.bincount(arr, minlength=k)
+    cluster_means = np.stack([np.mean(dist[:, arr == c], axis=1) for c in range(k)], axis=0)
+    idx_range = np.arange(n)
+    own_counts = counts[arr]
+    own_means = cluster_means[arr, idx_range]
+    a_vec = np.where(own_counts > 1, own_means * own_counts / np.maximum(own_counts - 1, 1), 0.0)
+    other_means = cluster_means.copy()
+    other_means[arr, idx_range] = np.inf
+    b_vec = np.min(other_means, axis=0)
+    denom = np.maximum(np.maximum(a_vec, b_vec), 1e-9)
+    # By definition (Rousseeuw 1987 / sklearn), singleton clusters have silhouette 0.0.
+    sil_scores = np.where(own_counts > 1, (b_vec - a_vec) / denom, 0.0)
 
     centroids: list[np.ndarray] = []
-    for cid in unique:
-        c = np.mean(embeddings[arr == cid], axis=0)
-        c /= max(float(np.linalg.norm(c)), 1e-9)
-        centroids.append(c)
+    for c in range(k):
+        centroid = np.mean(embeddings[arr == c], axis=0)
+        centroid /= max(float(np.linalg.norm(centroid)), 1e-9)
+        centroids.append(centroid)
     min_sep = min(
         1.0 - float(np.clip(np.dot(centroids[i], centroids[j]), -1.0, 1.0))
         for i in range(len(centroids))
@@ -165,31 +219,49 @@ def cluster_speaker_embeddings(
     num_speakers: int | None = None,
     max_speakers: int = 6,
     min_separation_cosine: float = 0.24,
+    cannot_link: Iterable[tuple[int, int]] | None = None,
 ) -> list[int]:
     """Cluster speaker embeddings into canonical chronological speaker indices ``0..K-1``."""
     n = len(embeddings)
     if n == 0:
         return []
-    if n == 1 or (num_speakers is not None and num_speakers <= 1):
-        return [0] * n
-    dist = _cosine_distance_matrix(np.asarray(embeddings, dtype=np.float64))
+    if n == 1:
+        return [0]
+    cos_dist = _cosine_distance_matrix(np.asarray(embeddings, dtype=np.float64))
+    merge_dist = cos_dist.copy()
+    for i, j in cannot_link or ():
+        if 0 <= i < n and 0 <= j < n and i != j:
+            merge_dist[i, j] = np.inf
+            merge_dist[j, i] = np.inf
+    merges = _average_linkage_merges(merge_dist)
+    min_valid_k = n - len(merges)
     if num_speakers is not None:
-        return _canonicalize_labels(_agglomerative_average_cosine(dist, num_speakers))
+        if num_speakers <= 1 and min_valid_k <= 1:
+            return [0] * n
+        return _canonicalize_labels(_labels_from_merges(n, merges, num_speakers))
 
-    best_k = 1
+    best_k = min_valid_k
     best_score = 0.16  # Require positive silhouette clarity before splitting a monologue.
-    best_labels = [0] * n
+    best_labels = _labels_from_merges(n, merges, min_valid_k) if min_valid_k > 1 else [0] * n
     upper_k = min(max_speakers, n)
-    for k in range(2, upper_k + 1):
-        cand = _agglomerative_average_cosine(dist, k)
+    for k in range(max(2, min_valid_k), upper_k + 1):
+        cand = _labels_from_merges(n, merges, k)
+        actual_k = len(set(cand))
+        if actual_k < 2:
+            continue
         counts = [cand.count(c) for c in set(cand)]
         if n >= 6 and min(counts) < 2 and max(counts) / n > 0.85:
             # Guard against a single cough/breath outlier creating a fake 2nd speaker.
             continue
-        sil, min_sep = _silhouette_and_min_sep(embeddings, dist, cand)
+        sil, min_sep = _silhouette_and_min_sep(embeddings, cos_dist, cand)
+        if n == 2 and actual_k == 2:
+            if min_sep >= min_separation_cosine or min_valid_k >= 2:
+                best_k = 2
+                best_labels = cand
+            continue
         if min_sep >= min_separation_cosine and sil > best_score:
             best_score = sil
-            best_k = k
+            best_k = actual_k
             best_labels = cand
     return _canonicalize_labels(best_labels) if best_k > 1 else [0] * n
 
@@ -197,14 +269,21 @@ def cluster_speaker_embeddings(
 def _read_sentence_clips_16k(
     sentences: list[Sentence],
     audio_path: Path,
+    *,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> tuple[list[int], list[np.ndarray]]:
     indices: list[int] = []
     clips: list[np.ndarray] = []
     if not sentences or not audio_path.is_file():
         return indices, clips
+    total = len(sentences)
     with sf.SoundFile(audio_path) as audio:
         rate = audio.samplerate
         for idx, sent in enumerate(sentences):
+            check_cancelled(cancel_event)
+            if progress and idx % 50 == 0:
+                progress("正在读取说话人音频片段", idx, total)
             if sent.status == "skipped_sound" or sent.end_seconds - sent.start_seconds < 0.18:
                 continue
             lo = max(0, min(audio.frames, round(sent.start_seconds * rate)))
@@ -223,9 +302,20 @@ def _read_sentence_clips_16k(
     return indices, clips
 
 
-def _compute_embeddings(clips_16k: list[np.ndarray]) -> np.ndarray:
+def _compute_embeddings(
+    clips_16k: list[np.ndarray],
+    *,
+    cancel_event: CancellationSignal | None = None,
+) -> np.ndarray:
+    check_cancelled(cancel_event)
     camp = extract_campplus_embeddings(clips_16k)
-    acoustic = np.stack([acoustic_timbre_embedding(c) for c in clips_16k], axis=0)
+    check_cancelled(cancel_event)
+    acoustic_list: list[np.ndarray] = []
+    for idx, clip in enumerate(clips_16k):
+        if idx % 32 == 0:
+            check_cancelled(cancel_event)
+        acoustic_list.append(acoustic_timbre_embedding(clip))
+    acoustic = np.stack(acoustic_list, axis=0)
     if camp is None:
         return acoustic
     # Blend 88% CAM++ x-vector with 12% acoustic F0/formant features for pitch-distinct duets.
@@ -240,8 +330,11 @@ def stitch_moss_chunk_speakers(
     *,
     num_speakers: int | None = None,
     max_speakers: int = 6,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[Sentence]:
     """Resolve MOSS chunk-local ``c0001:S01`` speaker IDs into global ``S01``, ``S02``."""
+    check_cancelled(cancel_event)
     chunk_tags = [
         s.speaker_id or ""
         for s in sentences
@@ -263,10 +356,14 @@ def stitch_moss_chunk_speakers(
                 updated.append(s)
         return updated
 
-    valid_indices, clips = _read_sentence_clips_16k(sentences, audio_path)
+    valid_indices, clips = _read_sentence_clips_16k(
+        sentences, audio_path, progress=progress, cancel_event=cancel_event
+    )
     if not clips:
         return sentences
-    embs = _compute_embeddings(clips)
+    if progress:
+        progress("正在提取说话人声纹", 1, 3)
+    embs = _compute_embeddings(clips, cancel_event=cancel_event)
     by_tag: dict[str, list[np.ndarray]] = {}
     tag_order: list[str] = []
     for sent_idx, emb in zip(valid_indices, embs, strict=True):
@@ -285,22 +382,41 @@ def stitch_moss_chunk_speakers(
         ],
         axis=0,
     )
+    tag_chunks = [tag.split(":", 1)[0] for tag in tag_order]
+    cannot_link = [
+        (i, j)
+        for i in range(len(tag_order))
+        for j in range(i + 1, len(tag_order))
+        if tag_chunks[i] == tag_chunks[j]
+    ]
+    if progress:
+        progress("正在聚类匹配说话人", 2, 3)
     group_labels = cluster_speaker_embeddings(
         group_centroids,
         num_speakers=num_speakers,
         max_speakers=max_speakers,
         min_separation_cosine=0.20,
+        cannot_link=cannot_link,
     )
     tag_to_global = {
         tag: f"S{lbl + 1:02d}" for tag, lbl in zip(tag_order, group_labels, strict=True)
     }
+    used_globals = set(tag_to_global.values())
+    fallback_map: dict[str, str] = {}
+    next_fallback = len(used_globals) + 1
     result: list[Sentence] = []
     for s in sentences:
         if s.speaker_id in tag_to_global:
             result.append(s.model_copy(update={"speaker_id": tag_to_global[s.speaker_id]}))
         elif s.speaker_id and _MOSS_CHUNK_SPEAKER.match(s.speaker_id):
-            local = s.speaker_id.split(":", 1)[1]
-            result.append(s.model_copy(update={"speaker_id": local}))
+            if s.speaker_id not in fallback_map:
+                while f"S{next_fallback:02d}" in used_globals:
+                    next_fallback += 1
+                fid = f"S{next_fallback:02d}"
+                fallback_map[s.speaker_id] = fid
+                used_globals.add(fid)
+                next_fallback += 1
+            result.append(s.model_copy(update={"speaker_id": fallback_map[s.speaker_id]}))
         else:
             result.append(s)
     return result
@@ -313,8 +429,11 @@ def diarize_sentences(
     num_speakers: int | None = None,
     max_speakers: int = 6,
     preserve_existing: bool = False,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
 ) -> list[Sentence]:
     """Assign ``S01``, ``S02``, ... ``speaker_id`` labels across ``sentences``."""
+    check_cancelled(cancel_event)
     if not sentences or not audio_path.is_file():
         return sentences
     if any(s.speaker_id and _MOSS_CHUNK_SPEAKER.match(s.speaker_id) for s in sentences):
@@ -323,14 +442,23 @@ def diarize_sentences(
             audio_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
+            progress=progress,
+            cancel_event=cancel_event,
         )
     if preserve_existing and all(s.speaker_id or not s.enabled for s in sentences):
         return sentences
 
-    valid_indices, clips = _read_sentence_clips_16k(sentences, audio_path)
+    valid_indices, clips = _read_sentence_clips_16k(
+        sentences, audio_path, progress=progress, cancel_event=cancel_event
+    )
     if not clips:
         return sentences
-    embs = _compute_embeddings(clips)
+    if progress:
+        progress("正在提取说话人声纹", 1, 3)
+    embs = _compute_embeddings(clips, cancel_event=cancel_event)
+    check_cancelled(cancel_event)
+    if progress:
+        progress("正在聚类匹配说话人", 2, 3)
     # Use a slightly higher separation bar when CAM++ is active so modal vs whisper of
     # the same actor stays unified unless two distinct vocal tracts are present.
     min_sep = 0.28 if embs.shape[1] > 64 else 0.22

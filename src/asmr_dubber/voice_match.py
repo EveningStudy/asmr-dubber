@@ -103,12 +103,21 @@ def _spectral_eq_gain(
                 sent_rel_db = 10 * np.log10(np.maximum(sent_smooth[low_mask], 1e-30) / sent_mid)
                 own_rel_db = 10 * np.log10(np.maximum(own[low_mask], 1e-30) / own_mid)
                 prox_delta = np.clip(sent_rel_db - own_rel_db, -6.0, 7.5)
-                blend = np.clip((260.0 - hz[low_mask]) / 120.0, 0.35, 0.85)
+                t_prox = np.clip((hz[low_mask] - 140.0) / (260.0 - 140.0), 0.0, 1.0)
+                blend = 0.85 * 0.5 * (1.0 + np.cos(np.pi * t_prox))
                 difference[low_mask] = (1.0 - blend) * difference[low_mask] + blend * prox_delta
 
     limit = min(bandwidth_hz(own_raw, rate), bandwidth_hz(target_spectrum, rate))
     min_hz = 60.0 if sentence_spectrum is not None else 80.0
-    difference[(hz < min_hz) | (hz > limit)] = 0
+    if limit <= min_hz:
+        difference[:] = 0.0
+    else:
+        t_lo = np.clip((hz - min_hz) / max(min_hz * 0.5, 1.0), 0.0, 1.0)
+        win_lo = 0.5 * (1.0 - np.cos(np.pi * t_lo))
+        hi_start = limit * 0.85
+        t_hi = np.clip((limit - hz) / max(limit - hi_start, 1.0), 0.0, 1.0)
+        win_hi = 0.5 * (1.0 - np.cos(np.pi * t_hi))
+        difference *= win_lo * win_hi
     return 10 ** (np.clip(difference * strength, -max_db, max_db) / 20)
 
 
@@ -163,9 +172,14 @@ def _extend_spectra_highband(
     result = spectra.copy()
     bins = np.arange(edge, top)
     source_bins = edge - width + (bins - edge) % width
+    frame_level = np.sum(np.abs(spectra) ** 2, axis=1)
+    max_level = float(frame_level.max(initial=0.0))
+    active = frame_level >= max_level * 1e-3 if max_level > 0 else np.ones(len(spectra), dtype=bool)
+    if not np.any(active):
+        return spectra
     magnitude = np.abs(spectra[:, source_bins])
     wanted = np.sqrt(np.maximum(target[bins] * offset, 0.0))
-    have = np.sqrt(np.mean(magnitude**2, axis=0)) + 1e-12
+    have = np.sqrt(np.mean(magnitude[active] ** 2, axis=0)) + 1e-12
     phase = np.exp(2j * np.pi * random.random(magnitude.shape))
     fade = np.clip((bins - edge) / max(1, width // 8), 0, 1)
     patch = magnitude * (wanted / have) * phase * (strength * _INCOHERENT_OLA_GAIN)

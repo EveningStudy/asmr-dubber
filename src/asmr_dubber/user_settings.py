@@ -434,11 +434,28 @@ def load_user_settings() -> UserSettings:
                     "tts_device_selection_version": 1,
                 }
             )
-    if settings.huggingface_endpoint:
-        os.environ["HF_ENDPOINT"] = settings.huggingface_endpoint
-    if settings.pypi_index_url:
-        os.environ["UV_DEFAULT_INDEX"] = settings.pypi_index_url
+    _sync_managed_env_var("HF_ENDPOINT", settings.huggingface_endpoint)
+    _sync_managed_env_var("UV_DEFAULT_INDEX", settings.pypi_index_url)
     return settings
+
+
+_MANAGED_ENV_VARS: dict[str, tuple[str, str | None]] = {}
+
+
+def _sync_managed_env_var(name: str, value: str) -> None:
+    entry = _MANAGED_ENV_VARS.get(name)
+    current = os.environ.get(name)
+    if value:
+        previous = entry[1] if entry is not None and current == entry[0] else current
+        os.environ[name] = value
+        _MANAGED_ENV_VARS[name] = (value, previous)
+    elif entry is not None:
+        _MANAGED_ENV_VARS.pop(name, None)
+        if current == entry[0]:
+            if entry[1] is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = entry[1]
 
 
 def save_user_settings(settings: UserSettings) -> Path:

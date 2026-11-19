@@ -250,6 +250,10 @@ def _analyze_project_impl(
     for sentence in sentences:
         sentence.end_seconds = min(sentence.end_seconds, project.source.duration_seconds)
         if sentence.end_seconds > sentence.start_seconds:
+            if sentence.status == "skipped_sound":
+                sentence.enabled = False
+                bounded_sentences.append(sentence)
+                continue
             duration = sentence.end_seconds - sentence.start_seconds
             hallucination_reason = implausible_asr_reason(
                 sentence.source_text, duration, previous_text
@@ -258,7 +262,7 @@ def _analyze_project_impl(
             if hallucination_reason:
                 sentence.enabled = False
                 sentence.status = "skipped_hallucination"
-                sentence.error = hallucination_reason
+                sentence.set_error(hallucination_reason)
             elif (
                 project.source_language == "ja"
                 and project.settings.skip_japanese_fillers
@@ -299,6 +303,9 @@ def _analyze_project_impl(
             bounded_sentences, diarize_audio, num_speakers=spk_count
         )
     project.sentences = bounded_sentences
+    project.translation_proposals = []
+    project.settings.tts_reference_sentence_id = None
+    project.settings.tts_whisper_reference_sentence_id = None
     annotate_sentence_voice_modes(project, diarize_audio)
     project.translation_language = project.settings.tts_target_language
     project.asr_language = language
@@ -399,21 +406,36 @@ def _translate_project_impl(
             project_dir / f"translations-{project.translation_language}-{project.revision}.json",
             project.model_dump_json(indent=2),
         )
+        preserved_skip_statuses = {"skipped_sound", "skipped_filler", "skipped_hallucination"}
         for sentence in project.sentences:
             sentence.zh_text = ""
             sentence.tts_file = None
             sentence.tts_cache_key = None
+            sentence.tts_duration_seconds = None
+            sentence.tts_candidates = []
+            sentence.tts_warning = None
+            sentence.tts_attempt = 0
+            sentence.translation_warning = None
+            sentence.review_locked = False
+            if sentence.status not in preserved_skip_statuses:
+                sentence.status = "pending"
+                sentence.clear_error()
+            elif sentence.status != "skipped_hallucination":
+                sentence.clear_error()
+        project.translation_proposals = []
         project.translation_language = project.settings.tts_target_language
         save_project(project, project_dir)
+    has_selected_ids = bool(sentence_ids)
     will_translate = (
         force
         or compress
+        or has_selected_ids
         or any(
             sentence.enabled and (not sentence.zh_text or sentence.status == "translation_failed")
             for sentence in project.sentences
         )
     )
-    if force or compress:
+    if force or compress or has_selected_ids:
         # Keep the old text until its replacement has arrived, and leave a copy so
         # an interrupted or disappointing run can be undone.
         from .translation_backup import write_translation_backup
@@ -432,63 +454,99 @@ def _translate_project_impl(
     )
     base_url = project.settings.translation_base_url.strip() or str(preset["base_url"])
 
+    before_translation = {sentence.id: sentence.zh_text for sentence in project.sentences}
+
     def checkpoint() -> None:
+        if compress and any(
+            sentence.zh_text != before_translation.get(sentence.id)
+            for sentence in project.sentences
+        ):
+            invalidate_outputs(project)
         save_project(project, project_dir)
         export_transcript(project, project_dir)
 
-    before_translation = {sentence.id: sentence.zh_text for sentence in project.sentences}
-    report = translate_sentences(
-        project.sentences,
-        api_key=key,
-        model=project.settings.translation_model,
-        base_url=base_url,
-        provider=provider,
-        source_language=project.source_language,
-        system_prompt=project.settings.translation_prompt,
-        target_language=project.settings.tts_target_language,
-        temperature=project.settings.translation_temperature,
-        top_p=project.settings.translation_top_p,
-        max_output_tokens=project.settings.translation_max_output_tokens,
-        extra_body=project.settings.translation_extra_body,
-        deepl_formality=project.settings.translation_deepl_formality,
-        microsoft_region=project.settings.translation_microsoft_region,
-        send_context=project.settings.translation_send_context,
-        context_sentences=project.settings.translation_context_sentences,
-        memory_sentences=project.settings.translation_memory_sentences,
-        job_id=f"asmr_{project.source.sha256[:24]}",
-        progress=progress,
-        on_batch=checkpoint,
-        cancel_event=cancel_event,
-        sound_policy=project.settings.translation_sound_policy,
-        retranslate=force,
-        overwrite_edited=overwrite_edited,
-        sentence_ids=sentence_ids,
-        compress=compress,
-        length_budget_rate=(
-            (
-                project.settings.translation_chars_per_second
-                if project.settings.tts_target_language != "en"
-                else project.settings.translation_chars_per_second * 0.6
-            )
-            if (project.settings.translation_length_budget or compress)
-            else None
-        ),
+    budget_key = "max_words" if project.settings.tts_target_language == "en" else "max_chars"
+    budget_rate = (
+        (
+            project.settings.translation_chars_per_second
+            if project.settings.tts_target_language != "en"
+            else project.settings.translation_chars_per_second * 0.6
+        )
+        if (project.settings.translation_length_budget or compress)
+        else None
     )
-    if report is not None:
-        # Lines translated in this run get the post-translation check's verdict;
-        # untouched lines keep theirs.
-        reasons: dict[str, list[str]] = {}
-        for flag in report.flagged:
-            reasons.setdefault(flag.sentence_id, []).append(flag.reason)
-        changed = False
-        for sentence in project.sentences:
-            if sentence.zh_text != before_translation.get(sentence.id):
-                changed = True
+    report = None
+    try:
+        report = translate_sentences(
+            project.sentences,
+            api_key=key,
+            model=project.settings.translation_model,
+            base_url=base_url,
+            provider=provider,
+            source_language=project.source_language,
+            system_prompt=project.settings.translation_prompt,
+            target_language=project.settings.tts_target_language,
+            temperature=project.settings.translation_temperature,
+            top_p=project.settings.translation_top_p,
+            max_output_tokens=project.settings.translation_max_output_tokens,
+            extra_body=project.settings.translation_extra_body,
+            deepl_formality=project.settings.translation_deepl_formality,
+            microsoft_region=project.settings.translation_microsoft_region,
+            send_context=project.settings.translation_send_context,
+            context_sentences=project.settings.translation_context_sentences,
+            memory_sentences=project.settings.translation_memory_sentences,
+            job_id=f"asmr_{project.source.sha256[:24]}",
+            progress=progress,
+            on_batch=checkpoint,
+            cancel_event=cancel_event,
+            sound_policy=project.settings.translation_sound_policy,
+            retranslate=force,
+            overwrite_edited=overwrite_edited,
+            sentence_ids=sentence_ids,
+            compress=compress,
+            length_budget_rate=budget_rate,
+        )
+    finally:
+        changed_sentences = [
+            sentence
+            for sentence in project.sentences
+            if sentence.zh_text != before_translation.get(sentence.id)
+        ]
+        if changed_sentences:
+            if compress:
+                invalidate_outputs(project)
+            if report is not None:
+                flagged = report.flagged
+            else:
+                from .translation import check_translations, length_budgets
+
+                changed_with_text = [s for s in changed_sentences if s.zh_text.strip()]
+                budgets = (
+                    length_budgets(list(project.sentences), changed_with_text, budget_rate)
+                    if (budget_rate and changed_with_text)
+                    else {}
+                )
+                flagged = (
+                    check_translations(
+                        project.sentences,
+                        budgets,
+                        budget_key,
+                        only_ids=[s.id for s in changed_with_text],
+                        source_language=project.source_language,
+                        target_language=project.settings.tts_target_language,
+                    )
+                    if changed_with_text
+                    else []
+                )
+            reasons: dict[str, list[str]] = {}
+            for flag in flagged:
+                reasons.setdefault(flag.sentence_id, []).append(flag.reason)
+            for sentence in changed_sentences:
                 found = reasons.get(sentence.id)
                 sentence.translation_warning = "；".join(found) if found else None
-        if compress and changed:
-            invalidate_outputs(project)
-    checkpoint()
+            checkpoint()
+    if not changed_sentences:
+        checkpoint()
     if report is not None and report.failed:
         # Every other sentence is already saved; say which ones are missing.
         raise TranslationError(report.failure_message())

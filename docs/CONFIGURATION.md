@@ -111,8 +111,7 @@ bash scripts/linux/run-ui.sh --host 0.0.0.0
 
 ```powershell
 # Windows
-.\scripts\windows
-un-cli.ps1 ui --host 0.0.0.0 --port 7860
+.\scripts\windows\run-cli.ps1 ui --host 0.0.0.0 --port 7860
 ```
 
 这种情况下程序会强制要求用户名和密码。用户名默认是 `asmr`，密码在启动时随机生成，打印在启动窗口里。想用固定的密码，启动前设置环境变量 `ASMR_DUBBER_UI_USERNAME` 和 `ASMR_DUBBER_UI_PASSWORD`。
@@ -130,5 +129,4 @@ un-cli.ps1 ui --host 0.0.0.0 --port 7860
 | `ASMR_DUBBER_FFMPEG` | 指定用哪个 FFmpeg |
 | `ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS=1` | 这次运行允许从海外源下载 |
 | `ASMR_DUBBER_UI_USERNAME`、`ASMR_DUBBER_UI_PASSWORD` | 远程访问的用户名和密码 |
-| `ASMR_DUBBER_MAX_UPLOAD_SIZE` | 上传文件的大小上限，默认 20gb |
 | `MODELSCOPE_API_TOKEN` | 访问私有模型仓库的令牌 |

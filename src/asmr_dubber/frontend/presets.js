@@ -72,7 +72,7 @@ export function renderPresets() {
       dynamic.innerHTML = '';
       return;
     }
-    const query = state.paramQuery.trim();
+    const query = (state.paramQuery[scope] || '').trim();
     const page = $(scope === 'proj' ? '#project' : '#settings');
     page.classList.toggle('searching', !!query);
     const count = query ? $$('.schema .field', page).length : 0;
@@ -95,15 +95,20 @@ async function applyPreset(id, scope) {
   const preferred = preset.prefer_requires && stateOf(preset.prefer_requires) === 'ready';
   if (preferred) Object.assign(changes, preset.prefer);
   await saveParameters(changes, scope);
-  notice(t('已应用预设：{name}', { name: t(preset.label) }));
-  if (preset.requires && stateOf(preset.requires) && stateOf(preset.requires) !== 'ready')
-    notice(t('“{name}”需要先在“模型”页安装人声分离模型，否则无法导出。', { name: t(preset.label) }), true, {
-      sticky: true,
-    });
-  if (preset.prefer_requires && !preferred)
-    notice(t('“{name}”推荐配合 IndexTTS-2.5，配音时长更贴合原句；在“模型”页装好后再点一次此预设即可切换。', {
-      name: t(preset.label),
-    }));
+  const missingRequired = Boolean(
+    preset.requires && stateOf(preset.requires) && stateOf(preset.requires) !== 'ready',
+  );
+  const missingPrefer = Boolean(preset.prefer_requires && !preferred);
+  const parts = [t('已应用预设：{name}', { name: t(preset.label) })];
+  if (missingRequired)
+    parts.push(t('“{name}”需要先在“模型”页安装人声分离模型，否则无法导出。', { name: t(preset.label) }));
+  if (missingPrefer)
+    parts.push(
+      t('“{name}”推荐配合 IndexTTS-2.5，配音时长更贴合原句；在“模型”页装好后再点一次此预设即可切换。', {
+        name: t(preset.label),
+      }),
+    );
+  notice(parts.join('\n'), missingRequired, { sticky: missingRequired });
 }
 
 export function initializePresets() {
@@ -111,8 +116,8 @@ export function initializePresets() {
   document.addEventListener('input', (event) => {
     const field = event.target.closest('.pr-search');
     if (!field) return;
-    state.paramQuery = field.value;
-    $$('.pr-search').forEach((other) => other !== field && (other.value = field.value));
+    const scope = field.closest('.presetbox')?.dataset.scope || 'def';
+    state.paramQuery[scope] = field.value;
     renderForms();
   });
   document.addEventListener(

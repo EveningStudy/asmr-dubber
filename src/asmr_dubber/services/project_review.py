@@ -39,6 +39,7 @@ def replacement_flags(project: DubProject, directory: Path) -> dict[str, dict]:
             "residual_db": entry.get("residual_db"),
             "uncovered_before_seconds": entry.get("uncovered_before_seconds", 0),
             "uncovered_after_seconds": entry.get("uncovered_after_seconds", 0),
+            "recognized_residual": str(entry.get("recognized_residual") or ""),
         }
     return flags
 

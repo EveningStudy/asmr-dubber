@@ -3,12 +3,13 @@
 import copy
 import json
 import logging
+import os
 import threading
 import time
 import uuid
 
 from ..app_logging import redact_sensitive
-from ..errors import InstallPausedError, OperationCancelledError, classify_error
+from ..errors import InstallPausedError, OperationCancelledError, ProjectError, classify_error
 from ..platforms import portable_home
 from ..storage import atomic_write_text
 from ..task_control import CancellationToken, cancellation_scope, check_cancelled
@@ -25,18 +26,43 @@ class Tasks:
         self.lock = threading.RLock()
         self.tokens = {}
         self.version = 1
-        self.items = (
-            json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
-        )
+        self.items = self._load_initial_items()
         for task in self.items.values():
             if task["status"] in ACTIVE:
-                task.update(status="interrupted", message="任务已中断；已完成的结果已保留。")
+                task.update(
+                    status="interrupted",
+                    message="任务已中断；已完成的结果已保留。",
+                    reference=None,
+                )
                 for plan in task.get("plans", {}).values():
                     if plan.get("status") == "running":
                         plan["status"] = "interrupted"
+            elif task.get("reference") is not None:
+                task["reference"] = None
         if self.items:
             self._prune()
             self._save()
+
+    def _load_initial_items(self):
+        if not self.path.is_file():
+            return {}
+        try:
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("任务状态文件格式无效。")
+            return loaded
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            backup = self.path.with_name(f"{self.path.name}.corrupt-{int(time.time())}")
+            if backup.exists():
+                backup = self.path.with_name(
+                    f"{self.path.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+                )
+            try:
+                os.replace(self.path, backup)
+                logger.warning("Corrupt tasks file backed up to %s: %s", backup, exc)
+            except OSError as move_exc:
+                logger.warning("Failed to back up corrupt tasks file %s: %s", self.path, move_exc)
+            return {}
 
     def _prune(self):
         finished = sorted(
@@ -46,9 +72,14 @@ class Tasks:
         for task in finished[:-HISTORY]:
             del self.items[task["id"]]
 
-    def _save(self):
+    def _save(self, *, best_effort: bool = False):
         self.version += 1
-        atomic_write_text(self.path, json.dumps(self.items, ensure_ascii=False))
+        try:
+            atomic_write_text(self.path, json.dumps(self.items, ensure_ascii=False))
+        except (OSError, ProjectError) as exc:
+            if not best_effort:
+                raise
+            logger.warning("Transient failure saving %s: %s", self.path, exc)
 
     def list(self):
         with self.lock:
@@ -139,8 +170,8 @@ class Tasks:
                 self.version += 1
                 if message and (not task["logs"] or task["logs"][-1] != str(message)):
                     task["logs"] = [*task["logs"][-199:], str(message)]
-                if time.monotonic() - last_save > 0.3:
-                    self._save()
+                if time.monotonic() - last_save > 1.0:
+                    self._save(best_effort=True)
                     last_save = time.monotonic()
             check_cancelled(token)
 
@@ -165,7 +196,7 @@ class Tasks:
                     entry.update(
                         {
                             k: payload[k]
-                            for k in ("work", "output", "error", "warnings", "log")
+                            for k in ("work", "output", "error", "warnings", "log", "project_json")
                             if k in payload
                         }
                     )
@@ -175,7 +206,7 @@ class Tasks:
                     task["reference"] = None
                 else:
                     task["reference"] = dict(payload) if kind == "ready" else None
-                self._save()
+                self._save(best_effort=(kind == "plan_stage"))
 
         try:
             with self.lock:

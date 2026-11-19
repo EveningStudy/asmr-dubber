@@ -79,10 +79,23 @@ class RevisionItem(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("zh")
+    @field_validator("zh", mode="before")
     @classmethod
-    def normalize_text(cls, value: str) -> str:
+    def normalize_text(cls, value: str | None) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("zh must be a string")
         return value.strip()
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def normalize_kind(cls, value: object) -> str:
+        if value is None:
+            return "speech"
+        if not isinstance(value, str):
+            raise ValueError("kind must be a string")
+        return value.strip().casefold()
 
     @model_validator(mode="after")
     def speech_needs_text(self) -> RevisionItem:
@@ -215,6 +228,8 @@ def _revision_messages(
             "source": item.source_text,
             "current_zh": item.zh_text,
         }
+        if item.speaker_id:
+            row["speaker"] = item.speaker_id
         if chunk.budgets and item.id in chunk.budgets:
             row[chunk.budget_key] = chunk.budgets[item.id]
         target_items.append(row)

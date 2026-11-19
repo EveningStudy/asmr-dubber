@@ -39,13 +39,20 @@ class Settings(UserSettings):
     batch_failure_budget_percent: float = Field(default=2.0, ge=0.0, le=100.0)
     # False until the first-run guide was finished or skipped; settings can reopen it.
     onboarding_completed: bool = False
+    # True once an upgraded 2.x user switched to anime-whisper or dismissed the prompt.
+    asr_upgrade_prompt_dismissed: bool = False
 
 
 def current():
     values = load_user_settings().model_dump()
     path = config_dir() / "interface.json"
     if path.is_file():
-        values.update(json.loads(path.read_text(encoding="utf-8")))
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            values.update(loaded)
     return Settings.model_validate(values)
 
 
@@ -55,6 +62,11 @@ def update(changes, project=None, revision=None):
     changes = expand_changes(changes)
     validate_changes(changes, project=bool(project))
     changes = dict(changes)
+    if (
+        changes.get("separation_mix_mode") == "replace"
+        and changes.get("separation_enabled") is not False
+    ):
+        changes["separation_enabled"] = True
     for backend_key, model_key, registry in (
         ("asr_backend", "asr_model", ASR_BACKENDS),
         ("tts_backend", "tts_model", TTS_BACKENDS),
@@ -120,6 +132,7 @@ def update(changes, project=None, revision=None):
                 "batch_failure_budget_count",
                 "batch_failure_budget_percent",
                 "onboarding_completed",
+                "asr_upgrade_prompt_dismissed",
             )
         }
         atomic_write_text(directory / "interface.json", json.dumps(preferences))

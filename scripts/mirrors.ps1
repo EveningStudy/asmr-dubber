@@ -37,6 +37,100 @@ function Test-ASMRDubberModelScopeUrl {
         $HostName -eq "modelscope.ai" -or $HostName.EndsWith(".modelscope.ai")
 }
 
+function Test-ASMRDubberModelScopeAuthHost {
+    param([Parameter(Mandatory = $true)][string]$Url)
+
+    try {
+        $HostName = ([Uri]$Url).DnsSafeHost.ToLowerInvariant()
+    } catch {
+        return $false
+    }
+    return $HostName -eq "modelscope.cn" -or $HostName -eq "www.modelscope.cn"
+}
+
+function New-ASMRDubberCurlAuthConfigFile {
+    param([Parameter(Mandatory = $true)][string]$Token)
+
+    $CleanToken = ($Token -replace "[\r\n]", "").Trim()
+    $EscapedToken = $CleanToken.Replace("\", "\\").Replace('"', '\"')
+    $ConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "asmr-curl-" + [Guid]::NewGuid().ToString("N") + ".cfg"
+    )
+    $Content = @(
+        ('header = "Authorization: Bearer ' + $EscapedToken + '"'),
+        ('header = "Cookie: m_session_id=' + $EscapedToken + '"')
+    ) -join "`n"
+    [System.IO.File]::WriteAllText(
+        $ConfigPath,
+        $Content + "`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    try {
+        $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $Acl = New-Object System.Security.AccessControl.FileSecurity
+        $Acl.SetAccessRuleProtection($true, $false)
+        $Rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $Identity,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $Acl.SetAccessRule($Rule)
+        [System.IO.File]::SetAccessControl($ConfigPath, $Acl)
+    } catch {
+        # Best-effort ACL restriction; temp file is still deleted in finally.
+    }
+    return $ConfigPath
+}
+
+function Resolve-ASMRDubberModelScopeRedirect {
+    param(
+        [Parameter(Mandatory = $true)][string]$CurlPath,
+        [Parameter(Mandatory = $true)][string]$Url,
+        [string]$ConfigFile = ""
+    )
+
+    $CurrentUrl = $Url
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        for ($Hop = 0; $Hop -lt 10; $Hop++) {
+            if (-not (Test-ASMRDubberModelScopeAuthHost -Url $CurrentUrl)) {
+                return $CurrentUrl
+            }
+            $ProbeArgs = @(
+                "-s", "-S", "-o", "NUL",
+                "-w", "%{http_code}`n%{redirect_url}",
+                "-r", "0-0",
+                "--connect-timeout", "20",
+                "--header", "Accept-Encoding: identity",
+                "--header", "User-Agent: curl/8.0",
+                "--header", "Referer: https://modelscope.cn/"
+            )
+            if ($ConfigFile) {
+                $ProbeArgs += @("-K", $ConfigFile)
+            }
+            $ProbeArgs += $CurrentUrl
+            $Output = @(& $CurlPath @ProbeArgs 2>$null)
+            if ($LASTEXITCODE -ne 0 -or $Output.Count -lt 1) {
+                return $CurrentUrl
+            }
+            $StatusCode = ([string]$Output[0]).Trim()
+            $RedirectUrl = if ($Output.Count -ge 2) { ([string]$Output[1]).Trim() } else { "" }
+            if ($StatusCode -in @("301", "302", "303", "307", "308") -and $RedirectUrl) {
+                if (-not $RedirectUrl.StartsWith("https://")) {
+                    throw "下载源重定向到了非 HTTPS 地址。"
+                }
+                $CurrentUrl = $RedirectUrl
+                continue
+            }
+            return $CurrentUrl
+        }
+    } finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+    return $CurrentUrl
+}
+
 function Test-ASMRDubberExternalUrl {
     param([Parameter(Mandatory = $true)][string]$Url)
 
@@ -328,9 +422,12 @@ function Test-ASMRDubberCurlRetryAllErrors {
 }
 
 function Get-ASMRDubberCurlCommonArguments {
-    param([Parameter(Mandatory = $true)][string]$CurlPath)
+    param(
+        [Parameter(Mandatory = $true)][string]$CurlPath,
+        [switch]$NoFollow
+    )
 
-    $Arguments = @("-L", "--fail", "--retry", "4")
+    $Arguments = if ($NoFollow) { @("--fail", "--retry", "4") } else { @("-L", "--fail", "--retry", "4") }
     if (Test-ASMRDubberCurlRetryAllErrors -CurlPath $CurlPath) {
         $Arguments += "--retry-all-errors"
     }
@@ -401,31 +498,45 @@ function Invoke-ASMRDubberDownload {
     $Errors = New-Object System.Collections.Generic.List[string]
     foreach ($Candidate in $Candidates) {
         Write-Host "尝试下载：$Candidate" -ForegroundColor Cyan
-        $CommonArguments = @(Get-ASMRDubberCurlCommonArguments -CurlPath $Curl.Source)
-        if (Test-ASMRDubberModelScopeUrl -Url $Candidate) {
-            $CommonArguments += @(
-                "--header", "User-Agent: curl/8.0",
-                "--header", "Referer: https://modelscope.cn/"
+        $ConfigFile = ""
+        try {
+            $EffectiveUrl = $Candidate
+            $UseAuthConfig = $false
+            if ((Test-ASMRDubberModelScopeAuthHost -Url $Candidate) -and $env:MODELSCOPE_API_TOKEN) {
+                $ConfigFile = New-ASMRDubberCurlAuthConfigFile -Token $env:MODELSCOPE_API_TOKEN
+                $EffectiveUrl = Resolve-ASMRDubberModelScopeRedirect `
+                    -CurlPath $Curl.Source -Url $Candidate -ConfigFile $ConfigFile
+                $UseAuthConfig = Test-ASMRDubberModelScopeAuthHost -Url $EffectiveUrl
+            }
+            $CommonArguments = @(
+                Get-ASMRDubberCurlCommonArguments -CurlPath $Curl.Source -NoFollow:$UseAuthConfig
             )
-            if ($env:MODELSCOPE_API_TOKEN) {
+            if (Test-ASMRDubberModelScopeUrl -Url $EffectiveUrl) {
                 $CommonArguments += @(
-                    "--header", "Authorization: Bearer $($env:MODELSCOPE_API_TOKEN)",
-                    "--header", "Cookie: m_session_id=$($env:MODELSCOPE_API_TOKEN)"
+                    "--header", "User-Agent: curl/8.0",
+                    "--header", "Referer: https://modelscope.cn/"
                 )
             }
-        }
-        $Arguments = $CommonArguments + @("--output", $PartialPath)
-        if ($Resume -and (Test-Path $Partial)) {
-            $Arguments += @("-C", "-")
-        }
-        $Arguments += $Candidate
-        $ExitCode = Invoke-ASMRDubberProcess -FilePath $Curl.Source `
-            -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path
-        if ($ExitCode -eq 33 -and $Resume) {
-            Remove-Item -Force -ErrorAction SilentlyContinue $Partial
-            $Arguments = $CommonArguments + @("--output", $PartialPath, $Candidate)
+            if ($UseAuthConfig -and $ConfigFile) {
+                $CommonArguments += @("-K", $ConfigFile)
+            }
+            $Arguments = $CommonArguments + @("--output", $PartialPath)
+            if ($Resume -and (Test-Path $Partial)) {
+                $Arguments += @("-C", "-")
+            }
+            $Arguments += $EffectiveUrl
             $ExitCode = Invoke-ASMRDubberProcess -FilePath $Curl.Source `
                 -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path
+            if ($ExitCode -eq 33 -and $Resume) {
+                Remove-Item -Force -ErrorAction SilentlyContinue $Partial
+                $Arguments = $CommonArguments + @("--output", $PartialPath, $EffectiveUrl)
+                $ExitCode = Invoke-ASMRDubberProcess -FilePath $Curl.Source `
+                    -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path
+            }
+        } finally {
+            if ($ConfigFile -and (Test-Path -LiteralPath $ConfigFile)) {
+                Remove-Item -LiteralPath $ConfigFile -Force -ErrorAction SilentlyContinue
+            }
         }
         if ($ExitCode -eq 0 -and (Test-Path $Partial)) {
             Move-Item -Force $Partial $Destination

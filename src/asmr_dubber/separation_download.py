@@ -10,6 +10,61 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 DEFAULT_BASE = "https://modelscope.cn/models/EveningStudyW/ASMR-Dubber-Separation/resolve/master"
+_MODELSCOPE_HOSTS = frozenset({"modelscope.cn", "modelscope.ai"})
+_OVERSEAS_HOSTS = frozenset(
+    {
+        "github.com",
+        "raw.githubusercontent.com",
+        "huggingface.co",
+        "hf.co",
+        "hf-mirror.com",
+        "dl.fbaipublicfiles.com",
+    }
+)
+
+
+class _BadChecksumError(RuntimeError):
+    pass
+
+
+def _is_modelscope_host(host: str) -> bool:
+    return host in _MODELSCOPE_HOSTS or any(host.endswith("." + h) for h in _MODELSCOPE_HOSTS)
+
+
+def _fallback_url_allowed(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if _is_modelscope_host(host):
+        return True
+    try:
+        from .mirrors import download_url_allowed, external_downloads_allowed
+
+        if not download_url_allowed(url):
+            return False
+        return external_downloads_allowed() or not any(
+            host == h or host.endswith("." + h) for h in _OVERSEAS_HOSTS
+        )
+    except ImportError:
+        flag = os.getenv("ASMR_DUBBER_ALLOW_EXTERNAL_DOWNLOADS", "").strip().lower()
+        if flag in {"1", "true", "yes", "on"}:
+            return True
+        return not any(host == h or host.endswith("." + h) for h in _OVERSEAS_HOSTS)
+
+
+def _download_headers(url: str, offset: int = 0) -> dict[str, str]:
+    headers = {"Accept-Encoding": "identity"}
+    host = (urlparse(url).hostname or "").lower()
+    if _is_modelscope_host(host):
+        headers["User-Agent"] = "curl/8.0"
+        headers["Referer"] = "https://modelscope.cn/"
+        token = os.getenv("MODELSCOPE_API_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Cookie"] = f"m_session_id={token}"
+    else:
+        headers["User-Agent"] = "ASMR-Dubber/0.4"
+    if offset > 0:
+        headers["Range"] = f"bytes={offset}-"
+    return headers
 
 
 def source_manifest():
@@ -38,9 +93,11 @@ def download_model_file(
     candidates = []
     if record and source == "modelscope":
         candidates.append(base_url.rstrip("/") + "/" + quote(target.name))
-    if record:
-        candidates.append(record["upstream"])
-    candidates.append(url)
+    candidates.extend(
+        extra
+        for extra in ([record["upstream"]] if record else []) + [url]
+        if source != "modelscope" or _fallback_url_allowed(extra)
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".partial")
     errors = []
@@ -48,16 +105,37 @@ def download_model_file(
         if not candidate.startswith("https://"):
             raise RuntimeError("模型下载必须使用 HTTPS。")
         provider = (
-            "ModelScope" if "modelscope." in (urlparse(candidate).hostname or "") else "原始来源"
+            "ModelScope"
+            if _is_modelscope_host((urlparse(candidate).hostname or "").lower())
+            else "原始来源"
         )
         report(f"正在下载：{target.name} · {provider}")
         try:
-            with get(candidate, stream=True, timeout=60) as response:
+            existing = partial.stat().st_size if partial.is_file() else 0
+            with get(
+                candidate,
+                headers=_download_headers(candidate, existing),
+                stream=True,
+                timeout=60,
+            ) as response:
+                status = getattr(response, "status_code", 200)
+                if status == 416 and existing > 0:
+                    partial.unlink(missing_ok=True)
+                    raise RuntimeError("断点续传范围无效")
                 response.raise_for_status()
-                total = int(response.headers.get("Content-Length", 0))
-                done, last = 0, 0.0
+                resuming = status == 206 and existing > 0
+                content_length = int(response.headers.get("Content-Length", 0))
+                total = (
+                    (existing + content_length) if (resuming and content_length) else content_length
+                )
+                done = existing if resuming else 0
+                last = 0.0
                 digest = hashlib.sha256()
-                with partial.open("wb") as output:
+                if resuming:
+                    with partial.open("rb") as prev:
+                        while chunk := prev.read(1024 * 1024):
+                            digest.update(chunk)
+                with partial.open("ab" if resuming else "wb") as output:
                     for block in response.iter_content(1024 * 1024):
                         if not block:
                             continue
@@ -77,15 +155,17 @@ def download_model_file(
                 if total and done != total:
                     raise RuntimeError("下载长度不符")
                 if expected and digest.hexdigest() != expected:
-                    raise RuntimeError("SHA256 不符")
+                    raise _BadChecksumError("SHA256 不符")
             os.replace(partial, target)
             report(f"下载完成：{target.name} · {done / 1048576:.1f} MB")
             return
+        except _BadChecksumError as exc:
+            partial.unlink(missing_ok=True)
+            errors.append(f"{provider}：{type(exc).__name__}")
+            report(f"{provider}校验失败，已清理损坏片段。")
         except Exception as exc:
             errors.append(f"{provider}：{type(exc).__name__}")
-            report(f"{provider}下载失败，尝试下一个来源。")
-        finally:
-            partial.unlink(missing_ok=True)
+            report(f"{provider}下载失败，保留断点并尝试下一个来源。")
     raise RuntimeError(f"下载失败：{target.name}；" + "；".join(errors))
 
 

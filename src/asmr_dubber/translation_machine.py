@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import random
 from typing import Self
 
 import httpx
@@ -16,6 +17,18 @@ from .translation_schema import (
 )
 
 MACHINE_TRANSLATION_PROVIDERS = frozenset({"deepl", "google_translate", "microsoft_translate"})
+_RETRYABLE_MT_HTTP_STATUS = frozenset({429, 502, 503, 504})
+
+
+def _retry_delay(attempt: int, response: httpx.Response | None = None) -> float:
+    if response is not None:
+        raw = (response.headers.get("Retry-After") or "").strip()
+        if raw:
+            try:
+                return min(30.0, max(0.0, float(raw)))
+            except ValueError:
+                pass
+    return min(20.0, float(2 ** (attempt - 1)) + random.uniform(0.0, 0.5))
 
 
 def _default_http_client(label: str, *, timeout: float) -> httpx.Client:
@@ -36,6 +49,7 @@ class _BaseMachineTranslator:
         model: str,
         base_url: str,
         timeout_seconds: float = 300.0,
+        max_retries: int = 4,
         client: httpx.Client | None = None,
         source_language: SourceLanguage = "ja",
         target_language: str = "zh",
@@ -48,6 +62,7 @@ class _BaseMachineTranslator:
         self.api_key = api_key.strip()
         self.model = model.strip()
         self.base_url = base_url.rstrip("/")
+        self.max_retries = max(1, max_retries)
         self.source_language: SourceLanguage = source_language
         self.target_language = target_language
         self.client = client or _default_http_client(
@@ -75,27 +90,41 @@ class _BaseMachineTranslator:
         _translation_memory: str,
         _job_id: str,
     ) -> dict[str, str]:
+        from . import translation
+
         if self.provider not in MACHINE_TRANSLATION_LANGUAGE_CODES:
             raise TranslationError(f"不支持的机器翻译服务：{self.provider}")
         texts = [sentence.source_text for sentence in chunk.sentences]
         source_code = MACHINE_TRANSLATION_LANGUAGE_CODES[self.provider][self.source_language]
-        try:
-            translated = self._request_translations(texts, source_code)
-        except httpx.HTTPStatusError as exc:
-            response = exc.response
-            message = (
-                f"{self.provider} API 请求失败（HTTP {response.status_code}）："
-                f"{response.text[:500]}"
-            )
-            if response.status_code in _FATAL_HTTP_STATUS:
-                raise _NonRetryableTranslationError(message, response.status_code) from exc
-            raise TranslationError(message) from exc
-        except TranslationError:
-            raise
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise TranslationError(f"{self.provider} 返回格式无效：{exc}") from exc
-        if len(translated) != len(chunk.sentences) or any(not item.strip() for item in translated):
-            raise TranslationError(f"{self.provider} 返回的译文数量或内容无效。")
+        attempts = max(1, self.max_retries)
+        translated: list[str] | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                translated = self._request_translations(texts, source_code)
+                break
+            except httpx.HTTPStatusError as exc:
+                response = exc.response
+                message = (
+                    f"{self.provider} API 请求失败（HTTP {response.status_code}）："
+                    f"{response.text[:500]}"
+                )
+                if response.status_code in _FATAL_HTTP_STATUS:
+                    raise _NonRetryableTranslationError(message, response.status_code) from exc
+                if response.status_code in _RETRYABLE_MT_HTTP_STATUS and attempt < attempts:
+                    translation.time.sleep(_retry_delay(attempt, response))
+                    continue
+                raise TranslationError(message) from exc
+            except httpx.TransportError as exc:
+                if attempt < attempts:
+                    translation.time.sleep(_retry_delay(attempt))
+                    continue
+                raise TranslationError(f"{self.provider} 网络请求失败：{exc}") from exc
+            except TranslationError:
+                raise
+            except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+                raise TranslationError(f"{self.provider} 返回格式无效：{exc}") from exc
+        if translated is None or len(translated) != len(chunk.sentences):
+            raise TranslationError(f"{self.provider} 返回的译文数量无效。")
         return {
             sentence.id: text.strip()
             for sentence, text in zip(chunk.sentences, translated, strict=True)
@@ -288,4 +317,5 @@ class MachineTranslationAPI(_BaseMachineTranslator):
             )
         else:
             raise TranslationError(f"不支持的机器翻译服务：{self.provider}")
+        adapter.max_retries = self.max_retries
         return adapter.translate_chunk(chunk, full_context, translation_memory, job_id)

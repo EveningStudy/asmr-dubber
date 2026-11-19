@@ -199,7 +199,7 @@ class Sentence(BaseModel):
         update: Mapping[str, Any] | None = None,
         deep: bool = False,
     ) -> Sentence:
-        if update and ("zh_text" in update or "ja_text" in update):
+        if update:
             remapped = dict(update)
             if "zh_text" in remapped and "target_text" not in remapped:
                 remapped["target_text"] = str(remapped.pop("zh_text") or "").strip()

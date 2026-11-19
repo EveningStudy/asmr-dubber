@@ -31,8 +31,31 @@ if [[ ! -x "$ASMR_DUBBER_UV" || ! -x "$PYTHON" ]]; then
 fi
 mkdir -p "$DOWNLOAD_ROOT"
 
+FORCE=0
+for arg in "$@"; do
+  if [[ "$arg" == "--force" ]]; then
+    FORCE=1
+  fi
+done
+
+indextts_checkpoints_complete() {
+  "$PYTHON" - "$MODEL_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
+
+model_dir = Path(sys.argv[1])
+files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
+dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
+raise SystemExit(0 if files_ready and dirs_ready else 1)
+PY
+}
+
 if [[ "${ASMR_DUBBER_MODEL_PACKS_PREPARED:-}" != "1" ]]; then
-  if "$PYTHON" -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints; then
+  if [[ "$FORCE" != "1" ]] && indextts_checkpoints_complete; then
+    echo "IndexTTS2 本地 checkpoints 已完整，跳过模型包下载。"
+  elif "$PYTHON" -m asmr_dubber.cli prepare-model-pack indextts2-checkpoints; then
     "$PYTHON" -m asmr_dubber.cli import-model-packs --all \
       --pack-id indextts2-checkpoints
   else
@@ -160,20 +183,6 @@ if [[ ! -x "$INDEX_CLI" ]]; then
   echo "IndexTTS2 CLI 安装失败：$INDEX_CLI" >&2
   exit 1
 fi
-
-indextts_checkpoints_complete() {
-  "$PYTHON" - "$MODEL_DIR" <<'PY'
-import sys
-from pathlib import Path
-
-from asmr_dubber.constants import INDEXTTS_REQUIRED_DIRS, INDEXTTS_REQUIRED_FILES
-
-model_dir = Path(sys.argv[1])
-files_ready = all((model_dir / name).is_file() for name in INDEXTTS_REQUIRED_FILES)
-dirs_ready = all((model_dir / name).is_dir() for name in INDEXTTS_REQUIRED_DIRS)
-raise SystemExit(0 if files_ready and dirs_ready else 1)
-PY
-}
 
 if indextts_checkpoints_complete; then
   echo "IndexTTS2 本地 checkpoints 已完整，无需联网下载。"

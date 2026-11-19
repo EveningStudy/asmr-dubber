@@ -93,11 +93,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return False
         host = self.headers.get("Host", "")
+        addr = str(self.server.server_address[0])
+        bare_addr = addr.strip("[]")
         valid_hosts = {
             f"127.0.0.1:{self.server.server_port}",
             f"localhost:{self.server.server_port}",
-            f"{self.server.server_address[0]}:{self.server.server_port}",
+            f"[::1]:{self.server.server_port}",
+            f"{addr}:{self.server.server_port}",
         }
+        if ":" in bare_addr:
+            valid_hosts.add(f"[{bare_addr}]:{self.server.server_port}")
         # A remote bind is reached through whatever name or address the client uses and is
         # protected by Basic authentication; the allow-list stops DNS rebinding on loopback.
         if not self.server.auth and host not in valid_hosts:
@@ -113,7 +118,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Invalid session token"}, 403)
             return False
         origin = self.headers.get("Origin")
-        if origin and origin != "http://" + host:
+        if origin and (not host or origin not in {f"http://{host}", f"https://{host}"}):
             self._discard_body()
             self.close_connection = True
             self._json({"error": "Invalid Origin"}, 403)
@@ -185,7 +190,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError("JSON object required")
             route = path.removeprefix("/api/")
-            if route in {"files/folder", "files/media", "app/shutdown"} and self.server.auth:
+            if (
+                route
+                in {"files/folder", "files/media", "app/shutdown", "batch/open", "projects/open"}
+                and self.server.auth
+            ):
                 self._json({"error": "Local host operation forbidden"}, 403)
                 return
             if route == "app/shutdown":
@@ -211,11 +220,17 @@ class Handler(BaseHTTPRequestHandler):
         data = resource.read_bytes()
         if name == "index.html":
             data = data.replace(b"__SESSION_TOKEN__", self.server.token.encode())
-        self._headers(
-            200,
-            (mimetypes.guess_type(name)[0] or "application/octet-stream") + "; charset=utf-8",
-            len(data),
-        )
+        mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        if mime_type.startswith("text/") or mime_type in {
+            "application/javascript",
+            "text/javascript",
+            "application/json",
+            "image/svg+xml",
+        }:
+            content_type = f"{mime_type}; charset=utf-8"
+        else:
+            content_type = mime_type
+        self._headers(200, content_type, len(data))
         self.end_headers()
         self.wfile.write(data)
 

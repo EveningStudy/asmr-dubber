@@ -6,6 +6,15 @@ const {chromium}=require(process.env.ASMR_TEST_PLAYWRIGHT||'playwright');
   const page=await browser.newPage();
   await page.goto(process.env.ASMR_TEST_URL||'http://127.0.0.1:7860/');
   await page.locator('#modelDevice b').first().waitFor({state:'attached'});
+  await page.waitForTimeout(300);
+  if(await page.locator('#wizard.on #wizardSkip').isVisible()){
+    await page.locator('#wizardSkip').click();
+    await page.locator('#wizard.on').waitFor({state:'hidden'});
+  }
+  if(await page.locator('#dialog.on [data-close]').isVisible()){
+    await page.locator('#dialog.on [data-close]').click();
+    await page.locator('#dialog.on').waitFor({state:'hidden'});
+  }
   for(const width of [1440,900,390]){
     await page.setViewportSize({width,height:1000});
     for(const name of ['home','models','batch','settings']){

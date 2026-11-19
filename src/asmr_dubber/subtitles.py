@@ -47,26 +47,45 @@ def _wrap_line(value: str, width: int) -> list[str]:
     ) or [cleaned]
 
 
+def _escape_srt_text(value: str) -> str:
+    return value.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _visible_char_count(value: str) -> int:
+    return sum(not character.isspace() for character in value)
+
+
 def _subtitle_lines(
     sentence: Sentence,
     language: SubtitleLanguage,
     maximum_chars: int,
     *,
+    target_language: str = "zh",
     allow_source_fallback: bool = False,
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], list[str], int, bool]:
+    source_raw = _clean_line(sentence.source_text)
+    target_raw = _clean_line(sentence.zh_text)
+    target_width = max(42, maximum_chars * 2) if target_language == "en" else maximum_chars
     source = _wrap_line(sentence.source_text, maximum_chars)
-    chinese = _wrap_line(sentence.zh_text, maximum_chars)
+    chinese = _wrap_line(sentence.zh_text, target_width)
     if language in {"bilingual", "zh"} and not chinese:
         if allow_source_fallback:
-            return source, True
+            srt_lines = [_escape_srt_text(line) for line in source]
+            lrc_items = [source_raw] if source_raw else []
+            return srt_lines, lrc_items, _visible_char_count(source_raw), True
         raise ProjectError(f"句子 {sentence.id} 没有中文，无法生成所选字幕。")
     if language == "source":
         if not source:
             raise ProjectError(f"句子 {sentence.id} 没有原文，请先识别或导入原文字幕。")
-        return source, False
+        srt_lines = [_escape_srt_text(line) for line in source]
+        return srt_lines, [source_raw], _visible_char_count(source_raw), False
     if language == "zh":
-        return chinese, False
-    return [*source, *chinese], False
+        srt_lines = [_escape_srt_text(line) for line in chinese]
+        return srt_lines, [target_raw], _visible_char_count(target_raw), False
+    srt_lines = [_escape_srt_text(line) for line in (*source, *chinese)]
+    lrc_items = [part for part in (source_raw, target_raw) if part]
+    cps_chars = max(_visible_char_count(source_raw), _visible_char_count(target_raw))
+    return srt_lines, lrc_items, cps_chars, False
 
 
 def _subtitle_range(
@@ -74,7 +93,7 @@ def _subtitle_range(
     *,
     timeline: SubtitleTimeline,
     dubbing_timing: DubbingTiming | None,
-    text: str,
+    visible_characters: int,
     minimum_duration: float,
     maximum_cps: float,
 ) -> tuple[float, float]:
@@ -84,7 +103,6 @@ def _subtitle_range(
     else:
         start = sentence.start_seconds
         end = sentence.end_seconds
-    visible_characters = sum(not character.isspace() for character in text)
     readable_duration = visible_characters / maximum_cps if maximum_cps > 0 else 0.0
     end = max(end, start + minimum_duration, start + readable_duration)
     if not math.isfinite(start) or not math.isfinite(end) or end <= start:
@@ -101,6 +119,7 @@ def write_subtitle_files(
     maximum_chars: int = 22,
     minimum_duration: float = 1.0,
     maximum_cps: float = 18.0,
+    target_language: str = "zh",
     chinese_dubbing_offset_ms: int = 0,
     chinese_max_auto_speed: float = 1.2,
     chinese_dubbing_timing_mode: DubbingTimingMode = "fit_window",
@@ -149,10 +168,11 @@ def write_subtitle_files(
     entries = []
     collected_warnings: list[str] = []
     for sentence in included:
-        lines, used_fallback = _subtitle_lines(
+        lines, lrc_items, cps_chars, used_fallback = _subtitle_lines(
             sentence,
             language,
             maximum_chars,
+            target_language=target_language,
             allow_source_fallback=has_translation,
         )
         if not lines:
@@ -163,27 +183,33 @@ def write_subtitle_files(
         timing = timing_by_id.get(sentence.id) if timeline == "dubbing" else None
         start = timing.start_seconds if timing else sentence.start_seconds
         original_end = start + timing.effective_duration_seconds if timing else sentence.end_seconds
-        entries.append((sentence, lines, start, original_end))
+        entries.append((sentence, lines, lrc_items, cps_chars, start, original_end))
     if not entries:
         raise ProjectError("没有可生成字幕的已启用句子。")
+    effective_media_duration = media_duration_seconds
+    if media_duration_seconds is not None and timeline == "dubbing":
+        max_planned_end = max(orig_end for _s, _lines, _lrc, _cps, _st, orig_end in entries)
+        effective_media_duration = max(media_duration_seconds, max_planned_end)
     srt_blocks: list[str] = []
     lrc_lines: list[str] = []
-    for index, (sentence, lines, _start, original_end) in enumerate(entries, start=1):
+    for index, (sentence, lines, lrc_items, cps_chars, _start, original_end) in enumerate(
+        entries, start=1
+    ):
         start, end = _subtitle_range(
             sentence,
             timeline=timeline,
             dubbing_timing=timing_by_id.get(sentence.id),
-            text="".join(lines),
+            visible_characters=cps_chars,
             minimum_duration=minimum_duration,
             maximum_cps=maximum_cps,
         )
         requested_end = end
         if index < len(entries):
-            next_start = entries[index][2]
+            next_start = entries[index][4]
             # Preserve genuine overlap; only prevent readability padding from creating it.
             end = min(end, max(original_end, next_start))
-        if media_duration_seconds is not None:
-            end = min(end, media_duration_seconds)
+        if effective_media_duration is not None:
+            end = min(end, effective_media_duration)
         if end <= start:
             raise ProjectError(f"句子 {sentence.id} 的字幕起点超出媒体范围。")
         if end < requested_end:
@@ -192,7 +218,7 @@ def write_subtitle_files(
             f"{index}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n" + "\n".join(lines)
         )
         timestamp = _lrc_timestamp(start)
-        lrc_lines.extend(f"{timestamp}{line}" for line in lines)
+        lrc_lines.extend(f"{timestamp}{line}" for line in lrc_items)
 
     if warnings is not None:
         warnings.extend(collected_warnings)

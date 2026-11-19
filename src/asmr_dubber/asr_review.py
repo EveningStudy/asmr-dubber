@@ -205,7 +205,7 @@ def _candidate(
             )
         )
     shifted.sort(key=lambda row: (row.start_seconds, row.end_seconds))
-    text = _text(rows, language)
+    text = _text(shifted, language)
     return {
         "id": "c" + _digest(normalize_text(text))[:16],
         "text": text,
@@ -265,7 +265,8 @@ def compare_window(
             if primary_source in item["sources"]:
                 group["text"], group["sentences"] = item["text"], item["sentences"]
                 group["timing_warning"] = item.get("timing_warning", False)
-    baseline_text = _text(owned, language)
+    spoken_owned = [row for row in owned if not (not row.enabled and row.status == "skipped_sound")]
+    baseline_text = _text(spoken_owned, language)
     candidates = list(groups.values())
     for candidate in candidates:
         candidate["protected_change"] = sensitive_change(baseline_text, candidate["text"])
@@ -669,6 +670,22 @@ def replace_window(
         row.id = f"{result['id']}-{candidate['id']}-{index + 1}"
         row.review_locked = True
         row.status = "review_accepted"
+        if owned:
+            owner = max(
+                owned,
+                key=lambda orig: (
+                    min(row.end_seconds, orig.end_seconds)
+                    - max(row.start_seconds, orig.start_seconds),
+                    -abs(
+                        (row.start_seconds + row.end_seconds)
+                        - (orig.start_seconds + orig.end_seconds)
+                    ),
+                ),
+            )
+            if row.speaker_id is None:
+                row.speaker_id = owner.speaker_id
+            if row.voice_mode is None:
+                row.voice_mode = owner.voice_mode
     kept = [row for row in current if row.id not in result["baseline_ids"]]
     return sorted(
         [*kept, *normalized], key=lambda row: (row.start_seconds, row.end_seconds, row.id)

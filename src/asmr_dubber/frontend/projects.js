@@ -1,16 +1,15 @@
 import { renderTranslationPanels, initializeRecovery, initializeTranslateAll } from './project_translation.js';
 import {
   $, $$, state, api, esc, t, time, options, field, dialog,
-  upload, enqueueSave, flushSaves, startTask, guard, notice, projectBusy,
+  upload, enqueueSave, flushSaves, startTask, guard, notice, projectBusy, stopAllAudio,
 } from './session.js';
 import { renderForms } from './forms.js';
 import { matchesRowFilter } from './project_revise.js';
-import { transcriptDialog, referenceDialog, reviewDialog } from './project_dialogs.js';
+import { transcriptDialog, referenceDialog, reviewDialog, openProjectDialog } from './project_dialogs.js';
 import { initializeReview } from './project_review.js';
 import { initializeCompare, renderCompare } from './compare_player.js';
 import {
   resetEditorHistory,
-  recordFieldUndo,
   recordListUndo,
   syncUndoButtons,
   undoEdit,
@@ -23,6 +22,7 @@ import {
   scrollToSentenceIndex,
   renderSentenceControls,
   initializeSentenceEditor,
+  commitSentenceEdit,
 } from './sentence_editor.js';
 
 const BUSY_CONTROLS = [
@@ -31,6 +31,7 @@ const BUSY_CONTROLS = [
   '#undoSentence,#redoSentence,#sentenceReference,#sentenceControls [data-detail],#rows input[type="checkbox"],#rows select',
   '#rows [data-candidates],#rows [data-take],#rows [data-regenerate],#rows [data-retranslate]',
   '#rows [data-compress],#rows [data-keep-original],#revisionProposals [data-proposal],#revisionProposals [data-proposal-all]',
+  '#project .schema :is(input,select,textarea,button),#project .presetbox button',
 ].join(',');
 const filteredSentences = () => (state.project ? state.project.sentences.filter(matchesRowFilter) : []);
 let selected = '', importAfterCreate = null, pendingSource = null;
@@ -60,58 +61,49 @@ export async function refreshHome() {
 }
 export async function openProject(manifest) {
   await flushSaves({ ignoreError: true });
+  stopAllAudio();
+  const dub = $('#dubPlayer');
+  if (dub) {
+    dub.removeAttribute('src');
+    dub.load?.();
+  }
+  if ($('#playSource')) $('#playSource').textContent = '▶';
   state.project = await api('projects/get', { project: manifest });
   resetEditorHistory();
   $('#saveState').textContent = t('修改会自动保存');
   state.filter = 'all';
+  if ($('#search')) $('#search').value = '';
+  $$('#filters [data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === 'all'));
   const box = $('.tablebox');
   if (box) box.scrollTop = 0;
   selected = state.project.sentences[0]?.id || '';
   $('#sourcePlayer').src = state.project.source_url;
   $('#seek').max = state.project.source.duration_seconds;
   window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'project' } }));
+  if (state.project.sentences.length === 0) window.dispatchEvent(new CustomEvent('set-step', { detail: 1 }));
   renderProject();
 }
-export function renderProject() {
+function refreshProjectStats() {
   if (!state.project) return;
   const project = state.project,
-    enabled = project.sentences.filter((sentence) => sentence.enabled);
-  const hasTr = (s) => Boolean(s.target_text ?? s.zh_text);
-  const translated = enabled.filter(hasTr).length,
-    voiced = enabled.filter((sentence) => sentence.tts_file).length;
-  $('#projectName').textContent = project.title;
-  $('#projectMeta').textContent =
-    `${t(project.source_language)} → ${t(project.settings.tts_target_language)} · ${time(project.source.duration_seconds)} · ${t('{count} 句', { count: project.sentences.length })}`;
-  $('#asrStat').textContent = t('已识别 {count} 句。重新识别会替换现有句子，译文和配音要重做。', {
-    count: project.sentences.length,
-  });
+    enabled = project.sentences.filter((sentence) => sentence.enabled),
+    hasTr = (s) => Boolean(s.target_text ?? s.zh_text),
+    translated = enabled.filter(hasTr).length,
+    voiced = enabled.filter((sentence) => sentence.tts_file).length,
+    undubbed = enabled.filter((s) => hasTr(s) && !s.tts_file).length;
+  $('#asrStat').textContent = t('已识别 {count} 句。重新识别会替换现有句子，译文和配音要重做。', { count: project.sentences.length });
   $('#translateRemaining').textContent = t('翻译剩余 {count} 句', { count: enabled.length - translated });
-  renderTranslationPanels(project);
-  $('#translationStat').textContent = t('已翻译 {done} / {total} 句。', {
-    done: translated,
-    total: enabled.length,
-  });
-  $('#synthesizeRemaining').textContent = t('生成剩余 {count} 句', {
-    count: enabled.filter((s) => hasTr(s) && !s.tts_file).length,
-  });
-  $('#dubStat').textContent = t('已完成 {done} / {total} 句。只生成还没有配音、或译文改过的句子。', {
-    done: voiced,
-    total: enabled.length,
-  });
+  $('#translationStat').textContent = t('已翻译 {done} / {total} 句。', { done: translated, total: enabled.length });
+  $('#synthesizeRemaining').textContent = t('生成剩余 {count} 句', { count: enabled.filter((s) => hasTr(s) && !s.tts_file).length });
+  $('#dubStat').textContent = t('已完成 {done} / {total} 句。只生成还没有配音、或译文改过的句子。', { done: voiced, total: enabled.length });
   $('#dubBar').style.width = `${enabled.length ? (voiced / enabled.length) * 100 : 0}%`;
-  const undubbed = enabled.filter((s) => hasTr(s) && !s.tts_file).length;
-  $('#exportStat').textContent = undubbed
-    ? t('还有 {count} 句没有配音，成品里这些句子只有原声。', { count: undubbed })
-    : t('所有句子都已配音。');
-  $('#referenceLabel').textContent =
-    `${t('音色参考')} · ${project.reference_external ? t('外部音频') : project.reference_selected || t('未选择')}`;
-  $('#projectDiagnostics').textContent = t(project.diagnostics);
-  $('#outputs').innerHTML = Object.entries(project.outputs)
-    .map(
-      ([key, item]) =>
-        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${esc(item.url)}"></audio>` : ''}<a class="btn plain small" href="${esc(item.url)}" download="${esc(item.name)}">${t('下载')}</a></div>`,
-    )
-    .join('');
+  $('#exportStat').textContent = project.sentences.length === 0
+    ? t('还没有句子，请先识别或导入台本。')
+    : translated === 0
+      ? t('还没有已翻译的句子，导出成品里将只有原声。')
+      : undubbed
+        ? t('还有 {count} 句没有配音，成品里这些句子只有原声。', { count: undubbed })
+        : t('所有句子都已配音。');
   $$('#steps button').forEach((button, index) =>
     button.classList.toggle(
       'done',
@@ -123,6 +115,24 @@ export function renderProject() {
       ][index],
     ),
   );
+}
+export function renderProject() {
+  if (!state.project) return;
+  const project = state.project;
+  $('#projectName').textContent = project.title;
+  $('#projectMeta').textContent =
+    `${t(project.source_language)} → ${t(project.settings.tts_target_language)} · ${time(project.source.duration_seconds)} · ${t('{count} 句', { count: project.sentences.length })}`;
+  renderTranslationPanels(project);
+  refreshProjectStats();
+  $('#referenceLabel').textContent =
+    `${t('音色参考')} · ${project.reference_external ? t('外部音频') : project.reference_selected || t('未选择')}`;
+  $('#projectDiagnostics').textContent = t(project.diagnostics);
+  $('#outputs').innerHTML = Object.entries(project.outputs)
+    .map(
+      ([key, item]) =>
+        `<div class="out"><span class="grow">${esc(item.name)}</span>${/audio|stem|output_file/.test(key) ? `<audio controls preload="none" src="${esc(item.url)}"></audio>` : ''}<a class="btn plain small" href="${esc(item.url)}" download="${esc(item.name)}">${t('下载')}</a></div>`,
+    )
+    .join('');
   renderRows();
   renderForms();
   renderCompare(project);
@@ -131,7 +141,7 @@ export function renderProject() {
 function renderRows() {
   if (!state.project) return;
   const sentences = filteredSentences();
-  renderVirtualRows(sentences, selected);
+  renderVirtualRows(sentences, selected, { force: true });
   renderSentenceControls(selected, sentences.length, syncProjectControls);
 }
 function saveRows(only = null) {
@@ -150,6 +160,15 @@ function saveRows(only = null) {
     state.project.revision = result.revision;
     state.project.settings = result.settings;
     state.project.outputs = result.outputs;
+    if (only && result.deleted) {
+      state.project.sentences = state.project.sentences.filter((s) => s.id !== only);
+      if (selected === only) selected = state.project.sentences[0]?.id || '';
+      renderProject();
+    } else if (only && result.row) {
+      const local = state.project.sentences.find((s) => s.id === only);
+      if (local) Object.assign(local, result.row);
+      state.project.sentences.sort((a, b) => a.start_seconds - b.start_seconds || a.end_seconds - b.end_seconds || a.id.localeCompare(b.id));
+    }
   });
 }
 function openCreateDialog(sourcePath, displayName) {
@@ -240,11 +259,7 @@ export function initializeProjects() {
     event.preventDefault();
     if (event.dataTransfer.files[0]) await newSource(event.dataTransfer.files[0]);
   });
-  $('#openExisting').onclick = guard(async () => {
-    dialog('打开项目', field('项目路径', '<input type="text" id="existingManifest">'), '打开项目', async () =>
-      openProject($('#existingManifest').value),
-    );
-  });
+  $('#openExisting').onclick = guard(() => openProjectDialog(openProject));
   $('#search').oninput = () => {
     const box = $('.tablebox');
     if (box) box.scrollTop = 0;
@@ -264,6 +279,7 @@ export function initializeProjects() {
     setSelected: (id) => { selected = id; },
     saveRows,
     renderProject,
+    refreshStats: refreshProjectStats,
     syncBusy: syncProjectControls,
     getListenMode: () => mode,
   });
@@ -339,7 +355,7 @@ export function initializeProjects() {
           ...beforeList,
           {
             id: selected, start_seconds: start, end_seconds: end, source_text: '',
-            target_text: t('新句子'),
+            target_text: t('新句子'), zh_text: t('新句子'),
             enabled: true, original_audio_enabled: null, original_audio_gain_db: 0,
             chinese_audio_enabled: true, chinese_audio_gain_db: 0,
           },
@@ -383,15 +399,12 @@ export function initializeProjects() {
       if (!tr) return;
       const sentence = state.project.sentences.find((s) => s.id === tr.dataset.sentence);
       if (!sentence) return;
+      const prevVal = key === 'zh_text' ? (sentence.target_text ?? sentence.zh_text ?? '') : sentence[key];
       const nextVal = event.target.textContent;
-      if (sentence[key] !== nextVal) {
-        recordFieldUndo(sentence.id, { [key]: sentence[key] }, { [key]: nextVal });
-        sentence[key] = nextVal;
-        if (key === 'zh_text') sentence.target_text = nextVal;
-        sentence.tts_file = null;
-        sentence.tts_url = null;
+      if (prevVal !== nextVal) {
+        const prevCandidates = sentence.tts_candidates;
         sentence.tts_candidates = [];
-        await saveRows(sentence.id);
+        await commitSentenceEdit(sentence, { [key]: prevVal }, { [key]: nextVal }, { prevCandidates });
       }
     }),
   );
@@ -415,25 +428,18 @@ export function initializeProjects() {
             : key === 'speaker_id'
               ? node.value.trim() || null
               : Number(node.value);
-      recordFieldUndo(sentence.id, { [key]: prevVal }, { [key]: nextVal });
-      sentence[key] = nextVal;
-      await saveRows(sentence.id);
-      if (key === 'enabled' || key === 'speaker_id' || key === 'start_seconds' || key === 'end_seconds') {
-        state.project = await api('projects/get', { project: state.project.manifest });
-        renderProject();
-      }
+      const refresh = ['enabled', 'speaker_id', 'start_seconds', 'end_seconds'].includes(key);
+      await commitSentenceEdit(sentence, { [key]: prevVal }, { [key]: nextVal }, { refresh });
     }),
   );
   const source = $('#sourcePlayer'),
     dub = $('#dubPlayer');
   $('#playSource').onclick = guard(async () => {
     if (!source.paused || !dub.paused) {
-      clearSourceSliceStop();
-      source.pause();
-      dub.pause();
-      $('#playSource').textContent = '▶';
+      stopAllAudio();
       return;
     }
+    stopAllAudio('transport');
     clearSourceSliceStop();
     if (mode !== 'dub') await source.play();
     if (mode !== 'source') {
@@ -456,7 +462,10 @@ export function initializeProjects() {
   };
   source.onended = () => {
     clearSourceSliceStop();
-    $('#playSource').textContent = '▶';
+    if (dub.paused) $('#playSource').textContent = '▶';
+  };
+  dub.onended = () => {
+    if (source.paused) $('#playSource').textContent = '▶';
   };
   $('#seek').oninput = () => {
     clearSourceSliceStop();

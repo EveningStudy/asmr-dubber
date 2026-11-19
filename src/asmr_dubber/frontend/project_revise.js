@@ -5,10 +5,12 @@ import { $, state, api, t, esc, field, dialog, guard, notice, startTask, flushSa
 export function matchesRowFilter(sentence) {
   const query = $('#search').value.toLowerCase();
   return (
-    `${sentence.source_text} ${sentence.target_text ?? ''}`.toLowerCase().includes(query) &&
+    `${sentence.id} ${sentence.speaker_id ?? ''} ${sentence.source_text} ${sentence.target_text ?? ''}`
+      .toLowerCase()
+      .includes(query) &&
     (state.filter === 'all' ||
-      (state.filter === 'translation' && !sentence.target_text) ||
-      (state.filter === 'tts' && !sentence.tts_file) ||
+      (state.filter === 'translation' && sentence.enabled && !sentence.target_text) ||
+      (state.filter === 'tts' && sentence.enabled && !sentence.tts_file) ||
       (state.filter === 'review' && sentence.script_review_note) ||
       (state.filter === 'check' && needsCheck(sentence)))
   );

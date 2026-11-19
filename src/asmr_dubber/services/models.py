@@ -5,13 +5,19 @@ import json
 import os
 import re
 import shutil
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
 from .. import runtime_manager as runtime
-from ..constants import ASMR_VAD_MODEL, DEFAULT_ALIGNER_MODEL
+from ..constants import (
+    ASMR_VAD_MODEL,
+    DEFAULT_ALIGNER_MODEL,
+    OPTIONAL_ASR_MODEL_REVISIONS,
+    PROJECT_ROOT,
+)
 from ..environment import cached_model_path
-from ..errors import InstallPausedError
+from ..errors import AsmrDubberError, EnvironmentError, InstallPausedError
 from ..model_packs import import_discovered_model_packs
 from ..model_registry import ASR_BACKENDS, TTS_BACKENDS
 from ..platforms import portable_home
@@ -29,10 +35,20 @@ SEPARATION_MODELS = {
     "separation_demucs": "htdemucs.yaml",
     "separation_demucs_ft": "htdemucs_ft.yaml",
 }
-# Optional models: repository, model pack, and the modules the advanced runtime provides.
+# Optional models: repository, model pack, required runtime modules, and Python extra.
 OPTIONAL_MODELS = {
-    "asmr_vad": (ASMR_VAD_MODEL, "whisper-vad-asmr-onnx", ("onnxruntime", "transformers")),
-    "qwen_aligner": (DEFAULT_ALIGNER_MODEL, "qwen3-forced-aligner", ("qwen_asr",)),
+    "asmr_vad": (
+        ASMR_VAD_MODEL,
+        "whisper-vad-asmr-onnx",
+        ("onnxruntime", "transformers"),
+        "asr-asmr-vad",
+    ),
+    "qwen_aligner": (
+        DEFAULT_ALIGNER_MODEL,
+        "qwen3-forced-aligner",
+        ("qwen_asr",),
+        "asr-forced-aligner",
+    ),
 }
 
 
@@ -190,6 +206,47 @@ def download(request, report, token):
             os.environ[name] = previous
 
 
+def _install_optional_extra(extra, report, token):
+    uv = runtime._uv_executable()
+    if uv is None:
+        raise EnvironmentError("找不到项目安装器 uv；请重新运行对应平台的 setup 脚本。")
+    pypi_index = current().pypi_index_url.strip()
+    env = os.environ.copy()
+    env.setdefault("UV_LINK_MODE", "copy" if os.name == "nt" else "clone")
+    if pypi_index:
+        env["ASMR_DUBBER_PYPI_MIRROR"] = pypi_index
+    lock_path = runtime.portable_home() / ".runtime-install.lock"
+    with runtime.exclusive_file_lock(lock_path, timeout_seconds=30.0):
+        attempts = []
+        for index_url in runtime.download_candidates("pypi_indexes", preferred=pypi_index):
+            report(f"使用 Python 软件源：{index_url}")
+            command = [
+                str(uv),
+                "pip",
+                "install",
+                "--python",
+                sys.executable,
+                "--editable",
+                f"{PROJECT_ROOT}[{extra}]",
+                "--default-index",
+                index_url,
+            ]
+            completed = runtime._run_streaming_process(
+                command,
+                cwd=PROJECT_ROOT,
+                env=env,
+                timeout_seconds=3600,
+                log_callback=report,
+                cancel_event=token,
+            )
+            if completed.returncode == 0:
+                return
+            attempts.append(f"{index_url}: {(completed.stderr or completed.stdout)[-800:]}")
+        raise EnvironmentError(
+            "安装可选运行依赖失败，所有 PyPI 源均不可用：\n" + "\n".join(attempts)
+        )
+
+
 def _download(request, report, token):
     identifier = request["model"]
     if identifier == "recommended":
@@ -210,13 +267,10 @@ def _download(request, report, token):
             )
         }
     if identifier in OPTIONAL_MODELS:
-        model, pack, modules = OPTIONAL_MODELS[identifier]
-        # Only the Kotoba installer ships these modules; skip it when they are already present.
+        model, pack, modules, extra = OPTIONAL_MODELS[identifier]
         if any(importlib.util.find_spec(module) is None for module in modules):
-            report("这个模型需要进阶运行环境，先安装 Kotoba-Whisper 后端。")
-            runtime.install_backend(
-                "kotoba_whisper", progress=report, log_callback=report, cancel_event=token
-            )
+            report(f"正在安装可选模型运行依赖：{extra}")
+            _install_optional_extra(extra, report, token)
         from ..model_pack_download import prepare_remote_model_pack
         from ..model_packs import import_model_pack
 
@@ -229,7 +283,10 @@ def _download(request, report, token):
         if token.is_set():
             raise InstallPausedError("下载已暂停；再次点击下载可继续。")
         report(f"正在下载：{model}")
-        result = snapshot_download_with_fallback(repo_id=model)
+        result = snapshot_download_with_fallback(
+            repo_id=model,
+            revision=OPTIONAL_ASR_MODEL_REVISIONS.get(model),
+        )
         return {"message": str(result)}
     return {
         "message": runtime.install_backend(
@@ -245,11 +302,30 @@ def import_packs(request, report, token):
 
 def remove(identifier):
     settings = current()
+    home = portable_home()
     candidates = []
     if identifier == "moss_transcribe_diarize":
         from .. import moss
 
         candidates.append(moss.model_directory())
+    elif identifier == "parakeet_nemo":
+        parakeet_dir = home / "models" / "parakeet"
+        if parakeet_dir.exists():
+            candidates.append(parakeet_dir)
+    elif identifier == "faster_whisper":
+        seen = set()
+        for model in ASR_BACKENDS[identifier].models:
+            repo_id = runtime._FASTER_WHISPER_REPOS.get(model, model)
+            path = cached_model_path(repo_id)
+            if path and path not in seen:
+                seen.add(path)
+                candidates.append(path)
+        models_dir = home / "models"
+        if models_dir.is_dir():
+            for path in sorted(models_dir.glob("faster-whisper-*")):
+                if path not in seen:
+                    seen.add(path)
+                    candidates.append(path)
     elif identifier in ASR_BACKENDS:
         for model in ASR_BACKENDS[identifier].models:
             path = cached_model_path(model)
@@ -282,7 +358,7 @@ def remove(identifier):
         candidates.append(model_directory() / f"{model}.integrity.json")
     else:
         raise ValueError("未知的模型。")
-    roots = [(portable_home() / name).resolve() for name in ("models", "cache", "runtimes")]
+    roots = [(home / name).resolve() for name in ("models", "cache", "runtimes")]
     for candidate in candidates:
         resolved = candidate.resolve()
         if candidate.is_symlink() or not any(
@@ -294,4 +370,6 @@ def remove(identifier):
             shutil.rmtree(candidate)
         else:
             candidate.unlink(missing_ok=True)
+    if any(candidate.exists() for candidate in candidates):
+        raise AsmrDubberError("模型文件未能完全删除，请关闭占用程序后重试。")
     return {"removed": identifier}

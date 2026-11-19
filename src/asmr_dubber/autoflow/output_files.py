@@ -24,6 +24,7 @@ def copy_subtitles(
     mode: str,
     *,
     harmonized_delay_seconds: int,
+    output_stem: str = "双语版",
 ) -> tuple[Path, Path]:
     project = read_project(project_json)
     srt_source = project_asset(project_json, project.get("subtitle_srt_file"))
@@ -31,8 +32,8 @@ def copy_subtitles(
     if srt_source is None or lrc_source is None:
         raise VideoPreparerError("ASMR Dubber 没有生成完整的 SRT/LRC 字幕。")
 
-    srt_destination = folder / "双语版.srt"
-    lrc_destination = folder / "双语版.lrc"
+    srt_destination = folder / f"{output_stem}.srt"
+    lrc_destination = folder / f"{output_stem}.lrc"
     if normalize_mode(mode) == MODE_VIDEO_HARMONIZED:
         offset_ms = harmonized_delay_seconds * 1000
         srt_text = srt_source.read_text(encoding="utf-8-sig")
@@ -67,6 +68,7 @@ def copy_final_outputs(
             folder,
             mode,
             harmonized_delay_seconds=harmonized_delay_seconds,
+            output_stem=output_stem,
         )
         audio_suffix = audio_source.suffix if audio_source.suffix else ".wav"
         audio_destination = folder / f"{output_stem}{audio_suffix}"
@@ -104,6 +106,7 @@ def copy_final_outputs(
         folder,
         mode,
         harmonized_delay_seconds=harmonized_delay_seconds,
+        output_stem=output_stem,
     )
     video_destination = folder / f"{output_stem}.mp4"
     runlog.emit("  正在把双语视频送回原文件夹……")

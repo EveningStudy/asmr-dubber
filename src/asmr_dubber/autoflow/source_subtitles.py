@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from ..models import load_project, save_project
 from ..pipeline import import_project_transcript
 from ..project_origin import batch_project_name, record_batch_origin
 from ..task_control import check_cancelled
 from . import engine as e
-from . import runlog
+from . import plan_files, project_cli, runlog, stages
+from .constants import ReferenceEventCallback
 from .domain import AppConfig, SmartTaskPlan, ToolPaths
 
 
-def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTaskPlan) -> None:
+def execute_source_subtitles(
+    paths: ToolPaths,
+    config: AppConfig,
+    plan: SmartTaskPlan,
+    *,
+    reference_event_callback: ReferenceEventCallback | None = None,
+) -> list[dict[str, Any]]:
     """Process tracks independently and concatenate subtitle clocks without media encoding."""
     check_cancelled()
     language = plan.subtitle_language
@@ -33,6 +41,8 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
 
     root = plan.output_root
     e.prepare_smart_output_root(root, plan_id=plan.plan_id, force=plan.force, rebuild=plan.rebuild)
+    if (plan.rebuild or plan.force) and reference_event_callback is not None:
+        reference_event_callback({"kind": "plan_rebuild_started", "plan_id": plan.plan_id})
     folder_translation, titles = e.translated_plan_titles(
         plan.plan_id,
         plan.folder,
@@ -54,9 +64,19 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         subtitles_only=True,
         plan_id=plan.plan_id,
     )
+    metadata = plan_files.load_plan_metadata(plan.plan_id)
+    metadata.update(
+        {
+            "source_folder": str(plan.folder),
+            "output_folder": str(root),
+            "mode": e.MODE_AUDIO,
+            "layout": plan.layout,
+            "subtitles_only": True,
+        }
+    )
     signature = e.fingerprint(list(plan.sources), None)
     states = []
-    descriptors = []
+    descriptors: list[dict[str, Any]] = []
     offset_samples = 0
     srt_entries = []
     lrc_entries = []
@@ -67,6 +87,14 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         if state and state.get("fingerprint") != signature:
             raise e.VideoPreparerError("音频或字幕已改变，请选择重做；既有字幕未被覆盖。")
         state = state or {"schema": 1, "fingerprint": signature}
+        state["job_id"] = f"track-{index:04d}"
+        state["output_folder"] = str(
+            root / "合并版" if plan.layout == e.LAYOUT_MERGED else root / "分轨" / f"{index:03d}"
+        )
+        state["failure_budget"] = {
+            "count": int(getattr(config, "failure_budget_count", 3)),
+            "percent": float(getattr(config, "failure_budget_percent", 2.0)),
+        }
         project_json = Path(str(state.get("project_json") or ""))
         if not project_json.is_file():
             project_json = e.create_asmr_project(
@@ -81,6 +109,17 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
             state["project_json"] = str(project_json)
             state["analyzed"] = False
             e.save_state(state_path, state)
+        descriptor = {
+            "job_id": f"track-{index:04d}",
+            "index": index,
+            "kind": "track",
+            "status": "running",
+            "project_json": str(project_json),
+            "output": state["output_folder"],
+        }
+        descriptors.append(descriptor)
+        metadata["jobs"] = descriptors
+        plan_files.save_plan_metadata(plan.plan_id, metadata)
         record_batch_origin(
             project_json,
             source_folder=plan.folder,
@@ -128,7 +167,7 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         if language != "source" and any(
             sentence.enabled and not sentence.zh_text for sentence in project_data.sentences
         ):
-            e.run_asmr_cli(paths, "translate", str(project_json))
+            project_cli.run_budgeted_stage(paths, state, "translate", project_json)
         e.run_asmr_cli(paths, "subtitles", str(project_json), "--language", language)
         project = e.read_project(project_json)
         srt = e.project_asset(project_json, project.get("subtitle_srt_file"))
@@ -169,21 +208,11 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         state["status"] = "completed"
         e.save_state(state_path, state)
         states.append(state)
-        descriptors.append(
-            {
-                "job_id": f"track-{index:04d}",
-                "index": index,
-                "kind": "track",
-                "status": "completed",
-                "project_json": str(project_json),
-                "outputs": state["outputs"],
-                "output": str(
-                    root / "合并版"
-                    if plan.layout == e.LAYOUT_MERGED
-                    else root / "分轨" / f"{index:03d}"
-                ),
-            }
-        )
+        descriptor["status"] = "completed"
+        descriptor["outputs"] = state["outputs"]
+        descriptor["partial"] = list(state.get("partial") or [])
+        metadata["jobs"] = descriptors
+        plan_files.save_plan_metadata(plan.plan_id, metadata)
         runlog.emit(f"{labels[language]} {index}/{len(plan.sources)} 完成：{source.path.name}")
     if plan.layout in {e.LAYOUT_MERGED, e.LAYOUT_BOTH}:
         merged = root / "合并版"
@@ -207,6 +236,7 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         footer_position=config.timestamp_footer_position,
         harmonized_delay_seconds=0,
     )
+    partial = stages.collect_partial(states)
     manifest = e.write_plan_manifest(
         root / "处理清单.json",
         source_folder=plan.folder,
@@ -221,9 +251,12 @@ def execute_source_subtitles(paths: ToolPaths, config: AppConfig, plan: SmartTas
         plan_id=plan.plan_id,
         jobs=descriptors,
     )
+    if partial:
+        manifest["partial"] = partial
     manifest["source_subtitles_only"] = True
     manifest["subtitle_language"] = language
     manifest["subtitle_naming"] = plan.subtitle_naming
     manifest["subtitle_custom_name"] = plan.subtitle_custom_name
     e.save_state(root / "处理清单.json", manifest)
     runlog.emit(f"仅字幕文件完成：{root}（{labels[language]}，未配音、未制作视频）")
+    return partial

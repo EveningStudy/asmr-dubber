@@ -51,10 +51,16 @@ def _obstacle_adjusted_start(
     start: float,
     source_start: float,
     obstacles: list[tuple[float, float]],
+    *,
+    duration: float = 0.0,
+    shifted: bool = False,
 ) -> float:
-    """Prevent a negative dubbing offset from backing a line onto a kept kiss/breath."""
+    """Prevent a line from landing on or shifting onto a kept kiss/breath obstacle."""
+    del source_start
     for lo, hi in obstacles:
-        if lo < source_start - 1e-3 and lo < start < hi:
+        if (lo < start < hi) or (
+            shifted and duration > 0.0 and start < hi and start + duration > lo + 1e-3
+        ):
             start = hi
     return start
 
@@ -105,7 +111,7 @@ def plan_dubbing_timing(
     kept_obstacles = _normalize_obstacles(obstacles)
     candidates: list[tuple[Sentence, float]] = []
     for sentence in sentences:
-        if not sentence.enabled or not sentence.zh_text:
+        if not sentence.enabled or not sentence.chinese_audio_enabled or not sentence.zh_text:
             continue
         duration = (
             durations.get(sentence.id) if durations is not None else sentence.tts_duration_seconds
@@ -123,8 +129,10 @@ def plan_dubbing_timing(
             dubbing_start_seconds(sentence, offset_ms),
             sentence.start_seconds,
             kept_obstacles,
+            duration=duration / (max_auto_speed if mode != "sequential" else 1.0),
+            shifted=dubbing_start_seconds(sentence, offset_ms) > sentence.start_seconds + 1e-3,
         )
-        for sentence, _ in candidates
+        for sentence, duration in candidates
     ]
     if mode == "fit_then_shift":
         return _plan_fit_then_shift(
@@ -139,10 +147,13 @@ def plan_dubbing_timing(
         starts: list[float] = []
         previous_end = 0.0
         for requested, (sentence, duration) in zip(requested_starts, candidates, strict=True):
+            candidate = max(requested, previous_end)
             start = _obstacle_adjusted_start(
-                max(requested, previous_end),
+                candidate,
                 sentence.start_seconds,
                 kept_obstacles,
+                duration=duration,
+                shifted=candidate > sentence.start_seconds + 1e-3 or candidate > requested + 1e-3,
             )
             starts.append(start)
             previous_end = start + duration
@@ -197,10 +208,13 @@ def _plan_fit_then_shift(
     for index, ((sentence, duration), requested) in enumerate(
         zip(candidates, requested_starts, strict=True)
     ):
+        candidate = max(requested, previous_end)
         start = _obstacle_adjusted_start(
-            max(requested, previous_end),
+            candidate,
             sentence.start_seconds,
             obstacles,
+            duration=duration / max_auto_speed,
+            shifted=candidate > sentence.start_seconds + 1e-3 or candidate > requested + 1e-3,
         )
         next_requested = requested_starts[index + 1] if index + 1 < len(candidates) else None
         boundary = _next_boundary_seconds(

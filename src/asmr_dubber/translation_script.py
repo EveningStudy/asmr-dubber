@@ -309,10 +309,12 @@ def reconcile_script_sentences(
                             consumed_ends=new_ends,
                         )
                         translator.system_prompt = messages[0]["content"]
-                        single_content, limited = translator._request(messages, job_id)
-                        if limited:
-                            raise _OutputLengthTranslationError("台本逐句校对达到输出长度上限。")
                         try:
+                            single_content, limited = translator._request(messages, job_id)
+                            if limited:
+                                raise _OutputLengthTranslationError(
+                                    "台本逐句校对达到输出长度上限。"
+                                )
                             single, next_ends, assigned = _validated_script_spans(
                                 single_content,
                                 [sentence],
@@ -321,12 +323,26 @@ def reconcile_script_sentences(
                             )
                             if not single.get(sentence.id):
                                 raise TranslationError("逐句重试没有可靠匹配")
-                        except TranslationError:
+                        except (_NonRetryableTranslationError, _OutputLengthTranslationError):
+                            raise
+                        except (
+                            TranslationError,
+                            httpx.HTTPError,
+                            KeyError,
+                            IndexError,
+                            TypeError,
+                            ValueError,
+                        ) as single_exc:
+                            check_cancelled(cancel_event)
                             review_ids.append(sentence.id)
                             result[sentence.id] = (
                                 sentence.source_text if target == "source" else sentence.zh_text
                             )
-                            logger.warning("%s 待人工校对，保留原文；详见项目诊断", sentence.id)
+                            logger.warning(
+                                "%s 待人工校对，保留原文（%s）；详见项目诊断",
+                                sentence.id,
+                                single_exc,
+                            )
                         else:
                             result.update(single)
                             new_ends = next_ends

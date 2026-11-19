@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..app_logging import redact_sensitive
 from ..errors import ProjectError
 from ..stage_result import (
     DEFAULT_BUDGET_COUNT,
@@ -63,7 +64,9 @@ def run_with_result(
             if not detail:
                 detail = tail[-1][-300:] if tail else str(exc)
             label = STAGE_LABELS[stage]
-            raise failure(stage, f"{label}失败：{detail}"[:MAX_MESSAGE], result) from exc
+            raise failure(
+                stage, redact_sensitive(f"{label}失败：{detail}")[:MAX_MESSAGE], result
+            ) from exc
         return read_result(result_path)
     finally:
         result_path.unlink(missing_ok=True)
@@ -86,12 +89,13 @@ def failure_text(
     state: dict[str, Any], stage: str, message: str, result: dict[str, Any] | None
 ) -> str:
     if not result:
-        return message
+        return redact_sensitive(message)
     count, percent = budget_of(state)
     detail = over_budget_message(
         stage, result, count=count, percent=percent, prior=state.get("partial")
     )
-    return f"{STAGE_LABELS[stage]}失败：{detail}"[:MAX_MESSAGE] if detail else message
+    rendered = f"{STAGE_LABELS[stage]}失败：{detail}" if detail else message
+    return redact_sensitive(rendered)[:MAX_MESSAGE]
 
 
 def has_missing_dubs(state: dict[str, Any]) -> bool:
@@ -134,11 +138,12 @@ def append_work_log(path: Path, text: str) -> None:
     """Append to one work's log; the file never grows beyond ``WORK_LOG_MAX_BYTES``."""
 
     try:
+        redacted = redact_sensitive(text)
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_file() and path.stat().st_size >= WORK_LOG_MAX_BYTES:
             os.replace(path, path.with_suffix(".log.1"))
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(text if text.endswith("\n") else text + "\n")
+            handle.write(redacted if redacted.endswith("\n") else redacted + "\n")
     except OSError:
         # A work log must never stop a media task.
         pass

@@ -61,7 +61,14 @@ def istft(spectra: np.ndarray, size: int, hop: int, length: int) -> np.ndarray:
     return output[size // 2 : size // 2 + length]
 
 
-def filters(reference: np.ndarray, rate: int, size: int = 4096, hop: int = 512):
+def filters(
+    reference: np.ndarray,
+    rate: int,
+    size: int = 4096,
+    hop: int = 512,
+    *,
+    strength: float = 1.0,
+):
     cues = analyze(reference, rate)
     spec = stft(reference, size, hop)
     times = np.minimum(np.arange(len(spec)) * hop / rate, cues.times[-1])
@@ -92,14 +99,15 @@ def filters(reference: np.ndarray, rate: int, size: int = 4096, hop: int = 512):
     reliability *= ((hz >= 100) & (hz <= min(18000, rate * 0.44)))[None, :]
     # Temporal/frequency smoothing of confidence prevents abrupt fallback edges.
     reliability = smooth(smooth(reliability, 5).T, 5).T
-    log_ratio = prior_ratio * (1 - reliability) + log_ratio * reliability
-    # Remove bulk delay first so residual phase is normally near zero; unwrap
-    # both axes to prevent polarity jumps when splitting the phase across ears.
-    residual = np.unwrap(np.unwrap(np.angle(cross), axis=1), axis=0)
-    residual -= 2 * np.pi * np.round(np.median(residual[:, :5], axis=1)[:, None] / (2 * np.pi))
-    residual = np.clip(residual, -np.pi, np.pi) * reliability
-    residual = smooth(residual, 5)
-    total_phase = residual - 2 * np.pi * itd[:, None] * hz
+    strength = float(strength)
+    log_ratio = (prior_ratio * (1 - reliability) + log_ratio * reliability) * strength
+    # Smooth the unit-normalized derotated cross-spectrum in complex form rather than
+    # unwrapping from DC through noisy <100 Hz bins and clipping +-2pi into +-pi.
+    norm_cross = cross / np.maximum(np.abs(cross), 1e-12)
+    weighted_cross = norm_cross * reliability
+    smoothed_cross = smooth(smooth(weighted_cross, 5).T, 3).T
+    residual = np.angle(smoothed_cross) * reliability * strength
+    total_phase = residual - 2 * np.pi * (itd * strength)[:, None] * hz
     ratio = 10 ** (log_ratio / 20)
     left_gain = np.sqrt(2 / (1 + ratio**2))
     right_gain = ratio * left_gain
@@ -130,6 +138,7 @@ def render_rtf(
     reference: np.ndarray,
     rate: int,
     *,
+    strength: float = 1.0,
     level_strength: float = 0.7,
     color_strength: float = 0.35,
     fft_size: int = 0,
@@ -139,15 +148,19 @@ def render_rtf(
         raise ValueError("中文语音为空、静音或包含非有限采样。")
     size = fft_size or (4096 if rate >= 32000 else 2048)
     hop = size // hop_divisor
-    response, cues, report = filters(reference, rate, size, hop)
+    response, cues, report = filters(reference, rate, size, hop, strength=strength)
     spec = stft(mono[:, None], size, hop)[:, :, 0]
     # Pipeline normally supplies equal-length phrases; support different lengths
-    # explicitly with trajectory interpolation, not rounded nearest-frame jumps.
+    # explicitly with polar trajectory interpolation to avoid Cartesian cancel dips.
     positions = np.linspace(0, len(response) - 1, len(spec))
     lower = np.floor(positions).astype(int)
     upper = np.minimum(lower + 1, len(response) - 1)
     fraction = (positions - lower)[:, None, None]
-    response = response[lower] * (1 - fraction) + response[upper] * fraction
+    log_mag = np.log(np.abs(response) + 1e-9)
+    phase = np.unwrap(np.angle(response), axis=0)
+    interp_log_mag = log_mag[lower] * (1 - fraction) + log_mag[upper] * fraction
+    interp_phase = phase[lower] * (1 - fraction) + phase[upper] * fraction
+    response = np.exp(interp_log_mag + 1j * interp_phase)
     ref_times = np.linspace(0, cues.times[-1], len(spec))
     base_level = float(np.median(cues.level_db))
     gain = np.clip(10 ** (base_level / 20) / max(rms(mono), 1e-8), 0.01, 30)

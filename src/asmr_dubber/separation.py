@@ -23,14 +23,21 @@ import numpy as np
 import soundfile as sf
 
 from .api_contracts import parse_json_object
-from .audio import _run_ffmpeg, sha256_file
+from .audio import _run_ffmpeg
 from .environment import ffmpeg_executable
 from .errors import ProjectError
+from .hashing import cached_sha256_file
 from .models import DubProject, ProjectSettings
 from .platforms import isolated_runtime_environment, portable_home, virtualenv_executable
 from .runtime_manager import _run_streaming_process
 from .storage import atomic_write_text, exclusive_file_lock, require_disk_space
-from .task_control import check_cancelled, current_cancellation, terminate_process_tree
+from .task_control import (
+    check_cancelled,
+    current_cancellation,
+    register_process,
+    terminate_process_tree,
+    unregister_process,
+)
 
 SEPARATOR_VERSION = "0.47.0"
 DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt"
@@ -55,6 +62,7 @@ class SeparationSession:
         self.process = None
         self.log = None
         self.temporary = None
+        self._cancel_signal = None
 
     def __enter__(self):
         return self
@@ -85,6 +93,7 @@ class SeparationSession:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 start_new_session=os.name != "nt",
             )
+            self._cancel_signal = register_process(self.process)
         atomic_write_text(self.request, json.dumps(job))
         deadline = time.monotonic() + timeout
         result_path = Path(job["result"])
@@ -102,11 +111,16 @@ class SeparationSession:
 
     def __exit__(self, exc_type, *_):
         if self.process is not None:
-            if exc_type is None and self.process.poll() is None:
-                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                    atomic_write_text(self.request, json.dumps({"stop": True}))
-                    self.process.wait(timeout=5)
-            terminate_process_tree(self.process)
+            proc = self.process
+            try:
+                if exc_type is None and proc.poll() is None:
+                    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                        atomic_write_text(self.request, json.dumps({"stop": True}))
+                        proc.wait(timeout=5)
+                terminate_process_tree(proc)
+            finally:
+                unregister_process(proc, self._cancel_signal)
+                self._cancel_signal = None
         if self.log is not None:
             self.log.close()
         if self.temporary is not None:
@@ -194,7 +208,15 @@ def prepare_local_model(
         python = runtime_python()
         if install:
             report("第 1/3 步：安装分离环境（首次需要下载 Python 依赖，可能数 GB）")
-            uv = shutil.which("uv") or str(portable_home() / "bootstrap/windows/uv/uv.exe")
+            uv_candidates = [
+                portable_home() / "bootstrap/windows/uv/uv.exe"
+                if os.name == "nt"
+                else portable_home() / "bootstrap/linux/uv/uv",
+                Path.home() / ".local/bin" / ("uv.exe" if os.name == "nt" else "uv"),
+            ]
+            uv = shutil.which("uv") or str(
+                next((p for p in uv_candidates if p.is_file()), uv_candidates[0])
+            )
             if not python.is_file():
                 _run(
                     [
@@ -334,7 +356,7 @@ def verify_local_model(model: str) -> str:
     for name, digest in records.items():
         local_model_name(name)
         path = root / name
-        if not path.is_file() or sha256_file(path) != digest:
+        if not path.is_file() or cached_sha256_file(path) != digest:
             raise ProjectError(f"分离文件缺失或损坏：{name}，请重新下载。")
     return records[model]
 
@@ -478,6 +500,7 @@ def _ensure_separation_impl(
             "separation_keep_original",
             "separation_keep_ids",
             "separation_keep_padding_ms",
+            "separation_timeout_seconds",
         }
     }
     digest = hashlib.sha256(
@@ -499,7 +522,8 @@ def _ensure_separation_impl(
         if done.is_file():
             hashes = json.loads(done.read_text(encoding="utf-8"))
             if all(
-                p.is_file() and sha256_file(p) == hashes.get(p.name) for p in (vocals, residual)
+                p.is_file() and cached_sha256_file(p) == hashes.get(p.name)
+                for p in (vocals, residual)
             ):
                 return vocals, residual
         rate, channels = 44100, project.source.channels
@@ -600,7 +624,7 @@ def _ensure_separation_impl(
                 valid_cache = (
                     result.is_file()
                     and receipt.is_file()
-                    and (sha256_file(result) == receipt.read_text(encoding="ascii").strip())
+                    and (cached_sha256_file(result) == receipt.read_text(encoding="ascii").strip())
                 )
                 if not valid_cache:
                     if progress:
@@ -656,7 +680,7 @@ def _ensure_separation_impl(
                         ]
                         sf.write(temp / "validated.wav", audio, rate, subtype="FLOAT")
                         os.replace(temp / "validated.wav", result)
-                        atomic_write_text(receipt, sha256_file(result), encoding="ascii")
+                        atomic_write_text(receipt, cached_sha256_file(result), encoding="ascii")
                 separated, _ = sf.read(result, dtype="float32", always_2d=True)
                 if (
                     len(separated) != hi - lo
@@ -678,7 +702,9 @@ def _ensure_separation_impl(
                 )  # Exact complementary residual; never double the background.
         os.replace(vp, vocals)
         os.replace(bp, residual)
-        atomic_write_text(done, json.dumps({p.name: sha256_file(p) for p in (vocals, residual)}))
+        atomic_write_text(
+            done, json.dumps({p.name: cached_sha256_file(p) for p in (vocals, residual)})
+        )
         if progress:
             progress("人声分离完成；请试听检查日语泄漏与音效损伤", 1, 1)
         return vocals, residual

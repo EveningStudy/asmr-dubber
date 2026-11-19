@@ -263,11 +263,15 @@ td.id { overflow: hidden; text-overflow: ellipsis; }
 .track small { display: block; }
 .sheet label > input[type=password] { display: block; width: 100%; margin-top: 8px; }
 .sheet footer { position: sticky; bottom: 0; background: var(--bg); }
-.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(700px,90vw); background: var(--text); color: var(--panel); padding: 10px 18px; border-radius: 9px; z-index: 30; white-space: pre-wrap; box-shadow: 0 6px 24px #0002; }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(700px,90vw); background: var(--text); color: var(--panel); padding: 10px 18px; border-radius: 9px; z-index: 40; white-space: pre-wrap; box-shadow: 0 6px 24px #0002; }
 .toast.error { background: var(--red); color: #fff; }
 .language { margin-top: 12px; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-@media (max-width: 1100px) {
+@media (max-width: 1360px) {
+  .app { grid-template-columns: 176px 1fr; }
+  .work { grid-template-columns: 1fr 310px; }
+}
+@media (max-width: 1180px) {
   .app { min-width: 0; }
   main, .set > div { min-width: 0; }
   .t, .d, pre.log { overflow-wrap: anywhere; }
@@ -337,14 +341,14 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .batch-status { padding: 4px 10px; border-radius: 12px; background: var(--fill-2); white-space: nowrap; font-size: 12px; }
 .batch-status.completed { color: #16733d; background: #e5f6ec; }
 .batch-status.running, .batch-status.awaiting_reference { color: #0759a5; background: #e4f0ff; }
-.batch-status.failed, .batch-error { color: #b3261e; }
-.batch-status.failed { background: #fce9e7; }
+.batch-status.failed { color: #b3261e; background: #fce9e7; }
+.batch-error { color: var(--red); }
 .grow > small.batch-error { display: block; }
 .result-card { padding: 12px 16px; margin-top: 10px; }
 .result-card .stat { margin: 4px 0 8px; }
 .result-card ul { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; }
 .result-card li { display: flex; gap: 8px; align-items: baseline; }
-.result-card .why { color: #b3261e; }
+.result-card .why { color: var(--red); }
 .result-card .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 [data-plan-status="running"], [data-plan-status="awaiting_reference"] { box-shadow: inset 3px 0 #087ad0; }
 .proposals { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; max-height: 420px; overflow-y: auto; }
@@ -357,7 +361,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 /* ---------- 句子检查与成品对比 ---------- */
 td.orig { font-size: 12px; }
 td.orig select { width: 100%; font-size: 12px; }
-.tablebox table { min-width: 720px; }
+.tablebox table { min-width: 640px; }
 .flag { margin-top: 4px; padding: 4px 6px; border-radius: 6px; line-height: 1.35; }
 .flag b { display: block; font-weight: 600; }
 .flag small { display: block; color: var(--text-2); word-break: break-word; }

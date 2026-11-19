@@ -16,13 +16,22 @@ import {
   upload,
 } from './session.js';
 import { referenceDialog } from './project_dialogs.js';
+import { openProject } from './projects.js';
 import { renderQueue, renderHistory } from './batch_view.js';
 import { startBatchChecked, exportDiagnostics } from './batch_preflight.js';
 import { requestNotifyPermission } from './notify.js';
 
 let scan = null,
   editing = '',
-  selected = new Set();
+  selected = new Set(),
+  refCountdownTimer = null,
+  lastRefKey = '';
+
+function updateRefCountdown(deadlineEpoch) {
+  const node = $('#batchRefCountdown');
+  if (!node || !deadlineEpoch) return;
+  node.textContent = String(Math.max(0, Math.ceil(deadlineEpoch - Date.now() / 1000)));
+}
 export async function refreshBatch() {
   state.queue = await api('batch/list');
   renderBatch();
@@ -64,11 +73,62 @@ export function renderBatch() {
   $('#runBatch').disabled = !!active || !state.queue.length;
   $('#setQueueReference').disabled = !!active || !state.queue.length;
   const request = active?.reference;
-  $('#batchReference').innerHTML = request
-    ? `<div class="card"><div class="row"><div class="grow"><div class="t">${esc(request.work || '')} · ${t('音色参考')}</div><div class="d">${t('等待时间结束后使用自动推荐的项目片段。')} ${request.deadline_epoch ? Math.max(0, Math.ceil(request.deadline_epoch - Date.now() / 1000)) : ''} ${t('秒')}</div></div><button class="btn" id="chooseBatchReference">${t('试听并选择')}</button></div></div>`
-    : `<p class="muted">${t('没有需要确认的任务')}</p>`;
-  if (request) $('#chooseBatchReference').onclick = guard(() => referenceDialog(request.project_json, true));
+  const refKey = request
+    ? `${request.request_id || ''}:${request.project_json || ''}:${request.deadline_epoch || ''}`
+    : '';
+  if (request) {
+    if (refKey !== lastRefKey || !$('#batchRefCountdown')) {
+      const secs = request.deadline_epoch
+        ? Math.max(0, Math.ceil(request.deadline_epoch - Date.now() / 1000))
+        : '';
+      $('#batchReference').innerHTML = `<div class="card"><div class="row"><div class="grow"><div class="t">${esc(request.work || '')} · ${t('音色参考')}</div><div class="d">${t('等待时间结束后使用自动推荐的项目片段。')} <span id="batchRefCountdown">${secs}</span> ${t('秒')}</div></div><button class="btn" id="chooseBatchReference">${t('试听并选择')}</button></div></div>`;
+      $('#chooseBatchReference').onclick = guard(() => referenceDialog(request.project_json, true));
+      lastRefKey = refKey;
+    } else {
+      updateRefCountdown(request.deadline_epoch);
+    }
+    if (request.deadline_epoch && !refCountdownTimer) {
+      refCountdownTimer = setInterval(() => {
+        const currentActive = state.tasks.find(
+          (task) => task.kind === 'batch' && ['queued', 'running', 'cancelling'].includes(task.status),
+        );
+        const currentReq = currentActive?.reference;
+        if (!currentReq?.deadline_epoch) {
+          clearInterval(refCountdownTimer);
+          refCountdownTimer = null;
+          return;
+        }
+        updateRefCountdown(currentReq.deadline_epoch);
+      }, 1000);
+    }
+  } else {
+    lastRefKey = '';
+    if (refCountdownTimer) {
+      clearInterval(refCountdownTimer);
+      refCountdownTimer = null;
+    }
+    $('#batchReference').innerHTML = `<p class="muted">${t('没有需要确认的任务')}</p>`;
+  }
   $('#batchHistory').innerHTML = renderHistory(history);
+}
+function syncTaskFieldVisibility() {
+  const content = $('#batchContent')?.value;
+  const isSubtitlesOnly = content === 'subtitles';
+  const modeNode = $('#batchMode');
+  if (modeNode) {
+    modeNode.disabled = isSubtitlesOnly;
+    if (isSubtitlesOnly) modeNode.value = 'audio';
+  }
+  const isAudio = isSubtitlesOnly || modeNode?.value === 'audio';
+  for (const id of ['batchBackground', 'batchEmbed']) {
+    const node = $(`#${id}`);
+    if (!node) continue;
+    node.disabled = isAudio;
+    const row = node.closest('.field');
+    if (row) row.hidden = isAudio;
+  }
+  const cover = $('#batchCover');
+  if (cover) cover.hidden = isAudio;
 }
 function taskFields() {
   const defaults = state.boot.settings;
@@ -122,8 +182,8 @@ async function workDialog(identifier = '') {
   selected.clear();
   dialog(
     identifier ? '编辑队列任务' : '添加作品',
-    `<div class="card group"><div class="field"><input type="text" id="workFolder" style="flex:1;max-width:none"><button class="btn" id="chooseWorkFolder">${t('选择文件夹')}</button><button class="btn" id="scanWork">${t('扫描作品')}</button></div>${field('音频版本', '<select id="workEdition"></select>')}${field('包含特典、样本和 Free Talk', `<input type="checkbox" id="workBonus"${state.boot.settings.autoflow_include_bonus ? ' checked' : ''}>`)}</div><div class="more" id="trackSummary"></div><div class="card group" id="workTracks"></div><div class="more">${t('做成什么')}</div>${taskFields()}<p class="small muted">${t('识别、翻译、配音按“新项目默认值”来。')}</p>`,
-    '加入队列',
+    `<div class="card group"><div class="field"><input type="text" id="workFolder" style="flex:1;max-width:none"><button class="btn" id="chooseWorkFolder">${t('选择文件夹')}</button><button class="btn" id="scanWork">${t('扫描作品')}</button></div>${field('音频版本', '<select id="workEdition"></select>')}${field('包含特典、样本和 Free Talk', `<input type="checkbox" id="workBonus"${state.boot.settings.autoflow_include_bonus ? ' checked' : ''}>`)}</div><div class="row"><div class="more grow" id="trackSummary"></div><button type="button" class="btn plain small" id="toggleAllTracks" hidden></button></div><div class="card group" id="workTracks"></div><div class="more">${t('做成什么')}</div>${taskFields()}<p class="small muted">${t('识别、翻译、配音按“新项目默认值”来。')}</p>`,
+    identifier ? '保存修改' : '加入队列',
     async () => {
       if (!scan) throw new Error(t('请先扫描作品。'));
       const sources = scan.source_payloads.filter((_, index) => selected.has(scan.track_items[index].id));
@@ -177,6 +237,14 @@ async function workDialog(identifier = '') {
     const result = await api('batch/background', {folder: scan.folder, background: backgroundSelect.value});
     if (generation === coverGeneration && backgroundSelect.isConnected) renderCover(result.preview);
   });
+  $('#batchContent').onchange = $('#batchMode').onchange = syncTaskFieldVisibility;
+  $('#toggleAllTracks').onclick = () => {
+    if (!scan?.track_items?.length) return;
+    if (selected.size === scan.track_items.length) selected.clear();
+    else selected = new Set(scan.track_items.map((track) => track.id));
+    renderTracks();
+  };
+  syncTaskFieldVisibility();
   if (identifier) {
     scan = await api('batch/edit', { identifier });
     selected = new Set(scan.track_items.map((track) => track.id));
@@ -191,6 +259,7 @@ async function workDialog(identifier = '') {
     $('#batchContent').value =
       plan.edition.output_policy?.content ||
       (scan.source_subtitles_only ? 'subtitles' : scan.subtitles_only ? 'source_subtitles' : 'dubbing');
+    syncTaskFieldVisibility();
   }
 }
 function renderScan() {
@@ -211,10 +280,15 @@ function renderTracks() {
     total: scan.track_items.length,
     selected: selected.size,
   });
+  const toggleBtn = $('#toggleAllTracks');
+  if (toggleBtn) {
+    toggleBtn.hidden = !scan.track_items.length;
+    toggleBtn.textContent = t(selected.size === scan.track_items.length ? '取消全选' : '全选');
+  }
   $('#workTracks').innerHTML = scan.track_items
     .map(
       (track, index) =>
-        `<div class="track${selected.has(track.id) ? '' : ' dim'}" data-track="${esc(track.id)}"><input type="checkbox" data-track-enabled="${esc(track.id)}"${selected.has(track.id) ? ' checked' : ''}><span>${esc(track.path)}<small class="muted">${esc(t(track.category))}</small></span><button class="btn plain" data-track-up="${index}"${index === 0 ? ' disabled' : ''}>↑</button><div><select data-track-subtitle="${esc(track.id)}">${options(
+        `<div class="track${selected.has(track.id) ? '' : ' dim'}" data-track="${esc(track.id)}"><input type="checkbox" data-track-enabled="${esc(track.id)}"${selected.has(track.id) ? ' checked' : ''}><span>${esc(track.path)}<small class="muted">${esc(t(track.category))}</small></span><button class="btn plain" data-track-up="${index}"${index === 0 ? ' disabled' : ''}>↑</button><button class="btn plain" data-track-down="${index}"${index === scan.track_items.length - 1 ? ' disabled' : ''}>↓</button><div><select data-track-subtitle="${esc(track.id)}">${options(
           track.transcript_choices.map((c) => [c.label, c.value]),
           track.transcript_choices.find((c) => c.selected)?.value || '',
         )}</select><div class="track-extra"><select data-track-language="${esc(track.id)}">${options(
@@ -288,16 +362,25 @@ export function initializeBatch() {
         await refreshBatch();
         return;
       }
-      const track = event.target.closest('[data-track-up]');
-      if (track) {
+      const openProj = event.target.closest('[data-open-batch-project]');
+      if (openProj) {
+        await openProject(openProj.dataset.openBatchProject);
+        return;
+      }
+      const trackMove = event.target.closest('[data-track-up],[data-track-down]');
+      if (trackMove) {
         const order = scan.track_items.map((track) => track.id),
-          index = Number(track.dataset.trackUp);
-        [order[index - 1], order[index]] = [order[index], order[index - 1]];
-        Object.assign(
-          scan,
-          await api('batch/tracks', { folder: scan.folder, sources: scan.source_payloads, order }),
-        );
-        renderTracks();
+          isUp = trackMove.hasAttribute('data-track-up'),
+          index = Number(isUp ? trackMove.dataset.trackUp : trackMove.dataset.trackDown),
+          swapWith = isUp ? index - 1 : index + 1;
+        if (swapWith >= 0 && swapWith < order.length) {
+          [order[swapWith], order[index]] = [order[index], order[swapWith]];
+          Object.assign(
+            scan,
+            await api('batch/tracks', { folder: scan.folder, sources: scan.source_payloads, order }),
+          );
+          renderTracks();
+        }
         return;
       }
       const output = event.target.closest('[data-batch-output]');

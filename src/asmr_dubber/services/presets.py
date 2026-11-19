@@ -39,6 +39,7 @@ QUALITY_KEYS = tuple(FAST)
 # Output group: which product the project aims at.  ``autoflow_default_content``
 # exists only as a global default (it picks the batch product).
 BILINGUAL = {
+    "separation_enabled": False,
     "separation_mix_mode": "bilingual",
     "chinese_dubbing_timing_mode": "fit_window",
     "autoflow_default_content": "dubbing",

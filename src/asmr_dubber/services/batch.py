@@ -5,6 +5,7 @@ import json
 import threading
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 from ..platforms import portable_home
 from ..storage import atomic_write_text
@@ -166,21 +167,56 @@ class Batch:
     def diagnostics(self, identifier="", outcomes=None):
         """Zip the logs, settings (no keys), failed sentences and doctor output."""
 
+        from ..autoflow import engine
         from . import diagnostics
         from .batch_plan import deserialize_plan
         from .settings import current as current_settings
 
         queue = [item for item in self.list() if not identifier or item["plan_id"] == identifier]
         plans = []
+        seen_ids: set[str] = set()
         for item in queue:
             try:
-                plans.append(deserialize_plan(item))
+                plan = deserialize_plan(item)
+                plans.append(plan)
+                seen_ids.add(plan.plan_id)
             except Exception:
                 continue
+        fallback_ids = list((outcomes or {}).keys())
+        if identifier and identifier not in fallback_ids:
+            fallback_ids.append(identifier)
+        for plan_id in fallback_ids:
+            if not plan_id or (identifier and plan_id != identifier) or plan_id in seen_ids:
+                continue
+            meta = engine.load_plan_metadata(plan_id)
+            entry = (outcomes or {}).get(plan_id) or {}
+            folder = meta.get("source_folder") or entry.get("work")
+            output = meta.get("output_folder") or entry.get("output") or ""
+            if folder or meta.get("jobs") or entry:
+                plans.append(
+                    SimpleNamespace(
+                        plan_id=plan_id,
+                        folder=Path(str(folder or plan_id)),
+                        output_root=Path(str(output)) if output else Path("."),
+                    )
+                )
+                seen_ids.add(plan_id)
         path, names = diagnostics.build_bundle(
             plans, current_settings().model_dump(mode="json"), outcomes=outcomes
         )
         return {"path": str(path), "url": self.media.register(path), "files": names}
+
+    def _clear_rebuild_flag(self, plan_id: str) -> None:
+        with self.lock:
+            queue = self.list()
+            changed = False
+            for item in queue:
+                if item.get("plan_id") == plan_id and (item.get("rebuild") or item.get("force")):
+                    item["rebuild"] = False
+                    item["force"] = False
+                    changed = True
+            if changed:
+                self._save(queue)
 
     def run(self, request, report, token, reference):
         queue = self.list()
@@ -222,11 +258,16 @@ class Batch:
             kind = payload.get("kind")
             if kind == "plan_started":
                 current_plan["id"] = payload["plan_id"]
-            if kind == "plan_finished":
+            if kind == "plan_rebuild_started":
+                if payload.get("plan_id"):
+                    self._clear_rebuild_flag(payload["plan_id"])
+            elif kind == "plan_finished":
                 current_plan["id"] = ""
                 with self.lock:
                     self.finished.add(payload["plan_id"])
                     outcomes[payload["plan_id"]] = payload
+                if payload.get("status") in {"completed", "partial"}:
+                    self._clear_rebuild_flag(payload["plan_id"])
                 reference(payload)
             elif kind == "prepare":
                 chosen = self.reference()
@@ -260,5 +301,33 @@ class Batch:
             "subtitles": batch_queue.subtitle_output_rows(outputs),
         }
         if result:
-            result_payload["error"] = "队列中有任务失败，请检查日志后重试。"
+            failed_entries = [
+                entry for entry in outcomes.values() if entry.get("status") == "failed"
+            ]
+            first_entry = next(
+                (entry for entry in failed_entries if entry.get("error")),
+                failed_entries[0] if failed_entries else {},
+            )
+            first_error = str(first_entry.get("error") or "").strip()
+            if len(failed_entries) == 1 and first_error:
+                work_name = str(first_entry.get("work") or "").strip()
+                result_payload["error"] = (
+                    f"{work_name}：{first_error}" if work_name else first_error
+                )
+            elif first_error:
+                result_payload["error"] = (
+                    f"队列中有 {len(failed_entries)} 个作品失败，首个错误：{first_error}"
+                )
+            else:
+                result_payload["error"] = "队列中有任务失败，请检查日志后重试。"
+            if first_entry.get("error_code"):
+                result_payload["error_code"] = first_entry["error_code"]
+                if first_entry.get("error_hint"):
+                    result_payload["error_hint"] = first_entry["error_hint"]
+            elif first_error:
+                from ..errors import classify_error
+
+                code, hint = classify_error(RuntimeError(first_error))
+                result_payload["error_code"] = code
+                result_payload["error_hint"] = hint
         return result_payload
