@@ -76,7 +76,8 @@ function candidatesHTML(sentence, disabled) {
 
 export function dubCell(sentence) {
   const redo = projectBusy() ? ' disabled' : '';
-  const canCandidates = Boolean(sentence.enabled && sentence.zh_text && sentence.zh_text.trim());
+  const translated = sentence.target_text ?? sentence.zh_text ?? '';
+  const canCandidates = Boolean(sentence.enabled && translated.trim());
   const candBtn = canCandidates
     ? ` <button class="btn plain small dub-cand-btn" data-candidates="${esc(sentence.id)}" title="${t('生成多个候选配音')}"${redo}>+3</button>`
     : '';

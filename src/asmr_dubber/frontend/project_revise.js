@@ -5,9 +5,9 @@ import { $, state, api, t, esc, field, dialog, guard, notice, startTask, flushSa
 export function matchesRowFilter(sentence) {
   const query = $('#search').value.toLowerCase();
   return (
-    `${sentence.source_text} ${sentence.zh_text}`.toLowerCase().includes(query) &&
+    `${sentence.source_text} ${sentence.target_text ?? ''}`.toLowerCase().includes(query) &&
     (state.filter === 'all' ||
-      (state.filter === 'translation' && !sentence.zh_text) ||
+      (state.filter === 'translation' && !sentence.target_text) ||
       (state.filter === 'tts' && !sentence.tts_file) ||
       (state.filter === 'review' && sentence.script_review_note) ||
       (state.filter === 'check' && needsCheck(sentence)))
@@ -15,7 +15,7 @@ export function matchesRowFilter(sentence) {
 }
 
 // Only enabled sentences that already have a translation can be revised.
-const revisable = (sentence) => sentence.enabled && sentence.zh_text;
+const revisable = (sentence) => sentence.enabled && sentence.target_text;
 
 function scopes(selectedId) {
   const sentences = state.project.sentences.filter(revisable);

@@ -76,7 +76,7 @@ export function renderProject() {
   if (!state.project) return;
   const project = state.project,
     enabled = project.sentences.filter((sentence) => sentence.enabled);
-  const hasTr = (s) => Boolean(s.zh_text ?? s.target_text);
+  const hasTr = (s) => Boolean(s.target_text ?? s.zh_text);
   const translated = enabled.filter(hasTr).length,
     voiced = enabled.filter((sentence) => sentence.tts_file).length;
   $('#projectName').textContent = project.title;
@@ -136,7 +136,7 @@ function renderRows() {
 }
 function saveRows(only = null) {
   const rows = state.project.sentences.map((s) => [
-    s.id, s.enabled, s.start_seconds, s.end_seconds, s.source_text, s.zh_text ?? s.target_text ?? '',
+    s.id, s.enabled, s.start_seconds, s.end_seconds, s.source_text, s.target_text ?? s.zh_text ?? '',
     s.original_audio_enabled === null ? 'default' : s.original_audio_enabled ? 'on' : 'off',
     s.original_audio_gain_db, s.chinese_audio_enabled, s.chinese_audio_gain_db, s.speaker_id || '',
   ]);
@@ -339,7 +339,7 @@ export function initializeProjects() {
           ...beforeList,
           {
             id: selected, start_seconds: start, end_seconds: end, source_text: '',
-            target_text: t('新句子'), zh_text: t('新句子'),
+            target_text: t('新句子'),
             enabled: true, original_audio_enabled: null, original_audio_gain_db: 0,
             chinese_audio_enabled: true, chinese_audio_gain_db: 0,
           },

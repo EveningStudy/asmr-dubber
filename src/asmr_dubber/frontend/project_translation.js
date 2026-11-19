@@ -29,10 +29,10 @@ export function renderTranslationResult(project) {
     (s) => SKIPPED.has(s.status) || (!s.enabled && s.status === 'translation_failed'),
   );
   const done = project.sentences.filter(
-    (s) => s.enabled && s.zh_text && !['translation_failed', 'skipped_sound'].includes(s.status),
+    (s) => s.enabled && s.target_text && !['translation_failed', 'skipped_sound'].includes(s.status),
   ).length;
   const tooLong = project.sentences.filter(
-    (s) => s.enabled && s.zh_text && (s.translation_warning || '').includes('超出时长预算'),
+    (s) => s.enabled && s.target_text && (s.translation_warning || '').includes('超出时长预算'),
   );
   box.hidden = !(done || skipped.length || failed.length || tooLong.length);
   if (box.hidden) return;
