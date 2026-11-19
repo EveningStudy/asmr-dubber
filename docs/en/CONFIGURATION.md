@@ -69,7 +69,7 @@ The top shows how much models, projects and caches use. Three categories can be 
 |---|---|---|
 | Temporary files | Copies left over from processing | No effect. Safe to clear |
 | Export intermediates | Intermediate results of mixing and spatial following | The next export takes a few minutes longer to recompute |
-| Separation results | The separated voice and background | The next replacement mix has to separate again, which is slow |
+| Separation results | The separated voice and background | The next fully dubbed mix has to separate again, which is slow |
 
 Clicking **Clear** does not delete right away. The program scans first and lists the projects and files it would remove. Nothing is deleted until you click **Confirm cleanup**.
 

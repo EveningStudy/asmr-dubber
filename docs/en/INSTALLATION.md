@@ -58,7 +58,7 @@ The top of the page shows your GPU, free disk space, and how much space models a
 
 **If you are not sure what to pick, click "Download both".** It installs:
 
-- **Parakeet**: Japanese recognition, about 5 GB.
+- **anime-whisper**: Japanese recognition, about 5 GB, fine-tuned on anime and game voices and more accurate on whispers and quiet lines. It also downloads ASMR speech detection and Qwen3 alignment, all with ModelScope China mirrors. Without an NVIDIA GPU it installs the lighter **Parakeet** instead.
 - **IndexTTS2**: voice-cloning dubbing, about 20 GB, needs an NVIDIA GPU.
 
 How long it takes depends on your connection. IndexTTS2 is large. You can click **Pause** during a download and **Resume** later; it continues where it stopped. The same applies if the connection drops.
@@ -71,21 +71,21 @@ How long it takes depends on your connection. IndexTTS2 is large. You can click 
 
 | What you want to do | Download |
 |---|---|
-| Dub Japanese audio in a voice like the original | Parakeet + IndexTTS2 (this is "Download both") |
+| Dub Japanese audio in a voice like the original | anime-whisper + IndexTTS2 (this is "Download both") |
 | Dub Japanese audio without a GPU | Parakeet. Use the built-in Edge TTS for dubbing |
 | Work with English or Chinese audio | Faster-Whisper. Parakeet only understands Japanese |
 | Dub from subtitles you already have | IndexTTS2 only, or nothing at all with Edge TTS |
-| Make a replacement mix (original voice removed) | Also a vocal separation model |
+| Make the fully dubbed version (original voice removed) | Also a vocal separation model; with 10 GB of VRAM or more, IndexTTS-2.5 too |
 
 You will not need these most of the time. Download them when you do:
 
 - **ASMR speech detection**: finds the parts with speech before recognition. Useful for audio with long silences.
 - **Qwen3 alignment**: recalculates the start and end of each sentence so subtitles and dubbing line up better.
-- **Vocal separation**: only needed for the replacement mix.
-- **anime-whisper** (the recommended recognizer, about 5 GB): fine-tuned on anime and game voices, more accurate on whispers and quiet lines. It also downloads ASMR speech detection and Qwen3 alignment, all with ModelScope China mirrors. Until it is installed, new projects use Parakeet instead of failing; saved settings and existing projects are not changed. The Windows Advanced setup profile tries to download it, and a failed download does not stop the installation.
+- **Vocal separation**: only needed for the fully dubbed version.
+- **Parakeet**: a lighter Japanese recognizer, about 5 GB. Until anime-whisper is installed, new projects use it instead of failing; saved settings and existing projects are not changed.
 - **Kotoba-Whisper**: another Japanese recognition model to compare against Parakeet.
 - **Qwen3-ASR** (experimental, about 11 GB): Alibaba's recognizer plus the Japanese anime/visual-novel fine-tune, both available on China mirrors.
-- **IndexTTS-2.5**: a newer cloning model with more languages. Needs 10 GB of VRAM or more.
+- **IndexTTS-2.5**: a newer cloning model with more languages. Needs 10 GB of VRAM or more. Recommended for the fully dubbed version because its dubs follow the original line lengths more closely; once installed, the "Fully dubbed" preset switches to it.
 
 #### Slow or failed downloads
 

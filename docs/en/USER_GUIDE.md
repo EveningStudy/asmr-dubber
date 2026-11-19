@@ -161,7 +161,7 @@ Click **Export** at the top.
 
 From top to bottom:
 
-- **Mix mode**: **Bilingual mix** is the original plus the dub. **Replacement mix (experimental)** is the fully dubbed mix: the original voice is replaced by the dub in dubbed sentences and everything else stays as recorded. See [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice).
+- **Mix mode**: **Bilingual mix** is the original plus the dub. **Fully dubbed (experimental)**: the original voice is replaced by the dub in dubbed sentences and everything else stays as recorded. See [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice).
 - **Spatial following**: when on, the dub follows the left-right position and distance of the original voice. Recommended for stereo works.
 - **Audio output layout**: besides the mix, you can save a separate track with only the dub, for further work in other software.
 - **Output**: **Audio** exports normally. **Subtitles only** produces no audio.

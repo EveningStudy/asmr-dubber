@@ -102,8 +102,8 @@ def _plan_content_label(plan: engine.SmartTaskPlan) -> str:
     content = plan.edition.get("output_policy", {}).get("content", "")
     return {
         "dubbing": "双语成品",
-        "replacement": "替换配音",
-        "both": "双语 + 替换配音",
+        "replacement": "完全配音",
+        "both": "双语 + 完全配音",
         "source_subtitles": "原声 + 字幕",
         "subtitles": "仅字幕文件",
     }.get(content, "原声 + 字幕" if plan.subtitles_only else "配音")

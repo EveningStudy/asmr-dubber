@@ -20,7 +20,7 @@
   "separation_api_output_field": {"label": "人声字段", "panel": "sep", "group": "人声分离", "basic": false, "visible_when": {}},
   "separation_api_params": {"label": "附加请求参数", "panel": "sep", "group": "人声分离", "basic": false, "visible_when": {}},
   "separation_cloud_consent": {"label": "同意上传音频", "panel": "sep", "group": "人声分离", "basic": false, "visible_when": {}},
-  "separation_mix_mode": {"label": "成品", "panel": "mix", "group": "输出保护", "basic": true, "visible_when": {}, "options": [["双语版", "bilingual"], ["替换版（实验性）", "replace"]]},
+  "separation_mix_mode": {"label": "成品", "panel": "mix", "group": "输出保护", "basic": true, "visible_when": {}, "options": [["双语版", "bilingual"], ["完全配音版（实验性）", "replace"]]},
   "separation_keep_original": {"label": "回填哪些", "panel": "mix", "group": "原声回填", "basic": false, "visible_when": {"separation_mix_mode": ["replace"]}, "options": [["不回填", "none"], ["没有配音的句子", "unvoiced"], ["手动指定", "manual"]]},
   "separation_keep_ids": {"label": "句子编号", "panel": "mix", "group": "原声回填", "basic": false, "visible_when": {"separation_mix_mode": ["replace"]}},
   "separation_keep_padding_ms": {"label": "前后多留", "unit": "毫秒", "panel": "mix", "group": "原声回填", "basic": false, "visible_when": {"separation_mix_mode": ["replace"]}},

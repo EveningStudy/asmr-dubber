@@ -321,21 +321,20 @@ def recommended_stack_markdown(profile: HardwareProfile | None = None) -> str:
     elif profile.cuda_available and vram >= 11.5:
         title = "质量优先（推荐）"
         detail = (
-            "日语识别首选 Parakeet CTC 1.1B GAL；疑难音频可启用"
-            " Parakeet + Kotoba + Faster-Whisper 多模型校对。翻译用 DeepSeek，"
-            "配音首选 IndexTTS2。"
+            "日语识别首选 anime-whisper，耳语和动画腔识别最好；疑难音频可再用 Qwen3-ASR 复核。"
+            "翻译用 DeepSeek，配音首选 IndexTTS2；做完全配音版建议再装 IndexTTS-2.5。"
         )
     elif profile.cuda_available and vram >= 8:
         title = "显存均衡"
         detail = (
-            "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.2 或 Faster-Whisper large-v2；"
-            "生成 TTS 前关闭其他显存占用程序。IndexTTS2 建议启用 FP16。"
+            "日语识别用 anime-whisper，翻译用 DeepSeek，配音用 IndexTTS2（建议启用 FP16）；"
+            "生成配音前关闭其他占用显存的程序。"
         )
     elif profile.cuda_available and vram >= 6:
         title = "低显存 NVIDIA"
         detail = (
-            "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.0-faster 或 Faster-Whisper large-v2"
-            "（float16 或 int8_float16）/ DeepSeek / IndexTTS2 FP16。"
+            "anime-whisper / DeepSeek / IndexTTS2 FP16；显存紧张时识别可改用"
+            " Parakeet CTC 1.1B GAL 或 Faster-Whisper（int8_float16）。"
         )
     else:
         title = "CPU / 无 NVIDIA"

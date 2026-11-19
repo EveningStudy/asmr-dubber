@@ -421,9 +421,7 @@
   "当前完整 GPU 依赖要求 Turing 或更新架构。Parakeet/Faster-Whisper 可按实际状态选择，Kotoba 和 Qwen 对齐建议改用 CPU，TTS 可使用外部 API。": "The full GPU stack needs Turing or newer. Parakeet and Faster-Whisper can be chosen as installed; run Kotoba and Qwen alignment on the CPU, and use an external API for TTS.",
   "质量优先（推荐）": "Quality first (recommended)",
   "显存均衡": "Balanced video memory",
-  "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.2 或 Faster-Whisper large-v2；生成 TTS 前关闭其他显存占用程序。IndexTTS2 建议启用 FP16。": "Parakeet CTC 1.1B GAL, Kotoba-Whisper v2.2 or Faster-Whisper large-v2; close other programs using video memory before generating speech. Enable FP16 for IndexTTS2.",
   "低显存 NVIDIA": "Low-memory NVIDIA",
-  "Parakeet CTC 1.1B GAL、Kotoba-Whisper v2.0-faster 或 Faster-Whisper large-v2（float16 或 int8_float16）/ DeepSeek / IndexTTS2 FP16。": "Parakeet CTC 1.1B GAL, Kotoba-Whisper v2.0-faster or Faster-Whisper large-v2 (float16 or int8_float16) / DeepSeek / IndexTTS2 FP16.",
   "CPU / 无 NVIDIA": "CPU / no NVIDIA",
   "Parakeet CTC 1.1B GAL（CPU F16）或 Faster-Whisper（cpu + int8）/ DeepSeek / 外部 TTS（语音合成）API。质量优先的本地克隆模型通常需要 NVIDIA GPU。": "Parakeet CTC 1.1B GAL (CPU F16) or Faster-Whisper (cpu + int8) / DeepSeek / an external TTS API. Local cloning models usually need an NVIDIA GPU.",
   "填写翻译 Key": "Translation key",
@@ -624,5 +622,12 @@
   "精简过长译文": "tightening long translations",
   "无需配音内容": "nothing to dub",
   "无可朗读内容": "nothing speakable",
-  "（总大小未知）": " (total size unknown)"
+  "（总大小未知）": " (total size unknown)",
+  "日语识别首选 anime-whisper，耳语和动画腔识别最好；疑难音频可再用 Qwen3-ASR 复核。翻译用 DeepSeek，配音首选 IndexTTS2；做完全配音版建议再装 IndexTTS-2.5。": "Japanese recognition: anime-whisper first, best on whispers and anime-style delivery; check hard audio again with Qwen3-ASR. Translate with DeepSeek and dub with IndexTTS2; for the fully dubbed output also install IndexTTS-2.5.",
+  "日语识别用 anime-whisper，翻译用 DeepSeek，配音用 IndexTTS2（建议启用 FP16）；生成配音前关闭其他占用显存的程序。": "Recognize Japanese with anime-whisper, translate with DeepSeek and dub with IndexTTS2 (enable FP16); close other programs using video memory before generating speech.",
+  "anime-whisper / DeepSeek / IndexTTS2 FP16；显存紧张时识别可改用 Parakeet CTC 1.1B GAL 或 Faster-Whisper（int8_float16）。": "anime-whisper / DeepSeek / IndexTTS2 FP16; when video memory is tight, recognize with Parakeet CTC 1.1B GAL or Faster-Whisper (int8_float16).",
+  "双语成品": "Bilingual",
+  "完全配音": "Fully dubbed",
+  "双语 + 完全配音": "Bilingual + fully dubbed",
+  "原声 + 字幕": "Original + subtitles"
 }

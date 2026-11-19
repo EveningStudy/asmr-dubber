@@ -54,7 +54,7 @@ export async function refreshStorage() {
       )}</div></div><div class="label"><b>${t('项目与批量中间产物')}</b></div><div class="card">${(result.projects || []).map(p => `<div class="row"><div class="grow"><div class="t">${esc(p.label)}</div><div class="d">${esc(p.path)}</div></div></div>`).join('') || `<p class="empty">${t('还没有项目')}</p>`}</div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
       ['safe', '临时文件', '可以放心删。'],
       ['rebuild', '导出用的中间文件', '删了以后，下次导出要多花几分钟重新计算。'],
-      ['separation', '人声分离结果', '删了以后，再做替换版要重新分离，比较慢。'],
+      ['separation', '人声分离结果', '删了以后，再做完全配音版要重新分离，比较慢。'],
     ]
       .map(
         ([category, title, hint]) =>

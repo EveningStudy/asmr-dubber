@@ -82,7 +82,7 @@ https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 
 <img src="assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen 提示：先点更多信息，再点仍要运行">
 
-**2. 下载模型。** 打开“模型”页，点“一起下载”。这会装上日语识别模型 Parakeet 和音色克隆模型 IndexTTS2。想要更准的日语识别，可以再下载 anime-whisper（推荐的识别模型，没装时程序自动改用 Parakeet）。原声是英语或中文的话，识别模型改下 Faster-Whisper。
+**2. 下载模型。** 打开“模型”页，点“一起下载”。有 NVIDIA 显卡时，会装上日语识别模型 anime-whisper 和音色克隆模型 IndexTTS2；没有显卡时识别改用轻量的 Parakeet。想做完全配音版，再下载 IndexTTS-2.5。原声是英语或中文的话，识别模型改下 Faster-Whisper。
 
 ![模型页](assets/screenshots/zh/models.png)
 
@@ -118,7 +118,7 @@ https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
 - **数据都在程序文件夹里。** 项目、模型、设置都在 `.asmr-dubber` 目录下。备份或搬家时复制整个文件夹。
 - **API Key 是明文保存的。** 位置在 `.asmr-dubber/config/secrets.json`，不要把这个文件夹发给别人。
 - **用云端服务时，内容会发给服务商。** 翻译会发送台词文本，云端配音会发送译文和参考音频。全部用本地模型时不会上传任何东西。
-- **人声分离和完全配音版（界面里叫“替换版”）是实验性功能。** 可能残留原声，识别漏掉的耳语会保留原声，也可能损伤音效。
+- **人声分离和完全配音版是实验性功能。** 可能残留原声，识别漏掉的耳语会保留原声，也可能损伤音效。
 
 ## 许可
 

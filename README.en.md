@@ -82,7 +82,7 @@ On the first run Windows may show "Windows protected your PC". This appears beca
 
 <img src="assets/windows-smartscreen-more-info.png" width="420" alt="SmartScreen prompt: click More info, then Run anyway">
 
-**2. Download models.** Open **Models** and click **Download both**. This installs Parakeet for Japanese recognition and IndexTTS2 for voice cloning. For more accurate Japanese recognition, also download anime-whisper (the recommended recognizer; Parakeet is used automatically until it is installed). If the original is English or Chinese, download Faster-Whisper for recognition instead.
+**2. Download models.** Open **Models** and click **Download both**. With an NVIDIA GPU this installs anime-whisper for Japanese recognition and IndexTTS2 for voice cloning; without one, recognition uses the lighter Parakeet. For the fully dubbed version, also download IndexTTS-2.5. If the original is English or Chinese, download Faster-Whisper for recognition instead.
 
 ![The Models page](assets/screenshots/en/models.png)
 
@@ -118,7 +118,7 @@ For developers: [Changelog](CHANGELOG.en.md) · [Architecture](docs/en/ARCHITECT
 - **Your data lives in the program folder.** Projects, models and settings are under `.asmr-dubber`. Copy the whole folder to back up or move.
 - **API keys are stored in plain text** at `.asmr-dubber/config/secrets.json`. Do not share that folder.
 - **Cloud services receive your content.** Translation sends the script text. Cloud dubbing sends the translation and the reference audio. Nothing is uploaded when you use local models only.
-- **Vocal separation and the fully dubbed mix (called Replacement mix in the interface) are experimental.** They can leave traces of the original voice, keep the original where a whisper was not recognized, and can damage sound effects.
+- **Vocal separation and the fully dubbed mix are experimental.** They can leave traces of the original voice, keep the original where a whisper was not recognized, and can damage sound effects.
 
 ## License
 
