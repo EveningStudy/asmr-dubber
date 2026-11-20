@@ -26,6 +26,8 @@ try {
             Copy-Item -LiteralPath $SourceDir -Destination $Package -Recurse
         }
     }
+    # README demo audio (~60 MB) is for the repository page only; the program never reads it.
+    Remove-Item -LiteralPath (Join-Path $Package "assets\demos") -Recurse -Force -ErrorAction SilentlyContinue
     Get-ChildItem -LiteralPath $Package -Directory -Filter "__pycache__" -Recurse | ForEach-Object {
         $CachePath = [IO.Path]::GetFullPath($_.FullName)
         if (-not $CachePath.StartsWith($Package + '\', [StringComparison]::OrdinalIgnoreCase)) {

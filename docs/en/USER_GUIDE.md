@@ -74,7 +74,7 @@ Settings changed in the right panel belong to this project only. They save autom
 Recognition turns the speech into text with timing.
 
 1. Check **ASR backend**. Use anime-whisper for Japanese (Parakeet until it is installed) and Faster-Whisper for English or Chinese.
-2. Click **Run recognition again**. The button has this name even on the first run.
+2. Click **Start recognition**. After the first run the button becomes **Run recognition again**.
 3. Wait. An hour of audio takes a few minutes on a GPU.
 
 When it finishes, sentences appear in the table. Spend a few minutes reading the original text and fixing obvious mistakes. Translation works from this text, so an error here carries through every later step.
@@ -83,7 +83,7 @@ If sentences are split badly (one sentence cut in half, or two stuck together), 
 
 ![More settings for recognition](../../assets/screenshots/en/step1-advanced.png)
 
-> **Note**: running recognition again replaces every existing sentence. Translations and dubbing already made have to be redone. Make sure the original text is right before moving on.
+> **Note**: running recognition again replaces every existing sentence. Translations and dubbing already made have to be redone (the program asks first). Make sure the original text is right before moving on.
 
 ## 5. Step two: Translation
 
@@ -165,7 +165,7 @@ From top to bottom:
 - **Mix mode**: **Bilingual mix** is the original plus the dub. **Fully dubbed**: the original voice is replaced by the dub in dubbed sentences and everything else stays as recorded. See [Mixing and spatial following](EXPERIMENTAL_AUDIO.md#fully-dubbed-mix-removing-the-original-voice).
 - **Spatial following**: when on, the dub follows the left-right position and distance of the original voice. Recommended for stereo works.
 - **Audio output layout**: besides the mix, you can save a separate track with only the dub, for further work in other software.
-- **Output**: **Audio** exports normally. **Subtitles only** produces no audio.
+- **Output**: **Audio** exports normally. **Subtitles only** produces no audio and needs no dubbing: after translating, **Export subtitles** in the Translation step jumps here with it selected.
 - **Subtitles**: bilingual, translation only, original only, or none.
 
 Click **Export**. The files appear under **Last export**, where you can listen to them right away or click **Download** to save a copy elsewhere.

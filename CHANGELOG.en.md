@@ -4,7 +4,7 @@ English | [中文](CHANGELOG.md)
 
 All notable changes to ASMR Dubber are documented in this file.
 
-## [3.0.0] - 2026-11-18
+## [3.0.0] - 2026-11-20
 
 ### Full-Dub Speech Replacement 3.0 & Audio Engine
 - **IndexTTS-2.5 Recommended for the Full Dub & Owned IndexTTS2 Worker**: The "Fully dubbed" preset switches to IndexTTS-2.5 when it is installed (and suggests installing it otherwise). Added dedicated `indextts2_worker.py` and upgraded `indextts25_worker.py` with native S2Mel `target_dur` duration control (`tts_fit_source_duration`), resident `--daemon` JSONL protocol, and reproducible per-take seeding. On the 7-clip benchmark, median onset error dropped to `38.0 ms` (`p95 = 107.6 ms`), and lines needing `>1.1x` speed-up dropped to `8%`.
@@ -23,6 +23,7 @@ All notable changes to ASMR Dubber are documented in this file.
 - **Virtual-Scrolling Sentence Editor & Interactive Waveform**: Replaced 50-row pagination with virtual scrolling (`1,000+` sentences smooth), per-row independent original-slice (`▶`) and dub (`▶`) audition, active-sentence `<canvas>` waveform with draggable start/end handles, keyboard navigation (`↑/↓`, `Space`, `Enter`), and `Ctrl+Z` / `Ctrl+Y` undo/redo.
 - **Duration-Budget Translation, Compression & Revise-on-Request**: Added per-line duration budget (`translation_length_budget`), automatic and one-click over-budget tightening, interactive batch revision proposals, multi-take dub candidates (`+3`), and project-level pronunciation glossary + spoken Chinese number/percentage normalization (`tts_pronunciation_glossary`, `tts_spoken_normalization`).
 - **Native Desktop File Handling & Lifecycle**: Added loopback-only native Windows file selection (`files/media`), same-volume hard links for video sources to avoid duplicate multi-GB copies (audio is still copied, so retagging the original cannot break a project), incremental task polling (`tasks/poll`), single-row save I/O optimization, first-run hardware/model/key wizard, quality & mix-type presets, global task panel, and a clean **Quit App** action.
+- **Clear Storage Breakdown & Named Missing DLLs**: **Settings → Storage** lists projects, models, each backend environment (previously uncounted, often tens of GB), the main environment, the cache and offline model packs by size, each with an **Open folder** button; deleting IndexTTS on the Models page now also removes its ~9 GB environment. **Check runtime** reads the backend files' dependencies and names the exact missing DLL with its fix (VC++ runtime, Windows Media Foundation, NVIDIA driver). Recognition starts as **Start recognition** and asks before a re-run; the Translation step links straight to a subtitles-only export.
 
 ### Batch Engine, Architecture & Model Packs
 - **In-Process Batch Execution & Resident Workers**: AutoFlow batch queues execute pipeline stages directly in-process (`inprocess_pipeline.py`) with resident ASR sessions and persistent IndexTTS daemon pools (`tts_daemon.py`), so recognition and dubbing models load once per queue (about 10%-14% of a 10-work run). Removed all blocking CLI `input()` / `print()` calls from `autoflow/`. Batch full-dub output folders are now named `完全配音版` (existing outputs under legacy `替换配音版` remain resumable/reusable).
@@ -44,4 +45,4 @@ Measured processing time divided by source audio duration (lower is faster):
 - Pre-existing legacy settings (`reference_audio_mode = "legacy"`, `tts_normalize_pauses = false`, `tts_fit_source_duration = false`, `tts_dual_voice_anchor = false`, `tts_spoken_normalization = false`) are preserved automatically on migrated projects so **existing synthesized dubs remain 100% cache-valid and are never forced to re-synthesize**.
 
 ## [2.2.1] - Previous Stable Release
-- See [docs/en/RELEASE.md](docs/en/RELEASE.md) and Git history up to tag `v2.2.1`.
+- See the [v2.2.1 release notes](https://github.com/EveningStudy/asmr-dubber/releases/tag/v2.2.1); earlier versions are listed on GitHub Releases.

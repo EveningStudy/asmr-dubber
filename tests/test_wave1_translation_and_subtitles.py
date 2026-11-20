@@ -741,19 +741,35 @@ def test_gemini_thought_filtering_extra_body_and_safety_block() -> None:
     calls = 0
 
     def blocked_handler(_request: httpx.Request) -> httpx.Response:
+        # A safety block hits one batch; the batch is split so the line that
+        # triggers it fails alone and the rest of the work is still translated.
         nonlocal calls
         calls += 1
-        return httpx.Response(200, json={"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}})
+        # Call 1 is the whole batch, call 2 is s1 alone (left half first).
+        if calls <= 2:
+            return httpx.Response(
+                200, json={"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [{"text": '{"translations":[{"id":"s2","zh":"嗯"}]}'}]
+                        },
+                    }
+                ]
+            },
+        )
 
     s_multi = [
         Sentence(id="s1", start_seconds=0.0, end_seconds=1.0, source_text="a"),
         Sentence(id="s2", start_seconds=1.0, end_seconds=2.0, source_text="b"),
     ]
-    with (
-        httpx.Client(transport=httpx.MockTransport(blocked_handler)) as client,
-        pytest.raises(TranslationError, match="PROHIBITED_CONTENT"),
-    ):
-        translate_sentences(
+    with httpx.Client(transport=httpx.MockTransport(blocked_handler)) as client:
+        report = translate_sentences(
             s_multi,
             api_key="k",
             model="gemini-2.5-flash",
@@ -761,7 +777,11 @@ def test_gemini_thought_filtering_extra_body_and_safety_block() -> None:
             base_url="https://generativelanguage.googleapis.com/v1beta",
             client=client,
         )
-    assert calls == 1
+    assert s_multi[1].zh_text == "嗯"
+    assert s_multi[0].status == "translation_failed"
+    assert "PROHIBITED_CONTENT" in (s_multi[0].error or "")
+    assert [failure.sentence_id for failure in report.failed] == ["s1"]
+    assert calls == 3
 
 
 def test_machine_translation_retries_429_and_passes_empty_items_to_settle() -> None:
@@ -951,7 +971,7 @@ def test_subtitles_dubbing_past_source_english_wrap_cps_escape_warnings_and_cach
     )
     srt_text = srt.read_text(encoding="utf-8")
     lrc_text = lrc.read_text(encoding="utf-8")
-    assert "&lt;breath&gt;" in srt_text and "<breath>" not in srt_text
+    assert "＜breath＞" in srt_text and "<breath>" not in srt_text and "&lt;" not in srt_text
     zh_lines = [line for line in srt_text.splitlines() if "reasonably" in line or "forty" in line]
     assert len(zh_lines[0]) <= 44 and len(zh_lines) == 2
     assert len(lrc_text.splitlines()) == 2

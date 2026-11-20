@@ -180,36 +180,21 @@ class Application:
 
     def storage(self):
         from ..project_origin import project_inventory
+        from . import storage_report
 
-        home = portable_home()
-        active = settings.current()
-        model_sizes = models.model_storage(active)
-        roots = {
-            "模型": home / "models",
-            "项目": Path(active.projects_root or home / "projects"),
-            "缓存": home / "cache",
-        }
-        sizes = {label: models.directory_bytes(path) for label, path in roots.items()}
-        sizes["模型"] = model_sizes["total_bytes"]
-        diag_zips = (
-            sum(
-                p.stat().st_size
-                for p in (home / "temp").glob("ASMR-Dubber-diagnostics-*.zip")
-                if p.is_file()
-            )
-            if (home / "temp").is_dir()
-            else 0
-        )
-        sizes["缓存"] = (
-            max(0, sizes["缓存"] - model_sizes["cache_bytes"])
-            + models.directory_bytes(home / "autoflow" / ".work")
-            + diag_zips
-        )
+        result = storage_report.report(settings.current())
+        projects_root = Path(result["projects_root"])
         return {
-            "sizes": sizes,
-            "root": str(roots["项目"]),
-            "projects": project_inventory(roots["项目"]),
+            "sizes": {item["label"]: item["bytes"] for item in result["locations"]},
+            "locations": result["locations"],
+            "root": str(projects_root),
+            "projects": project_inventory(projects_root),
         }
+
+    def open_storage(self, key):
+        from . import storage_report
+
+        return storage_report.open_folder(key, settings.current().projects_root)
 
     def scan_storage(self, root, categories):
         return cache_cleanup.scan_caches(root, categories, app_home=portable_home())

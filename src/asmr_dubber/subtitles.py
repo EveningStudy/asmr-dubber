@@ -48,7 +48,13 @@ def _wrap_line(value: str, width: int) -> list[str]:
 
 
 def _escape_srt_text(value: str) -> str:
-    return value.replace("<", "&lt;").replace(">", "&gt;")
+    """Keep literal angle brackets visible in every player.
+
+    SRT has no escape syntax: players and FFmpeg's burn-in treat ``<...>`` as a
+    tag (``<breath>`` disappears, ``< b >`` turns bold) and show ``&lt;`` as is.
+    Full-width brackets read the same in CJK subtitles and are never markup.
+    """
+    return value.replace("<", "＜").replace(">", "＞")
 
 
 def _visible_char_count(value: str) -> int:

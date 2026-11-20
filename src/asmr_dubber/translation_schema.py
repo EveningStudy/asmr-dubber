@@ -43,7 +43,11 @@ class _OutputLengthTranslationError(TranslationError):
 
 
 def _is_fatal_translation_error(error: BaseException) -> bool:
-    """Credentials, billing, misconfiguration, contract and safety-block errors stop immediately."""
+    """Credentials, billing, misconfiguration and contract errors stop immediately.
+
+    Content blocks (moderation 400s, Gemini safety) are per-batch: the batch is
+    split so only the offending lines fail.
+    """
 
     if isinstance(error, APIContractError):
         return True

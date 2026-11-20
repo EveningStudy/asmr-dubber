@@ -388,6 +388,9 @@ def subtitles_command(
         typer.Option("--language", "-l", help="bilingual、zh 或 source（ja 为兼容别名）"),
     ] = "bilingual",
     output_variant: Annotated[str | None, typer.Option("--output-variant")] = None,
+    no_video: Annotated[
+        bool, typer.Option("--no-video", help="视频项目也只生成 SRT/LRC，不渲染带字幕视频")
+    ] = False,
 ) -> None:
     """独立生成 SRT/LRC；视频项目同时生成带字幕视频。"""
     try:
@@ -402,6 +405,7 @@ def subtitles_command(
             language=cast(SubtitleLanguage, language),
             progress=ConsoleProgress(),
             output_variant=output_variant,
+            render_video=not no_video,
         )
     except (AsmrDubberError, ValueError) as exc:
         _fail(exc)

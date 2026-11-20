@@ -63,7 +63,9 @@ After a few projects, intermediate files take up a fair amount of space. **Setti
 
 ![Storage](../../assets/screenshots/en/storage.png)
 
-The top shows how much models, projects and caches use. Three categories can be cleared:
+The top shows the total. **Where the space goes** lists every folder by size: projects, models, backend environments (the separate Python environments of IndexTTS, vocal separation and MOSS, about 3–9 GB each), the main program environment, the cache, and any offline model packs you added. Each has an **Open folder** button. Do not delete the backend or main environments by hand; deleting IndexTTS on the Models page removes its environment too.
+
+Three categories can be cleared:
 
 | Category | What it is | After clearing |
 |---|---|---|

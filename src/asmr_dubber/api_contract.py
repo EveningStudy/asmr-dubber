@@ -58,6 +58,10 @@ class ModelRequest(Request):
     model: str
 
 
+class StorageOpenRequest(Request):
+    key: Literal["projects", "models", "runtimes", "environment", "cache", "model_packs"]
+
+
 class TaskID(Request):
     identifier: str
 

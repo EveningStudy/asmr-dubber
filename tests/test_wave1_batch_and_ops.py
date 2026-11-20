@@ -493,6 +493,21 @@ def test_subtitles_skips_video_render_when_no_video_passed(
     assert reloaded.source.media_type == "video"
     assert reloaded.subtitle_srt_file
 
+    # The same flag through the real CLI, which batch runs use when the stage
+    # cannot run in process.
+    from typer.testing import CliRunner
+
+    from asmr_dubber.cli import app
+
+    result = CliRunner().invoke(
+        app, ["subtitles", str(manifest), "--language", "bilingual", "--no-video"]
+    )
+    assert result.exit_code == 0, result.output
+    assert not rendered_video["called"]
+    reloaded, _ = models.load_project(manifest)
+    assert reloaded.source.media_type == "video"
+    assert reloaded.subtitle_video_file is None
+
 
 def test_safe_filename_component_guards_windows_reserved_names() -> None:
     for name in ("CON", "prn", "Aux.txt", "nul", "COM1", "com9.srt", "LPT1", "lpt9.lrc"):

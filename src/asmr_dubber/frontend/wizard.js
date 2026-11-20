@@ -24,6 +24,16 @@ async function load() {
 export async function openWizard() {
   step = 1;
   testTaskId = testError = '';
+  // Hardware and model detection takes a few seconds; never show an empty sheet.
+  $('#wizardTitle').textContent = t(TITLES[0][0]);
+  $('#wizardDesc').textContent = t(TITLES[0][1]);
+  $('#wizardSteps').innerHTML = '';
+  $('#wizardBody').innerHTML = `<p class="stat">${esc(t('正在检测显卡、内存和已安装的模型…'))}</p>`;
+  $('#wizardBody').dataset.step = '';
+  $('#wizardBack').hidden = true;
+  $('#wizardNext').textContent = t('下一步');
+  $('#wizardNext').disabled = true;
+  $('#wizardSkip').textContent = t('稍后再说');
   $('#wizard').classList.add('on');
   await load();
   renderWizard();
@@ -124,6 +134,7 @@ export function renderWizard() {
   else body.innerHTML = [stepOne, stepTwo, stepThree][step - 1]();
   body.dataset.step = String(step);
   $('#wizardBack').hidden = step === 1;
+  $('#wizardNext').disabled = false;
   $('#wizardNext').textContent = t(step === 3 ? '完成，开始新建项目' : '下一步');
   $('#wizardSkip').textContent = t(step === 3 ? '先不用，直接进入' : '稍后再说');
   localize($('#wizard'));

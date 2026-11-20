@@ -44,4 +44,4 @@
 
 ![桌面 MOSS 参数](../assets/screenshots/zh/moss-settings.png)
 ![窄屏 MOSS 参数](../assets/screenshots/zh/moss-settings-mobile.png)
-![重新打开项目后的说话人标签](../assets/screenshots/zh/moss-speaker.png)
+![示例项目所选句子的说话人字段](../assets/screenshots/zh/moss-speaker.png)

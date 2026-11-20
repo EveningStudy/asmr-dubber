@@ -174,23 +174,14 @@ def run_stage_in_process(arguments: Sequence[str]) -> dict[str, Any] | None:
         no_video = "--no-video" in rest[1:]
         try:
             project, directory = pipeline.reload_project(project_path)
-            orig_media_type = project.source.media_type
-            if no_video:
-                project.source.media_type = "audio"
-            try:
-                pipeline.generate_subtitles(
-                    project,
-                    directory,
-                    language=cast(SubtitleLanguage, lang_raw),
-                    progress=progress,
-                    output_variant=variant,
-                )
-            finally:
-                if no_video and orig_media_type != "audio":
-                    saved_project, saved_dir = pipeline.reload_project(project_path)
-                    if saved_project.source.media_type != orig_media_type:
-                        saved_project.source.media_type = orig_media_type
-                        pipeline.save_project(saved_project, saved_dir)
+            pipeline.generate_subtitles(
+                project,
+                directory,
+                language=cast(SubtitleLanguage, lang_raw),
+                progress=progress,
+                output_variant=variant,
+                render_video=not no_video,
+            )
         except OperationCancelledError:
             raise
         except (AsmrDubberError, ValueError) as exc:

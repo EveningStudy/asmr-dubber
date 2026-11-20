@@ -37,9 +37,10 @@ BALANCED = {
 QUALITY_KEYS = tuple(FAST)
 
 # Output group: which product the project aims at.  ``autoflow_default_content``
-# exists only as a global default (it picks the batch product).
+# exists only as a global default (it picks the batch product).  The bilingual
+# preset leaves vocal separation as the user set it: it is optional there, and
+# cleaner recognition and voice references are a reason to keep it on.
 BILINGUAL = {
-    "separation_enabled": False,
     "separation_mix_mode": "bilingual",
     "chinese_dubbing_timing_mode": "fit_window",
     "autoflow_default_content": "dubbing",

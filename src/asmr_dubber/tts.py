@@ -593,8 +593,8 @@ def synthesize_sentences(
             sentence_ids=[sentence.id for sentence in retry],
             **options,
         )
-        failures = list(dict.fromkeys([*failures, *again]))
         next_inspect_ids: set[str] = set()
+        restored_ids: set[str] = set()
         for sentence in retry:
             valid_new = False
             if sentence.status != "error" and sentence.tts_file:
@@ -617,6 +617,17 @@ def synthesize_sentences(
                     sentence.status,
                     sentence.error,
                 ) = snapshots[sentence.id]
+                restored_ids.add(sentence.id)
+        # A retry that could not produce a new take keeps the earlier, usable one;
+        # it is not a missing line, so it must not fail the whole run.
+        failures = list(
+            dict.fromkeys(
+                [
+                    *failures,
+                    *(item for item in again if item.partition(":")[0] not in restored_ids),
+                ]
+            )
+        )
         if not next_inspect_ids:
             break
         inspect_ids = next_inspect_ids

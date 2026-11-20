@@ -52,9 +52,16 @@ Expand **Details** for that model to see what is missing. Then go to **Settings 
 
 Most likely the path is too long. Move the program to a shorter path and enable Windows long path support. See [Installation and models](INSTALLATION.md#1-download-and-extract).
 
-**DLL or VC++ errors**
+**DLL or VC++ errors, or exit code 0xC0000135**
 
-Click **Repair Microsoft VC++ runtime** under Logs and diagnostics.
+Under Logs and diagnostics, select the backend that failed in the **Repair a model runtime** row, then click **Start check** next to **Check runtime**. The end of the report names the exact missing DLL, which file needs it, and what to do:
+
+- `VCRUNTIME140`, `MSVCP140`, `VCOMP140` and similar: click **Repair Microsoft VC++ runtime**, then restart the computer.
+- `MFPlat.DLL`, `MFReadWrite.dll` (used by Parakeet): this is Windows Media Foundation. Windows N/KN editions and many stripped-down builds lack it, and the VC++ runtime cannot replace it. Install the **Media Feature Pack** under Windows **Settings → Apps → Optional features → Add an optional feature**, restart and check again; if it cannot be installed, use a different recognition model.
+- `nvcuda.dll`: install or update the NVIDIA graphics driver.
+- A file that belongs to the backend: select it and click **Repair** to reinstall.
+
+Do not download single DLLs from unknown websites.
 
 ## Recognition
 

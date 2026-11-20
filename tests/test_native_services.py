@@ -355,9 +355,63 @@ def test_model_storage_counts_checkpoints_and_cache_without_overlapping_totals(a
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"a" * count)
     result = models.model_storage(settings.current())
-    assert result == {"total_bytes": 31, "cache_bytes": 13}
+    assert (result["total_bytes"], result["cache_bytes"]) == (31, 13)
     assert application.storage()["sizes"]["模型"] == 31
     assert application.storage()["sizes"]["缓存"] == 17
+
+
+def test_storage_lists_every_large_folder_once_and_opens_only_known_ones(application, monkeypatch):
+    from asmr_dubber.platforms import portable_home
+    from asmr_dubber.services import storage_report
+
+    home = portable_home()
+    application.update_settings(
+        {
+            "tts_model_path": str(home / "runtimes/index-tts/checkpoints"),
+            "tts_index25_model_path": str(home / "runtimes/index-tts-2.5/checkpoints"),
+        }
+    )
+    for relative, count in (
+        ("runtimes/index-tts/checkpoints/gpt.pth", 11),  # counted as a model
+        ("runtimes/index-tts/.venv/torch.dll", 23),  # the backend's own environment
+        ("projects/work/source.wav", 5),
+    ):
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"a" * count)
+    storage = application.storage()
+    by_key = {item["key"]: item for item in storage["locations"]}
+    assert by_key["runtimes"]["bytes"] == 23
+    assert by_key["models"]["bytes"] == 11
+    assert by_key["projects"]["bytes"] == 5 and by_key["projects"]["exists"]
+    assert storage["sizes"]["后端运行环境"] == 23
+    assert all(item["hint"] for item in storage["locations"])
+
+    opened = []
+    monkeypatch.setattr(storage_report, "open_directory", lambda path: opened.append(path) or path)
+    application.open_storage("runtimes")
+    assert opened == [home / "runtimes"]
+    with pytest.raises(ValueError):
+        application.open_storage("../../Windows")
+    with pytest.raises(ValueError):
+        application.open_storage("model_packs" if not by_key.get("model_packs") else "nothing")
+
+
+def test_directory_size_skips_entries_it_cannot_read(tmp_path, monkeypatch):
+    (tmp_path / "ok.bin").write_bytes(b"abc")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "x.bin").write_bytes(b"zz")
+    real_scandir = models.os.scandir
+
+    def scandir(path):
+        if str(path) == str(locked):
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(models.os, "scandir", scandir)
+    assert models.directory_bytes(tmp_path) == 3
+    assert models.directory_bytes(tmp_path / "missing") == 0
 
 
 def _dummy_plan(

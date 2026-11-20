@@ -37,4 +37,4 @@ Japanese whisper accuracy, real multi-speaker diarization, Linux and CPU inferen
 
 ![Desktop settings](../../assets/screenshots/zh/moss-settings.png)
 ![Narrow settings](../../assets/screenshots/zh/moss-settings-mobile.png)
-![Persisted speaker label](../../assets/screenshots/zh/moss-speaker.png)
+![Speaker field for the selected sentence in a demo project](../../assets/screenshots/zh/moss-speaker.png)

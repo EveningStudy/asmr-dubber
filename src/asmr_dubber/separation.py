@@ -285,9 +285,9 @@ def prepare_local_model(
 def local_install_status(model: str, *, thorough: bool = False) -> str:
     """Fast page status; explicit checks additionally test imports and file hashes."""
     python = runtime_python()
-    environment = "未安装 → 点击“安装环境和模型”"
+    environment = "未安装 → 点击“下载”会一并安装"
     if python.is_file():
-        environment = "已安装（点击“检查环境和模型”确认可用）"
+        environment = "已安装"
         if thorough:
             try:
                 result = subprocess.run(
@@ -308,10 +308,10 @@ def local_install_status(model: str, *, thorough: bool = False) -> str:
                 environment = (
                     "可用（依赖检查通过）"
                     if result.returncode == 0
-                    else "不完整 → 点击“安装环境和模型”修复"
+                    else "不完整 → 再点一次“下载”修复"
                 )
             except (OSError, subprocess.TimeoutExpired):
-                environment = "检查失败或超时 → 点击“安装环境和模型”修复"
+                environment = "检查失败或超时 → 再点一次“下载”修复"
     try:
         model = local_model_name(model)
         if thorough:
@@ -321,9 +321,9 @@ def local_install_status(model: str, *, thorough: bool = False) -> str:
             root = model_directory()
             manifest = root / f"{model}.integrity.json"
             if not (root / model).is_file():
-                state = "未下载 → 点击“下载所选模型”"
+                state = "未下载 → 点击“下载”"
             elif not manifest.is_file():
-                state = "文件已存在，尚未校验 → 点击“下载所选模型”"
+                state = "文件已存在，尚未校验 → 点击“下载”校验"
             else:
                 records = json.loads(manifest.read_text(encoding="utf-8"))
                 if not isinstance(records, dict) or model not in records:
@@ -331,9 +331,7 @@ def local_install_status(model: str, *, thorough: bool = False) -> str:
                 missing = [
                     name for name in records if not (root / local_model_name(name)).is_file()
                 ]
-                state = (
-                    "文件不完整 → 重新下载所选模型" if missing else "已下载（点击检查可重新校验）"
-                )
+                state = "文件不完整 → 点击“下载”补齐" if missing else "已下载"
     except Exception as exc:
         state = f"未就绪：{exc}"
     return (

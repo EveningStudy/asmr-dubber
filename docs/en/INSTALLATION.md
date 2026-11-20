@@ -95,7 +95,7 @@ If a download fails, click **Download** again. What was already downloaded is ke
 
 #### Deleting a model
 
-Installed models have a **Delete** link. It removes the model files only and never touches your projects or exports. You cannot delete a model while a task is running.
+Installed models have a **Delete** link. It removes the model files only and never touches your projects or exports; IndexTTS2 and IndexTTS-2.5 also remove their own runtime environment (about 9 GB each), so using them again means downloading again. You cannot delete a model while a task is running.
 
 #### Offline installation
 

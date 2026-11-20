@@ -192,7 +192,14 @@ class Handler(BaseHTTPRequestHandler):
             route = path.removeprefix("/api/")
             if (
                 route
-                in {"files/folder", "files/media", "app/shutdown", "batch/open", "projects/open"}
+                in {
+                    "files/folder",
+                    "files/media",
+                    "app/shutdown",
+                    "batch/open",
+                    "projects/open",
+                    "storage/open",
+                }
                 and self.server.auth
             ):
                 self._json({"error": "Local host operation forbidden"}, 403)

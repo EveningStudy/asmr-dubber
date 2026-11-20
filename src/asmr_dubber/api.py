@@ -51,6 +51,7 @@ class API:
             "batch/preflight": (contract.Empty, application.batch.preflight),
             "batch/diagnostics": (contract.TaskID, application.diagnostics),
             "storage/get": (contract.Empty, application.storage),
+            "storage/open": (contract.StorageOpenRequest, application.open_storage),
             "storage/scan": (contract.StorageRequest, application.scan_storage),
             "storage/clean": (contract.CleanRequest, application.clean_storage),
             "logs/get": (contract.Empty, application.logs),

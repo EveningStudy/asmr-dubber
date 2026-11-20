@@ -166,6 +166,49 @@ def test_when_every_retry_fails_the_least_wrong_take_is_kept(monkeypatch, tmp_pa
     assert hard.tts_warning == "配音回听字错率 20%"
 
 
+def test_a_retry_that_cannot_regenerate_keeps_the_old_take_and_is_not_a_failure(
+    monkeypatch, tmp_path
+) -> None:
+    project = DubProject(
+        source={
+            "path": "source.wav",
+            "sha256": "0" * 64,
+            "duration_seconds": 10.0,
+            "sample_rate": 16000,
+            "channels": 1,
+        },
+        sentences=[
+            Sentence(
+                id="hard", start_seconds=0, end_seconds=1, source_text="a", zh_text="被治愈了哦"
+            ),
+        ],
+    )
+    project.settings.tts_asr_quality_check = True
+
+    def fake_backend(project, project_dir, source, force=False, sentence_ids=None, **kwargs):
+        sentence = project.sentences[0]
+        if sentence.tts_attempt == 0:
+            _wav(project_dir / "hard-0.wav", 1.2)
+            sentence.tts_file = "hard-0.wav"
+            sentence.tts_cache_key = "key-0"
+            sentence.status = "synthesized"
+            return []
+        # The retry crashes before producing a file (e.g. the worker died).
+        sentence.status = "error"
+        sentence.tts_file = None
+        return [f"{sentence.id}: worker crashed"]
+
+    monkeypatch.setattr("asmr_dubber.tts_backends.synthesize_with_selected_backend", fake_backend)
+    monkeypatch.setattr(
+        "asmr_dubber.dub_qc.dub_asr_check", lambda *_args: ("配音回听字错率 40%", 0.4)
+    )
+    failures = tts.synthesize_sentences(project, tmp_path, tmp_path / "source.wav")
+    hard = project.sentences[0]
+    assert failures == []
+    assert (hard.tts_attempt, hard.tts_file, hard.status) == (0, "hard-0.wav", "synthesized")
+    assert hard.tts_warning == "配音回听字错率 40%"
+
+
 def test_retry_attempt_changes_the_cache_key_only_after_a_retry() -> None:
     project = DubProject(
         source={

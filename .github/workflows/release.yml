@@ -41,6 +41,8 @@ jobs:
           Get-ChildItem -Force | Where-Object {
             $_.Name -notin @(".git", ".asmr-dubber", "dist")
           } | Copy-Item -Destination $staging -Recurse -Force
+          # README demo audio (~60 MB) is for the repository page only; the program never reads it.
+          Remove-Item -LiteralPath (Join-Path $staging "assets\demos") -Recurse -Force -ErrorAction SilentlyContinue
           $portable = Join-Path $staging ".asmr-dubber"
           $uvDir = Join-Path $portable "bootstrap\windows\uv"
           $pythonDir = Join-Path $portable "runtimes\python"

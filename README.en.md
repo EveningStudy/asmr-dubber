@@ -29,29 +29,63 @@ Works with Japanese, English and Chinese audio or video, and dubs into Chinese o
 
 Headphones recommended.
 
-### Sample 1 · RTF
+The dubbed demos use ASMR Dubber 3.0 factory defaults and the corresponding output presets. The bilingual mix retains the Japanese original and adds Chinese dubbing processed with RTF (spatial-cue transfer from the original). The fully dubbed mix also uses RTF and separates vocals so it can replace the original voice only in dubbed sentences, leaving the rest as recorded. Separation may leave some Japanese speech or alter sound effects. Speech that recognition misses keeps its original voice, so complete removal is not guaranteed.
 
-Bilingual audio: the Japanese original is retained and mixed with Chinese dubbing processed by RTF (original spatial-cue transfer).
+### Sample 1
 
-https://github.com/user-attachments/assets/2eddb029-1a6d-4daf-8f53-741b46141f4d
+**Original**
 
-### Sample 2 · RTF
+https://github.com/user-attachments/assets/67e3dbf2-4727-4d9c-8f06-38eeee6fbce1
 
-Bilingual audio: RTF-processed Chinese dubbing is mixed with the retained Japanese original.
+**Bilingual (RTF)**
 
-https://github.com/user-attachments/assets/8068b982-95c0-4561-8d18-f82cb8cebb6e
+https://github.com/user-attachments/assets/3508d200-9477-48a2-baa7-27b5be211cf1
 
-### Sample 3 · RTF
+**Fully dubbed (RTF + vocal separation)**
 
-Bilingual audio: the Japanese original plus RTF-processed Chinese dubbing. Compare it with the vocal-separation version below.
+https://github.com/user-attachments/assets/324b242b-ace9-4643-a4be-46545ae80b02
 
-https://github.com/user-attachments/assets/4e7618af-ad3d-4931-9749-4b39816d01d8
+### Sample 2
 
-### Sample 3 · RTF + vocal separation
+**Original**
 
-Fully dubbed mix: separate Japanese vocals from the background, recognize and translate the speech, then synthesize Chinese dubbing. RTF transfers spatial cues from the original to the dub, which then replaces the original voice in the dubbed sentences only; everything else stays as recorded. Separation may leave Japanese speech or alter sound effects, and speech that recognition misses keeps its original voice, so complete removal is not guaranteed.
+https://github.com/user-attachments/assets/75549f29-1435-448a-851a-86f2828f356a
 
-https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
+**Bilingual (RTF)**
+
+https://github.com/user-attachments/assets/1e335590-c1b3-4a20-ba96-ecf77a0423d3
+
+**Fully dubbed (RTF + vocal separation)**
+
+https://github.com/user-attachments/assets/f5099846-7f9d-4c65-aef6-c24e1393c1a2
+
+### Sample 3
+
+**Original**
+
+https://github.com/user-attachments/assets/f1e55d2d-be2a-45b6-90a3-76a92ff47920
+
+**Bilingual (RTF)**
+
+https://github.com/user-attachments/assets/314eec6d-f903-4c6b-ae8f-52882f897ba0
+
+**Fully dubbed (RTF + vocal separation)**
+
+https://github.com/user-attachments/assets/619dfe0f-2a4b-42fb-a769-d75eed1dbd53
+
+### Sample 4 (18+)
+
+**Original**
+
+https://github.com/user-attachments/assets/74c76761-def1-47b3-a58c-03de69483bad
+
+**Bilingual (RTF)**
+
+https://github.com/user-attachments/assets/0939c7d6-1f04-4a24-a393-25b57614aec7
+
+**Fully dubbed (RTF + vocal separation)**
+
+https://github.com/user-attachments/assets/85fdff01-d78c-4fa6-a93c-8b56a182981c
 
 [Watch the introduction and demo of an older version on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Please refer to the documents for current information.
 

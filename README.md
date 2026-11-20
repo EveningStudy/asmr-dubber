@@ -29,29 +29,63 @@
 
 建议戴耳机。
 
-### 素材 1 · RTF
+配音演示采用 ASMR Dubber 3.0 的出厂默认设置与对应的输出预设。双语版保留日语原声，叠加经过 RTF（原声空间线索迁移）处理的中文配音。完全配音版也使用 RTF，并通过人声分离只替换有配音的句子里的原人声，其余时间保持原声。分离可能残留日语或影响音效，识别漏掉的部分会保留原声，不保证完全消除原人声。
 
-双语音声：保留日语原声，叠加经过 RTF（原声空间线索迁移）处理的中文配音。
+### 素材 1
 
-https://github.com/user-attachments/assets/2eddb029-1a6d-4daf-8f53-741b46141f4d
+**原声**
 
-### 素材 2 · RTF
+https://github.com/user-attachments/assets/67e3dbf2-4727-4d9c-8f06-38eeee6fbce1
 
-双语音声：保留日语原声，中文配音经 RTF 处理后与原声混合。
+**双语版（RTF）**
 
-https://github.com/user-attachments/assets/8068b982-95c0-4561-8d18-f82cb8cebb6e
+https://github.com/user-attachments/assets/3508d200-9477-48a2-baa7-27b5be211cf1
 
-### 素材 3 · RTF
+**完全配音版（RTF + 人声分离）**
 
-双语音声：保留日语原声，叠加经过 RTF 处理的中文配音，可与下方的人声分离版本对比试听。
+https://github.com/user-attachments/assets/324b242b-ace9-4643-a4be-46545ae80b02
 
-https://github.com/user-attachments/assets/4e7618af-ad3d-4931-9749-4b39816d01d8
+### 素材 2
 
-### 素材 3 · RTF + 人声分离
+**原声**
 
-完全配音版：先分离日语人声与背景，再识别、翻译并生成中文配音；中文配音经 RTF 迁移原声的空间线索后，替换有配音的句子里的原人声，其余时间保持原声。分离可能残留日语或影响音效，识别漏掉的部分会保留原声，不保证完全消除原人声。
+https://github.com/user-attachments/assets/75549f29-1435-448a-851a-86f2828f356a
 
-https://github.com/user-attachments/assets/a8841fb0-e4f1-4383-92bb-942805ff1adc
+**双语版（RTF）**
+
+https://github.com/user-attachments/assets/1e335590-c1b3-4a20-ba96-ecf77a0423d3
+
+**完全配音版（RTF + 人声分离）**
+
+https://github.com/user-attachments/assets/f5099846-7f9d-4c65-aef6-c24e1393c1a2
+
+### 素材 3
+
+**原声**
+
+https://github.com/user-attachments/assets/f1e55d2d-be2a-45b6-90a3-76a92ff47920
+
+**双语版（RTF）**
+
+https://github.com/user-attachments/assets/314eec6d-f903-4c6b-ae8f-52882f897ba0
+
+**完全配音版（RTF + 人声分离）**
+
+https://github.com/user-attachments/assets/619dfe0f-2a4b-42fb-a769-d75eed1dbd53
+
+### 素材 4（18+）
+
+**原声**
+
+https://github.com/user-attachments/assets/74c76761-def1-47b3-a58c-03de69483bad
+
+**双语版（RTF）**
+
+https://github.com/user-attachments/assets/0939c7d6-1f04-4a24-a393-25b57614aec7
+
+**完全配音版（RTF + 人声分离）**
+
+https://github.com/user-attachments/assets/85fdff01-d78c-4fa6-a93c-8b56a182981c
 
 [在 B 站观看旧版本的介绍与演示](https://www.bilibili.com/video/BV1f43G6YEov/)。目前版本的使用请以文档为准。
 

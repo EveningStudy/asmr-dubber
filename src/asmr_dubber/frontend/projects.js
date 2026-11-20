@@ -8,6 +8,7 @@ import { matchesRowFilter } from './project_revise.js';
 import { transcriptDialog, referenceDialog, reviewDialog, openProjectDialog } from './project_dialogs.js';
 import { initializeReview } from './project_review.js';
 import { initializeCompare, renderCompare } from './compare_player.js';
+import { refreshStepHints, confirmAnalyze, exportRequest, initializeStepHints } from './project_steps.js';
 import {
   resetEditorHistory,
   recordListUndo,
@@ -89,21 +90,13 @@ function refreshProjectStats() {
     enabled = project.sentences.filter((sentence) => sentence.enabled),
     hasTr = (s) => Boolean(s.target_text ?? s.zh_text),
     translated = enabled.filter(hasTr).length,
-    voiced = enabled.filter((sentence) => sentence.tts_file).length,
-    undubbed = enabled.filter((s) => hasTr(s) && !s.tts_file).length;
-  $('#asrStat').textContent = t('已识别 {count} 句。重新识别会替换现有句子，译文和配音要重做。', { count: project.sentences.length });
+    voiced = enabled.filter((sentence) => sentence.tts_file).length;
+  refreshStepHints(project);
   $('#translateRemaining').textContent = t('翻译剩余 {count} 句', { count: enabled.length - translated });
   $('#translationStat').textContent = t('已翻译 {done} / {total} 句。', { done: translated, total: enabled.length });
   $('#synthesizeRemaining').textContent = t('生成剩余 {count} 句', { count: enabled.filter((s) => hasTr(s) && !s.tts_file).length });
   $('#dubStat').textContent = t('已完成 {done} / {total} 句。只生成还没有配音、或译文改过的句子。', { done: voiced, total: enabled.length });
   $('#dubBar').style.width = `${enabled.length ? (voiced / enabled.length) * 100 : 0}%`;
-  $('#exportStat').textContent = project.sentences.length === 0
-    ? t('还没有句子，请先识别或导入台本。')
-    : translated === 0
-      ? t('还没有已翻译的句子，导出成品里将只有原声。')
-      : undubbed
-        ? t('还有 {count} 句没有配音，成品里这些句子只有原声。', { count: undubbed })
-        : t('所有句子都已配音。');
   $$('#steps button').forEach((button, index) =>
     button.classList.toggle(
       'done',
@@ -273,6 +266,7 @@ export function initializeProjects() {
   initializeRecovery(saveRows, renderProject, dialog);
   initializeReview({ save: saveRows, render: renderProject, getSelected: () => selected });
   initializeCompare();
+  initializeStepHints(refreshProjectStats);
   initializeSentenceEditor({
     filteredSentences,
     getSelected: () => selected,
@@ -294,16 +288,18 @@ export function initializeProjects() {
     renderRows();
     $(`#rows [data-sentence="${CSS.escape(event.detail)}"]`)?.scrollIntoView({ block: 'center' });
   });
-  $('#exportProject').onclick = guard(() =>
-    startTask('export', { audio: $('#exportAudio').value === 'true', language: $('#exportSubtitle').value }),
-  );
+  $('#exportProject').onclick = guard(() => startTask('export', exportRequest()));
   document.addEventListener(
     'click',
     guard(async (event) => {
       const open = event.target.closest('[data-open]');
       if (open) { await openProject(open.dataset.open); return; }
       const task = event.target.closest('[data-task]');
-      if (task) { await startTask(task.dataset.task); return; }
+      if (task) {
+        if (task.dataset.task === 'analyze' && !confirmAnalyze(state.project)) return;
+        await startTask(task.dataset.task);
+        return;
+      }
       const review = event.target.closest('[data-review-task]');
       if (review) {
         await startTask(review.dataset.reviewTask, {

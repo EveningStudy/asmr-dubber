@@ -179,26 +179,25 @@ def _resolve_expected_sha256(asset):
     sidecar_url = str(asset.get("sha256_url") or "").strip()
     if not sidecar_url:
         return ""
-    last_exc = None
-    for candidate in _download_candidates(sidecar_url):
-        try:
-            response = httpx.get(candidate, timeout=15, follow_redirects=True)
-            response.raise_for_status()
-            match = re.match(r"^([0-9a-fA-F]{64})(?:\s|$)", response.text.strip())
-            if not match:
-                raise ValueError("更新包的 SHA-256 校验文件格式无效。")
-            return match.group(1).lower()
-        except ValueError:
-            raise
-        except Exception as exc:
-            last_exc = exc
-    raise ValueError("无法下载更新包的 SHA-256 校验文件，请重试。") from last_exc
+    # The checksum is what makes a proxy download trustworthy, so it is only
+    # read from GitHub itself; a proxy could otherwise serve a matching pair.
+    try:
+        response = httpx.get(sidecar_url, timeout=15, follow_redirects=True)
+        response.raise_for_status()
+    except Exception as exc:
+        raise ValueError("无法下载更新包的 SHA-256 校验文件，请重试。") from exc
+    match = re.match(r"^([0-9a-fA-F]{64})(?:\s|$)", response.text.strip())
+    if not match:
+        raise ValueError("更新包的 SHA-256 校验文件格式无效。")
+    return match.group(1).lower()
 
 
 def _download(asset, archive, report, token):
     expected_sha256 = _resolve_expected_sha256(asset)
     last_error = None
-    for candidate in _download_candidates(asset["url"]):
+    # Third-party GitHub proxies are only used when the archive can be verified.
+    candidates = _download_candidates(asset["url"]) if expected_sha256 else (asset["url"],)
+    for candidate in candidates:
         digest = hashlib.sha256()
         done = 0
         try:

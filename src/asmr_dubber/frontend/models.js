@@ -94,7 +94,10 @@ export function initializeModels() {
       if (remove) {
         const entry = catalog?.items?.find((item) => item.id === remove.dataset.removeModel);
         const name = t(entry?.name || remove.dataset.removeModel);
-        if (!window.confirm(t('确定要删除已下载的模型“{name}”吗？之后需要重新下载才能使用。', { name }))) return;
+        const question = ['indextts2', 'indextts2_5'].includes(remove.dataset.removeModel)
+          ? '确定要删除“{name}”吗？会连同它自带的运行环境（约 9 GB）一起删除，之后需要重新下载才能使用。'
+          : '确定要删除已下载的模型“{name}”吗？之后需要重新下载才能使用。';
+        if (!window.confirm(t(question, { name }))) return;
         await api('models/remove', { model: remove.dataset.removeModel });
         await refreshModels();
         return;

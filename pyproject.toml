@@ -119,6 +119,8 @@ include = [
   "/pyproject.toml",
   "/uv.lock",
 ]
+# README demo audio is for the repository page only.
+exclude = ["/assets/demos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -348,13 +348,13 @@ def _request_gemini_content(
     if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
         raise _NonRetryableTranslationError(
             f"Gemini 安全策略拦截了翻译请求（blockReason={prompt_feedback['blockReason']}）。",
-            fatal=True,
+            fatal=False,
         )
     candidates = data.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         raise _NonRetryableTranslationError(
             "Gemini 未返回候选结果（可能被安全策略拦截）。",
-            fatal=True,
+            fatal=False,
         )
     candidate = candidates[0]
     finish_reason = candidate.get("finishReason")
@@ -373,6 +373,6 @@ def _request_gemini_content(
     }:
         raise _NonRetryableTranslationError(
             f"Gemini 安全策略拦截了翻译输出（finishReason={finish_reason}）。",
-            fatal=True,
+            fatal=False,
         )
     return content, finish_reason in {"MAX_TOKENS", "LENGTH"}

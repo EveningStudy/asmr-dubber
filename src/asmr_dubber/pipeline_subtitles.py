@@ -73,19 +73,25 @@ def generate_subtitles(
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
     output_variant: str | None = None,
+    render_video: bool = True,
 ) -> tuple[Path, Path, Path | None]:
-    """Create external subtitles and, for video projects, a subtitled video."""
+    """Create external subtitles and, for video projects, a subtitled video.
+
+    ``render_video=False`` writes only SRT/LRC, for callers that build their own
+    video (batch harmonized/no-embed modes) and would discard this one.
+    """
     from . import pipeline
     from .stem_cache import variant_directory
 
     pipeline.require_supported_platform()
     pipeline.check_cancelled(cancel_event)
+    with_video = render_video and project.source.media_type == "video"
     normalized_language: SubtitleLanguage = "source" if language == "ja" else language
     output_dir = variant_directory(project_dir, output_variant)
     source = pipeline.verify_source(project_dir, project.source)
 
     if progress:
-        progress("生成 SRT 与 LRC 字幕", 0, 2 if project.source.media_type == "video" else 1)
+        progress("生成 SRT 与 LRC 字幕", 0, 2 if with_video else 1)
     media_duration = project.source.duration_seconds
     if project.settings.subtitle_timeline == "dubbing":
         from .audio import probe_audio
@@ -161,7 +167,7 @@ def generate_subtitles(
     pipeline.check_cancelled(cancel_event)
 
     video_output: Path | None = None
-    if project.source.media_type == "video":
+    if with_video:
         mixed_audio: Path | None = None
         if project.output_file:
             candidate = pipeline.resolve_project_path(project_dir, project.output_file, "完成音频")

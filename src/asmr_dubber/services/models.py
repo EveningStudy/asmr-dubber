@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -65,11 +66,30 @@ def separation_files(model):
 
 
 def directory_bytes(path):
-    if not path.exists():
-        return 0
-    return sum(
-        file.stat().st_size for file in path.rglob("*") if file.is_file() and not file.is_symlink()
-    )
+    """Bytes of regular files below ``path``; unreadable entries and links are skipped.
+
+    A single inaccessible entry (e.g. a Linux symlink copied onto Windows raises
+    WinError 1920) must not make the whole storage page fail.
+    """
+    total = 0
+    pending = [os.fspath(path)]
+    while pending:
+        try:
+            entries = os.scandir(pending.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+    return total
 
 
 def model_storage(settings):
@@ -86,6 +106,7 @@ def model_storage(settings):
     return {
         "total_bytes": sum(directory_bytes(path) for path in roots),
         "cache_bytes": sum(directory_bytes(path) for path in cache_roots),
+        "roots": roots,
     }
 
 
@@ -300,6 +321,18 @@ def import_packs(request, report, token):
     return {"message": f"已处理 {len(results)} 个模型包。"}
 
 
+def _retry_writable(function, path, _error):
+    """Windows refuses to delete read-only files (common in installed packages).
+
+    A file that is still locked is left for the final check, which reports it.
+    """
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    except OSError:
+        pass
+
+
 def remove(identifier):
     settings = current()
     home = portable_home()
@@ -339,6 +372,13 @@ def remove(identifier):
                 else settings.tts_index25_model_path
             )
         )
+        # Its own Python environment (PyTorch, ~9 GB) is useless without the model;
+        # the next download reinstalls both.
+        runtime_root = (
+            home / "runtimes" / ("index-tts" if identifier == "indextts2" else "index-tts-2.5")
+        )
+        if runtime_root.exists():
+            candidates.append(runtime_root)
     elif identifier in OPTIONAL_MODELS:
         path = cached_model_path(OPTIONAL_MODELS[identifier][0])
         if path:
@@ -367,7 +407,7 @@ def remove(identifier):
             raise ValueError("模型路径不在受管理的文件夹内。")
     for candidate in candidates:
         if candidate.is_dir():
-            shutil.rmtree(candidate)
+            shutil.rmtree(candidate, onexc=_retry_writable)
         else:
             candidate.unlink(missing_ok=True)
     if any(candidate.exists() for candidate in candidates):

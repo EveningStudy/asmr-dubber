@@ -47,14 +47,16 @@ function keyRow(kind, id, label, status) {
 }
 export async function refreshStorage() {
   const result = await api('storage/get');
+  // Biggest first: users want to know where tens of gigabytes went.
+  const places = [...(result.locations || [])].sort((a, b) => b.bytes - a.bytes);
+  const place = (item) =>
+    `<div class="row"><div class="grow"><div class="t">${esc(t(item.label))} · ${size(item.bytes)}</div><div class="d">${esc(t(item.hint))}</div><div class="d muted">${esc(item.path)}</div></div><button class="btn" data-open-storage="${esc(item.key)}"${item.exists ? '' : ' disabled'}>${t('打开文件夹')}</button></div>`;
   $('#storageView').innerHTML =
-    `<div class="card" style="padding:16px 18px"><div>${t('已用')} ${size(Object.values(result.sizes).reduce((a, b) => a + b, 0))}</div><div class="legend">${Object.entries(
-      result.sizes,
-    )
-      .map(([name, bytes]) => `<span>${t(name)} ${size(bytes)}</span>`)
-      .join(
-        '',
-      )}</div></div><div class="label"><b>${t('项目与批量中间产物')}</b></div><div class="card">${(result.projects || []).map(p => `<div class="row"><div class="grow"><div class="t">${esc(p.label)}</div><div class="d">${esc(p.path)}</div></div></div>`).join('') || `<p class="empty">${t('还没有项目')}</p>`}</div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
+    `<div class="card" style="padding:16px 18px"><div>${t('已用')} ${size(places.reduce((sum, item) => sum + item.bytes, 0))}</div><div class="legend">${places
+      .map((item) => `<span>${esc(t(item.label))} ${size(item.bytes)}</span>`)
+      .join('')}</div></div><div class="label"><b>${t('空间用在哪里')}</b><span>${t('点“打开文件夹”可以在文件管理器里查看')}</span></div><div class="card">${places
+      .map(place)
+      .join('')}</div><div class="label"><b>${t('项目与批量中间产物')}</b></div><div class="card">${(result.projects || []).map(p => `<div class="row"><div class="grow"><div class="t">${esc(p.label)}</div><div class="d">${esc(p.path)}</div></div></div>`).join('') || `<p class="empty">${t('还没有项目')}</p>`}</div><div class="label"><b>${t('清理缓存')}</b><span>${t('不会删除项目、配音和成品')}</span></div><div class="card">${[
       ['safe', '临时文件', '可以放心删。'],
       ['rebuild', '导出用的中间文件', '删了以后，下次导出要多花几分钟重新计算。'],
       ['separation', '人声分离结果', '删了以后，再做完全配音版要重新分离，比较慢。'],
@@ -98,7 +100,7 @@ export function renderDiagnosticTasks() {
 export async function refreshLogs() {
   const result = await api('logs/get');
   $('#logsView').innerHTML =
-    `<div class="card"><div class="row"><div class="grow"><div class="t">${t('检查运行环境')}</div><div class="d">${t('显卡驱动、模型文件、运行库。出问题时先点这个。')}</div></div><button class="btn" id="checkHealth">${t('开始检查')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复微软 VC++ 运行库')}</div><div class="d">${t('从微软官网下载，可能会请求管理员权限。')}</div></div><button class="btn" data-repair="vc">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复某个模型的运行环境')}</div></div><select id="healthBackend">${options(
+    `<div class="card"><div class="row"><div class="grow"><div class="t">${t('检查运行环境')}</div><div class="d">${t('显卡驱动、模型文件、运行库；缺 DLL 时会写出具体文件名。检查的是下面选中的后端。')}</div></div><button class="btn" id="checkHealth">${t('开始检查')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复微软 VC++ 运行库')}</div><div class="d">${t('从微软官网下载，可能会请求管理员权限。')}</div></div><button class="btn" data-repair="vc">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('修复某个模型的运行环境')}</div></div><select id="healthBackend">${options(
       Object.entries(state.boot.health_backends).map(([id, label]) => [label, id]),
       Object.keys(state.boot.health_backends)[0],
     )}</select><button class="btn" data-repair="backend">${t('修复')}</button></div><div class="row"><div class="grow"><div class="t">${t('导出日志')}</div><div class="d">${t('Key 会自动隐藏，但日志里有本机路径，发给别人前看一眼。')}</div></div><a class="btn" download="ASMR-Dubber.log.txt" href="${esc(result.url)}">${t('导出')}</a></div></div><div class="label"><b>${t('最近日志')}</b></div><div class="card"><pre class="log">${esc(result.text)}</pre></div><div id="diagnosticTasks"></div>`;
@@ -126,6 +128,11 @@ export function initializeSettings() {
             renderKeys();
           },
         );
+        return;
+      }
+      const place = event.target.closest('[data-open-storage]');
+      if (place) {
+        await api('storage/open', { key: place.dataset.openStorage });
         return;
       }
       const clear = event.target.closest('[data-clear-key]');

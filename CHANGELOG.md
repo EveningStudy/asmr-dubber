@@ -4,7 +4,7 @@
 
 ASMR Dubber 各版本的重要变更记录在此文件中。
 
-## [3.0.0] - 2026-11-18
+## [3.0.0] - 2026-11-20
 
 ### 完全配音版 3.0 与音频引擎
 - **完全配音版推荐 IndexTTS-2.5，自有 IndexTTS2 Worker**：“完全配音版”预设在已安装 IndexTTS-2.5 时自动切换到它（未安装则提示）。新增独立 `indextts2_worker.py` 并升级 `indextts25_worker.py`，支持原生 S2Mel 目标时长控制（`tts_fit_source_duration`）、`--daemon` 常驻 JSONL 协议与多候选可复现种子。在 7 段评测素材上，起点偏差中位数降至 `38.0 ms`（`p95 = 107.6 ms`），需加速超过 `1.1×` 的句子降至 `8%`。
@@ -23,6 +23,7 @@ ASMR Dubber 各版本的重要变更记录在此文件中。
 - **虚拟滚动句子表与交互式迷你波形**：用虚拟滚动取代每页 50 行翻页（上千句流畅滚动），新增逐行独立的原声片段（`▶`）与配音（`▶`）一键试听、带起止拖拽手柄的迷你波形、键盘工作流（`↑/↓` 选句、空格试听、回车编辑）以及 `Ctrl+Z` / `Ctrl+Y` 撤销重做。
 - **时长预算翻译、压缩、按要求改译与读音词典**：新增按句时长预算（`translation_length_budget`）、自动与一键压缩过长译文、按要求改译提议审阅、单句多候选配音（`+3`），以及项目级读音词典与中文数字/百分比读法展开（`tts_pronunciation_glossary`、`tts_spoken_normalization`）。
 - **本机大文件免复制与程序生命周期**：新增仅限本机访问的原生文件选择（`files/media`）与同盘视频文件的硬链接建项（音频仍复制一份，原文件被标签软件改动也不影响项目）、增量任务轮询（`tasks/poll`）、单行保存 I/O 加速、首次启动向导、质量与成品类型预设、全局任务面板，以及左下角“退出程序”按钮。
+- **存储占用一目了然、缺 DLL 直接点名**：“设置 → 存储”按大小列出项目、模型、各后端运行环境（此前未计入，常有几十 GB）、程序主环境、缓存和离线模型包，每项可直接打开文件夹；在“模型”页删除 IndexTTS 会连同它约 9 GB 的运行环境一起删除；“检查运行环境”会读取后端文件的依赖，写出具体缺哪个 DLL 及补法（VC++ 运行库、Windows 媒体功能、NVIDIA 驱动）。识别按钮首次显示“开始识别”，重新识别前先确认；翻译步骤可一键去导出字幕、不配音。
 
 ### 批量引擎、数据模型 v4 与国内镜像
 - **批量进程内执行与常驻模型池**：AutoFlow 批量队列在进程内直接调用流水线函数（`inprocess_pipeline.py`），配合常驻识别会话与常驻 IndexTTS 守护进程池（`tts_daemon.py`），识别和配音模型在整个队列只加载一次（实测 10 个作品时加载约占总时长 10%–14%）；移除 `autoflow/` 中所有交互式 `input()` 与裸 `print()`。批量输出文件夹统一命名为 `完全配音版`（已有的旧 `替换配音版` 成品仍兼容续跑与复用）。
@@ -44,4 +45,4 @@ ASMR Dubber 各版本的重要变更记录在此文件中。
 - 旧项目自动保留原有的参考音频与停顿/数字处理设置（`reference_audio_mode = "legacy"`、`tts_normalize_pauses = false`、`tts_fit_source_duration = false`、`tts_dual_voice_anchor = false`、`tts_spoken_normalization = false`），**已有配音缓存 100% 继续有效，不会被迫重新合成**。
 
 ## [2.2.1] - 上一正式版
-- 见 [docs/RELEASE.md](docs/RELEASE.md) 与 `v2.2.1` 标签历史记录。
+- 见 [v2.2.1 发布说明](https://github.com/EveningStudy/asmr-dubber/releases/tag/v2.2.1)；更早的版本见 GitHub Releases。

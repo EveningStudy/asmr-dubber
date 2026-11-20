@@ -206,9 +206,10 @@ def test_separation_mix_mode_replace_auto_enables_separation_and_corrupt_interfa
     assert active.settings.separation_mix_mode == "replace"
     assert active.settings.separation_enabled is True
 
-    # Bilingual preset resets separation_enabled back to False
+    # The bilingual preset leaves vocal separation as the user set it
     bilingual = next(p for p in presets.catalog() if p["id"] == "bilingual")
-    assert bilingual["changes"]["separation_enabled"] is False
+    assert "separation_enabled" not in bilingual["changes"]
+    assert bilingual["changes"]["separation_mix_mode"] == "bilingual"
 
     # Explicit separation_enabled=False is still rejected
     with pytest.raises(Exception, match="人声分离"):

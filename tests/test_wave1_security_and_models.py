@@ -295,6 +295,43 @@ def test_services_models_remove_parakeet_and_faster_whisper(tmp_path: Path, monk
     assert not fw_local.exists()
 
 
+def test_removing_indextts_also_removes_its_own_environment(tmp_path: Path, monkeypatch) -> None:
+    import os
+    import stat
+
+    home = tmp_path / ".asmr-dubber"
+    runtimes = home / "runtimes"
+    for name in ("index-tts", "index-tts-2.5"):
+        (runtimes / name / "checkpoints").mkdir(parents=True)
+        (runtimes / name / "checkpoints" / "gpt.pth").write_bytes(b"w")
+        (runtimes / name / ".venv" / "Lib").mkdir(parents=True)
+        (runtimes / name / "user-state" / "Local").mkdir(parents=True)
+    locked = runtimes / "index-tts" / ".venv" / "Lib" / "torch.dll"
+    locked.write_bytes(b"dll")
+    os.chmod(locked, stat.S_IREAD)  # installed packages are often read-only on Windows
+    shared_python = runtimes / "python" / "cpython-3.11"
+    shared_python.mkdir(parents=True)
+
+    monkeypatch.setattr(models_service, "portable_home", lambda: home)
+    monkeypatch.setattr(
+        models_service,
+        "current",
+        lambda: UserSettings(
+            tts_model_path=str(runtimes / "index-tts" / "checkpoints"),
+            tts_index25_model_path=str(runtimes / "index-tts-2.5" / "checkpoints"),
+        ),
+    )
+
+    assert models_service.remove("indextts2") == {"removed": "indextts2"}
+    assert not (runtimes / "index-tts").exists()
+    assert (runtimes / "index-tts-2.5" / ".venv").is_dir()  # the other backend stays
+    assert shared_python.is_dir()  # the shared base Python stays
+
+    assert models_service.remove("indextts2_5") == {"removed": "indextts2_5"}
+    assert not (runtimes / "index-tts-2.5").exists()
+    assert shared_python.is_dir()
+
+
 def test_optional_model_download_passes_pinned_revision_and_only_needed_extra(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -423,7 +460,28 @@ def test_updates_rejects_symlinks_verifies_sidecar_and_handles_old_lock(
             lambda *_: None,
             threading.Event(),
         )
-    assert requested_urls[0].startswith("https://ghfast.top/")
+    # The checksum itself only comes from GitHub; the archive may use a proxy.
+    assert requested_urls[0].endswith("/a.zip.sha256")
+    assert requested_urls[0].startswith("https://github.com/")
+    assert requested_urls[1].startswith("https://ghfast.top/")
+
+    # 3b. Without any trusted checksum the archive is never fetched through a proxy.
+    requested_urls.clear()
+    updates._download(
+        {
+            "name": "a.zip",
+            "url": "https://github.com/EveningStudy/asmr-dubber/releases/download/v1.0.0/a.zip",
+            "size": len(b"tampered" * 2),
+            "sha256": "",
+            "digest_malformed": False,
+        },
+        tmp_path / "direct.zip",
+        lambda *_: None,
+        threading.Event(),
+    )
+    assert requested_urls == [
+        "https://github.com/EveningStudy/asmr-dubber/releases/download/v1.0.0/a.zip"
+    ]
 
     # 4. _replace falls back to unique .old.<pid> if .old cannot be unlinked.
     src = tmp_path / "new.exe"

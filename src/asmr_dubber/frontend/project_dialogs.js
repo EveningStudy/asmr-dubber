@@ -175,7 +175,7 @@ export async function reviewDialog() {
   const overview = await api('review/get', { project: state.project.manifest });
   dialog(
     '音频复核提案：试听、采纳与撤销',
-    `<p>${esc(overview.status)}</p><div class="card group">${field('复核音频片段', `<select id="reviewWindow">${options(overview.choices, overview.choices[0]?.[1])}</select>`)}${field('候选文字', '<select id="reviewCandidate"></select>')}</div><div id="reviewDiff"></div><audio controls id="reviewAudio" style="width:100%"></audio><div class="review-actions">${[
+    `<p>${esc(t(overview.status))}</p><div class="card group">${field('复核音频片段', `<select id="reviewWindow">${options(overview.choices, overview.choices[0]?.[1])}</select>`)}${field('候选文字', '<select id="reviewCandidate"></select>')}</div><div id="reviewDiff"></div><audio controls id="reviewAudio" style="width:100%"></audio><div class="review-actions">${[
       ['accept_review', '采纳所选候选'],
       ['keep_review', '保留并确认主稿'],
       ['undo_review', '撤销上一次采纳或确认'],
