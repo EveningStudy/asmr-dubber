@@ -417,6 +417,7 @@ def synthesize_with_selected_backend(
 
         items = iter(pending)
         completed_count = 0
+        max_pending = 1 if request_workers == 1 else request_workers * 2
 
         def generate_one(
             sentence: Sentence, reference: VoiceReference, output: Path
@@ -438,7 +439,7 @@ def synthesize_with_selected_backend(
 
                 def fill_window() -> None:
                     nonlocal completed_count
-                    while len(futures) < max(1, request_workers) * 2:
+                    while len(futures) < max_pending:
                         check_cancelled(cancel_event)
                         sentence = next(items, None)
                         if sentence is None:
