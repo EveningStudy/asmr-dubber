@@ -27,66 +27,6 @@
 
 ## 先听效果
 
-建议戴耳机。
-
-配音演示采用 ASMR Dubber 3.0 的出厂默认设置与对应的输出预设。双语版保留日语原声，叠加经过 RTF（原声空间线索迁移）处理的中文配音。完全配音版也使用 RTF，并通过人声分离只替换有配音的句子里的原人声，其余时间保持原声。分离可能残留日语或影响音效，识别漏掉的部分会保留原声，不保证完全消除原人声。
-
-### 素材 1
-
-**原声**
-
-https://github.com/user-attachments/assets/67e3dbf2-4727-4d9c-8f06-38eeee6fbce1
-
-**双语版（RTF）**
-
-https://github.com/user-attachments/assets/3508d200-9477-48a2-baa7-27b5be211cf1
-
-**完全配音版（RTF + 人声分离）**
-
-https://github.com/user-attachments/assets/324b242b-ace9-4643-a4be-46545ae80b02
-
-### 素材 2
-
-**原声**
-
-https://github.com/user-attachments/assets/75549f29-1435-448a-851a-86f2828f356a
-
-**双语版（RTF）**
-
-https://github.com/user-attachments/assets/1e335590-c1b3-4a20-ba96-ecf77a0423d3
-
-**完全配音版（RTF + 人声分离）**
-
-https://github.com/user-attachments/assets/f5099846-7f9d-4c65-aef6-c24e1393c1a2
-
-### 素材 3
-
-**原声**
-
-https://github.com/user-attachments/assets/f1e55d2d-be2a-45b6-90a3-76a92ff47920
-
-**双语版（RTF）**
-
-https://github.com/user-attachments/assets/314eec6d-f903-4c6b-ae8f-52882f897ba0
-
-**完全配音版（RTF + 人声分离）**
-
-https://github.com/user-attachments/assets/619dfe0f-2a4b-42fb-a769-d75eed1dbd53
-
-### 素材 4（18+）
-
-**原声**
-
-https://github.com/user-attachments/assets/74c76761-def1-47b3-a58c-03de69483bad
-
-**双语版（RTF）**
-
-https://github.com/user-attachments/assets/0939c7d6-1f04-4a24-a393-25b57614aec7
-
-**完全配音版（RTF + 人声分离）**
-
-https://github.com/user-attachments/assets/85fdff01-d78c-4fa6-a93c-8b56a182981c
-
 [在 B 站观看旧版本的介绍与演示](https://www.bilibili.com/video/BV1f43G6YEov/)。目前版本的使用请以文档为准。
 
 [更多音声示例](https://space.bilibili.com/3747523753675973)。一些使用本程序制作的音声实例，效果仅供参考，实际表现因素材、模型与参数设置而异。

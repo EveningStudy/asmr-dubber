@@ -27,66 +27,6 @@ Works with Japanese, English and Chinese audio or video, and dubs into Chinese o
 
 ## Listen first
 
-Headphones recommended.
-
-The dubbed demos use ASMR Dubber 3.0 factory defaults and the corresponding output presets. The bilingual mix retains the Japanese original and adds Chinese dubbing processed with RTF (spatial-cue transfer from the original). The fully dubbed mix also uses RTF and separates vocals so it can replace the original voice only in dubbed sentences, leaving the rest as recorded. Separation may leave some Japanese speech or alter sound effects. Speech that recognition misses keeps its original voice, so complete removal is not guaranteed.
-
-### Sample 1
-
-**Original**
-
-https://github.com/user-attachments/assets/67e3dbf2-4727-4d9c-8f06-38eeee6fbce1
-
-**Bilingual (RTF)**
-
-https://github.com/user-attachments/assets/3508d200-9477-48a2-baa7-27b5be211cf1
-
-**Fully dubbed (RTF + vocal separation)**
-
-https://github.com/user-attachments/assets/324b242b-ace9-4643-a4be-46545ae80b02
-
-### Sample 2
-
-**Original**
-
-https://github.com/user-attachments/assets/75549f29-1435-448a-851a-86f2828f356a
-
-**Bilingual (RTF)**
-
-https://github.com/user-attachments/assets/1e335590-c1b3-4a20-ba96-ecf77a0423d3
-
-**Fully dubbed (RTF + vocal separation)**
-
-https://github.com/user-attachments/assets/f5099846-7f9d-4c65-aef6-c24e1393c1a2
-
-### Sample 3
-
-**Original**
-
-https://github.com/user-attachments/assets/f1e55d2d-be2a-45b6-90a3-76a92ff47920
-
-**Bilingual (RTF)**
-
-https://github.com/user-attachments/assets/314eec6d-f903-4c6b-ae8f-52882f897ba0
-
-**Fully dubbed (RTF + vocal separation)**
-
-https://github.com/user-attachments/assets/619dfe0f-2a4b-42fb-a769-d75eed1dbd53
-
-### Sample 4 (18+)
-
-**Original**
-
-https://github.com/user-attachments/assets/74c76761-def1-47b3-a58c-03de69483bad
-
-**Bilingual (RTF)**
-
-https://github.com/user-attachments/assets/0939c7d6-1f04-4a24-a393-25b57614aec7
-
-**Fully dubbed (RTF + vocal separation)**
-
-https://github.com/user-attachments/assets/85fdff01-d78c-4fa6-a93c-8b56a182981c
-
 [Watch the introduction and demo of an older version on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Please refer to the documents for current information.
 
 [More audio examples](https://space.bilibili.com/3747523753675973) made with this program. Results vary with the source material, models and settings.
