@@ -16,7 +16,7 @@ def _powershell_dialog(script: str) -> str:
         text=True,
         encoding="utf-8",
         check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     return result.stdout.strip()
 
