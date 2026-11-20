@@ -514,7 +514,9 @@ def test_preflight_blocks_on_low_disk_with_a_clear_message(quiet_machine, monkey
 def test_preflight_vram_levels(quiet_machine, monkeypatch):
     from asmr_dubber import runtime_manager
 
-    plans = [make_plan(quiet_machine)]
+    plan = make_plan(quiet_machine)
+    plan.edition["output_policy"]["settings"]["asr_backend"] = "anime_whisper"
+    plans = [plan]
     monkeypatch.setattr(runtime_manager, "detect_hardware", lambda: Hardware(1.5))
     low = by_id(batch_preflight.run_preflight(plans, network=False))["vram"]
     assert low.status == FAIL and "显存" in low.message and "1.5 GB" in low.message

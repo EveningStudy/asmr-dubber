@@ -125,6 +125,9 @@ def test_anime_whisper_alignment_fallback_and_oom_cancellation(
     clip0[round(0.2 * 16_000) : round(0.9 * 16_000)] = 0.05
     clip1 = np.full(16_000, 0.05, dtype=np.float32)
     monkeypatch.setattr(asr_candidates, "_require_model", lambda *a, **k: None)
+    monkeypatch.setattr(
+        asr_candidates, "resolve_transformers_model_source", lambda model_id: (model_id, None)
+    )
     monkeypatch.setattr(asr_candidates, "_pretrained", lambda *a, **k: ("m", {"dtype": "float32"}))
     monkeypatch.setattr(
         asr_candidates,

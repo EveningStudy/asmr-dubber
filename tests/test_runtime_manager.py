@@ -411,7 +411,7 @@ def test_windows_advanced_backend_installs_dependencies_before_model_pack(
     assert "安装完成" in result
 
 
-def test_install_backend_imports_matching_pack_before_network(monkeypatch) -> None:
+def test_install_backend_imports_matching_pack_before_network(monkeypatch, tmp_path: Path) -> None:
     statuses = iter(
         [
             type("Status", (), {"state": "missing"})(),
@@ -420,6 +420,8 @@ def test_install_backend_imports_matching_pack_before_network(monkeypatch) -> No
     )
     imported: list[str] = []
 
+    monkeypatch.setattr("asmr_dubber.runtime_manager.portable_home", lambda: tmp_path)
+    monkeypatch.setattr("asmr_dubber.user_settings.load_user_settings", UserSettings)
     monkeypatch.setattr(
         "asmr_dubber.runtime_manager.backend_status",
         lambda *_args, **_kwargs: next(statuses),
