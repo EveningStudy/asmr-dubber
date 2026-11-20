@@ -19,7 +19,9 @@
 
 <br>
 
-<img src="assets/screenshots/zh/step3-done.png" alt="项目工作区：左边是句子表格，右边是当前步骤的设置" width="880">
+<img src="assets/screenshots/zh/readme-workspace.jpg" alt="翻译工作区，展示示例项目的英文原文、校对后的中文译文和音频波形" width="880">
+
+<sub>示例项目「河畔散步」的原文与人工校对后的译文</sub>
 
 </div>
 

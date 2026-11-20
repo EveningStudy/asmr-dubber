@@ -19,7 +19,9 @@ Works with Japanese, English and Chinese audio or video, and dubs into Chinese o
 
 <br>
 
-<img src="assets/screenshots/en/step3-done.png" alt="The project workspace: sentences on the left, settings for the current step on the right" width="880">
+<img src="assets/screenshots/en/readme-workspace.jpg" alt="The translation workspace showing the sample project's English source text, proofread Chinese translation, and audio waveform" width="880">
+
+<sub>Source text and manually proofread translations from the Evening by the River sample project</sub>
 
 </div>
 
