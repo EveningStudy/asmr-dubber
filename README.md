@@ -29,6 +29,53 @@
 
 ## 先听效果
 
+<table>
+<thead>
+<tr><th>素材</th><th>双语版</th><th>完全替换版</th></tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">素材 1</th>
+<td>
+
+https://github.com/user-attachments/assets/3210cc03-dec5-4488-8f4a-0f5d22a7d687
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/47c9aaf9-23b2-4ecf-8fe9-894cd2ae36f3
+
+</td>
+</tr>
+<tr>
+<th scope="row">素材 2</th>
+<td>
+
+https://github.com/user-attachments/assets/9bb3f59a-1397-4e41-8b9d-86207a41731e
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/707e48d2-30be-41eb-8f0c-db074cd0ce01
+
+</td>
+</tr>
+<tr>
+<th scope="row">素材 3</th>
+<td>
+
+https://github.com/user-attachments/assets/07475fb4-1aa4-4c4c-b33a-6a79d2ffbf9f
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/28bd7b8f-49c6-4369-97f0-ff5791ccdb7c
+
+</td>
+</tr>
+</tbody>
+</table>
+
 [在 B 站观看旧版本的介绍与演示](https://www.bilibili.com/video/BV1f43G6YEov/)。目前版本的使用请以文档为准。
 
 [更多音声示例](https://space.bilibili.com/3747523753675973)。一些使用本程序制作的音声实例，效果仅供参考，实际表现因素材、模型与参数设置而异。

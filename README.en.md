@@ -29,6 +29,53 @@ Works with Japanese, English and Chinese audio or video, and dubs into Chinese o
 
 ## Listen first
 
+<table>
+<thead>
+<tr><th>Sample</th><th>Bilingual mix</th><th>Fully dubbed</th></tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">Sample 1</th>
+<td>
+
+https://github.com/user-attachments/assets/3210cc03-dec5-4488-8f4a-0f5d22a7d687
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/47c9aaf9-23b2-4ecf-8fe9-894cd2ae36f3
+
+</td>
+</tr>
+<tr>
+<th scope="row">Sample 2</th>
+<td>
+
+https://github.com/user-attachments/assets/9bb3f59a-1397-4e41-8b9d-86207a41731e
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/707e48d2-30be-41eb-8f0c-db074cd0ce01
+
+</td>
+</tr>
+<tr>
+<th scope="row">Sample 3</th>
+<td>
+
+https://github.com/user-attachments/assets/07475fb4-1aa4-4c4c-b33a-6a79d2ffbf9f
+
+</td>
+<td>
+
+https://github.com/user-attachments/assets/28bd7b8f-49c6-4369-97f0-ff5791ccdb7c
+
+</td>
+</tr>
+</tbody>
+</table>
+
 [Watch the introduction and demo of an older version on Bilibili](https://www.bilibili.com/video/BV1f43G6YEov/). Please refer to the documents for current information.
 
 [More audio examples](https://space.bilibili.com/3747523753675973) made with this program. Results vary with the source material, models and settings.
