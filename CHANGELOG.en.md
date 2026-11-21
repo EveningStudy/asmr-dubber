@@ -4,6 +4,22 @@ English | [中文](CHANGELOG.md)
 
 All notable changes to ASMR Dubber are documented in this file.
 
+## [3.0.1] - 2026-11-21
+
+### 8 GB VRAM Dubbing & Error Handling
+- **IndexTTS2 low-VRAM initialization & CPU semantic offload** (`indextts2_worker.py`): lazy-loads `QwenEmotion` (~1.11 GiB) only when text emotion is requested, casts GPT weights to FP16 on CPU before CUDA placement, and offloads `w2v-bert-2.0` (~2.16 GiB) to CPU on GPUs with `<= 9.5 GiB` total or `<= 7.0 GiB` free VRAM (bringing initial VRAM down to ~2.89 GiB).
+- **Windows CUDA allocator & concise failure UI**: defaults `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128` on Windows; raises a single diagnostic error with pagefile guidance instead of marking every sentence failed on worker startup errors; caps error toast height with scrolling.
+
+### Installer Import, 8 GB ASR Progress & Home Project Folder
+- **Windows advanced dependency pack import**: skips duplicate 2.9 GiB SHA-256 verification, merges files via same-volume `os.replace`, enables unbuffered output (`python -u`) and phase progress reporting, and resets the UI progress bar between download and import stages.
+- **8 GB transcription stall fixes**: adds `model_heartbeat` around FFmpeg analysis extraction, model loading, and alignment; passes `local_files_only` when offline/local; parses MOSS chunk progress; caps ASR batch size under low free VRAM.
+- **Home folder management**: adds **Open projects folder** (auto-creating missing `projects/`) and delete guidance on Home.
+
+### Multi-Speaker Phase 1 (Binaural Cues & Per-Speaker Voice Picker)
+- **Binaural ILD cues & basic speaker count**: adds stereo interaural panning cues in `diarization.py` to separate left/right duets without splitting solo binaural actors, and promotes `asr_speaker_count` to Step 1 basic ASR controls.
+- **Standalone speaker column, filtering & Step 3 per-speaker UI**: adds a dedicated **Speaker** column (`+ New…`), toolbar speaker filter, undoable batch speaker assignment, `/api/projects/speaker-reference`, and Step 3 **Reference voice per speaker** controls with targeted per-speaker cache invalidation.
+- **README**: replaces Sample 3 bilingual and fully dubbed demo videos.
+
 ## [3.0.0] - 2026-11-20
 
 ### Full-Dub Speech Replacement 3.0 & Audio Engine

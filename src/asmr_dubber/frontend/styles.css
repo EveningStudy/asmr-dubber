@@ -71,8 +71,11 @@ main { overflow: auto; }
 .page.wide.on { display: flex; flex-direction: column; }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
 .head p { color: var(--text-2); margin-top: 6px; max-width: 520px; font-size: 14px; }
-.label { font-size: 12px; color: var(--text-2); margin: 28px 2px 8px; display: flex; justify-content: space-between; align-items: baseline; }
+.label { font-size: 12px; color: var(--text-2); margin: 28px 2px 8px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 12px; }
 .label b { font-weight: 600; color: var(--text); font-size: 13px; }
+#projectsRoot { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.label-actions { display: inline-flex; align-items: center; gap: 14px; flex: none; }
+.home-projects-hint { margin: 0 2px 10px; }
 
 /* ---------- 基础控件 ---------- */
 .btn { border: 0; border-radius: 7px; padding: 5px 13px; background: var(--fill-2); font-weight: 500; white-space: nowrap; transition: opacity .12s; }
@@ -260,14 +263,15 @@ input[type=search] { border: 1px solid var(--line-2); border-radius: 6px; backgr
 .out { flex-wrap: wrap; }
 .out .grow { flex-basis: calc(100% - 45px); }
 .out audio { width: 100%; height: 30px; order: 3; }
-td.id { overflow: hidden; text-overflow: ellipsis; }
+td.id { font-size: 11.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; padding-right: 4px; }
 .track-extra { display: flex; gap: 4px; margin-top: 4px; }
 .track-extra select { min-width: 0; max-width: 140px; font-size: 11px; }
 .track small { display: block; }
 .sheet label > input[type=password] { display: block; width: 100%; margin-top: 8px; }
 .sheet footer { position: sticky; bottom: 0; background: var(--bg); }
-.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(700px,90vw); background: var(--text); color: var(--panel); padding: 10px 18px; border-radius: 9px; z-index: 40; white-space: pre-wrap; box-shadow: 0 6px 24px #0002; }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(700px,90vw); max-height: min(40vh, 320px); overflow: hidden; background: var(--text); color: var(--panel); padding: 10px 18px; border-radius: 9px; z-index: 40; white-space: pre-wrap; box-shadow: 0 6px 24px #0002; }
 .toast.error { background: var(--red); color: #fff; }
+.toast > span { flex: 1; min-width: 0; max-height: calc(min(40vh, 320px) - 20px); overflow-y: auto; overflow-wrap: anywhere; }
 .language { margin-top: 12px; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 1360px) {
@@ -331,7 +335,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .language button { flex: 1 1 0; min-width: 0; text-align: center; }
 .toast { display: flex; align-items: start; gap: 16px; }
 .toast[hidden] { display: none; }
-.toast button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 20px; padding: 0 3px; }
+.toast button { flex: none; border: 0; background: none; color: inherit; cursor: pointer; font-size: 20px; line-height: 1; padding: 0 3px; }
 .cover-preview { margin: 12px; height: 160px; background: #000; border-radius: 8px; display: flex; justify-content: center; align-items: center; color: #bbb; }
 .cover-preview img { max-width: 100%; height: 100%; object-fit: contain; }
 

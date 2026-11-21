@@ -116,6 +116,31 @@ class Application:
         self.tasks.assert_idle(str(Path(project).resolve()))
         return self.projects.take(project, sentence, attempt, revision)
 
+    def set_speaker_reference(
+        self,
+        project,
+        speaker_id,
+        mode="auto",
+        sentence="",
+        external="",
+        external_name="",
+        text="",
+        language="auto",
+        revision=None,
+    ):
+        self.tasks.assert_idle(str(Path(project).resolve()))
+        return self.projects.speaker_reference(
+            project,
+            speaker_id=speaker_id,
+            mode=mode,
+            sentence=sentence,
+            external=external,
+            external_name=external_name,
+            text=text,
+            language=language,
+            revision=revision,
+        )
+
     def remove_model(self, model):
         if any(task["status"] in ACTIVE for task in self.tasks.list()):
             raise ValueError("请等待当前任务结束后再删除模型。")

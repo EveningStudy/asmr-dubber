@@ -180,6 +180,17 @@ class ReferenceRequest(ProjectRequest):
     revision: int = Field(ge=0)
 
 
+class SpeakerReferenceRequest(ProjectRequest):
+    revision: int = Field(ge=0)
+    speaker_id: str = Field(min_length=1, max_length=32)
+    mode: Literal["auto", "project_sentence", "external"] = "auto"
+    sentence: str = ""
+    external: str = ""
+    external_name: str = ""
+    text: str = ""
+    language: Literal["auto", "ja", "en", "zh"] = "auto"
+
+
 class ReviewRequest(ProjectRequest):
     window: str = ""
     candidate: str = ""

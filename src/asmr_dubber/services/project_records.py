@@ -200,7 +200,14 @@ def apply_table(project: DubProject, table: Any) -> bool:
     )
     if reference_removed:
         project.settings.tts_reference_sentence_id = None
-    changed = sentence_changed or reference_removed
+    stale_spk_refs = [
+        spk
+        for spk, ref in project.speaker_references.items()
+        if ref.source == "project_sentence" and ref.sentence_id not in remaining_ids
+    ]
+    for spk in stale_spk_refs:
+        del project.speaker_references[spk]
+    changed = sentence_changed or reference_removed or bool(stale_spk_refs)
     project.sentences = parsed
     if changed:
         project.chinese_stem_file = None
@@ -230,6 +237,12 @@ def apply_single_row(project: DubProject, row: list[Any]) -> bool:
         del project.sentences[matched]
         if project.settings.tts_reference_sentence_id == target_id:
             project.settings.tts_reference_sentence_id = None
+        for spk in [
+            spk
+            for spk, ref in project.speaker_references.items()
+            if ref.source == "project_sentence" and ref.sentence_id == target_id
+        ]:
+            del project.speaker_references[spk]
         changed = True
     else:
         start = _number(row[2], f"{target_id} 开始时间")

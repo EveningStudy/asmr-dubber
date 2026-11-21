@@ -373,6 +373,78 @@ def _run_batch_tasks(model: Any, hook_state: dict[str, Any], batch_file: Path) -
     return EXIT_INFERENCE_ERROR if failures else EXIT_SUCCESS
 
 
+class _LazyQwenEmotion:
+    """Delay loading QwenEmotion (1.11 GiB) until text emotion mode is actually used."""
+
+    def __init__(self, model_dir: str, factory: Any, *, low_vram: bool = False) -> None:
+        self.model_dir = model_dir
+        self._factory = factory
+        self._low_vram = low_vram
+        self._inner: Any | None = None
+
+    def inference(self, text_input: str) -> Any:
+        inner = self._inner
+        if inner is None:
+            if self._low_vram:
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
+            inner = self._factory(self.model_dir)
+            self._inner = inner
+        return inner.inference(text_input)
+
+
+class _CpuSemanticModelProxy:
+    """Keep w2v-bert-2.0 (2.16 GiB) on CPU while matching IndexTTS2's module interface."""
+
+    def __init__(self, module: Any) -> None:
+        self._module = module
+
+    def to(self, *_args: Any, **_kwargs: Any) -> _CpuSemanticModelProxy:
+        return self
+
+    def eval(self) -> _CpuSemanticModelProxy:
+        self._module.eval()
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        cpu_args = tuple(
+            arg.detach().cpu() if hasattr(arg, "detach") and hasattr(arg, "cpu") else arg
+            for arg in args
+        )
+        cpu_kwargs = {
+            key: (val.detach().cpu() if hasattr(val, "detach") and hasattr(val, "cpu") else val)
+            for key, val in kwargs.items()
+        }
+        return self._module(*cpu_args, **cpu_kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._module, name)
+
+
+def _should_offload_semantic_model(torch_mod: Any, device: str) -> bool:
+    if not device.startswith("cuda"):
+        return False
+    override = os.getenv("ASMR_DUBBER_INDEXTTS2_LOW_VRAM", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    try:
+        free_bytes, total_bytes = torch_mod.cuda.mem_get_info(device)
+        return total_bytes <= int(9.5 * 1024**3) or free_bytes <= int(7.0 * 1024**3)
+    except Exception:
+        try:
+            total_bytes = torch_mod.cuda.get_device_properties(device).total_memory
+            return total_bytes <= int(9.5 * 1024**3)
+        except Exception:
+            return False
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     model_dir = Path(args.model_dir).expanduser().resolve()
@@ -399,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ.setdefault("HF_HUB_CACHE", str(model_dir / "hf_cache"))
     try:
+        import indextts.infer_v2 as infer_v2
         import torch
         from indextts.infer_v2 import IndexTTS2
     except (ImportError, OSError) as exc:
@@ -410,14 +483,43 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: CUDA was selected but is not available in this runtime", file=sys.stderr)
         return EXIT_RUNTIME_UNAVAILABLE
 
+    effective_fp16 = bool(args.fp16) and not device.startswith("cpu")
+    offload_semantic = _should_offload_semantic_model(torch, device)
+
     use_deepspeed = _optional_acceleration(bool(args.deepspeed), "deepspeed", "DeepSpeed")
     use_accel = _optional_acceleration(bool(args.accel), "flash_attn", "GPT acceleration")
     use_torch_compile = _optional_acceleration(bool(args.torch_compile), "triton", "torch.compile")
+
+    orig_qwen_emotion = infer_v2.QwenEmotion
+    orig_load_checkpoint = infer_v2.load_checkpoint
+    orig_build_semantic_model = infer_v2.build_semantic_model
     try:
+        infer_v2.QwenEmotion = lambda model_dir: _LazyQwenEmotion(
+            model_dir, orig_qwen_emotion, low_vram=offload_semantic
+        )
+        if effective_fp16 and device.startswith("cuda"):
+
+            def _load_gpt_half(model_obj: Any, path: str) -> Any:
+                loaded = orig_load_checkpoint(model_obj, path)
+                if isinstance(model_obj, infer_v2.UnifiedVoice):
+                    model_obj.half()
+                return loaded
+
+            infer_v2.load_checkpoint = _load_gpt_half
+        if offload_semantic:
+
+            def _build_cpu_semantic(*call_args: Any, **call_kwargs: Any) -> Any:
+                semantic_model, semantic_mean, semantic_std = orig_build_semantic_model(
+                    *call_args, **call_kwargs
+                )
+                return _CpuSemanticModelProxy(semantic_model), semantic_mean, semantic_std
+
+            infer_v2.build_semantic_model = _build_cpu_semantic
+
         model = IndexTTS2(
             cfg_path=str(model_dir / "config.yaml"),
             model_dir=str(model_dir),
-            use_fp16=bool(args.fp16) and not device.startswith("cpu"),
+            use_fp16=effective_fp16,
             device=device,
             use_cuda_kernel=bool(args.cuda_kernel),
             use_deepspeed=use_deepspeed,
@@ -428,6 +530,35 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"ERROR: model initialization failed: {exc}", file=sys.stderr)
         return EXIT_RUNTIME_UNAVAILABLE
+    finally:
+        infer_v2.QwenEmotion = orig_qwen_emotion
+        infer_v2.load_checkpoint = orig_load_checkpoint
+        infer_v2.build_semantic_model = orig_build_semantic_model
+
+    if offload_semantic:
+
+        def _cpu_get_emb(input_features: Any, attention_mask: Any) -> Any:
+            with torch.no_grad():
+                vq_emb = model.semantic_model(
+                    input_features=input_features,
+                    attention_mask=attention_mask,
+                    output_hidden_states=True,
+                )
+                feat = vq_emb.hidden_states[17].to(model.device)
+                return (feat - model.semantic_mean) / model.semantic_std
+
+        model.get_emb = _cpu_get_emb
+
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        alloc_mib = torch.cuda.memory_allocated(device) / (1024**2)
+        peak_mib = torch.cuda.max_memory_allocated(device) / (1024**2)
+        print(
+            f"INFO: IndexTTS2 ready (fp16={effective_fp16}, "
+            f"low_vram_semantic_cpu={offload_semantic}, "
+            f"allocated_mib={alloc_mib:.1f}, peak_mib={peak_mib:.1f})",
+            flush=True,
+        )
 
     hook_state = _install_runtime_hooks(model)
     if not args.daemon:

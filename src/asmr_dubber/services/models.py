@@ -209,11 +209,30 @@ def download(request, report, token):
         if "desc" in kwargs:
             current, total = message if isinstance(message, tuple) else (message, 1)
             message = kwargs["desc"]
-        percent = re.search(r"(?:下载|download).*?(\d+(?:\.\d+)?)%", str(message), re.I)
-        curl = re.match(r"\s*(\d+)\s+[\d.]+[kMGT]?\s+\d+\s+[\d.]+[kMGT]?\s", str(message))
+        text = str(message)
+        percent = re.search(r"(?:下载|download|解压|合并|导入|校验).*?(\d+(?:\.\d+)?)%", text, re.I)
+        curl = re.match(r"\s*(\d+)\s+[\d.]+[kMGT]?\s+\d+\s+[\d.]+[kMGT]?\s", text)
         match = percent or curl
         if match:
             current, total = float(match.group(1)), 100
+        elif (
+            current is None
+            and total is None
+            and total_progress > 0
+            and current_progress >= total_progress
+            and any(
+                phase in text
+                for phase in (
+                    "正在导入",
+                    "正在校验",
+                    "正在清理",
+                    "运行环境安装完成",
+                    "正在下载",
+                    "正在检查模型",
+                )
+            )
+        ):
+            current, total = 0, 0
         if current is not None and total is not None:
             current_progress, total_progress = current, total
         report(message, current_progress, total_progress)

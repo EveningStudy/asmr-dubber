@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import filecmp
 import importlib.metadata
 import json
@@ -8,6 +9,7 @@ import os
 import shutil
 import stat
 import tempfile
+import time
 import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -33,6 +35,40 @@ WINDOWS_RESERVED = {
 
 class DependencyPackError(RuntimeError):
     pass
+
+
+class _ProgressReporter:
+    """Emit throttled stage progress lines that WebUI parses from stdout."""
+
+    def __init__(self, enabled: bool = True, min_interval: float = 0.4) -> None:
+        self.enabled = enabled
+        self.min_interval = min_interval
+        self._last_emit = 0.0
+        self._last_line = ""
+
+    def emit(self, message: str, *, force: bool = False) -> None:
+        if not self.enabled:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_emit < self.min_interval:
+            return
+        if force and message == self._last_line:
+            return
+        print(message, flush=True)
+        self._last_emit = now
+        self._last_line = message
+
+    def stage(self, stage_label: str, done: int, total: int) -> None:
+        total = max(1, total)
+        pct = min(100, max(0, round(done * 100 / total)))
+        self.emit(
+            f"导入 Windows 进阶依赖包：{stage_label} {pct}%（{done}/{total}）",
+            force=(done == 0 or done >= total),
+        )
+
+
+def _norm_path(path: Path | str) -> str:
+    return os.path.normcase(os.path.normpath(os.fspath(path)))
 
 
 def _windows_io_path(path: Path) -> Path:
@@ -123,18 +159,30 @@ def _validate(handle: zipfile.ZipFile) -> dict[str, object]:
     return manifest
 
 
-def _extract(handle: zipfile.ZipFile, staging: Path) -> None:
-    for info in handle.infolist():
-        if info.is_dir() or not info.filename.startswith(PAYLOAD_PREFIX):
-            continue
-        if any(info.filename.startswith(prefix) for prefix in OPTIONAL_PAYLOAD_PREFIXES):
-            continue
+def _extract(
+    handle: zipfile.ZipFile,
+    staging: Path,
+    progress: _ProgressReporter | None = None,
+) -> None:
+    members = [
+        info
+        for info in handle.infolist()
+        if not info.is_dir()
+        and info.filename.startswith(PAYLOAD_PREFIX)
+        and not any(info.filename.startswith(prefix) for prefix in OPTIONAL_PAYLOAD_PREFIXES)
+    ]
+    total = len(members)
+    if progress is not None:
+        progress.stage("解压", 0, total)
+    for index, info in enumerate(members, start=1):
         relative = PurePosixPath(info.filename).relative_to(PAYLOAD_PREFIX.rstrip("/"))
         destination = staging.joinpath(*relative.parts)
         io_destination = _windows_io_path(destination)
         io_destination.parent.mkdir(parents=True, exist_ok=True)
         with handle.open(info, "r") as source, io_destination.open("wb") as target:
             shutil.copyfileobj(source, target, length=4 * 1024 * 1024)
+        if progress is not None:
+            progress.stage("解压", index, total)
 
 
 def _validate_staging(staging: Path) -> None:
@@ -151,12 +199,25 @@ def _validate_staging(staging: Path) -> None:
             raise DependencyPackError(f"dependency pack is missing {relative}")
 
 
-def _merge_file(source: Path, destination: Path) -> None:
+def _merge_file(source: Path, destination: Path, *, move: bool = False) -> None:
     io_source = _windows_io_path(source)
     io_destination = _windows_io_path(destination)
     io_destination.parent.mkdir(parents=True, exist_ok=True)
-    if io_destination.is_file() and filecmp.cmp(io_source, io_destination, shallow=False):
-        return
+    if io_destination.is_file():
+        try:
+            if io_source.stat().st_size == io_destination.stat().st_size and filecmp.cmp(
+                io_source, io_destination, shallow=False
+            ):
+                return
+        except OSError:
+            pass
+    if move:
+        try:
+            os.replace(io_source, io_destination)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
     temporary = io_destination.with_name(f".{io_destination.name}.advanced-dependency-pack-new")
     temporary.unlink(missing_ok=True)
     try:
@@ -166,7 +227,13 @@ def _merge_file(source: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _merge_venv(source: Path, destination: Path) -> None:
+def _merge_venv(
+    source: Path,
+    destination: Path,
+    *,
+    move: bool = False,
+    progress: _ProgressReporter | None = None,
+) -> None:
     """Add optional distributions without replacing the running core's ABI."""
     source_site = _windows_io_path(source / "Lib/site-packages")
     destination_site = _windows_io_path(destination / "Lib/site-packages")
@@ -175,30 +242,39 @@ def _merge_venv(source: Path, destination: Path) -> None:
         for distribution in importlib.metadata.distributions(path=[str(destination_site)])
         if distribution.files and distribution.metadata["Name"]
     }
-    preserved = set()
-    metadata_directories = set()
+    preserved: set[str] = set()
+    metadata_directories: set[str] = set()
     for distribution in importlib.metadata.distributions(path=[str(source_site)]):
         name = distribution.metadata["Name"]
         if not name or name.lower().replace("-", "_").replace(".", "_") not in installed:
             continue
         for entry in distribution.files or ():
-            preserved.add((source_site / entry).resolve())
+            preserved.add(_norm_path(source_site / entry))
             if entry.parts[0].endswith(".dist-info"):
-                metadata_directories.add((source_site / entry.parts[0]).resolve())
-    for current, directories, filenames in os.walk(_windows_io_path(source)):
+                metadata_directories.add(_norm_path(source_site / entry.parts[0]))
+    io_source_root = _windows_io_path(source)
+    pending: list[tuple[Path, Path]] = []
+    for current, directories, filenames in os.walk(io_source_root):
         current_path = Path(current)
-        relative = current_path.relative_to(_windows_io_path(source))
-        if current_path.resolve() in metadata_directories:
+        if _norm_path(current_path) in metadata_directories:
             directories.clear()
             continue
+        relative = current_path.relative_to(io_source_root)
         for filename in filenames:
             incoming = current_path / filename
             target = destination / relative / filename
-            if incoming.resolve() in preserved:
+            if _norm_path(incoming) in preserved:
                 continue
             if not incoming.is_relative_to(source_site) and _windows_io_path(target).is_file():
                 continue
-            _merge_file(incoming, target)
+            pending.append((incoming, target))
+    total = len(pending)
+    if progress is not None:
+        progress.stage("合并运行库", 0, total)
+    for index, (incoming, target) in enumerate(pending, start=1):
+        _merge_file(incoming, target, move=move)
+        if progress is not None:
+            progress.stage("合并运行库", index, total)
 
 
 def import_pack(
@@ -210,19 +286,25 @@ def import_pack(
 ) -> None:
     if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
         raise DependencyPackError("dependency pack SHA-256 is invalid")
+    progress = _ProgressReporter()
     staging_parent = portable / "t"
     staging_parent.mkdir(parents=True, exist_ok=True)
+    for stale in staging_parent.iterdir():
+        if stale.is_dir() and stale.name.startswith("a-"):
+            _remove_tree(stale, ignore_errors=True)
     staging = Path(tempfile.mkdtemp(prefix="a-", dir=staging_parent))
     destination = portable / "venv"
     backup = portable / ".venv.advanced-dependency-pack-backup"
     try:
+        progress.emit("导入 Windows 进阶依赖包：校验 0%", force=True)
         with zipfile.ZipFile(archive, "r", allowZip64=True) as handle:
             manifest = _validate(handle)
-            _extract(handle, staging)
+            _extract(handle, staging, progress=progress)
         _validate_staging(staging)
         if merge_existing and destination.exists():
-            _merge_venv(staging / "venv", destination)
+            _merge_venv(staging / "venv", destination, move=True, progress=progress)
         else:
+            progress.emit("导入 Windows 进阶依赖包：合并运行库 50%", force=True)
             _remove_tree(backup, ignore_errors=True)
             if destination.exists():
                 os.replace(destination, backup)
@@ -248,7 +330,9 @@ def import_pack(
             + "\n",
             encoding="utf-8",
         )
+        progress.emit("导入 Windows 进阶依赖包：清理临时文件...", force=True)
         _remove_tree(backup, ignore_errors=True)
+        progress.emit("导入 Windows 进阶依赖包：完成 100%", force=True)
     finally:
         _remove_tree(staging, ignore_errors=True)
 

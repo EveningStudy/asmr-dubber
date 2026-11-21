@@ -228,6 +228,7 @@ function Import-ASMRDubberAdvancedDependencies {
     $Archive = $null
     New-Item -ItemType Directory -Force -Path $Inbox, $DownloadRoot | Out-Null
 
+    $VerifiedByDownload = $false
     if (Test-Path -LiteralPath $LocalArchive -PathType Leaf) {
         $Archive = $LocalArchive
         Write-Host "使用项目 model-packs 中的 Windows 进阶依赖包。" `
@@ -245,6 +246,7 @@ function Import-ASMRDubberAdvancedDependencies {
                     -Url $Url -Destination $DownloadedArchive `
                     -Sha256 $script:AdvancedDependencyPackSha256 -Resume | Out-Null
                 $Archive = $DownloadedArchive
+                $VerifiedByDownload = $true
                 break
             } catch {
                 Write-Warning "Windows 进阶依赖包来源失败：$($_.Exception.Message)"
@@ -260,12 +262,15 @@ function Import-ASMRDubberAdvancedDependencies {
     if ($File.Length -ne $script:AdvancedDependencyPackSize) {
         throw "Windows 进阶依赖包大小不符：$($File.Length)"
     }
-    $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
-    if ($ActualHash -ne $script:AdvancedDependencyPackSha256) {
-        throw "Windows 进阶依赖包 SHA-256 校验失败：$ActualHash"
+    if (-not $VerifiedByDownload) {
+        $ActualHash = Get-ASMRDubberFileSha256 -Path $Archive
+        if ($ActualHash -ne $script:AdvancedDependencyPackSha256) {
+            throw "Windows 进阶依赖包 SHA-256 校验失败：$ActualHash"
+        }
     }
     Write-Host "正在导入 Windows 进阶依赖包..." -ForegroundColor Cyan
     $ImportArguments = @(
+        "-u",
         (Join-Path $Root "scripts\import_windows_advanced_dependency_pack.py"),
         $Archive,
         $PortableRoot,

@@ -61,7 +61,13 @@ async function applyHistoryEntry(entry, direction) {
     if (!sentence) return;
     const patch = direction === 'undo' ? entry.before : entry.after;
     Object.assign(sentence, patch);
-    if ('source_text' in patch || 'zh_text' in patch || 'start_seconds' in patch || 'end_seconds' in patch) {
+    if (
+      'source_text' in patch ||
+      'zh_text' in patch ||
+      'start_seconds' in patch ||
+      'end_seconds' in patch ||
+      'speaker_id' in patch
+    ) {
       if ('zh_text' in patch) sentence.target_text = patch.zh_text;
       sentence.tts_file = null;
       sentence.tts_url = null;
@@ -192,6 +198,50 @@ function computeOffsets(sentences) {
   return offsets;
 }
 
+function speakerSortKey(id) {
+  const match = String(id || '').match(/^S(\d+)$/i);
+  return match ? [0, Number(match[1]), id] : [1, 0, String(id).toLowerCase()];
+}
+
+function speakerOptionsForProject() {
+  const found = new Set(['S01', 'S02']);
+  for (const s of state.project?.sentences || []) {
+    const spk = (s.speaker_id || '').trim();
+    if (spk) found.add(spk);
+  }
+  for (const key of Object.keys(state.project?.speaker_references || {})) {
+    if (key.trim()) found.add(key.trim());
+  }
+  return [...found].sort((a, b) => {
+    const [ga, na, sa] = speakerSortKey(a);
+    const [gb, nb, sb] = speakerSortKey(b);
+    return ga - gb || na - nb || sa.localeCompare(sb);
+  });
+}
+
+function speakerToneIndex(speakerId) {
+  const value = String(speakerId || '').trim();
+  if (!value) return '';
+  const match = value.match(/^S(\d+)$/i);
+  if (match) return String((Number(match[1]) - 1) % 6);
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  return String(Math.abs(hash) % 6);
+}
+
+function speakerCell(sentence, speakers, busy) {
+  const cur = (sentence.speaker_id || '').trim();
+  const tone = speakerToneIndex(cur);
+  const opts = [
+    `<option value=""${cur ? '' : ' selected'}>—</option>`,
+    ...speakers.map(
+      (spk) => `<option value="${esc(spk)}"${cur === spk ? ' selected' : ''}>${esc(spk)}</option>`,
+    ),
+    `<option value="__new__">${esc(t('+ 新增…'))}</option>`,
+  ].join('');
+  return `<select class="spk-select" data-row-field="speaker_id"${tone !== '' ? ` data-spk-tone="${tone}"` : ''} aria-label="${esc(t('说话人'))}"${busy ? ' disabled' : ''}>${opts}</select>`;
+}
+
 export function renderVirtualRows(sentences, selectedId, { force = false } = {}) {
   if (!state.project) return;
   const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
@@ -218,8 +268,9 @@ export function renderVirtualRows(sentences, selectedId, { force = false } = {})
     if (offsets[mid] < scrollTop + viewHeight) endLo = mid + 1;
     else endHi = mid;
   }
+  const speakers = speakerOptionsForProject();
   const endIdx = Math.min(total, Math.max(startIdx + 40, endLo + OVERSCAN));
-  const windowKey = `${startIdx}:${endIdx}:${total}:${selectedId}:${busy}`;
+  const windowKey = `${startIdx}:${endIdx}:${total}:${selectedId}:${busy}:${speakers.join(',')}`;
   if (!force && windowKey === lastWindowKey) return;
   lastWindowKey = windowKey;
   const topPad = offsets[startIdx];
@@ -230,12 +281,12 @@ export function renderVirtualRows(sentences, selectedId, { force = false } = {})
     .slice(startIdx, endIdx)
     .map((sentence) => {
       const txt = sentence.target_text ?? sentence.zh_text ?? '';
-      return `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selectedId === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}${sentence.speaker_id ? ` <span class="badge">${esc(sentence.speaker_id)}</span>` : ''}</td><td class="time"><button type="button" class="play src-play" data-play-source="${esc(sentence.id)}" title="${t('试听原声片段')}" aria-label="${t('试听原声片段')}">▶</button><span class="time-span">${time(sentence.start_seconds)}<br>– ${time(sentence.end_seconds)}</span></td><td lang="${esc(srcLang)}" contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(txt)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`;
+      return `<tr data-sentence="${esc(sentence.id)}" class="${!sentence.enabled ? 'off' : ''} ${selectedId === sentence.id ? 'sel' : ''}"><td><input type="checkbox" data-row-field="enabled"${sentence.enabled ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="${t('启用句子')}"></td><td class="id">${esc(sentence.id)}</td><td class="spk">${speakerCell(sentence, speakers, busy)}</td><td class="time"><button type="button" class="play src-play" data-play-source="${esc(sentence.id)}" title="${t('试听原声片段')}" aria-label="${t('试听原声片段')}">▶</button><span class="time-span">${time(sentence.start_seconds)}<br>– ${time(sentence.end_seconds)}</span></td><td lang="${esc(srcLang)}" contenteditable="${!busy}" data-row-field="source_text">${esc(sentence.source_text)}</td><td contenteditable="${!busy}" data-row-field="zh_text">${esc(txt)}</td><td class="dub">${dubCell(sentence)}</td><td class="orig">${originalCell(sentence)}${flagsCell(sentence)}</td></tr>`;
     })
     .join('');
 
-  const topSpacer = topPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="7" style="height:${topPad}px"></td></tr>` : '';
-  const botSpacer = bottomPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="7" style="height:${bottomPad}px"></td></tr>` : '';
+  const topSpacer = topPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="8" style="height:${topPad}px"></td></tr>` : '';
+  const botSpacer = bottomPad > 0 ? `<tr class="vs-spacer" aria-hidden="true"><td colspan="8" style="height:${bottomPad}px"></td></tr>` : '';
   const tbody = $('#rows');
   tbody.innerHTML = `${topSpacer}${sliceHTML}${botSpacer}`;
   if (typeof tbody.querySelectorAll === 'function') {

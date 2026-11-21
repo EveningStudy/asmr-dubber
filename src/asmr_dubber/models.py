@@ -626,11 +626,22 @@ def settings_for_source_language(
     )
 
 
+class SpeakerReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["project_sentence", "external"] = "project_sentence"
+    sentence_id: str | None = None
+    audio_path: str = ""
+    audio_label: str = ""
+    text: str = ""
+    language: Literal["auto", "ja", "en", "zh"] = "auto"
+
+
 class DubProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = PROJECT_SCHEMA_VERSION
-    app_version: str = "3.0.0"
+    app_version: str = "3.0.1"
     revision: int = Field(default=0, ge=0)
     migration_warnings: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -639,6 +650,7 @@ class DubProject(BaseModel):
     source_language: SourceLanguage = "ja"
     translation_language: Literal["zh", "en"] = "zh"
     settings: ProjectSettings = Field(default_factory=ProjectSettings)
+    speaker_references: dict[str, SpeakerReference] = Field(default_factory=dict)
     sentences: list[Sentence] = Field(default_factory=list)
     asr_language: str | None = None
     asr_settings_dirty: bool = False

@@ -7,7 +7,14 @@ from .. import pipeline
 from ..audio import probe_audio, verify_source
 from ..lifecycle import browser_revision_scope
 from ..models import load_project
-from . import project_audio, project_operations, project_records, project_review, review
+from . import (
+    project_audio,
+    project_operations,
+    project_records,
+    project_review,
+    review,
+    speaker_references,
+)
 from .media import discard_upload
 from .settings import current
 
@@ -106,6 +113,9 @@ class Projects:
             project_ref or manifest_str, include_preview=False
         )
         result["reference_choices"], result["reference_selected"] = choices, selected
+        result["speaker_profiles"] = speaker_references.speaker_voice_profiles(
+            active, self.media.register
+        )
         return result
 
     def list(self):
@@ -173,6 +183,9 @@ class Projects:
             "row": updated_row,
             "rows": project_records.project_rows(active),
             "sentences": sentences_payload,
+            "speaker_profiles": speaker_references.speaker_voice_profiles(
+                active, self.media.register
+            ),
         }
 
     def waveform(self, project, start, end, bins=160):
@@ -251,6 +264,31 @@ class Projects:
             "url": self.media.register(preview),
             "project": self.get(project),
         }
+
+    def speaker_reference(
+        self,
+        project,
+        speaker_id,
+        mode="auto",
+        sentence="",
+        external="",
+        external_name="",
+        text="",
+        language="auto",
+        revision=None,
+    ):
+        with browser_revision_scope(project, revision):
+            message = speaker_references.set_speaker_reference(
+                project,
+                speaker_id=speaker_id,
+                mode=mode,
+                sentence=sentence,
+                external=external,
+                external_name=external_name,
+                text=text,
+                language=language,
+            )
+        return {"message": message, "project": self.get(project)}
 
     def review(self, project, window="", candidate=""):
         rows, choices, status = review.review_overview(project)

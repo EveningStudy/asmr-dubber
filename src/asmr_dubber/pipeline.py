@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .asr import transcribe_source
+from .asr_progress import model_heartbeat
 from .asr_review import run_audio_review
 from .audio import (
     ASR_ANALYSIS_NAME,
@@ -208,9 +209,11 @@ def _analyze_project_impl(
         from .separation import ensure_separation
 
         vocals, _background = ensure_separation(project, project_dir, source, progress)
-        analysis = make_asr_analysis_copy(vocals, vocals.parent / ASR_ANALYSIS_NAME)
+        with model_heartbeat(progress, "正在预处理音频（提取 16 kHz 分析音轨）"):
+            analysis = make_asr_analysis_copy(vocals, vocals.parent / ASR_ANALYSIS_NAME)
     else:
-        analysis = make_asr_analysis_copy(source, project_dir / "analysis" / ASR_ANALYSIS_NAME)
+        with model_heartbeat(progress, "正在预处理音频（提取 16 kHz 分析音轨）"):
+            analysis = make_asr_analysis_copy(source, project_dir / "analysis" / ASR_ANALYSIS_NAME)
     cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
     sentences, language = transcribe_source(
         analysis,
@@ -304,6 +307,9 @@ def _analyze_project_impl(
         )
     project.sentences = bounded_sentences
     project.translation_proposals = []
+    project.speaker_references = {
+        spk: ref for spk, ref in project.speaker_references.items() if ref.source == "external"
+    }
     project.settings.tts_reference_sentence_id = None
     project.settings.tts_whisper_reference_sentence_id = None
     annotate_sentence_voice_modes(project, diarize_audio)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -75,18 +76,42 @@ def _transcribe_moss(
             )
             asr.register_process(process, cancel_event)
             deadline = time.monotonic() + settings.asr_moss_timeout_seconds
+            current_window = 0
+            started_at = time.monotonic()
+            last_heartbeat = started_at
+            last_message = f"MOSS 初始化中（共 {len(windows)} 段）"
             with log_file.open(encoding="utf-8", errors="replace") as reader:
                 while process.poll() is None:
                     check_cancelled(cancel_event)
                     if time.monotonic() > deadline:
                         raise AsmrDubberError("MOSS 推理超时；请缩短分块或增加 MOSS 超时。")
+                    saw_progress = False
                     for line in reader:
                         try:
                             message = json.loads(line).get("progress")
                         except (json.JSONDecodeError, AttributeError):
                             continue
-                        if message and progress:
-                            progress(message, 0, len(windows))
+                        if message:
+                            saw_progress = True
+                            last_message = str(message)
+                            match = re.search(r"MOSS\s+(?:识别)?分块\s+(\d+)", last_message)
+                            if match:
+                                current_window = max(
+                                    current_window,
+                                    min(len(windows), int(match.group(1)) - 1),
+                                )
+                            if progress:
+                                progress(last_message, current_window, len(windows))
+                    now = time.monotonic()
+                    if saw_progress:
+                        last_heartbeat = now
+                    elif progress and now - last_heartbeat >= 2.0:
+                        progress(
+                            f"{last_message} · 仍在处理，已运行 {now - started_at:.0f} 秒",
+                            current_window,
+                            len(windows),
+                        )
+                        last_heartbeat = now
                     time.sleep(0.1)
         check_cancelled(cancel_event)
         if process.returncode or not output_file.is_file():

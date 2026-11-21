@@ -25,7 +25,7 @@ from .audio_ffmpeg import (
 from .errors import AsmrDubberError, SynthesisError
 from .hashing import cached_sha256_file
 from .languages import SourceLanguage
-from .models import DubProject, Sentence
+from .models import DubProject, Sentence, SpeakerReference
 
 STABLE_CLONE_MODES = {
     "stable_reference",
@@ -268,13 +268,48 @@ def project_has_multiple_speakers(project: DubProject) -> bool:
     return len(speakers) >= 2
 
 
+def _sentence_by_id(project: DubProject, sentence_id: str | None) -> Sentence | None:
+    if not sentence_id:
+        return None
+    active = _REFERENCE_SELECTION.get()
+    if active is not None and active[0] is project:
+        return active[1].get(sentence_id)
+    return next((item for item in project.sentences if item.id == sentence_id), None)
+
+
+def configured_speaker_reference(
+    project: DubProject, sentence: Sentence
+) -> SpeakerReference | None:
+    """Return a valid per-speaker reference override configured on ``project``, if any."""
+    spk = (sentence.speaker_id or "").strip()
+    if not spk:
+        return None
+    ref = project.speaker_references.get(spk)
+    if ref is None:
+        return None
+    if ref.source == "external":
+        return ref if ref.audio_path.strip() else None
+    if ref.source == "project_sentence" and _sentence_by_id(project, ref.sentence_id) is not None:
+        return ref
+    return None
+
+
 def speaker_reference_sentence(
     project: DubProject,
     sentence: Sentence,
     source: Path | None = None,
+    *,
+    ignore_override: bool = False,
 ) -> tuple[Sentence, bool]:
     """Select the clearest modal or whisper voice anchor for ``sentence.speaker_id``."""
     from .filtering import is_japanese_filler_only
+
+    if not ignore_override:
+        override = configured_speaker_reference(project, sentence)
+        if override is not None and override.source == "project_sentence":
+            anchor = _sentence_by_id(project, override.sentence_id)
+            if anchor is not None:
+                return anchor, anchor.voice_mode == "whisper"
 
     target_spk = (sentence.speaker_id or "").strip()
     same_speaker = [
@@ -346,6 +381,11 @@ def effective_project_reference_sentence(
     sentence: Sentence,
 ) -> tuple[Sentence, bool]:
     """Return ``(anchor_sentence, is_whisper_anchor)`` for IndexTTS speaker prompt."""
+    override = configured_speaker_reference(project, sentence)
+    if override is not None and override.source == "project_sentence":
+        anchor = _sentence_by_id(project, override.sentence_id)
+        if anchor is not None:
+            return anchor, anchor.voice_mode == "whisper"
     if sentence.speaker_id and project_has_multiple_speakers(project):
         return speaker_reference_sentence(project, sentence)
     if (
@@ -463,7 +503,26 @@ def prepare_voice_reference(
     sentence: Sentence,
 ) -> VoiceReference:
     """Return the selected external/shared/per-sentence reference for any TTS backend."""
-    if project.settings.tts_reference_source == "external":
+    override = configured_speaker_reference(project, sentence)
+    if override is not None and override.source == "external":
+        path = Path(override.audio_path).expanduser().resolve()
+        if not path.is_file():
+            raise SynthesisError(f"找不到说话人 {sentence.speaker_id} 的外部参考音频：{path}")
+        resolved_lang: SourceLanguage = (
+            project.source_language if override.language == "auto" else override.language
+        )
+        spk = (sentence.speaker_id or "").strip()
+        raw_payload = f"{spk}|{cached_sha256_file(path)}|{override.text.strip()}|{resolved_lang}"
+        identity = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        return VoiceReference(
+            path=path,
+            text=override.text.strip(),
+            identity=f"speaker-external:{identity}",
+            language=resolved_lang,
+        )
+
+    has_sentence_override = override is not None and override.source == "project_sentence"
+    if not has_sentence_override and project.settings.tts_reference_source == "external":
         path = Path(project.settings.tts_external_reference_audio).expanduser().resolve()
         if not path.is_file():
             raise SynthesisError(f"找不到设置中的外部参考音频：{path}")
@@ -480,9 +539,11 @@ def prepare_voice_reference(
         )
 
     stable = project.settings.tts_clone_mode in STABLE_CLONE_MODES
-    if stable and sentence.speaker_id and project_has_multiple_speakers(project):
+    if has_sentence_override or (
+        stable and sentence.speaker_id and project_has_multiple_speakers(project)
+    ):
         reference_sentence, _ = speaker_reference_sentence(project, sentence)
-        safe_spk = re.sub(r"[^A-Za-z0-9_-]+", "_", sentence.speaker_id.strip()) or "S01"
+        safe_spk = re.sub(r"[^A-Za-z0-9_-]+", "_", (sentence.speaker_id or "").strip()) or "S01"
         prefix = f"speaker_{safe_spk}"
         payload = (
             f"{project.source.sha256}|{reference_sentence.id}|{reference_sentence.start_seconds:.6f}|"
@@ -720,6 +781,20 @@ def prepare_index_speaker_reference(
     source: Path,
     sentence: Sentence,
 ) -> VoiceReference:
+    override = configured_speaker_reference(project, sentence)
+    if override is not None:
+        if override.source == "external":
+            return _index_external_reference(override.audio_path, role="speaker")
+        ref_sentence = _sentence_by_id(project, override.sentence_id)
+        if ref_sentence is not None:
+            return _index_sentence_reference(
+                project,
+                project_dir,
+                source,
+                ref_sentence,
+                role="speaker",
+                shared=True,
+            )
     source_id = project.settings.tts_index_speaker_source
     if source_id == "external":
         return _index_external_reference(

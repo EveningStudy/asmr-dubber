@@ -248,6 +248,8 @@ def _synthesize_indextts_cli_batch(
     cancelled: OperationCancelledError | None = None
     try:
         env = tts_backends.isolated_runtime_environment("index-tts")
+        if os.name == "nt":
+            env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128")
         if use_custom_worker:
             env["HF_HUB_OFFLINE"] = "1"
             env["TRANSFORMERS_OFFLINE"] = "1"
@@ -413,6 +415,23 @@ def _synthesize_indextts_cli_batch(
         manifest.unlink(missing_ok=True)
 
     detail = tts_backends.readable_output_tail(output_tail)
+    if (
+        batch_error is None
+        and cancelled is None
+        and return_code != 0
+        and not committed
+        and not any(temporary.is_file() for _, _, temporary in tasks)
+    ):
+        for _, _, temporary in tasks:
+            temporary.unlink(missing_ok=True)
+        if "out of memory" in detail.casefold():
+            raise SynthesisError(
+                f"IndexTTS2 模型初始化失败：显卡显存或系统虚拟内存不足（退出码 {return_code}）。\n"
+                f"{detail}"
+            )
+        raise SynthesisError(
+            f"IndexTTS2 模型初始化或批处理启动失败（退出码 {return_code}）：{detail}"
+        )
     failures: list[str] = list(line_failures)
     for index, (sentence, reference, temporary) in enumerate(tasks, start=1):
         output = tts_backends._cache_output(project, sentence, project_dir)

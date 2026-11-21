@@ -18,6 +18,10 @@ class API:
             "projects/take": (contract.TakeRequest, application.choose_take),
             "projects/open": (contract.OpenRequest, application.projects.open),
             "projects/reference": (contract.ReferenceRequest, application.projects.reference),
+            "projects/speaker-reference": (
+                contract.SpeakerReferenceRequest,
+                application.set_speaker_reference,
+            ),
             "review/get": (contract.ReviewRequest, application.projects.review),
             "settings/get": (contract.Empty, lambda: settings.current().model_dump(mode="json")),
             "settings/update": (contract.SettingsRequest, application.update_settings),

@@ -9,6 +9,7 @@ import { transcriptDialog, referenceDialog, reviewDialog, openProjectDialog } fr
 import { initializeReview } from './project_review.js';
 import { initializeCompare, renderCompare } from './compare_player.js';
 import { refreshStepHints, confirmAnalyze, exportRequest, initializeStepHints } from './project_steps.js';
+import { SPEAKER_BUSY_CONTROLS, renderSpeakerFilter, renderSpeakerVoices, initializeSpeakerVoices } from './speaker_voices.js';
 import {
   resetEditorHistory,
   recordListUndo,
@@ -33,6 +34,7 @@ const BUSY_CONTROLS = [
   '#rows [data-candidates],#rows [data-take],#rows [data-regenerate],#rows [data-retranslate]',
   '#rows [data-compress],#rows [data-keep-original],#revisionProposals [data-proposal],#revisionProposals [data-proposal-all]',
   '#project .schema :is(input,select,textarea,button),#project .presetbox button',
+  SPEAKER_BUSY_CONTROLS,
 ].join(',');
 const filteredSentences = () => (state.project ? state.project.sentences.filter(matchesRowFilter) : []);
 let selected = '', importAfterCreate = null, pendingSource = null;
@@ -72,7 +74,7 @@ export async function openProject(manifest) {
   state.project = await api('projects/get', { project: manifest });
   resetEditorHistory();
   $('#saveState').textContent = t('修改会自动保存');
-  state.filter = 'all';
+  state.filter = 'all'; state.speakerFilter = 'all';
   if ($('#search')) $('#search').value = '';
   $$('#filters [data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === 'all'));
   const box = $('.tablebox');
@@ -117,6 +119,8 @@ export function renderProject() {
     `${t(project.source_language)} → ${t(project.settings.tts_target_language)} · ${time(project.source.duration_seconds)} · ${t('{count} 句', { count: project.sentences.length })}`;
   renderTranslationPanels(project);
   refreshProjectStats();
+  renderSpeakerFilter(project);
+  renderSpeakerVoices(project);
   $('#referenceLabel').textContent =
     `${t('音色参考')} · ${project.reference_external ? t('外部音频') : project.reference_selected || t('未选择')}`;
   $('#projectDiagnostics').textContent = t(project.diagnostics);
@@ -153,6 +157,7 @@ function saveRows(only = null) {
     state.project.revision = result.revision;
     state.project.settings = result.settings;
     state.project.outputs = result.outputs;
+    if (result.speaker_profiles) state.project.speaker_profiles = result.speaker_profiles;
     if (only && result.deleted) {
       state.project.sentences = state.project.sentences.filter((s) => s.id !== only);
       if (selected === only) selected = state.project.sentences[0]?.id || '';
@@ -252,6 +257,7 @@ export function initializeProjects() {
     event.preventDefault();
     if (event.dataTransfer.files[0]) await newSource(event.dataTransfer.files[0]);
   });
+  $('#openProjectsFolder').onclick = guard(() => api('storage/open', { key: 'projects' }));
   $('#openExisting').onclick = guard(() => openProjectDialog(openProject));
   $('#search').oninput = () => {
     const box = $('.tablebox');
@@ -267,6 +273,7 @@ export function initializeProjects() {
   initializeReview({ save: saveRows, render: renderProject, getSelected: () => selected });
   initializeCompare();
   initializeStepHints(refreshProjectStats);
+  initializeSpeakerVoices({ filteredSentences, getSelected: () => selected, saveRows, renderProject });
   initializeSentenceEditor({
     filteredSentences,
     getSelected: () => selected,
@@ -280,7 +287,7 @@ export function initializeProjects() {
   window.addEventListener('locate-sentence', (event) => {
     const index = state.project?.sentences.findIndex((s) => s.id === event.detail);
     if (index === undefined || index < 0) return;
-    state.filter = 'all';
+    state.filter = 'all'; state.speakerFilter = 'all';
     $('#search').value = '';
     $$('[data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === 'all'));
     selected = event.detail;
@@ -390,7 +397,7 @@ export function initializeProjects() {
     guard(async (event) => {
       if (projectBusy()) return;
       const key = event.target.dataset.rowField;
-      if (!key || event.target.type === 'checkbox') return;
+      if (!key || !['source_text', 'zh_text'].includes(key)) return;
       const tr = event.target.closest('tr');
       if (!tr) return;
       const sentence = state.project.sentences.find((s) => s.id === tr.dataset.sentence);
@@ -410,19 +417,25 @@ export function initializeProjects() {
       if (projectBusy()) return;
       const node = event.target,
         key = node.dataset.detail || node.dataset.rowField;
-      if (!key) return;
+      if (!key || ['source_text', 'zh_text'].includes(key)) return;
       const sentence = state.project.sentences.find(
         (s) => s.id === (node.dataset.detail ? selected : node.closest('tr').dataset.sentence),
       );
       if (!sentence) return;
       const prevVal = sentence[key];
+      let rawSpk = node.value;
+      if (key === 'speaker_id' && rawSpk === '__new__') {
+        rawSpk = (window.prompt(t('输入新的说话人编号（例如 S03 或 旁白）：'), '') || '').trim();
+        if (!rawSpk) { renderRows(); return; }
+        if (rawSpk.length > 32) { renderRows(); throw new Error(t('说话人编号不能超过 32 个字符。')); }
+      }
       const nextVal =
         node.type === 'checkbox'
           ? node.checked
           : key === 'original_audio_enabled'
             ? { default: null, on: true, off: false }[node.value]
             : key === 'speaker_id'
-              ? node.value.trim() || null
+              ? rawSpk.trim() || null
               : Number(node.value);
       const refresh = ['enabled', 'speaker_id', 'start_seconds', 'end_seconds'].includes(key);
       await commitSentenceEdit(sentence, { [key]: prevVal }, { [key]: nextVal }, { refresh });

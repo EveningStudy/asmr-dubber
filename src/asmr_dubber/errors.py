@@ -104,7 +104,13 @@ def classify_error(exc: BaseException) -> tuple[str, str]:
             "请求触发服务商限流；已完成批次已保存，稍等片刻后点击继续即可。",
         )
     if "out of memory" in lowered or "cuda error" in lowered or "显存不足" in text:
-        return "CUDA_OOM", "显卡显存不足；请关闭其他占用显存的程序，或在设置中降低批大小/分段时长。"
+        return (
+            "CUDA_OOM",
+            "显存或虚拟内存不足：请先重启程序释放上一步识别占用的显存、"
+            "关闭浏览器视频/壁纸/游戏等占显存程序、确认配音已开启 FP16；"
+            "Windows 若报错仍显示有空闲显存，"
+            "请检查系统虚拟内存（页面文件）是否已设为自动管理且 C 盘空间充足。",
+        )
     if "找不到" in text and ("运行环境" in text or "模型" in text):
         return "RUNTIME_MISSING", "请在“设备与模型”页面安装或修复对应的本地模型运行环境。"
     if "句未取得译文：" in text:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import nullcontext
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from .asr_progress import model_heartbeat
 from .asr_token_timing import active_frames, group_tokens
 from .constants import DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, require_cuda, resolve_transformers_model_source
@@ -71,6 +73,8 @@ def _pretrained(torch: Any, settings: ProjectSettings, model_id: str) -> tuple[s
     }
     if revision is not None:
         kwargs["revision"] = revision
+    if Path(source).is_dir():
+        kwargs["local_files_only"] = True
     return source, kwargs
 
 
@@ -188,17 +192,18 @@ def transcribe_qwen3_asr(
     aligner_source, aligner_kwargs = _pretrained(torch, settings, aligner)
     model = None
     try:
-        model = _session_model(
-            f"qwen3-asr:{source}:{aligner_source}:{settings.asr_device}",
-            lambda: Qwen3ASRModel.from_pretrained(
-                source,
-                forced_aligner=aligner_source,
-                forced_aligner_kwargs=aligner_kwargs,
-                max_inference_batch_size=max(1, settings.asr_batch_size),
-                max_new_tokens=1024,
-                **model_kwargs,
-            ),
-        )
+        with model_heartbeat(progress, f"加载 Qwen3-ASR：{settings.asr_model}"):
+            model = _session_model(
+                f"qwen3-asr:{source}:{aligner_source}:{settings.asr_device}",
+                lambda: Qwen3ASRModel.from_pretrained(
+                    source,
+                    forced_aligner=aligner_source,
+                    forced_aligner_kwargs=aligner_kwargs,
+                    max_inference_batch_size=max(1, settings.asr_batch_size),
+                    max_new_tokens=1024,
+                    **model_kwargs,
+                ),
+            )
         tokens: list[TimedToken] = []
         texts: list[str] = []
         if source_language == "ja":
@@ -327,11 +332,18 @@ def transcribe_anime_whisper(
     try:
         if progress:
             progress(f"加载 anime-whisper：{settings.asr_model}", 0, len(groups))
+        local_only = Path(source).is_dir()
 
         def _build_anime_pipe() -> Any:
-            proc = AutoProcessor.from_pretrained(source, revision=revision)
+            proc = AutoProcessor.from_pretrained(
+                source, revision=revision, local_files_only=local_only
+            )
             mdl = AutoModelForSpeechSeq2Seq.from_pretrained(
-                source, revision=revision, dtype=dtype, low_cpu_mem_usage=True
+                source,
+                revision=revision,
+                dtype=dtype,
+                low_cpu_mem_usage=True,
+                local_files_only=local_only,
             ).to(device)
             return pipeline(
                 "automatic-speech-recognition",
@@ -342,30 +354,48 @@ def transcribe_anime_whisper(
                 device=device,
             )
 
-        pipe = _session_model(
-            f"anime-whisper:{source}:{revision}:{device}:{dtype}",
-            _build_anime_pipe,
-        )
+        with model_heartbeat(progress, f"加载 anime-whisper：{settings.asr_model}"):
+            pipe = _session_model(
+                f"anime-whisper:{source}:{revision}:{device}:{dtype}",
+                _build_anime_pipe,
+            )
         batch = max(1, settings.asr_batch_size) * 4
+        if use_cuda:
+            try:
+                if torch.cuda.is_available():
+                    free_bytes, _total_bytes = torch.cuda.mem_get_info()
+                    if free_bytes < 2.5 * 1024**3:
+                        batch = 1
+                    elif free_bytes < 4.5 * 1024**3:
+                        batch = min(batch, 2)
+            except Exception:
+                pass
         for first in range(0, len(clips), batch):
             check_cancelled(cancel_event)
-            if progress:
-                progress("anime-whisper 正在识别语音段", first, len(clips))
-            outputs = _run_transformers_asr_pipeline(
-                pipe,
-                [
-                    {"array": clip, "sampling_rate": sample_rate}
-                    for clip in clips[first : first + batch]
-                ],
-                batch_size=batch,
-                generate_kwargs={
-                    "language": "ja",
-                    "task": "transcribe",
-                    # The model card's advice against repetition loops; never an initial prompt.
-                    "no_repeat_ngram_size": 5,
-                    "repetition_penalty": 1.0,
-                },
-            )
+            with (
+                model_heartbeat(progress, "anime-whisper 正在识别语音段")
+                if first == 0
+                else nullcontext()
+            ) as hb:
+                if hb:
+                    hb("anime-whisper 正在识别语音段", 0, len(clips))
+                elif progress:
+                    progress("anime-whisper 正在识别语音段", first, len(clips))
+                outputs = _run_transformers_asr_pipeline(
+                    pipe,
+                    [
+                        {"array": clip, "sampling_rate": sample_rate}
+                        for clip in clips[first : first + batch]
+                    ],
+                    batch_size=batch,
+                    generate_kwargs={
+                        "language": "ja",
+                        "task": "transcribe",
+                        # The model card's advice against repetition loops; never an initial prompt.
+                        "no_repeat_ngram_size": 5,
+                        "repetition_penalty": 1.0,
+                    },
+                )
             texts.extend(
                 str(output.get("text", "")).strip() if isinstance(output, dict) else ""
                 for output in (outputs if isinstance(outputs, list) else [outputs])
@@ -382,10 +412,13 @@ def transcribe_anime_whisper(
     try:
         if progress:
             progress("加载 Qwen3 ForcedAligner（逐字时间戳）", 0, len(pending))
-        aligner_model = _session_model(
-            f"qwen3-aligner:{aligner_source}:{settings.asr_device}",
-            lambda: Qwen3ForcedAligner.from_pretrained(aligner_source, **aligner_kwargs),
-        )
+        with model_heartbeat(progress, "加载 Qwen3 ForcedAligner（逐字时间戳）") as hb:
+            if hb:
+                hb("加载 Qwen3 ForcedAligner（逐字时间戳）", 0, len(pending))
+            aligner_model = _session_model(
+                f"qwen3-aligner:{aligner_source}:{settings.asr_device}",
+                lambda: Qwen3ForcedAligner.from_pretrained(aligner_source, **aligner_kwargs),
+            )
         for first in range(0, len(pending), _ALIGN_BATCH):
             check_cancelled(cancel_event)
             chunk = pending[first : first + _ALIGN_BATCH]

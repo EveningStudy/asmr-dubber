@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import inspect
+import itertools
 import json
 import tempfile
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from pathlib import Path
 
 import soundfile as sf
 
 from .api_contracts import APIContractError, bearer_headers, endpoint_url, merge_extra_body
 from .api_logging import safe_api_url
+from .asr_progress import model_heartbeat
 from .errors import AsmrDubberError
 from .languages import SpeechSourceLanguage
+from .mirrors import external_downloads_allowed
 from .models import ProjectSettings, Sentence
+from .runtime_specs import _FASTER_WHISPER_REPOS
 from .segmentation import TimedToken, restore_punctuation
 from .task_control import (
     CancellationSignal,
@@ -235,15 +241,13 @@ def _transcribe_faster_whisper(
         progress(f"加载 Faster-Whisper：{settings.asr_model}", 0, 1)
     model = None
     try:
-        model_source = settings.asr_model
+        model_source = _FASTER_WHISPER_REPOS.get(settings.asr_model, settings.asr_model)
         is_kotoba_faster = model_source == "kotoba-tech/kotoba-whisper-v2.0-faster"
         if source_language != "ja" and is_kotoba_faster:
             raise AsmrDubberError(
                 "Kotoba-Whisper 是日语模型；英语项目请选择其它 Faster-Whisper 模型。"
             )
-        if model_source == "large-v2":
-            model_source = "Systran/faster-whisper-large-v2"
-        model_source = asr.resolve_model_source(model_source)
+        resolved_source = asr.resolve_model_source(model_source)
         compute_type = settings.asr_compute_type
         if not settings.asr_device.startswith("cuda") and compute_type in {
             "float16",
@@ -260,13 +264,47 @@ def _transcribe_faster_whisper(
             )
             if progress:
                 progress("Faster-Whisper CPU 自动使用 int8 计算精度", 0, 1)
-        model = asr._session_model(
-            f"whisper:{model_source}:{settings.asr_device}:{compute_type}",
-            lambda: WhisperModel(
-                model_source,
-                device=settings.asr_device,
-                compute_type=compute_type,
-            ),
+        model_kwargs: dict[str, object] = {
+            "device": settings.asr_device,
+            "compute_type": compute_type,
+        }
+        try:
+            whisper_params = inspect.signature(WhisperModel.__init__).parameters
+        except (TypeError, ValueError):
+            whisper_params = {}
+        is_local_dir = Path(resolved_source).expanduser().is_dir()
+        offline_guard = (
+            "local_files_only" in whisper_params
+            and not is_local_dir
+            and not external_downloads_allowed()
+        )
+        if offline_guard:
+            model_kwargs["local_files_only"] = True
+
+        def _load_whisper_model():
+            try:
+                return WhisperModel(resolved_source, **model_kwargs)
+            except Exception as exc:
+                lowered = str(exc).casefold()
+                if offline_guard and (
+                    type(exc).__name__ == "LocalEntryNotFoundError"
+                    or any(
+                        marker in lowered
+                        for marker in ("local", "cannot find", "offline", "snapshot", "not found")
+                    )
+                ):
+                    raise AsmrDubberError(
+                        f"Faster-Whisper 模型尚未完整下载：{settings.asr_model}。"
+                        "当前为国内镜像模式，识别时不会直连海外源下载；"
+                        "请先在“模型”页安装 Faster-Whisper（内置 large-v2），"
+                        "或在“设置 → 下载来源”切到“海外源”后重试。"
+                    ) from exc
+                raise
+
+        load_label = (
+            f"加载 Faster-Whisper：{settings.asr_model}"
+            if is_local_dir or offline_guard
+            else f"正在下载并加载 Faster-Whisper：{settings.asr_model}"
         )
         transcribe_kwargs = {
             "language": source_language,
@@ -286,34 +324,49 @@ def _transcribe_faster_whisper(
         }
         if is_kotoba_faster:
             transcribe_kwargs["chunk_length"] = settings.asr_kotoba_chunk_seconds
-        if settings.asr_batch_size > 1:
-            # Faster-Whisper's official batched pipeline defaults VAD to on;
-            # pass every ASMR-sensitive option explicitly so a speed opt-in
-            # does not silently discard whispers or breathy speech.
-            batched_model = BatchedInferencePipeline(model=model)
-            segments, info = batched_model.transcribe(
-                str(analysis_audio),
-                without_timestamps=False,
-                batch_size=settings.asr_batch_size,
-                **transcribe_kwargs,
+        with ExitStack() as hb_stack:
+            hb = hb_stack.enter_context(model_heartbeat(progress, load_label))
+            model = asr._session_model(
+                f"whisper:{resolved_source}:{settings.asr_device}:{compute_type}",
+                _load_whisper_model,
             )
-        else:
-            segments, info = model.transcribe(
-                str(analysis_audio),
-                **transcribe_kwargs,
-            )
-        values = []
-        for segment in segments:
-            check_cancelled(cancel_event)
-            values.append(segment)
-            if progress:
-                duration = float(getattr(info, "duration", 0) or 0)
-                consumed = min(duration, max(0.0, float(getattr(segment, "end", 0) or 0)))
-                progress(
-                    f"Faster-Whisper 已识别 {consumed:.1f}/{duration:.1f} 秒",
-                    round(consumed * 1000),
-                    max(1, round(duration * 1000)),
+            if hb:
+                hb("Faster-Whisper 模型已就绪，正在分析首个语音段", 0, 1)
+            if settings.asr_batch_size > 1:
+                # Faster-Whisper's official batched pipeline defaults VAD to on;
+                # pass every ASMR-sensitive option explicitly so a speed opt-in
+                # does not silently discard whispers or breathy speech.
+                batched_model = BatchedInferencePipeline(model=model)
+                segments, info = batched_model.transcribe(
+                    str(analysis_audio),
+                    without_timestamps=False,
+                    batch_size=settings.asr_batch_size,
+                    **transcribe_kwargs,
                 )
+            else:
+                segments, info = model.transcribe(
+                    str(analysis_audio),
+                    **transcribe_kwargs,
+                )
+            check_cancelled(cancel_event)
+            segment_iter = iter(segments)
+            try:
+                first_segment = next(segment_iter)
+            except StopIteration:
+                first_segment = None
+        values = []
+        if first_segment is not None:
+            for segment in itertools.chain((first_segment,), segment_iter):
+                check_cancelled(cancel_event)
+                values.append(segment)
+                if progress:
+                    duration = float(getattr(info, "duration", 0) or 0)
+                    consumed = min(duration, max(0.0, float(getattr(segment, "end", 0) or 0)))
+                    progress(
+                        f"Faster-Whisper 已识别 {consumed:.1f}/{duration:.1f} 秒",
+                        round(consumed * 1000),
+                        max(1, round(duration * 1000)),
+                    )
         tokens: list[TimedToken] = []
         for segment in values:
             words = list(getattr(segment, "words", None) or [])
@@ -377,35 +430,40 @@ def _transcribe_kotoba_whisper(
         progress(f"加载 Kotoba-Whisper：{settings.asr_model}", 0, 1)
     model = processor = pipe = None
     try:
-        source, revision = asr.resolve_transformers_model_source(settings.asr_model)
-        dtype = torch.float16 if use_cuda else torch.float32
-        processor = asr._session_model(
-            f"processor:{source}:{revision}",
-            lambda: AutoProcessor.from_pretrained(source, revision=revision),
-        )
-        model = asr._session_model(
-            f"kotoba:{source}:{revision}:{settings.asr_device}",
-            lambda: AutoModelForSpeechSeq2Seq.from_pretrained(
-                source,
-                revision=revision,
-                dtype=dtype,
-                low_cpu_mem_usage=True,
-            ).to(settings.asr_device if use_cuda else "cpu"),
-        )
-        pipe = asr._session_model(
-            f"pipeline:{source}:{revision}:{settings.asr_device}",
-            lambda model=model, processor=processor: pipeline(
-                "automatic-speech-recognition",
-                model=model,
-                tokenizer=processor.tokenizer,
-                feature_extractor=processor.feature_extractor,
-                dtype=dtype,
-                device=settings.asr_device if use_cuda else "cpu",
-                chunk_length_s=settings.asr_kotoba_chunk_seconds,
-                batch_size=max(1, settings.asr_batch_size),
-                ignore_warning=True,
-            ),
-        )
+        with model_heartbeat(progress, f"加载 Kotoba-Whisper：{settings.asr_model}"):
+            source, revision = asr.resolve_transformers_model_source(settings.asr_model)
+            dtype = torch.float16 if use_cuda else torch.float32
+            local_only = Path(source).is_dir()
+            processor = asr._session_model(
+                f"processor:{source}:{revision}",
+                lambda: AutoProcessor.from_pretrained(
+                    source, revision=revision, local_files_only=local_only
+                ),
+            )
+            model = asr._session_model(
+                f"kotoba:{source}:{revision}:{settings.asr_device}",
+                lambda: AutoModelForSpeechSeq2Seq.from_pretrained(
+                    source,
+                    revision=revision,
+                    dtype=dtype,
+                    low_cpu_mem_usage=True,
+                    local_files_only=local_only,
+                ).to(settings.asr_device if use_cuda else "cpu"),
+            )
+            pipe = asr._session_model(
+                f"pipeline:{source}:{revision}:{settings.asr_device}",
+                lambda model=model, processor=processor: pipeline(
+                    "automatic-speech-recognition",
+                    model=model,
+                    tokenizer=processor.tokenizer,
+                    feature_extractor=processor.feature_extractor,
+                    dtype=dtype,
+                    device=settings.asr_device if use_cuda else "cpu",
+                    chunk_length_s=settings.asr_kotoba_chunk_seconds,
+                    batch_size=max(1, settings.asr_batch_size),
+                    ignore_warning=True,
+                ),
+            )
         sample_rate, chunk_ranges = asr._audio_file_chunk_ranges(
             analysis_audio,
             settings.asr_kotoba_chunk_seconds,

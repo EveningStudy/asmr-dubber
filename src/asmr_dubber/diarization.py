@@ -266,17 +266,47 @@ def cluster_speaker_embeddings(
     return _canonicalize_labels(best_labels) if best_k > 1 else [0] * n
 
 
-def _read_sentence_clips_16k(
+def stereo_pan_features(raw: np.ndarray, sample_rate: int = 16_000) -> np.ndarray:
+    """Return bounded 2-D binaural ILD cues ``[pan, pan_consistency]`` in ``[-1, 1]``."""
+    if raw.ndim < 2 or raw.shape[1] < 2 or raw.shape[0] == 0:
+        return np.zeros(2, dtype=np.float32)
+    left = raw[:, 0].astype(np.float64)
+    right = raw[:, 1].astype(np.float64)
+    size = max(1, round(sample_rate * 0.040))
+    hop = max(1, round(sample_rate * 0.020))
+    if len(left) < size:
+        rms_l = np.array([math.sqrt(float(np.mean(left**2)))], dtype=np.float64)
+        rms_r = np.array([math.sqrt(float(np.mean(right**2)))], dtype=np.float64)
+    else:
+        count = 1 + (len(left) - size) // hop
+        idx = np.arange(size)[None, :] + hop * np.arange(count)[:, None]
+        rms_l = np.sqrt(np.mean(left[idx] ** 2, axis=1))
+        rms_r = np.sqrt(np.mean(right[idx] ** 2, axis=1))
+    frame_peak = np.maximum(rms_l, rms_r)
+    active = frame_peak > max(float(frame_peak.max(initial=0.0)) * 0.12, 1e-5)
+    if not np.any(active):
+        return np.zeros(2, dtype=np.float32)
+    total_l = math.sqrt(float(np.mean(rms_l[active] ** 2)))
+    total_r = math.sqrt(float(np.mean(rms_r[active] ** 2)))
+    ild_db = 20.0 * math.log10((total_r + 1e-7) / (total_l + 1e-7))
+    pan = math.tanh(ild_db / 9.0)
+    frame_ild = 20.0 * np.log10((rms_r[active] + 1e-7) / (rms_l[active] + 1e-7))
+    pan_consistency = float(np.mean(np.tanh(frame_ild / 9.0)))
+    return np.array([pan, pan_consistency], dtype=np.float32)
+
+
+def _read_sentence_clips_and_pan(
     sentences: list[Sentence],
     audio_path: Path,
     *,
     progress: Progress | None = None,
     cancel_event: CancellationSignal | None = None,
-) -> tuple[list[int], list[np.ndarray]]:
+) -> tuple[list[int], list[np.ndarray], np.ndarray]:
     indices: list[int] = []
     clips: list[np.ndarray] = []
+    pans: list[np.ndarray] = []
     if not sentences or not audio_path.is_file():
-        return indices, clips
+        return indices, clips, np.zeros((0, 2), dtype=np.float32)
     total = len(sentences)
     with sf.SoundFile(audio_path) as audio:
         rate = audio.samplerate
@@ -295,16 +325,34 @@ def _read_sentence_clips_16k(
             ear_rms = np.sqrt(np.mean(raw.astype(np.float64) ** 2, axis=0))
             if float(ear_rms.max(initial=0.0)) < 1e-5:
                 continue
+            pan = stereo_pan_features(raw, rate)
             mono = raw[:, int(np.argmax(ear_rms))] if raw.shape[1] >= 2 else raw[:, 0]
             mono_16k = soxr.resample(mono, rate, 16_000, quality="HQ") if rate != 16_000 else mono
             indices.append(idx)
             clips.append(np.asarray(mono_16k, dtype=np.float32))
+            pans.append(pan)
+    pan_matrix = np.stack(pans, axis=0) if pans else np.zeros((0, 2), dtype=np.float32)
+    return indices, clips, pan_matrix
+
+
+def _read_sentence_clips_16k(
+    sentences: list[Sentence],
+    audio_path: Path,
+    *,
+    progress: Progress | None = None,
+    cancel_event: CancellationSignal | None = None,
+) -> tuple[list[int], list[np.ndarray]]:
+    indices, clips, _ = _read_sentence_clips_and_pan(
+        sentences, audio_path, progress=progress, cancel_event=cancel_event
+    )
     return indices, clips
 
 
 def _compute_embeddings(
     clips_16k: list[np.ndarray],
     *,
+    stereo_pans: np.ndarray | None = None,
+    num_speakers: int | None = None,
     cancel_event: CancellationSignal | None = None,
 ) -> np.ndarray:
     check_cancelled(cancel_event)
@@ -317,11 +365,28 @@ def _compute_embeddings(
         acoustic_list.append(acoustic_timbre_embedding(clip))
     acoustic = np.stack(acoustic_list, axis=0)
     if camp is None:
-        return acoustic
-    # Blend 88% CAM++ x-vector with 12% acoustic F0/formant features for pitch-distinct duets.
-    combined = np.concatenate([camp * math.sqrt(0.88), acoustic * math.sqrt(0.12)], axis=1)
-    norms = np.linalg.norm(combined, axis=1, keepdims=True)
-    return (combined / np.maximum(norms, 1e-9)).astype(np.float32)
+        voice_embs = acoustic
+    else:
+        # Blend 88% CAM++ x-vector with 12% acoustic F0/formant features for pitch-distinct duets.
+        combined = np.concatenate([camp * math.sqrt(0.88), acoustic * math.sqrt(0.12)], axis=1)
+        norms = np.linalg.norm(combined, axis=1, keepdims=True)
+        voice_embs = (combined / np.maximum(norms, 1e-9)).astype(np.float32)
+
+    if (
+        stereo_pans is not None
+        and len(stereo_pans) == len(clips_16k)
+        and len(clips_16k) >= 2
+        and float(np.std(stereo_pans[:, 0])) >= 0.18
+    ):
+        # Moderate binaural weight helps split left/right co-actors without splitting
+        # one moving solo actor in auto mode; explicit num_speakers uses stronger panning.
+        auto_weight = 0.115 if camp is not None else 0.107
+        w_stereo = 0.22 if (num_speakers is not None and num_speakers >= 2) else auto_weight
+        pan_feats = stereo_pans.astype(np.float32) * math.sqrt(w_stereo / 2.0)
+        joined = np.concatenate([voice_embs * math.sqrt(1.0 - w_stereo), pan_feats], axis=1)
+        norms = np.linalg.norm(joined, axis=1, keepdims=True)
+        return (joined / np.maximum(norms, 1e-9)).astype(np.float32)
+    return voice_embs
 
 
 def stitch_moss_chunk_speakers(
@@ -356,14 +421,16 @@ def stitch_moss_chunk_speakers(
                 updated.append(s)
         return updated
 
-    valid_indices, clips = _read_sentence_clips_16k(
+    valid_indices, clips, pans = _read_sentence_clips_and_pan(
         sentences, audio_path, progress=progress, cancel_event=cancel_event
     )
     if not clips:
         return sentences
     if progress:
         progress("正在提取说话人声纹", 1, 3)
-    embs = _compute_embeddings(clips, cancel_event=cancel_event)
+    embs = _compute_embeddings(
+        clips, stereo_pans=pans, num_speakers=num_speakers, cancel_event=cancel_event
+    )
     by_tag: dict[str, list[np.ndarray]] = {}
     tag_order: list[str] = []
     for sent_idx, emb in zip(valid_indices, embs, strict=True):
@@ -448,14 +515,16 @@ def diarize_sentences(
     if preserve_existing and all(s.speaker_id or not s.enabled for s in sentences):
         return sentences
 
-    valid_indices, clips = _read_sentence_clips_16k(
+    valid_indices, clips, pans = _read_sentence_clips_and_pan(
         sentences, audio_path, progress=progress, cancel_event=cancel_event
     )
     if not clips:
         return sentences
     if progress:
         progress("正在提取说话人声纹", 1, 3)
-    embs = _compute_embeddings(clips, cancel_event=cancel_event)
+    embs = _compute_embeddings(
+        clips, stereo_pans=pans, num_speakers=num_speakers, cancel_event=cancel_event
+    )
     check_cancelled(cancel_event)
     if progress:
         progress("正在聚类匹配说话人", 2, 3)

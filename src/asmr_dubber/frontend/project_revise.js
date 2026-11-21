@@ -4,7 +4,11 @@ import { $, state, api, t, esc, field, dialog, guard, notice, startTask, flushSa
 // The sentence table's search box and filter buttons decide which rows are visible.
 export function matchesRowFilter(sentence) {
   const query = $('#search').value.toLowerCase();
+  const spk = state.speakerFilter || 'all';
+  const spkMatch =
+    spk === 'all' || (spk === '__none__' ? !sentence.speaker_id : sentence.speaker_id === spk);
   return (
+    spkMatch &&
     `${sentence.id} ${sentence.speaker_id ?? ''} ${sentence.source_text} ${sentence.target_text ?? ''}`
       .toLowerCase()
       .includes(query) &&

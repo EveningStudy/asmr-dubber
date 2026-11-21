@@ -19,6 +19,7 @@ from .models import DubProject, ProjectSettings, Sentence
 from .task_control import CancellationSignal, check_cancelled
 from .voice_reference import (
     STABLE_CLONE_MODES,
+    configured_speaker_reference,
     effective_index_emotion_weight,
     effective_project_reference_sentence,
     fallback_reference_sentence,
@@ -79,7 +80,24 @@ def _index_reference_payload(project: DubProject, sentence: Sentence) -> dict[st
             references["whisper_anchor"] = True
 
     payload: dict[str, object] = {}
-    if speaker_source == "external":
+    override = configured_speaker_reference(project, sentence)
+    if override is not None and override.source == "external":
+        path = Path(override.audio_path).expanduser()
+        if not path.is_file():
+            raise SynthesisError(f"找不到说话人 {sentence.speaker_id} 的外部参考音频：{path}")
+        payload["speaker"] = {"speaker_external": cached_sha256_file(path)}
+    elif override is not None and override.source == "project_sentence":
+        ref_sent = next((s for s in project.sentences if s.id == override.sentence_id), None)
+        if ref_sent is not None:
+            payload["speaker"] = {
+                "id": ref_sent.id,
+                "start": ref_sent.start_seconds,
+                "end": ref_sent.end_seconds,
+                "ja": ref_sent.source_text,
+            }
+        else:
+            payload["speaker"] = references[speaker_source]
+    elif speaker_source == "external":
         path = Path(project.settings.tts_external_reference_audio).expanduser()
         if not path.is_file():
             raise SynthesisError(f"找不到 IndexTTS2 外部音色参考：{path}")
@@ -292,6 +310,28 @@ def tts_cache_key(project: DubProject, sentence: Sentence) -> str:
         and (settings.tts_model.strip() or "mimo-v2.5-tts-voiceclone") != "mimo-v2.5-tts-voiceclone"
     ):
         payload["reference_plan"] = "unused"
+    elif (override := configured_speaker_reference(project, sentence)) is not None:
+        if override.source == "external":
+            path = Path(override.audio_path).expanduser()
+            if not path.is_file():
+                raise SynthesisError(f"找不到说话人 {sentence.speaker_id} 的外部参考音频：{path}")
+            payload["reference_plan"] = {
+                "speaker": sentence.speaker_id,
+                "source": "external",
+                "sha256": cached_sha256_file(path),
+                "text": override.text,
+                "language": override.language,
+            }
+        else:
+            spk_ref, _ = speaker_reference_sentence(project, sentence)
+            payload["reference_plan"] = {
+                "speaker": sentence.speaker_id,
+                "sentence_id": spk_ref.id,
+                "start": spk_ref.start_seconds,
+                "end": spk_ref.end_seconds,
+                "padding": settings.reference_padding_seconds,
+            }
+        payload["seed"] = settings.random_seed
     elif (
         settings.tts_reference_source == "external"
         or settings.tts_clone_mode in _STABLE_CLONE_MODES

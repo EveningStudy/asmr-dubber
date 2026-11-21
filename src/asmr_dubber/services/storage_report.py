@@ -113,5 +113,8 @@ def open_folder(key: str, projects_root: str | None) -> dict[str, str]:
     if path is None:
         raise ValueError("未知的存储位置。")
     if not path.is_dir():
-        raise ValueError("这个文件夹还不存在。")
+        if key == "projects":
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            raise ValueError("这个文件夹还不存在。")
     return {"path": str(open_directory(path))}

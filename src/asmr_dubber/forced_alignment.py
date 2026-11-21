@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from .asr_progress import model_heartbeat
 from .constants import DEFAULT_ALIGNER_MODEL
 from .environment import cached_model_path, require_cuda, resolve_transformers_model_source
 from .errors import AsmrDubberError
@@ -136,6 +137,8 @@ def align_sentences_with_qwen(
     }
     if revision is not None:
         kwargs["revision"] = revision
+    if Path(source).is_dir():
+        kwargs["local_files_only"] = True
 
     model = None
     results: list[dict[str, Any]] = []
@@ -143,7 +146,10 @@ def align_sentences_with_qwen(
     try:
         if progress:
             progress("加载 Qwen3 ForcedAligner（时间戳对齐）", 0, len(sentences))
-        model = Qwen3ForcedAligner.from_pretrained(source, **kwargs)
+        with model_heartbeat(progress, "加载 Qwen3 ForcedAligner（时间戳对齐）") as hb:
+            if hb:
+                hb("加载 Qwen3 ForcedAligner（时间戳对齐）", 0, len(sentences))
+            model = Qwen3ForcedAligner.from_pretrained(source, **kwargs)
         check_cancelled(cancel_event)
         duration = audio_info.frames / sample_rate
         padding = max(0.75, min(2.0, settings.asr_review_max_drift_seconds))
@@ -270,13 +276,18 @@ def align_script_sentences_with_qwen(
     }
     if revision is not None:
         kwargs["revision"] = revision
+    if Path(source).is_dir():
+        kwargs["local_files_only"] = True
 
     model = None
     report: list[dict[str, Any]] = []
     try:
         if progress:
             progress("加载 Qwen3 ForcedAligner（纯台本时间轴）", 0, len(groups))
-        model = Qwen3ForcedAligner.from_pretrained(source, **kwargs)
+        with model_heartbeat(progress, "加载 Qwen3 ForcedAligner（纯台本时间轴）") as hb:
+            if hb:
+                hb("加载 Qwen3 ForcedAligner（纯台本时间轴）", 0, len(groups))
+            model = Qwen3ForcedAligner.from_pretrained(source, **kwargs)
         check_cancelled(cancel_event)
         for group_index, group in enumerate(groups, start=1):
             check_cancelled(cancel_event)

@@ -8,6 +8,7 @@ export const state = {
   page: 'home',
   step: 1,
   filter: 'all',
+  speakerFilter: 'all',
   language: 'zh',
   saveChain: Promise.resolve(),
   saveError: null,

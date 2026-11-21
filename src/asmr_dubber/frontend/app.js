@@ -59,6 +59,13 @@ function refreshTaskViews() {
   renderDiagnosticTasks();
   syncProjectControls();
 }
+function formatTaskErrorNotice(task) {
+  const hint = task.error_hint ? `${t(task.error_hint)}\n` : '';
+  const raw = String(task.error || t('操作失败'));
+  const cap = 450;
+  const body = raw.length > cap ? `${raw.slice(0, cap)}…\n${t('…（完整信息请看下方日志）')}` : raw;
+  return `${hint}${body}`.trim();
+}
 let polling = false, pollingError = '', taskPollVersion = 0, appStopped = false;
 async function pollTasks() {
   if (polling || !state.boot || appStopped) return;
@@ -103,7 +110,7 @@ async function pollTasks() {
           $('#saveState').textContent = t('修改会自动保存');
           renderProject();
         }
-        notice(task.error, true, { sticky: true });
+        notice(formatTaskErrorNotice(task), true, { sticky: true });
       } else if (
         task.status === 'cancelled' &&
         state.project &&
