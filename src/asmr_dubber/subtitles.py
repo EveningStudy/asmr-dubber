@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import textwrap
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -13,6 +14,34 @@ from .timing import DubbingTiming, DubbingTimingMode, plan_dubbing_timing
 
 SubtitleLanguage = Literal["bilingual", "zh", "source"]
 SubtitleTimeline = Literal["source", "dubbing"]
+
+_CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_NUMBER = re.compile(
+    r"[+\-−]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+\-−]?\d+|[×xX]10(?:\^[+\-−]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))?"
+)
+
+
+class _NumberAwareWrapper(textwrap.TextWrapper):
+    """Keep a number together when it can fit on the next line."""
+
+    def _handle_long_word(self, reversed_chunks, cur_line, cur_len, width):
+        space_left = width - cur_len
+        # Python 3.12's default appends an empty chunk when a line is full,
+        # which can prevent the wrapper from dropping trailing whitespace.
+        if space_left <= 0 and cur_line:
+            return
+        chunk = reversed_chunks[-1]
+        for number in _NUMBER.finditer(chunk):
+            if number.start() < space_left < number.end() and len(number.group()) <= width:
+                if number.start():
+                    cur_line.append(chunk[: number.start()])
+                    reversed_chunks[-1] = chunk[number.start() :]
+                    return
+                if cur_line:
+                    return
+                break
+        # A number wider than a line still needs the normal hard-break fallback.
+        super()._handle_long_word(reversed_chunks, cur_line, cur_len, width)
 
 
 def _srt_timestamp(seconds: float) -> str:
@@ -38,13 +67,13 @@ def _wrap_line(value: str, width: int) -> list[str]:
     cleaned = _clean_line(value)
     if not cleaned:
         return []
-    return textwrap.wrap(
-        cleaned,
+    wrapper = _NumberAwareWrapper if _CJK.search(cleaned) else textwrap.TextWrapper
+    return wrapper(
         width=width,
         break_long_words=True,
         break_on_hyphens=False,
         replace_whitespace=False,
-    ) or [cleaned]
+    ).wrap(cleaned) or [cleaned]
 
 
 def _escape_srt_text(value: str) -> str:
