@@ -6,12 +6,13 @@ import logging
 import math
 import re
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from heapq import nlargest
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 from .audio import extract_reference, probe_audio
@@ -104,15 +105,21 @@ def shared_reference_sentence(project: DubProject) -> Sentence:
     )
 
 
-_PICK_MAX_CANDIDATES = 24
+_PICK_MAX_CANDIDATES = 48
+_SPOKEN_CONTENT = re.compile(r"[A-Za-z0-9\u3041-\u3096\u30a1-\u30fa\u4e00-\u9fff]")
+_STRETCH_MARKS = re.compile(r"[・ー〜～…⋯]+")
 
 
 def _duration_score(seconds: float) -> float:
-    if 5.0 <= seconds <= 12.0:
+    if 5.5 <= seconds <= 9.5:
         return 1.0
-    if seconds < 5.0:
-        return max(0.0, (seconds - 2.0) / 3.0)
-    return max(0.0, 1.0 - (seconds - 12.0) / 8.0)
+    if 4.0 <= seconds < 5.5:
+        return 0.88 + 0.12 * (seconds - 4.0) / 1.5
+    if seconds < 4.0:
+        return max(0.0, 0.88 * (seconds - 2.0) / 2.0)
+    if seconds <= 12.0:
+        return 1.0 - 0.12 * (seconds - 9.5) / 2.5
+    return max(0.0, 0.88 - 0.88 * (seconds - 12.0) / 8.0)
 
 
 def _whisper_duration_score(seconds: float) -> float:
@@ -121,13 +128,62 @@ def _whisper_duration_score(seconds: float) -> float:
     return max(0.0, 1.0 - abs(seconds - 6.0) / 8.0)
 
 
-def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | None:
+def _speech_density_score(text: str, seconds: float) -> float:
+    """Reward conversational speaking rate and penalize slow-sung/elongated lines."""
+    spoken = len(_SPOKEN_CONTENT.findall(text))
+    if seconds <= 0.0 or spoken == 0:
+        return 0.0
+    cps = spoken / seconds
+    latin = sum(1 for ch in text if "a" <= ch.lower() <= "z")
+    is_latin = latin > spoken * 0.5
+    lo_cps, good_cps = (3.5, 9.0) if is_latin else (1.4, 4.2)
+    rate_score = max(0.0, min(1.0, (cps - lo_cps) / (good_cps - lo_cps)))
+    stretch_chars = sum(len(m.group(0)) for m in _STRETCH_MARKS.finditer(text))
+    stretch_ratio = stretch_chars / max(spoken, 1)
+    stretch_pen = max(0.0, 1.0 - max(0.0, stretch_ratio - 0.12) * 2.5)
+    return rate_score * stretch_pen
+
+
+def _modal_voiced_score(vr: float) -> float:
+    """Plateau on normal speech (0.65-0.93) instead of rewarding monotone 1.00 singing."""
+    if vr <= 0.25:
+        return 0.0
+    if vr < 0.65:
+        return (vr - 0.25) / 0.40
+    if vr <= 0.93:
+        return 1.0
+    return max(0.70, 1.0 - (vr - 0.93) * 4.0)
+
+
+def _formant_richness_score(mono: np.ndarray, rate: int, vr: float) -> float:
+    """Measure vocal-fold closure via 500-2500 Hz formant energy vs 100-500 Hz fundamental."""
+    from .voice_match import long_term_spectrum
+
+    if len(mono) < max(64, rate // 20):
+        return 0.0
+    spec = long_term_spectrum(mono)
+    hz = np.fft.rfftfreq(2048, 1.0 / rate)
+    p_lo = float(spec[(hz >= 100.0) & (hz < 500.0)].sum())
+    p_mid = float(spec[(hz >= 500.0) & (hz < 2500.0)].sum())
+    mid_lo_db = 10.0 * math.log10((p_mid + 1e-20) / (p_lo + 1e-20))
+    raw = max(0.0, min(1.0, (mid_lo_db + 18.0) / 18.0))
+    # Gate by voicing so unvoiced broadband noise never gets formant credit.
+    voiced_gate = max(0.0, min(1.0, (vr - 0.25) / 0.35))
+    return raw * voiced_gate
+
+
+def pick_reference_sentence(
+    project: DubProject,
+    source: Path,
+    *,
+    vocals: Path | None = None,
+) -> Sentence | None:
     """Choose the voice anchor by quality, not just length (F3).
 
-    Scores each candidate line on length (5-12 s is best), how far its voice
-    stands above the recording's noise floor, and how much of it is voiced:
-    a clear, normally spoken line gives a steadier cloned timbre than a long
-    whisper or a line full of effects.  Deterministic for a given source.
+    Scores candidates on comfort duration, SNR, normal conversational speech
+    density, mid-band formant richness (rejecting breathy close-mic lullabies
+    whose fundamental booms while vocal folds barely close), and optionally
+    vocal-to-mix purity against separated ``vocals``.  Deterministic for a source.
     """
     from .filtering import is_japanese_filler_only
     from .voice_match import voiced_ratio
@@ -145,15 +201,24 @@ def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | Non
     candidates = sorted(
         candidates,
         key=lambda s: (
-            -_duration_score(s.end_seconds - s.start_seconds),
+            -(
+                _duration_score(s.end_seconds - s.start_seconds)
+                + 0.8 * _speech_density_score(s.source_text, s.end_seconds - s.start_seconds)
+            ),
             -(s.end_seconds - s.start_seconds),
             s.start_seconds,
         ),
     )[:_PICK_MAX_CANDIDATES]
     try:
-        with open_audio_for_analysis(source) as audio:
+        with ExitStack() as stack:
+            audio = stack.enter_context(open_audio_for_analysis(source))
             rate = audio.samplerate
             floor = source_noise_floor(audio, rate)
+            vocals_audio = None
+            vocals_rate = rate
+            if vocals is not None and vocals.is_file() and vocals.resolve() != source.resolve():
+                vocals_audio = stack.enter_context(open_audio_for_analysis(vocals))
+                vocals_rate = vocals_audio.samplerate
             scored = []
             for sentence in candidates:
                 clip = read_clip_for_window(
@@ -162,10 +227,29 @@ def pick_reference_sentence(project: DubProject, source: Path) -> Sentence | Non
                 snr_db = clip_snr_db(clip, rate, floor)
                 if snr_db is None:
                     continue
+                snr_score = snr_db / (snr_db + 20.0) if snr_db > 0.0 else 0.0
+                source_mono = louder_ear_mono(clip)
+                voice_mono, voice_rate = source_mono, rate
+                purity: float | None = None
+                if vocals_audio is not None:
+                    v_clip = read_clip_for_window(
+                        vocals_audio, vocals_rate, sentence.start_seconds, sentence.end_seconds
+                    )
+                    v_mono = louder_ear_mono(v_clip)
+                    if len(v_mono) >= vocals_rate // 10:
+                        src_pwr = float(np.mean(source_mono.astype(np.float64) ** 2))
+                        voc_pwr = float(np.mean(v_mono.astype(np.float64) ** 2))
+                        purity = min(voc_pwr / max(src_pwr, 1e-18), 1.0)
+                        voice_mono, voice_rate = v_mono, vocals_rate
+                vr = voiced_ratio(voice_mono, voice_rate)
+                dur = sentence.end_seconds - sentence.start_seconds
                 score = (
-                    _duration_score(sentence.end_seconds - sentence.start_seconds)
-                    + 0.5 * min(max(snr_db, 0.0) / 30.0, 1.0)
-                    + 0.5 * voiced_ratio(louder_ear_mono(clip), rate)
+                    0.8 * _duration_score(dur)
+                    + 0.4 * snr_score
+                    + 0.6 * _modal_voiced_score(vr)
+                    + 0.8 * _formant_richness_score(voice_mono, voice_rate, vr)
+                    + 0.6 * _speech_density_score(sentence.source_text, dur)
+                    + (0.5 * purity if purity is not None else 0.0)
                 )
                 scored.append((score, -sentence.start_seconds, sentence))
     except (OSError, RuntimeError, ValueError, AsmrDubberError):
@@ -367,7 +451,9 @@ def speaker_reference_sentence(
     best_m = max(
         modals,
         key=lambda s: (
-            _duration_score(s.end_seconds - s.start_seconds),
+            _duration_score(s.end_seconds - s.start_seconds)
+            + 0.45
+            * _speech_density_score(s.source_text or s.zh_text, s.end_seconds - s.start_seconds),
             s.end_seconds - s.start_seconds,
             len(_REFERENCE_TEXT.findall(s.source_text or s.zh_text)),
             -s.start_seconds,

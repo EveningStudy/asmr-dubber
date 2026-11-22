@@ -276,6 +276,95 @@ def test_reference_pick_prefers_a_clear_voiced_line_over_the_longest(tmp_path) -
     assert pick_reference_sentence(project, source).id == "clear"
 
 
+def test_reference_pick_rejects_breathy_lullaby_for_clear_speech(tmp_path) -> None:
+    from asmr_dubber.voice_reference import pick_reference_sentence
+
+    rate = 16000
+    rng = np.random.default_rng(12)
+    audio = rng.normal(0, 0.0005, rate * 30).astype(np.float32)
+
+    # 11.5s breathy lullaby: booming 230 Hz fundamental, weak mid formants, vr near 1.0.
+    t_lull = np.arange(int(rate * 11.5)) / rate
+    lull = 0.25 * np.sin(2 * np.pi * 230.0 * t_lull) + 0.012 * np.sin(2 * np.pi * 690.0 * t_lull)
+    lull += rng.normal(0, 0.01, len(lull))
+    audio[rate * 1 : rate * 1 + len(lull)] += lull.astype(np.float32)
+
+    # 7.0s normal conversational speech: rich 220-1980 Hz formants with brief natural gaps.
+    t_norm = np.arange(rate * 7) / rate
+    norm = sum((1.0 / k) * np.sin(2 * np.pi * (220.0 * k) * t_norm) for k in (1, 3, 5, 7, 9))
+    norm = (norm / np.max(np.abs(norm)) * 0.15).astype(np.float32)
+    for gap_start in (int(rate * 1.4), int(rate * 3.2), int(rate * 5.0)):
+        norm[gap_start : gap_start + int(rate * 0.18)] = 0.0
+    audio[rate * 15 : rate * 22] += norm
+
+    source = tmp_path / "source.wav"
+    sf.write(source, audio, rate)
+    project = DubProject(
+        source={
+            "path": "source.wav",
+            "sha256": "0" * 64,
+            "duration_seconds": 30.0,
+            "sample_rate": rate,
+            "channels": 1,
+        },
+        sentences=[
+            Sentence(
+                id="lullaby",
+                start_seconds=1.0,
+                end_seconds=12.5,
+                source_text="び・わ・の・み・が・揺・れる・よねんねこねんね…",
+            ),
+            Sentence(
+                id="normal",
+                start_seconds=15.0,
+                end_seconds=22.0,
+                source_text="こういうところって仕事相手にはもちろん近所の人とかにも意外と見られてるんだから",
+            ),
+        ],
+    )
+    assert pick_reference_sentence(project, source).id == "normal"
+
+
+def test_reference_pick_prefers_dry_vocals_over_noisy_se_when_vocals_given(tmp_path) -> None:
+    from asmr_dubber.voice_reference import pick_reference_sentence
+
+    rate = 16000
+    rng = np.random.default_rng(27)
+    t_line = np.arange(rate * 7) / rate
+    clean_speech = sum((1.0 / k) * np.sin(2 * np.pi * (210.0 * k) * t_line) for k in (1, 3, 5, 7))
+    clean_speech = (clean_speech / np.max(np.abs(clean_speech)) * 0.12).astype(np.float32)
+    for gap_start in (int(rate * 1.5), int(rate * 4.0)):
+        clean_speech[gap_start : gap_start + int(rate * 0.15)] = 0.0
+
+    vocals_audio = rng.normal(0, 0.0003, rate * 20).astype(np.float32)
+    vocals_audio[rate * 1 : rate * 8] += clean_speech
+    vocals_audio[rate * 10 : rate * 17] += clean_speech
+
+    source_audio = vocals_audio.copy()
+    # Add heavy non-vocal sound effects (e.g. ear-cleaning/scissors) over the first line only.
+    source_audio[rate * 1 : rate * 8] += rng.normal(0, 0.25, rate * 7).astype(np.float32)
+
+    source = tmp_path / "source.wav"
+    vocals = tmp_path / "vocals.wav"
+    sf.write(source, source_audio, rate)
+    sf.write(vocals, vocals_audio, rate)
+    text = "これはテスト用の普通の会話セリフですので安心して選べます"
+    project = DubProject(
+        source={
+            "path": "source.wav",
+            "sha256": "0" * 64,
+            "duration_seconds": 20.0,
+            "sample_rate": rate,
+            "channels": 1,
+        },
+        sentences=[
+            Sentence(id="se_heavy", start_seconds=1.0, end_seconds=8.0, source_text=text),
+            Sentence(id="dry", start_seconds=10.0, end_seconds=17.0, source_text=text),
+        ],
+    )
+    assert pick_reference_sentence(project, source, vocals=vocals).id == "dry"
+
+
 def test_reference_is_fixed_only_before_the_first_dub(monkeypatch, tmp_path) -> None:
     project = DubProject(
         source={

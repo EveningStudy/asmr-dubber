@@ -4,6 +4,12 @@ English | [中文](CHANGELOG.md)
 
 All notable changes to ASMR Dubber are documented in this file.
 
+## [3.0.2] - 2026-11-22
+
+### Automatic Voice Reference & Full-Dub Audio Quality Fixes
+- **Prevent breathy lullabies from hijacking automatic voice reference selection** (`voice_reference.py`, `separation.py`, `pipeline.py`, `tts.py`, `services/project_audio.py`): `pick_reference_sentence` expands candidate pre-ranking to 48 lines (sweet spot `5.5–9.5 s`), scores normal speech rate while penalizing elongated singing marks (`・`/`ー`/`…`), adds voicing-gated `500–2500 Hz` formant richness over `100–500 Hz` fundamental energy, caps modal voicing credit on a `0.65–0.93` plateau, scores against cached separated `vocals.wav` purity when available, and aligns multi-speaker modal selection (`speaker_reference_sentence`) with speech-density scoring.
+- **Gate `replacement_whisper_match` to genuinely whispered or breathy originals** (`audio_dsp.py`, `stem_cache.py`): `_VoiceMatcher.apply` now ramps whisper conversion smoothly across `original voiced_ratio` `0.45 -> 0.20`, stopping normal conversational lines from receiving hoarse random-phase noise; bumped `stem_cache` implementation version to `6`.
+
 ## [3.0.1] - 2026-11-21
 
 ### 8 GB VRAM Dubbing & Error Handling

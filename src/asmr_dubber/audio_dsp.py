@@ -446,7 +446,11 @@ class _VoiceMatcher:
         whisper_amount = 0.0
         if whisper > 0 and len(window) >= self.rate // 4:
             original, dub = voiced_ratio(window, self.rate), voiced_ratio(clip, self.rate)
-            whisper_amount = whisper * float(np.clip((dub - original) / max(dub, 1e-3), 0.0, 1.0))
+            # Only push toward breathy whisper when the original line is whispered or very breathy.
+            whisper_gate = float(np.clip((0.45 - original) / 0.25, 0.0, 1.0))
+            whisper_amount = (
+                whisper * whisper_gate * float(np.clip((dub - original) / max(dub, 1e-3), 0.0, 1.0))
+            )
         return process_voice_match_fused(
             clip,
             self.rate,

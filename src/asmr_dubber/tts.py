@@ -527,6 +527,8 @@ def synthesize_sentences(
     progress: Progress | None = None,
     on_sentence: Callable[[], None] | None = None,
     cancel_event: CancellationSignal | None = None,
+    *,
+    scoring_vocals: Path | None = None,
 ) -> list[str]:
     from .audio import resolve_project_path
     from .tts_backends import synthesize_with_selected_backend
@@ -538,7 +540,11 @@ def synthesize_sentences(
     ):
         from .voice_reference import pick_reference_sentence
 
-        picked = pick_reference_sentence(project, source)
+        picked = (
+            pick_reference_sentence(project, source, vocals=scoring_vocals)
+            if scoring_vocals is not None
+            else pick_reference_sentence(project, source)
+        )
         if picked is not None:
             project.settings.tts_reference_sentence_id = picked.id
     if project.settings.tts_dual_voice_anchor:

@@ -7,8 +7,10 @@ import re
 import time
 import unicodedata
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .asr import transcribe_source
 from .asr_progress import model_heartbeat
@@ -643,8 +645,11 @@ def _synthesize_project_impl(
             last_checkpoint = now
             checkpoint_dirty = False
 
-    cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
+    cancel_kwargs: dict[str, Any] = (
+        {"cancel_event": cancel_event} if cancel_event is not None else {}
+    )
     reference_source = source
+    scoring_vocals: Path | None = None
     if (
         needs_generation
         and project.settings.reference_audio_mode == "fullband_vocals"
@@ -655,6 +660,14 @@ def _synthesize_project_impl(
         from .separation import _ensure_separation_impl
 
         reference_source, _ = _ensure_separation_impl(project, project_dir, source, progress)
+        scoring_vocals = reference_source
+    elif needs_generation and project.settings.separation_enabled:
+        from .separation import cached_separated_vocals
+
+        with suppress(Exception):
+            scoring_vocals = cached_separated_vocals(project, project_dir)
+    if scoring_vocals is not None:
+        cancel_kwargs["scoring_vocals"] = scoring_vocals
     try:
         failures = synthesize_sentences(
             project,

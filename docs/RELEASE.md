@@ -1,28 +1,23 @@
-中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v3.0.1/docs/en/RELEASE.md)
+中文 | [English](https://github.com/EveningStudy/asmr-dubber/blob/v3.0.2/docs/en/RELEASE.md)
 
-# ASMR Dubber 3.0.1
+# ASMR Dubber 3.0.2
 
-完整的变更列表见[更新日志](https://github.com/EveningStudy/asmr-dubber/blob/v3.0.1/CHANGELOG.md)。
+完整的变更列表见[更新日志](https://github.com/EveningStudy/asmr-dubber/blob/v3.0.2/CHANGELOG.md)。
 
 ## 主要变化
 
-- **8 GB 显存配音优化与报错改进**：
-  - IndexTTS2 按需懒加载文本情绪模型（`QwenEmotion`，不用文本情绪时不占约 1.1 GB 显存），GPT 权重在进 GPU 前先转半精度以消掉峰值飙升；总显存 ≤ 9.5 GB 或可用显存 ≤ 7 GB 时自动将语义特征模型（`w2v-bert-2.0`，约 2.2 GB）放 CPU，初始化显存从 ~5.1 GB 降至 ~2.9 GB；
-  - Windows 自动设置 `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128`；模型初始化失败且零产出时直接报单条根因（含 Windows 页面文件排查提示），不再误标全部句子，顶部错误弹窗支持限高滚动。
-- **Windows 进阶依赖包导入与 8 GB 转录进度体验**：
-  - 导入 Windows 进阶依赖包时跳过重复大包 SHA-256 校验、同盘使用移动合并、关闭 Python 输出缓冲，并在无百分比阶段重置进度条，不再停留在下载结束的 `100%` 假死；
-  - FFmpeg 分析音轨预处理、Whisper / Anime-Whisper / Kotoba / 对齐器加载及 MOSS 分块补全心跳与 `local_files_only` 离线快速报错，补充低显存识别批大小上限。
-- **首页直接管理项目文件夹**：首页「最近」旁新增“打开项目文件夹”按钮，并说明删除对应项目文件夹即可完整删除项目且不影响原始音视频。
-- **多说话人识别与分角色配音**：
-  - 说话人聚类新增双耳左右声道声像线索以辅助区分左右耳双人音声，并把“说话人数量”移入第 1 步基础面板；
-  - 句子表独立出“说话人”列，支持行内彩色下拉切换、自定义角色编号、按说话人筛选及批量改说话人；
-  - 配音步骤新增「按说话人指定参考音色」卡片，支持分别试听或为每个角色单独绑定项目片段 / 外部参考音频（仅重算对应角色的缓存）。
+- **自动选参考音频不再误选气声哼唱 / 摇篮曲**：
+  - `pick_reference_sentence` 新增对话语速密度（惩罚长拖音符号与慢唱）、`500–2500 Hz` 实声共振峰丰富度（按有声度门控）以及 `0.65–0.93` 有声度平台区间，并在已有分离人声缓存时优先挑选无背景音效的干声台词，避免因选到气声摇篮曲而让整部作品配音发虚撕哑；多说话人参考选句同步对齐该语速密度策略；
+  - 仍沿用 `16 kHz` 单声道参考提取策略，不使老项目配音缓存失效，也不引入全带宽破音。
+- **完全配音版耳语转气声增加原声门限**：
+  - `replacement_whisper_match` 仅在原声确实偏耳语或重气声（`voiced_ratio < 0.45`）时启动，不再误伤正常清晰说话的台词。
+- （包含 `3.0.1` 的全部改进：IndexTTS2 8 GB 显存优化、Windows 进阶依赖包导入与 8 GB 转录进度修复、首页打开项目文件夹、多说话人第一阶段。）
 
 ## 下载与升级
 
-Windows 下载 `ASMR-Dubber-windows-portable-v3.0.1.zip`，完整解压到一个路径短的文件夹，运行 `ASMR-Dubber.exe`。
+Windows 下载 `ASMR-Dubber-windows-portable-v3.0.2.zip`，完整解压到一个路径短的文件夹，运行 `ASMR-Dubber.exe`。
 
-从 3.0.0 升级：关闭程序后将新版本文件覆盖到原程序目录即可，`.asmr-dubber` 中的项目、设置与已下载模型/运行库（含 IndexTTS2）均可保留，无需重新下载或重传。
+从 3.0.0 / 3.0.1 升级：关闭程序后将新版本文件覆盖到原程序目录即可，`.asmr-dubber` 中的项目、设置与已下载模型/运行库（含 IndexTTS2）均可保留，无需重新下载或重传。
 
 从 2.x 升级：先关闭程序并备份，将新版本文件覆盖到原程序目录。保留 `.asmr-dubber` 文件夹，其中包含项目、模型和设置。首次启动会检查并更新基础客户端，已经装好的语音模型不用重新下载。
 

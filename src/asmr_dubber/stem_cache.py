@@ -32,7 +32,8 @@ def build_cached_stem(builder, **kwargs):
     # 3: per-channel mean-power loudness reference (was summed L^2 + R^2, +3 dB).
     # 4: +2 dB high-band rebuild in the fused voice match.
     # 5: tempo changes back to FFmpeg atempo.
-    parameters["implementation"] = 5
+    # 6: gate replacement_whisper_match to genuinely whispered/breathy originals.
+    parameters["implementation"] = 6
     parameters["events"] = []
     for event in kwargs["events"]:
         check_cancelled()

@@ -426,3 +426,57 @@ def test_indextts2_worker_batch_loading_kwargs_and_daemon_cli(tmp_path: Path) ->
     with patch.dict(sys.modules, {"torch": fake_torch}):
         state = _install_runtime_hooks(fake_model)
     assert state["duration_factor"] == 1.0
+
+
+def test_voice_matcher_whisper_gate_protects_normal_speech(tmp_path: Path) -> None:
+    from asmr_dubber.audio_dsp import StemEvent, _VoiceMatcher
+
+    rate = 48_000
+    consonant = _whisper_wave(rate, 0.35, seed=31)
+    normal = np.concatenate(
+        [_harmonic_wave(rate, 0.55, f0=200.0), consonant, _harmonic_wave(rate, 0.60, f0=200.0)]
+    )
+    whisper = _whisper_wave(rate, 1.5, seed=29)
+    gap = np.zeros(rate // 2, dtype=np.float32)
+    vocals = np.concatenate([normal, gap, whisper])
+    vocals_path = tmp_path / "vocals.wav"
+    sf.write(vocals_path, vocals, rate)
+
+    dub = _harmonic_wave(rate, 1.5, f0=210.0)
+    dub_path = tmp_path / "dub.wav"
+    sf.write(dub_path, dub, rate)
+
+    assert 0.55 <= voiced_ratio(normal, rate) <= 0.88
+    assert voiced_ratio(whisper, rate) < 0.20
+    assert voiced_ratio(dub, rate) > 0.92
+
+    ev_normal = StemEvent(
+        sentence_id="s1",
+        start_seconds=0.0,
+        audio_path=dub_path,
+        source_start_seconds=0.0,
+        source_end_seconds=1.5,
+    )
+    ev_whisper = StemEvent(
+        sentence_id="s2",
+        start_seconds=2.0,
+        audio_path=dub_path,
+        source_start_seconds=2.0,
+        source_end_seconds=3.5,
+    )
+    matcher = _VoiceMatcher(vocals_path, [ev_normal, ev_whisper], rate)
+    try:
+        for whisper_strength in (0.65, 0.95):
+            out_norm_gated = matcher.apply(dub, ev_normal, 0.0, False, whisper_strength)
+            out_norm_zero = matcher.apply(dub, ev_normal, 0.0, False, 0.0)
+            assert np.allclose(out_norm_gated, out_norm_zero, atol=1e-6)
+
+        out_whisp_65 = matcher.apply(dub, ev_whisper, 0.0, False, 0.65)
+        out_whisp_off = matcher.apply(dub, ev_whisper, 0.0, False, 0.0)
+        assert float(np.sqrt(np.mean((out_whisp_65 - out_whisp_off) ** 2))) > 0.05
+        assert voiced_ratio(out_whisp_65, rate) < voiced_ratio(out_whisp_off, rate)
+
+        out_whisp_95 = matcher.apply(dub, ev_whisper, 0.0, False, 0.95)
+        assert voiced_ratio(out_whisp_95, rate) < 0.25
+    finally:
+        matcher.close()

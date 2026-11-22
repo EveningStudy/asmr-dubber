@@ -146,7 +146,10 @@ def _scored_reference_id(
     source: str,
     stamp: tuple[Any, ...],
     sentence_key: tuple[tuple[str, float, float, str, bool], ...],
+    vocals: str = "",
+    vocals_stamp: tuple[int, int] | None = None,
 ) -> str | None:
+    del vocals_stamp
     from ..models import AudioInfo, DubProject, Sentence
     from ..voice_reference import pick_reference_sentence
 
@@ -169,7 +172,11 @@ def _scored_reference_id(
             for sid, start, end, text, enabled in sentence_key
         ],
     )
-    picked = pick_reference_sentence(stub, Path(source))
+    picked = (
+        pick_reference_sentence(stub, Path(source), vocals=Path(vocals))
+        if vocals
+        else pick_reference_sentence(stub, Path(source))
+    )
     return picked.id if picked is not None else None
 
 
@@ -183,8 +190,23 @@ def recommended_reference_id(project, directory: Path) -> str | None:
     sentence_key = tuple(
         (s.id, s.start_seconds, s.end_seconds, s.source_text, s.enabled) for s in project.sentences
     )
+    vocals_path = ""
+    vocals_stamp: tuple[int, int] | None = None
+    if getattr(project.settings, "separation_enabled", False):
+        from ..separation import cached_separated_vocals
+
+        with suppress(Exception):
+            vocals = cached_separated_vocals(project, directory)
+            if vocals is not None:
+                v_info = vocals.stat()
+                vocals_path = str(vocals)
+                vocals_stamp = (v_info.st_size, v_info.st_mtime_ns)
     return _scored_reference_id(
-        str(source), (project.source.sha256, info.st_size, info.st_mtime_ns), sentence_key
+        str(source),
+        (project.source.sha256, info.st_size, info.st_mtime_ns),
+        sentence_key,
+        vocals_path,
+        vocals_stamp,
     )
 
 

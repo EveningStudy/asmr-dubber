@@ -25,7 +25,7 @@ import soundfile as sf
 from .api_contracts import parse_json_object
 from .audio import _run_ffmpeg
 from .environment import ffmpeg_executable
-from .errors import ProjectError
+from .errors import AsmrDubberError, ProjectError
 from .hashing import cached_sha256_file
 from .models import DubProject, ProjectSettings
 from .platforms import isolated_runtime_environment, portable_home, virtualenv_executable
@@ -477,17 +477,26 @@ def _cloud_separate(audio: Path, destination: Path, settings: ProjectSettings) -
     return destination
 
 
-def _ensure_separation_impl(
-    project: DubProject, directory: Path, source: Path, progress=None
-) -> tuple[Path, Path]:
+def _separation_cache_root(
+    project: DubProject,
+    directory: Path,
+    *,
+    strict: bool = True,
+) -> Path | None:
     settings = project.settings
     if project.source.channels not in {1, 2}:
-        raise ProjectError("实验分离仅支持单声道/双声道；多声道请先明确转换。")
-    model_hash = (
-        verify_local_model(settings.separation_model)
-        if settings.separation_backend == "local"
-        else "remote"
-    )
+        if strict:
+            raise ProjectError("实验分离仅支持单声道/双声道；多声道请先明确转换。")
+        return None
+    if settings.separation_backend == "local":
+        try:
+            model_hash = verify_local_model(settings.separation_model)
+        except (OSError, AsmrDubberError):
+            if strict:
+                raise
+            return None
+    else:
+        model_hash = "remote"
     fields = {
         k: v
         for k, v in settings.model_dump().items()
@@ -512,7 +521,35 @@ def _ensure_separation_impl(
             sort_keys=True,
         ).encode()
     ).hexdigest()[:24]
-    root = directory / "analysis/separation" / digest
+    return directory / "analysis/separation" / digest
+
+
+def cached_separated_vocals(project: DubProject, directory: Path) -> Path | None:
+    """Return cached separated vocals.wav if complete and verified, without writing or locking."""
+    root = _separation_cache_root(project, directory, strict=False)
+    if root is None or not root.is_dir():
+        return None
+    vocals, residual = root / "vocals.wav", root / "background.wav"
+    done = root / "complete.json"
+    if not done.is_file():
+        return None
+    try:
+        hashes = json.loads(done.read_text(encoding="utf-8"))
+        if all(
+            p.is_file() and cached_sha256_file(p) == hashes.get(p.name) for p in (vocals, residual)
+        ):
+            return vocals
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
+def _ensure_separation_impl(
+    project: DubProject, directory: Path, source: Path, progress=None
+) -> tuple[Path, Path]:
+    settings = project.settings
+    root = _separation_cache_root(project, directory, strict=True)
+    assert root is not None
     root.mkdir(parents=True, exist_ok=True)
     with exclusive_file_lock(root / ".lock", timeout_seconds=1):
         vocals, residual = root / "vocals.wav", root / "background.wav"
