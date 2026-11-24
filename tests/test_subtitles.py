@@ -1,4 +1,5 @@
 import subprocess
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,63 @@ from asmr_dubber.environment import ffmpeg_executable
 from asmr_dubber.errors import OperationCancelledError, ProjectError
 from asmr_dubber.models import AudioInfo, DubProject, Sentence, load_project, save_project
 from asmr_dubber.pipeline import generate_subtitles
-from asmr_dubber.subtitles import write_subtitle_files
+from asmr_dubber.subtitles import _wrap_line, write_subtitle_files
+
+
+@pytest.mark.parametrize(
+    ("text", "number"),
+    [
+        ("我们测得阿伏伽德罗常数约为6.02214076×10²³每摩尔", "6.02214076×10²³"),
+        ("配音响度测量结果约为负的-28.5dB需要留出动态空间", "-28.5"),
+        ("配音响度测量结果约为负的−18.5dB需要留出动态空间", "−18.5"),
+        ("画面在第十二秒之后等待0.35秒再出现字幕", "0.35"),
+        ("科学记数法示例的测量结果为-1.602e-19库仑", "-1.602e-19"),
+        ("光速约为每秒299792458米可以在真空传播", "299792458"),
+    ],
+)
+def test_chinese_wrap_keeps_numbers_that_fit_together(text: str, number: str) -> None:
+    lines = _wrap_line(text, 22)
+    assert "".join(lines) == text
+    assert all(len(line) <= 22 for line in lines)
+    assert any(number in line for line in lines)
+
+
+def test_oversized_number_does_not_prevent_protecting_the_next_number() -> None:
+    text = "甲123456789乙−2.5秒"
+    lines = _wrap_line(text, 5)
+    assert "".join(lines) == text
+    assert all(len(line) <= 5 for line in lines)
+    assert any("−2.5" in line for line in lines)
+
+
+def test_wrap_number_at_boundaries_and_oversized_fallback() -> None:
+    assert _wrap_line("甲乙丙丁12.34秒", 5) == ["甲乙丙丁", "12.34", "秒"]
+    assert _wrap_line("甲乙丙丁 12.34秒", 5) == ["甲乙丙丁", "12.34", "秒"]
+    assert _wrap_line("甲乙丙丁−18.5秒", 5) == ["甲乙丙丁", "−18.5", "秒"]
+    assert _wrap_line("甲乙丙丁-18.5秒", 5) == ["甲乙丙丁", "-18.5", "秒"]
+    text = "甲123456789乙"
+    lines = _wrap_line(text, 4)
+    assert lines == ["甲123", "4567", "89乙"]
+    assert "".join(lines) == text
+
+
+def test_english_wrap_keeps_existing_behavior() -> None:
+    text = "A very long English sentence with 12.3456789 and words."
+    expected = textwrap.wrap(
+        text, width=8, break_long_words=True, break_on_hyphens=False, replace_whitespace=False
+    )
+    assert _wrap_line(text, 8) == expected
+
+
+def test_number_aware_wrap_preserves_srt_timing_and_lrc(tmp_path: Path) -> None:
+    text = "我们测得阿伏伽德罗常数约为6.02214076×10²³每摩尔"
+    sentence = Sentence(id="s1", start_seconds=1.25, end_seconds=10, source_text=text)
+    srt, lrc = write_subtitle_files([sentence], tmp_path, "source", maximum_chars=22)
+    lines = srt.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == ["1", "00:00:01,250 --> 00:00:10,000"]
+    assert "".join(lines[2:]) == text
+    assert any("6.02214076×10²³" in line for line in lines[2:])
+    assert lrc.read_text(encoding="utf-8").splitlines() == [f"[00:01.25]{text}"]
 
 
 @pytest.mark.parametrize("width", [40, 60, 80, 120, 500])
