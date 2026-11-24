@@ -2,11 +2,11 @@ English | [中文](CHANGELOG.md)
 
 # Changelog
 
+All notable changes to ASMR Dubber are documented in this file.
+
 ## [Unreleased]
 
 - Keep decimals and scientific notation together when wrapping Chinese subtitles if they fit on one line; longer numbers still use the existing hard-break fallback.
-
-All notable changes to ASMR Dubber are documented in this file.
 
 ## [3.0.2] - 2026-11-22
 

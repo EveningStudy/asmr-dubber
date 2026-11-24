@@ -17,31 +17,54 @@ SubtitleTimeline = Literal["source", "dubbing"]
 
 _CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _NUMBER = re.compile(
-    r"[+\-−]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+\-−]?\d+|[×xX]10(?:\^[+\-−]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))?"
+    r"(?:(?<!\d)[+\-−])?(?:\d+(?:\.\d+)?|(?<!\d)\.\d+)(?:[eE][+\-−]?\d+|[×xX]10(?:\^[+\-−]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))?"
 )
 
 
-class _NumberAwareWrapper(textwrap.TextWrapper):
-    """Keep a number together when it can fit on the next line."""
+def _split_cut_index(chunk: str, space_left: int, width: int) -> int:
+    for match in _NUMBER.finditer(chunk):
+        if match.start() >= space_left:
+            break
+        if match.end() > space_left and len(match.group()) <= width:
+            return match.start()
+    return space_left
 
-    def _handle_long_word(self, reversed_chunks, cur_line, cur_len, width):
-        space_left = width - cur_len
-        # Python 3.12's default appends an empty chunk when a line is full,
-        # which can prevent the wrapper from dropping trailing whitespace.
-        if space_left <= 0 and cur_line:
-            return
-        chunk = reversed_chunks[-1]
-        for number in _NUMBER.finditer(chunk):
-            if number.start() < space_left < number.end() and len(number.group()) <= width:
-                if number.start():
-                    cur_line.append(chunk[: number.start()])
-                    reversed_chunks[-1] = chunk[number.start() :]
-                    return
-                if cur_line:
-                    return
+
+def _wrap_cjk_line(cleaned: str, width: int) -> list[str]:
+    if width <= 0:
+        return [cleaned]
+    lines: list[str] = []
+    current = ""
+    for word in cleaned.split(" "):
+        remaining = word
+        while remaining:
+            prefix_len = len(current) + (1 if current else 0)
+            if prefix_len + len(remaining) <= width:
+                current = f"{current} {remaining}" if current else remaining
                 break
-        # A number wider than a line still needs the normal hard-break fallback.
-        super()._handle_long_word(reversed_chunks, cur_line, cur_len, width)
+            if current and len(remaining) <= width:
+                lines.append(current)
+                current = remaining
+                break
+            space_left = width - prefix_len
+            if space_left <= 0:
+                lines.append(current)
+                current = ""
+                continue
+            cut = _split_cut_index(remaining, space_left, width)
+            if cut == 0:
+                if current:
+                    lines.append(current)
+                    current = ""
+                    continue
+                cut = space_left
+            piece = remaining[:cut]
+            lines.append(f"{current} {piece}" if current else piece)
+            current = ""
+            remaining = remaining[cut:]
+    if current:
+        lines.append(current)
+    return lines or [cleaned]
 
 
 def _srt_timestamp(seconds: float) -> str:
@@ -67,13 +90,15 @@ def _wrap_line(value: str, width: int) -> list[str]:
     cleaned = _clean_line(value)
     if not cleaned:
         return []
-    wrapper = _NumberAwareWrapper if _CJK.search(cleaned) else textwrap.TextWrapper
-    return wrapper(
+    if _CJK.search(cleaned):
+        return _wrap_cjk_line(cleaned, width)
+    return textwrap.wrap(
+        cleaned,
         width=width,
         break_long_words=True,
         break_on_hyphens=False,
         replace_whitespace=False,
-    ).wrap(cleaned) or [cleaned]
+    ) or [cleaned]
 
 
 def _escape_srt_text(value: str) -> str:

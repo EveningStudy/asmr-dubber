@@ -43,8 +43,10 @@ def test_oversized_number_does_not_prevent_protecting_the_next_number() -> None:
 def test_wrap_number_at_boundaries_and_oversized_fallback() -> None:
     assert _wrap_line("甲乙丙丁12.34秒", 5) == ["甲乙丙丁", "12.34", "秒"]
     assert _wrap_line("甲乙丙丁 12.34秒", 5) == ["甲乙丙丁", "12.34", "秒"]
+    assert _wrap_line("甲乙丙 12.34秒", 5) == ["甲乙丙", "12.34", "秒"]
     assert _wrap_line("甲乙丙丁−18.5秒", 5) == ["甲乙丙丁", "−18.5", "秒"]
     assert _wrap_line("甲乙丙丁-18.5秒", 5) == ["甲乙丙丁", "-18.5", "秒"]
+    assert _wrap_line("甲乙丙丁10-20秒", 7) == ["甲乙丙丁10-", "20秒"]
     text = "甲123456789乙"
     lines = _wrap_line(text, 4)
     assert lines == ["甲123", "4567", "89乙"]
